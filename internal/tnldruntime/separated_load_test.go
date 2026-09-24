@@ -46,6 +46,7 @@ var (
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
 	runtimeLoadBandwidthStreams   = flag.Int("tnl-runtime-load-bandwidth-streams", 64, "bandwidth streams per direction")
+	runtimeLoadBandwidthMeasure   = flag.Duration("tnl-runtime-load-bandwidth-measure", 0, "optional bandwidth measurement per path (0s-5m)")
 	runtimeLoadScenario           = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
 	runtimeLoadNetworkPath        = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
 	runtimeLoadRTT                = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
@@ -158,16 +159,20 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		}, duration)
 	}
 	if *runtimeLoadBandwidthDirection != "" {
+		bandwidthDuration := duration
+		if *runtimeLoadBandwidthMeasure > 0 {
+			bandwidthDuration = *runtimeLoadBandwidthMeasure
+		}
 		bandwidth := &benchworkload.BandwidthConfig{
 			Direction: *runtimeLoadBandwidthDirection, Streams: *runtimeLoadBandwidthStreams,
 			BytesPerSecond: *runtimeLoadBandwidthMbits * 1_000_000 / 8,
 		}
 		direct := separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{
 			Name: "direct-bandwidth", Direct: true, URLs: []string{"https://direct." + separatedDomain}, Bandwidth: bandwidth,
-		}, duration)
+		}, bandwidthDuration)
 		tunneled := separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{
 			Name: "tunnel-bandwidth", URLs: publishers.URLs, Bandwidth: bandwidth,
-		}, duration)
+		}, bandwidthDuration)
 		t.Logf("separated_bandwidth_comparison direction=%s direct_elapsed=%s tunnel_elapsed=%s", bandwidth.Direction, direct.Elapsed, tunneled.Elapsed)
 	}
 	if *runtimeLoadHeldStreams > 0 {
@@ -396,8 +401,8 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress")
 	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
-	if routes < 4 || routes > 8000 {
-		t.Fatal("separated runtime load routes must be between 4 and 8000")
+	if routes < 4 || routes > 10000 {
+		t.Fatal("separated runtime load routes must be between 4 and 10000")
 	}
 	if *runtimeLoadStartParallel < 1 || *runtimeLoadStartParallel > 1000 {
 		t.Fatal("publisher startup concurrency must be between 1 and 1000")
@@ -441,6 +446,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		if *runtimeLoadBandwidthStreams < 4 || *runtimeLoadBandwidthStreams > 4096 || *runtimeLoadBandwidthMbits < 1 || *runtimeLoadBandwidthMbits > 10_000 {
 			t.Fatal("invalid bandwidth rate or stream count")
 		}
+	}
+	if *runtimeLoadBandwidthMeasure < 0 || *runtimeLoadBandwidthMeasure > 5*time.Minute || (*runtimeLoadBandwidthMeasure > 0 && *runtimeLoadBandwidthDirection == "") {
+		t.Fatal("invalid bandwidth measurement duration")
 	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")

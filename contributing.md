@@ -315,6 +315,9 @@ deterministic payloads and rotate upstream requests below the production 30-seco
 request read timeout. The workload fails on any corrupt, incomplete, rejected, or
 timed-out transfer, and when exact bytes complete more than one second after the
 requested measurement window.
+`BANDWIDTH_MEASURE` optionally sets a separate bandwidth window per direct and
+tunneled path, up to five minutes; `DURATION` continues to control fresh and
+shutdown phases. This keeps longer transfers within the runtime watchdog.
 
 Bandwidth summaries record target rate, exact expected and transferred application
 bytes, elapsed time, failures, and achieved rate. Existing phase resource snapshots
@@ -422,6 +425,19 @@ non-default value only to characterize a known miss. Shutdown uses four concurre
 stops and a ten-second per-publisher deadline, independently of startup concurrency.
 `ROUTE_CERTIFICATE_WORKERS` selects the control process's certificate worker count
 (default 4, range 1–8) so larger trials can compare bounded issuance concurrency.
+For the local 7,000–10,000-route screens, the default 30-second publisher
+readiness deadline and 128 MiB Pebble memory limit interrupted activation;
+`READY_TIMEOUT=2m` and `PEBBLE_MEMORY=512m` give those separate test inputs
+headroom without changing server-role CPU or memory. The 8,000-route screens
+used the former harness cap and explicitly raised 8,000 publisher connections
+per relay. The harness now permits up to 10,000 routes; 9,000/10,000-route
+screens set `PUBLISHER_CONNECTION_LIMIT=10000`. These are configured ceilings,
+not measured server resource limits. One 10,000-route attempt exceeded even
+the two-minute publisher readiness deadline; do not erase that failure when
+comparing runs with `READY_TIMEOUT=5m`.
+On publisher failure, `publisher-failure.json` captures unfinished route-session,
+certificate-order, authorization, and ready-connection state before the group
+cancels publishers; it excludes credential and challenge material.
 
 `activation.json` retains exact launch-to-ready durations, whole-group readiness,
 verified activation time, CA order count, and certificate-work attempt count.

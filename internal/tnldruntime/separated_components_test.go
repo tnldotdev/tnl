@@ -244,6 +244,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	}
 	var fallbacks atomic.Int64
 	client := separatedHTTP(t)
+	inspect := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
 	if *runtimeLoadTrace {
 		traceRuntimeCertificateHTTP(t, client, time.Now())
 	}
@@ -254,6 +255,11 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
 		RequestLimit: runtimeLoadAdmission.PublisherRequestLimit,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		OnFailure: func() {
+			if err := captureSeparatedPublisherFailure(inspect); err != nil {
+				t.Logf("publisher failure snapshot: %v", err)
+			}
+		},
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
 				fallbacks.Add(1)
