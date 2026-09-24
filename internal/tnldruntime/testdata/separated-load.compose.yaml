@@ -215,9 +215,9 @@ services:
   coordinator:
     <<: *runtime
     ports: ["127.0.0.1::8080"]
-    cpus: "0.5"
-    mem_limit: 128m
-    memswap_limit: 128m
+    cpus: "${COORDINATOR_CPUS:-0.5}"
+    mem_limit: "${COORDINATOR_MEMORY:-128m}"
+    memswap_limit: "${COORDINATOR_MEMORY:-128m}"
     volumes:
       - artifacts:/artifacts:ro
       - coordination:/load

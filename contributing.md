@@ -423,17 +423,17 @@ captured at the barrier. Later heartbeats do not advance that barrier's target.
 Compare startup concurrency explicitly: increasing it reduces whole-group wall
 time without necessarily reducing an individual publisher's activation latency.
 
-| Component     | CPU quota | Memory limit | Overrides                            |
-| ------------- | --------: | -----------: | ------------------------------------ |
-| Control       |         1 |         2GiB | `CONTROL_CPUS`, `CONTROL_MEMORY`     |
-| Ingress       |         1 |         2GiB | `INGRESS_CPUS`, `INGRESS_MEMORY`     |
-| Each relay    |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`             |
-| Publishers    |         2 |       512MiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY` |
-| Each visitor  |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`     |
-| Local service |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`             |
-| Pebble/DNS    |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`       |
-| PostgreSQL    |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`   |
-| Coordinator   |       0.5 |       128MiB | Fixed                                |
+| Component     | CPU quota | Memory limit | Overrides                                |
+| ------------- | --------: | -----------: | ---------------------------------------- |
+| Control       |         1 |         2GiB | `CONTROL_CPUS`, `CONTROL_MEMORY`         |
+| Ingress       |         1 |         2GiB | `INGRESS_CPUS`, `INGRESS_MEMORY`         |
+| Each relay    |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`                 |
+| Publishers    |         2 |       512MiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY`     |
+| Each visitor  |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`         |
+| Local service |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`                 |
+| Pebble/DNS    |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`           |
+| PostgreSQL    |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`       |
+| Coordinator   |       0.5 |       128MiB | `COORDINATOR_CPUS`, `COORDINATOR_MEMORY` |
 
 Append `_CPUS` or `_MEMORY` to a prefix and pass it through `mise exec -- env`.
 The server-role defaults model the CPU/memory ratio of a Fly `performance-1x`

@@ -22,3 +22,4 @@
 - When a runtime component is OOM-killed, the runner stops the coordinator before its test cleanup can serialize in-memory samples; write long-phase resource samples incrementally to the result directory so failure evidence survives.
 - The first capacity-only runtime smoke failed after the coordinator passed because a component still waited for fault coordination; gate component fault listeners alongside the coordinator's fault phase.
 - Stream screens above 500 held requests per route initially returned 503 from the publisher's local proxy rather than exhausting the server-role profile; expose and record the publisher request limit with other capacity inputs.
+- At 1,600 fresh requests/sec, retaining per-request evidence exhausted the coordinator's 128 MiB cgroup before the tunneled phase; raise its separate memory quota without changing the 1 CPU / 2 GiB server-role profile.
