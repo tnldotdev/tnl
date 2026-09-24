@@ -23,3 +23,4 @@
 - The first capacity-only runtime smoke failed after the coordinator passed because a component still waited for fault coordination; gate component fault listeners alongside the coordinator's fault phase.
 - Stream screens above 500 held requests per route initially returned 503 from the publisher's local proxy rather than exhausting the server-role profile; expose and record the publisher request limit with other capacity inputs.
 - At 1,600 fresh requests/sec, retaining per-request evidence exhausted the coordinator's 128 MiB cgroup before the tunneled phase; raise its separate memory quota without changing the 1 CPU / 2 GiB server-role profile.
+- The 5,500/6,000-route capacity runs failed during final usage reporting under the fixture's five-second ingress drain, then a fixed ten-second routing barrier; capacity-only runs now use the production 30-second drain and a matching bounded routing wait.

@@ -158,7 +158,11 @@ func (p *integrationProcess) result() error {
 }
 
 func (p *integrationProcess) wait() error {
-	if err := waitForDoneWithin(p.done, 10*time.Second); err != nil {
+	return p.waitWithin(10 * time.Second)
+}
+
+func (p *integrationProcess) waitWithin(timeout time.Duration) error {
+	if err := waitForDoneWithin(p.done, timeout); err != nil {
 		return fmt.Errorf("process did not shut down within its drain deadline: %w", err)
 	}
 	return p.result()
@@ -168,6 +172,14 @@ func stopIntegrationProcess(t *testing.T, process *integrationProcess) {
 	t.Helper()
 	process.cancel()
 	waitForIntegrationProcess(t, process)
+}
+
+func stopIntegrationProcessWithin(t *testing.T, process *integrationProcess, timeout time.Duration) {
+	t.Helper()
+	process.cancel()
+	if err := process.waitWithin(timeout); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitForIntegrationProcess(t *testing.T, process *integrationProcess) {

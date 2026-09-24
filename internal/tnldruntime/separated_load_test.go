@@ -342,15 +342,27 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			(SELECT coalesce(sum(assignment_count), 0) FROM control.relay_service_assignment_totals)`).Scan(&active)
 		return active == 0, err
 	})
-	waitForIngressRoutingCurrent(t, database, 1)
+	routingTimeout := 10 * time.Second
+	if *runtimeLoadCapacityOnly {
+		routingTimeout = 30 * time.Second
+	}
+	waitForIngressRoutingCurrentWithin(t, database, 1, routingTimeout)
 	separatedCapture(t, database, "final")
 	if got := separatedResource(t, "control").CAOrders; got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
 	}
 	// Stop ingress while control and PostgreSQL remain available. Its production
 	// reporter flushes final checkpoints and marks this process run complete.
-	separatedWrite(t, "ingress.stop", time.Now())
-	separatedWait(t, "ingress.stopped", 10*time.Second, nil)
+	stoppingIngress := time.Now()
+	separatedWrite(t, "ingress.stop", stoppingIngress)
+	ingressStopTimeout := 10 * time.Second
+	if *runtimeLoadCapacityOnly {
+		ingressStopTimeout = 35 * time.Second
+	}
+	separatedWait(t, "ingress.stopped", ingressStopTimeout, nil)
+	ingressStopElapsed := time.Since(stoppingIngress)
+	t.Logf("separated_ingress_shutdown elapsed=%s", ingressStopElapsed)
+	separatedResult(t, "ingress-shutdown", map[string]any{"elapsed": ingressStopElapsed.String()})
 	var buckets, coveredRoutes, attempts, successes, ingressBytes, egressBytes int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(DISTINCT route_id), coalesce(sum(connection_attempts),0),
 		coalesce(sum(successful_streams),0), coalesce(sum(ingress_bytes),0), coalesce(sum(egress_bytes),0) FROM control.route_usage_buckets`).Scan(&buckets, &coveredRoutes, &attempts, &successes, &ingressBytes, &egressBytes); err != nil {

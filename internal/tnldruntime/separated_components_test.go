@@ -84,7 +84,11 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			if !separatedRead(t, ctx, "ingress.stop", nil) {
 				return
 			}
-			stopIntegrationProcess(t, process)
+			if *runtimeLoadCapacityOnly {
+				stopIntegrationProcessWithin(t, process, 35*time.Second)
+			} else {
+				stopIntegrationProcess(t, process)
+			}
 			separatedWrite(t, "ingress.stopped", time.Now())
 			<-ctx.Done()
 			return

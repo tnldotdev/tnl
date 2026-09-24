@@ -263,7 +263,10 @@ per-visitor opening duration, and resources before and after each opening phase.
 the ordinary `DURATION` still controls fresh, recovery, and shutdown traffic.
 `CAPACITY_ONLY=1` runs the direct and tunneled phases without a fault phase,
 closes every held stream after the steady measurement, and still verifies
-shutdown and usage accounting. The default workload retains its fault phase.
+shutdown and usage accounting. Its ingress uses the production 30-second
+drain deadline, with a matching final-routing and shutdown wait; the smaller
+fault workload retains its five-second ingress drain fixture. Ingress shutdown
+elapsed time is retained in `ingress-shutdown.json`.
 During the tunneled warmup and long held-stream measurements, per-component CPU,
 memory, memory-limit events, and open file descriptors are sampled every five
 seconds into `<phase>-resource-samples.jsonl`, written incrementally so samples
