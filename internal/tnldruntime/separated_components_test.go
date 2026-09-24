@@ -89,7 +89,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			<-ctx.Done()
 			return
 		}
-		if component == "relay-a" && *runtimeLoadScenario == "relay-restart" {
+		if component == "relay-a" && *runtimeLoadScenario == "relay-restart" && !*runtimeLoadCapacityOnly {
 			if !separatedRead(t, ctx, "relay-a.restart", nil) {
 				return
 			}

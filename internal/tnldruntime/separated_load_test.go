@@ -41,6 +41,7 @@ var (
 	runtimeLoadHeldWarmup         = flag.Duration("tnl-runtime-load-held-warmup", 0, "optional held-stream warmup per path (0s-2m)")
 	runtimeLoadHeldMeasure        = flag.Duration("tnl-runtime-load-held-measure", 0, "optional held-stream measurement per path (0s-5m)")
 	runtimeLoadHeapProfile        = flag.Bool("tnl-runtime-load-heap-profile", false, "capture live Go heap profiles after steady held traffic")
+	runtimeLoadCapacityOnly       = flag.Bool("tnl-runtime-load-capacity-only", false, "measure direct and tunneled capacity without a fault phase")
 	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
@@ -198,7 +199,11 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "tunnel-held-warmup", URLs: publishers.URLs}, *runtimeLoadHeldWarmup)
 		}
 	}
-	for _, phase := range []string{"steady", *runtimeLoadScenario, "shutdown"} {
+	phases := []string{"steady", "shutdown"}
+	if !*runtimeLoadCapacityOnly {
+		phases = []string{"steady", *runtimeLoadScenario, "shutdown"}
+	}
+	for _, phase := range phases {
 		before := separatedCapture(t, database, phase+"-before")
 		stopSamples := sampleSeparatedGauges(t, phase)
 		stopResources := func() {}
@@ -303,6 +308,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		}
 		// Cover every live route, not only routes sampled late in a traffic window.
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
+		if phase == "steady" && *runtimeLoadCapacityOnly && *runtimeLoadHeldStreams > 0 {
+			separatedProbe(t, &sequence, benchworkload.Phase{Name: "tunnel-held-close", URLs: publishers.URLs, CloseHeld: true})
+		}
 		if runtimeControlledFault(phase) {
 			if runtimeBlackhole(phase) {
 				assertRelayOpenedVisitors(t, before, after, "relay-b")
@@ -388,8 +396,8 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadCertificateWorkers < 1 || *runtimeLoadCertificateWorkers > 8 {
 		t.Fatal("route certificate workers must be between 1 and 8")
 	}
-	if rate < 4 || rate > 500 {
-		t.Fatal("separated runtime load requests per second must be between 4 and 500")
+	if rate < 4 || rate > 2000 {
+		t.Fatal("separated runtime load requests per second must be between 4 and 2000")
 	}
 	if duration < 10*time.Second || duration > 2*time.Minute {
 		t.Fatal("separated runtime load phase duration must be between 10s and 2m")
@@ -397,8 +405,8 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadWorkers < 4 || *runtimeLoadWorkers > 4096 || *runtimeLoadQueue < 0 || *runtimeLoadQueue > 4096 {
 		t.Fatal("invalid visitor concurrency or queue")
 	}
-	if *runtimeLoadHeldStreams < 0 || *runtimeLoadHeldStreams > 4096 {
-		t.Fatal("held streams must be between 0 and 4096")
+	if *runtimeLoadHeldStreams < 0 || *runtimeLoadHeldStreams > 20000 {
+		t.Fatal("held streams must be between 0 and 20000")
 	}
 	if *runtimeLoadHeldWarmup < 0 || *runtimeLoadHeldWarmup > 2*time.Minute || *runtimeLoadHeldMeasure < 0 || *runtimeLoadHeldMeasure > 5*time.Minute ||
 		(*runtimeLoadHeldStreams == 0 && (*runtimeLoadHeldWarmup != 0 || *runtimeLoadHeldMeasure != 0)) {
@@ -417,6 +425,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
+	}
+	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" {
+		t.Fatal("capacity-only workload requires the default scenario")
 	}
 	if !slices.Contains([]string{"forwarding", "publisher"}, *runtimeLoadNetworkPath) {
 		t.Fatal("invalid network path")

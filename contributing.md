@@ -261,6 +261,9 @@ per-visitor opening duration, and resources before and after each opening phase.
 `HELD_WARMUP` and `HELD_MEASURE` optionally set separate held-stream warmup
 (up to two minutes) and measurement (up to five minutes) windows per path;
 the ordinary `DURATION` still controls fresh, recovery, and shutdown traffic.
+`CAPACITY_ONLY=1` runs the direct and tunneled phases without a fault phase,
+closes every held stream after the steady measurement, and still verifies
+shutdown and usage accounting. The default workload retains its fault phase.
 During the tunneled warmup and long held-stream measurements, per-component CPU,
 memory, memory-limit events, and open file descriptors are sampled every five
 seconds into `<phase>-resource-samples.jsonl`, written incrementally so samples
@@ -278,6 +281,19 @@ For example, a longer stream measurement with generator memory held fixed:
 ```console
 mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-held-1200
 ```
+
+For isolated stream capacity on the 1 CPU / 2 GiB server-role profile, give
+generators separate headroom and use a fresh results directory at each step:
+
+```console
+mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-streams-4000
+```
+
+The default relay stream capacity is 4,096. Above it, pass an explicit
+`RELAY_STREAM_CAPACITY` and record the applied limits from
+`admission-limits.json`; above the per-route ingress limit, also adjust
+`ROUTE_CONNECTION_LIMIT`. These are distinct configured-capacity profiles
+even when CPU and memory stay fixed.
 
 Setting `BANDWIDTH_DIRECTION` to `downstream`, `upstream`, or
 `bidirectional` adds matched direct and tunneled phases. The decimal Mbit/sec
@@ -406,9 +422,9 @@ time without necessarily reducing an individual publisher's activation latency.
 
 | Component     | CPU quota | Memory limit | Overrides                            |
 | ------------- | --------: | -----------: | ------------------------------------ |
-| Control       |         1 |       512MiB | `CONTROL_CPUS`, `CONTROL_MEMORY`     |
-| Ingress       |         1 |       256MiB | `INGRESS_CPUS`, `INGRESS_MEMORY`     |
-| Each relay    |         1 |       256MiB | `RELAY_A_*`, `RELAY_B_*`             |
+| Control       |         1 |         2GiB | `CONTROL_CPUS`, `CONTROL_MEMORY`     |
+| Ingress       |         1 |         2GiB | `INGRESS_CPUS`, `INGRESS_MEMORY`     |
+| Each relay    |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`             |
 | Publishers    |         2 |       512MiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY` |
 | Each visitor  |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`     |
 | Local service |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`             |
@@ -417,6 +433,10 @@ time without necessarily reducing an individual publisher's activation latency.
 | Coordinator   |       0.5 |       128MiB | Fixed                                |
 
 Append `_CPUS` or `_MEMORY` to a prefix and pass it through `mise exec -- env`.
+The server-role defaults model the CPU/memory ratio of a Fly `performance-1x`
+Machine; the local Docker quota is not a deployed performance measurement.
+Earlier local results with 256MiB ingress/relay limits remain measurements of
+that explicitly constrained profile.
 Swap is disabled. Publisher targets remain loopback-only: the local service has
 its own cgroup but shares the publisher network namespace. Their network counters
 are therefore marked shared and must not be summed. CPU and memory remain separate.

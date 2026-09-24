@@ -35,6 +35,7 @@ x-runtime: &runtime
         -tnl-runtime-load-held-warmup='${HELD_WARMUP:-0s}' \
         -tnl-runtime-load-held-measure='${HELD_MEASURE:-0s}' \
         -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
+        -tnl-runtime-load-capacity-only='${CAPACITY_ONLY:-0}' \
         -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
         -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
         -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
@@ -115,8 +116,8 @@ services:
   control:
     <<: *runtime
     cpus: "${CONTROL_CPUS:-1}"
-    mem_limit: "${CONTROL_MEMORY:-512m}"
-    memswap_limit: "${CONTROL_MEMORY:-512m}"
+    mem_limit: "${CONTROL_MEMORY:-2g}"
+    memswap_limit: "${CONTROL_MEMORY:-2g}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: control
@@ -128,8 +129,8 @@ services:
     <<: *runtime
     cap_add: [NET_ADMIN]
     cpus: "${INGRESS_CPUS:-1}"
-    mem_limit: "${INGRESS_MEMORY:-256m}"
-    memswap_limit: "${INGRESS_MEMORY:-256m}"
+    mem_limit: "${INGRESS_MEMORY:-2g}"
+    memswap_limit: "${INGRESS_MEMORY:-2g}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: ingress
@@ -138,8 +139,8 @@ services:
     <<: *runtime
     cap_add: [NET_ADMIN]
     cpus: "${RELAY_A_CPUS:-1}"
-    mem_limit: "${RELAY_A_MEMORY:-256m}"
-    memswap_limit: "${RELAY_A_MEMORY:-256m}"
+    mem_limit: "${RELAY_A_MEMORY:-2g}"
+    memswap_limit: "${RELAY_A_MEMORY:-2g}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: relay-a
@@ -151,8 +152,8 @@ services:
     <<: *runtime
     cap_add: [NET_ADMIN]
     cpus: "${RELAY_B_CPUS:-1}"
-    mem_limit: "${RELAY_B_MEMORY:-256m}"
-    memswap_limit: "${RELAY_B_MEMORY:-256m}"
+    mem_limit: "${RELAY_B_MEMORY:-2g}"
+    memswap_limit: "${RELAY_B_MEMORY:-2g}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: relay-b
@@ -239,6 +240,7 @@ services:
       - "-tnl-runtime-load-held-warmup=${HELD_WARMUP:-0s}"
       - "-tnl-runtime-load-held-measure=${HELD_MEASURE:-0s}"
       - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
+      - "-tnl-runtime-load-capacity-only=${CAPACITY_ONLY:-0}"
       - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
       - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
       - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"

@@ -59,6 +59,9 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 	if phase.Name == "direct-held-close" {
 		separatedReportHeld(t, phase.Name, results, *runtimeLoadHeldStreams, false, false, true)
 	}
+	if phase.Name == "tunnel-held-close" {
+		separatedReportHeld(t, phase.Name, results, *runtimeLoadHeldStreams, false, false, true)
+	}
 }
 
 func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separatedPublishers) time.Time {
