@@ -566,8 +566,8 @@ Implement provider signing and the shared replay executor.
 Document configuration, provider authentication, history scope, retention,
 cleanup, replay semantics, and worktree behavior in:
 
-- [CLI reference](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/cli-reference.md).
-- [Architecture](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/architecture.md).
+- [CLI reference](https://tnl.dev/docs/cli).
+- [Architecture](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/maintainers/architecture.md).
 - [Package guide](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/packages/tnl/readme.md).
 
 ## 10. tests and completion criteria

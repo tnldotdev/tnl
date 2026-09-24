@@ -1,7 +1,7 @@
 # releasing tnl
 
 Audience: maintainers publishing `tnl`, `tnld`, or `@tnldotdev` packages. Users
-installing a release should follow [install and verify releases](../releases.md).
+installing a release should follow [install and verify releases](https://tnl.dev/docs/releases).
 
 Use the `tnl-release` agent skill for the complete assessment, approval, and
 verification workflow. The rules below describe the repository contract; they

@@ -514,7 +514,7 @@ Do not hand-edit generated output.
 `packages/tnl/src` is handwritten except `config.gen.ts`; `packages/tnl/dist` is disposable build
 output. Project-local `.tnl/project.json` and `.tnl/project.d.ts` are generated
 by the CLI, not repository code generation. Their user workflow belongs in the
-[package guide](packages/tnl/readme.md).
+[framework guide](https://tnl.dev/docs/frameworks).
 
 ## local stack
 
@@ -538,7 +538,7 @@ explicit approval and the [benchmark gates](docs/benchmarks/readme.md).
 
 ## engineering rules
 
-- Follow [Architecture](docs/architecture.md) for package and API ownership and
+- Follow [contributor architecture](docs/maintainers/architecture.md) for package and API ownership and
   [AGENTS.md](AGENTS.md) for canonical terminology and CLI presentation rules.
 - Prefer the smallest design that completes the current phase.
 - Reuse the service that already owns a behavior, along with generated

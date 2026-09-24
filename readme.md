@@ -1,75 +1,80 @@
 # tnl
 
-**A URL for every worktree.**
+**A stable dev URL for your app.**
 
-tnl gives your development app a stable HTTPS URL. Run it on your laptop or a
-remote machine, and open it in your browser.
+tnl starts your app and gives it an HTTPS URL. Each Git worktree gets its own,
+so you can open changes side by side. Use [tnl.dev](https://tnl.dev), put the
+URLs on a domain you own, or run the tnl server yourself.
 
-Working with coding agents? Give each one a Git worktree. Each worktree gets
-its own URL, so you can try their changes side by side.
+## start developing
 
-```text
-main worktree       --> its own URL --> browser tab 1
-checkout worktree   --> its own URL --> browser tab 2
-redesign worktree   --> its own URL --> browser tab 3
+In a Next.js or Vite project with a `dev` script:
+
+```console
+pnpm add -D @tnldotdev/tnl@next
+pnpm exec tnl init
 ```
 
-## try it
+`tnl init` creates `tnl.config.ts` with the command that starts your app. If
+your existing framework config needs a change, it tells you what to add.
 
-Have an app running on port 3000? From its project directory:
+```console
+pnpm exec tnl dev
+```
+
+Sign in when prompted. Your app starts, and tnl prints its URL:
+
+```text
++--[ tnl dev ]-- ready ----------------------------------------+
+|                                                              |
+|  https://app-checkout-a1b2c3d4.busy-toast.tnl.dev            |
+|     |                                                        |
+|     v                                                        |
+|  tnl                                                         |
+|     |                                                        |
+|     v                                                        |
+|  http://127.0.0.1:5173                                       |
+|                                                              |
+|  route version             1                                 |
+|  framework                 vite                              |
+|  automatically allowed IP  192.0.2.10                        |
+|                                                              |
++-- ctrl+c to stop --------------------------------------------+
+```
+
+[Follow the quickstart](https://tnl.dev/docs) for the configuration and
+[Next.js and Vite setup](https://tnl.dev/docs/frameworks). The integration
+follows the port your app actually opens, including when another worktree
+already uses the preferred port. Live reload works through the URL.
+
+## already running an app?
+
+On macOS or Linux, Homebrew installs the native client. Publish an HTTP app
+already listening on port 3000 without any project configuration:
 
 ```console
 brew install tnldotdev/tap/tnl
 tnl publish 3000
 ```
 
-Sign in when prompted, then open the HTTPS URL tnl prints. Keep tnl running
-while you use it. [tnl.dev](https://tnl.dev) hosts the service, so there's no
-server to set up.
-
-By default, only connections from the public IP of the machine running tnl
-are allowed.
-
-Available for macOS and Linux. [Other ways to install](docs/releases.md).
-
-## make it your dev command
-
-With the [Next.js or Vite integration](packages/tnl/readme.md#initialize-a-project)
-set up, start your app with:
-
-```console
-tnl dev
-```
-
-tnl follows the port your app actually uses, and live reload works through the
-URL. Run it in each worktree. Its
-[URL stays the same across restarts](docs/project-configuration.md#worktree-urls).
-
-## develop on a remote machine
-
-Let a remote machine run your app and your agents while you review their work
-in your laptop's browser. Run tnl beside the app and add your laptop's public
-IP with `--allow-ip`. To let anyone connect, use `--allow-all-ips` instead.
+tnl.dev is free now. Accounts and teams created while it is free will keep a
+free plan if paid options arrive. We'll announce usage limits before they apply.
 
 ## why tnl?
 
-ngrok and Cloudflare Tunnel put apps online too. tnl focuses on the development
-workflow: automatic worktree URLs, Next.js and Vite integration, and one command
-to start your app. HTTPS stays encrypted until it reaches tnl on your machine.
-Use our hosted service or [run your own](docs/self-hosting.md).
+ngrok and Cloudflare Tunnel can also give apps stable URLs and custom domains.
+tnl combines worktree-aware URLs, Next.js and Vite integrations, and a server
+you can run yourself. Visitor HTTPS stays encrypted until it reaches tnl beside
+your app.
 
-## learn more
+[Use your own domain](https://tnl.dev/docs/domains) ·
+[Run your own server](https://tnl.dev/docs/self-hosting) ·
+[Commands and visitor access](https://tnl.dev/docs/cli) ·
+[Contribute](contributing.md)
 
-[Commands](docs/cli-reference.md) ·
-[Project setup](docs/project-configuration.md) ·
-[Automation](docs/automation.md) ·
-[Contributing](contributing.md)
+## telemetry and license
 
-## telemetry
-
-tnl sends usage telemetry by default, including when self-hosted. Disable it
-with `TNL_NO_TELEMETRY=true`. [What gets sent](docs/cli-reference.md#telemetry).
-
-## license
-
-Client and server: [MIT](LICENSE). [Dependency notices](THIRD_PARTY_LICENSES.txt).
+tnl sends usage telemetry by default, even with a self-hosted server. Disable
+it with `TNL_NO_TELEMETRY=true`. [See what is sent](https://tnl.dev/docs/cli#telemetry).
+The client and server are [MIT-licensed](LICENSE); see the
+[dependency notices](THIRD_PARTY_LICENSES.txt).

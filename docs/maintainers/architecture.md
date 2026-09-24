@@ -1,11 +1,10 @@
 # architecture
 
-This document explains the major runtime boundaries in tnl. It is for
-contributors and operators who need to understand where state, trust, and
-network responsibilities live.
+These are contributor-facing runtime, trust, and package boundaries. For a
+public overview, see [how tnl works](https://tnl.dev/docs/how-it-works).
 
-See [self-hosting](self-hosting.md) for deployment procedures and the
-[`tnld` reference](tnld-reference.md) for configuration.
+See [self-hosting](https://tnl.dev/docs/self-hosting) for deployment procedures
+and the [`tnld` reference](https://tnl.dev/docs/tnld) for configuration.
 
 ## see the system at a glance
 
@@ -207,4 +206,4 @@ previews.
 
 Detailed PostgreSQL locking, routing publication, usage aggregation, and cleanup
 invariants are in the maintainer-only
-[control-state notes](maintainers/control-state.md).
+[control-state notes](control-state.md).

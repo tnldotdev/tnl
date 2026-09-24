@@ -23,14 +23,14 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 ## People And Local Processes
 
-| Term              | Definition                                                         |
-| ----------------- | ------------------------------------------------------------------ |
-| **identity**      | A person or administrator known to one tnl server.                 |
-| **publisher**     | The local `tnl publish` or `tnl dev` process.                      |
-| **visitor**       | A browser or other client connecting to a public route.            |
-| **local service** | The developer's HTTP application.                                  |
-| **target**        | The local HTTP URL the publisher uses to reach the local service.  |
-| **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle. |
+| Term              | Definition                                                                        |
+| ----------------- | --------------------------------------------------------------------------------- |
+| **identity**      | A person or administrator known to one tnl server.                                |
+| **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
+| **visitor**       | A browser or other client connecting to a public route.                           |
+| **local service** | The developer's HTTP application.                                                 |
+| **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
+| **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
 
 ## Projects And Client State
 
@@ -255,6 +255,11 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 # CLI Human Output
 
+In user-facing CLI diagrams and introductory documentation, label the local
+process `tnl`. Reserve **publisher** for architectural and protocol distinctions
+from other `tnl` commands and the local service; do not rename machine fields
+such as `publisher_connection_id`.
+
 Human-readable output from `tnl`, including diagnostics, uses the shared ASCII diagram renderer. The renderer and its tests are the source of truth for layout, width, wrapping, escaping, and frame syntax. Command handlers provide semantic content only and must not construct borders, rails, padding, or connectors.
 
 Frames follow this general form:
@@ -280,6 +285,9 @@ Frames follow this general form:
 
 - Use lowercase documentation filenames and headings. Keep `AGENTS.md` and
   `SKILL.md` uppercase for automatic agent discovery.
+- Keep public product, client, and operator documentation on `tnl.dev`; the
+  repository README and npm package README link there. Keep contributor,
+  maintainer, and benchmark documentation with the code.
 
 # Tests and Benchmarks
 
@@ -307,7 +315,7 @@ Frames follow this general form:
 # Architecture
 
 - `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
-- Follow [Architecture](docs/architecture.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [Self-Hosting](docs/self-hosting.md).
+- Follow [contributor architecture](docs/maintainers/architecture.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [self-hosting](https://tnl.dev/docs/self-hosting).
 
 # Contracts and State
 

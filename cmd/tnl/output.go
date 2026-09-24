@@ -183,7 +183,7 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 			if err := writeHumanFrame(o.stderr, o.command, "ready", footer,
 				clioutput.Flow(
 					clioutput.FlowNode{Label: url},
-					clioutput.FlowNode{Label: "publisher"},
+					clioutput.FlowNode{Label: "tnl"},
 					clioutput.FlowNode{Label: o.target},
 				),
 				clioutput.Fields(fields...),

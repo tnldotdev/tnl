@@ -19,7 +19,7 @@ func TestRenderFrame(t *testing.T) {
 			Fields(Field{Label: "framework", Value: "vite"}),
 			Flow(
 				FlowNode{Label: "https://chase.tnl.dev"},
-				FlowNode{Label: "publisher"},
+				FlowNode{Label: "tnl"},
 				FlowNode{Label: "http://127.0.0.1:5173"},
 			),
 		},
@@ -35,7 +35,7 @@ func TestRenderFrame(t *testing.T) {
 		"|  https://chase.tnl.dev                                       |\n" +
 		"|     |                                                        |\n" +
 		"|     v                                                        |\n" +
-		"|  publisher                                                   |\n" +
+		"|  tnl                                                         |\n" +
 		"|     |                                                        |\n" +
 		"|     v                                                        |\n" +
 		"|  http://127.0.0.1:5173                                       |\n" +
@@ -133,7 +133,7 @@ func TestRenderRightBorderIsAligned(t *testing.T) {
 				Fields(Field{Label: "framework", Value: "vite"}),
 				Flow(
 					FlowNode{Label: "https://chase.tnl.dev"},
-					FlowNode{Label: "publisher"},
+					FlowNode{Label: "tnl"},
 					FlowNode{Label: "http://127.0.0.1:5173"},
 				),
 			},
