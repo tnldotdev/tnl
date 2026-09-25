@@ -74,7 +74,7 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 			WHERE c.state = 'ready' AND NOT l.draining AND l.lease_expires_at > now()`).Scan(&count)
 		return count == len(publishers.Ready)*2, err
 	})
-	waitForIngressRoutingCurrent(t, database, 1)
+	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
 	for _, ready := range publishers.Ready {
 		assertRouteVersion(t, database, ready.RouteID, ready.RouteVersion)
 	}

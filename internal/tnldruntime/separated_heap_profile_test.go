@@ -16,7 +16,7 @@ import (
 // Run a separate diagnostic trial rather than mixing them into capacity points.
 func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separatedSnapshot) {
 	t.Helper()
-	for _, component := range []string{"ingress", "relay-a", "publishers", "app", "visitor-1"} {
+	for _, component := range []string{"ingress-a", "relay-a", "publishers", "app", "visitor-1"} {
 		address := component + ":9091"
 		if component == "app" {
 			address = "publishers:9092"
@@ -48,7 +48,7 @@ func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separat
 		}
 	}
 	after := separatedCapture(t, database, "steady-after-heap")
-	for _, component := range []string{"ingress", "relay-a", "publishers", "app", "visitor-1"} {
+	for _, component := range []string{"ingress-a", "relay-a", "publishers", "app", "visitor-1"} {
 		t.Logf("separated_heap component=%s memory_before=%d memory_after_gc=%d profile=steady-%s-heap.pb.gz", component,
 			before.Resources[component].Memory, after.Resources[component].Memory, component)
 	}

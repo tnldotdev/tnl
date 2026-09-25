@@ -331,9 +331,12 @@ progressing. Set `BANDWIDTH_MEASURE` to the held measurement window (or leave it
 unset); the same load first runs directly against the local service, then
 through ingress and a relay. Separate fresh, held, and bandwidth summaries
 and resource samples retain all three checks for each path.
-`HA_TOPOLOGY=1` adds a second control and ingress process with the same per-role
-resource limits. Shared Docker DNS names distribute control and visitor
-connections, while unique inspection addresses retain per-process metrics.
+The runtime harness starts `control-a`, `control-b`, `ingress-a`, and `ingress-b`
+by default, with the same per-role resource limits. `HA_TOPOLOGY=0` is available
+for single-control/single-ingress comparisons. Shared `control` and `ingress`
+Docker DNS names distribute client connections; process-specific service names
+retain per-process metrics. Relay faults and forwarding impairments exercise
+both ingress processes in the default topology.
 Both ingress processes must acknowledge routing, serve visitor connections,
 flush usage, and complete shutdown. The disposable PostgreSQL is still a
 single instance and local Docker DNS is not a health-aware public address;
@@ -385,12 +388,11 @@ capacity-boundary experiments prove enforcement. Resource snapshots record
 effective CPU/memory allocations separately.
 Declare overrides before each experiment and keep them fixed across its healthy
 and fault windows; changing admission settings defines a new measured profile.
-The runtime workload bounds are 4–1,000 routes and 4–500 requests/sec. This
-ceiling is below the default relay publisher-connection capacity and keeps the
-routine local topology within its explicit resource profile; testing 4,000 routes
-requires a separately declared load profile. Local Pebble validates from one
-source address; challenge concurrency and deadlines apply independently of
-visitor source rate.
+The runtime workload bounds are 4–10,000 routes and 4–2,000 requests/sec.
+Large runs require separately declared database, generator, and certificate
+worker resources; the routine smoke defaults are four routes and 16 requests/sec.
+Local Pebble validates from one source address; challenge concurrency and
+deadlines apply independently of visitor source rate.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
@@ -398,9 +400,10 @@ process run ID after restart. The relay exits before the measured fresh-request
 window begins, and every measured visitor must succeed through the alternate.
 Preexisting held streams still cross the abrupt failure boundary and are not
 replayed. Ingress gives a preferred relay at most 250ms before trying the
-alternate. `forwarding-blackhole` drops only ingress-to-relay-a
-TCP port 8443. `publisher-blackhole` drops publisher-to-relay-a TCP and UDP port
-443 and measures detection using the existing transport timers. Control and
+alternate. `forwarding-blackhole` drops ingress-to-relay-a TCP port 8443 from
+both ingress processes in the default topology. `publisher-blackhole` drops
+publisher-to-relay-a TCP and UDP port 443 and measures detection using the
+existing transport timers. Control and
 relay-b remain reachable. Blackholes stay installed through the entire traffic
 window and every-route correctness probes; each installed rule must drop packets.
 Every scenario requires zero missed offers and queue expiry. Controlled faults

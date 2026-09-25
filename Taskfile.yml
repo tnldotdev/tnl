@@ -249,7 +249,7 @@ tasks:
       CPU_PROFILE: '{{default "0" .CPU_PROFILE}}'
       CAPACITY_ONLY: '{{default "0" .CAPACITY_ONLY}}'
       COMBINED: '{{default "0" .COMBINED}}'
-      HA_TOPOLOGY: '{{default "0" .HA_TOPOLOGY}}'
+      HA_TOPOLOGY: '{{default "1" .HA_TOPOLOGY}}'
       DIRECT_PATH: '{{default "0" .DIRECT_PATH}}'
       BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
       BANDWIDTH_MBITS_PER_SECOND: '{{default "100" .BANDWIDTH_MBITS_PER_SECOND}}'

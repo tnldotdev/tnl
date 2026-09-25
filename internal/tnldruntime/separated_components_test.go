@@ -48,11 +48,11 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		runSeparatedPublishers(t, ctx, routes)
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
-	case "control", "control-b", "ingress", "ingress-b", "relay-a", "relay-b":
+	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b":
 		if !separatedRead(t, ctx, "pebble.ready", nil) {
 			return
 		}
-		if component != "control" && !separatedRead(t, ctx, "control.ready", nil) {
+		if component != "control-a" && !separatedRead(t, ctx, "control-a.ready", nil) {
 			return
 		}
 		client := separatedHTTP(t)
@@ -64,7 +64,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			return base.RoundTrip(request)
 		})
 		cfg := separatedConfig(t, component)
-		if component != "control" {
+		if component != "control-a" {
 			separatedWrite(t, component+".admission-limits", separatedAdmissionFrom(cfg))
 		}
 		options := integrationProcessOptions{acmeHTTPClient: client,
@@ -82,7 +82,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			}
 		}
 		separatedWrite(t, readyName, time.Now())
-		if component == "ingress" || component == "ingress-b" {
+		if component == "ingress-a" || component == "ingress-b" {
 			if !separatedRead(t, ctx, component+".stop", nil) {
 				return
 			}
@@ -590,7 +590,7 @@ func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.
 func separatedResource(t *testing.T, component string) separatedResources {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
-	address := separatedInspectionAddress(component) + ":9091"
+	address := component + ":9091"
 	if component == "app" {
 		address = "publishers:9092"
 	}

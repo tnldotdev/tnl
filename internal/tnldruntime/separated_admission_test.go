@@ -124,7 +124,7 @@ func verifySeparatedAdmission(t *testing.T) {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)
 		var matches bool
-		if component == "ingress" || component == "ingress-b" {
+		if component == "ingress-a" || component == "ingress-b" {
 			components[component] = applied.ingress()
 			matches = applied.ingress() == runtimeLoadAdmission.ingress()
 		} else {

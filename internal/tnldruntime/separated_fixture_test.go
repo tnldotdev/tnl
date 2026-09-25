@@ -32,20 +32,20 @@ const separatedDomain = "split.integration.test"
 
 var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
-var separatedComponents = []string{"control", "ingress", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
+var separatedComponents = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
 
 func separatedIngresses() []string {
 	if *runtimeLoadHATopology {
-		return []string{"ingress", "ingress-b"}
+		return []string{"ingress-a", "ingress-b"}
 	}
-	return []string{"ingress"}
+	return []string{"ingress-a"}
 }
 
 func separatedControls() []string {
 	if *runtimeLoadHATopology {
-		return []string{"control", "control-b"}
+		return []string{"control-a", "control-b"}
 	}
-	return []string{"control"}
+	return []string{"control-a"}
 }
 
 func separatedServerRoles() []string {
@@ -67,20 +67,6 @@ func separatedCAOrders(t *testing.T) int64 {
 		orders += separatedResource(t, name).CAOrders
 	}
 	return orders
-}
-
-// Shared client hostnames may resolve to either process. Inspection always
-// targets one specific process so per-role measurements are not duplicated.
-func separatedInspectionAddress(component string) string {
-	if *runtimeLoadHATopology {
-		switch component {
-		case "control":
-			return "control-a"
-		case "ingress":
-			return "ingress-a"
-		}
-	}
-	return component
 }
 
 func separatedCoordination(t *testing.T) *benchworkload.Coordination {
@@ -199,10 +185,10 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	t.Helper()
 	role := tnldconfig.Role(component)
-	if component == "control-b" {
+	if component == "control-a" || component == "control-b" {
 		role = tnldconfig.RoleControl
 	}
-	if component == "ingress-b" {
+	if component == "ingress-a" || component == "ingress-b" {
 		role = tnldconfig.RoleIngress
 	}
 	if strings.HasPrefix(component, "relay-") {

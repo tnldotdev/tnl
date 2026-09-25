@@ -33,7 +33,10 @@ type FaultEvents = {
 };
 
 const results = z.string().min(1).parse(process.env.RESULTS);
-const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "0") === "1";
+const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
+const ingresses: readonly ("ingress-a" | "ingress-b")[] = haTopology
+  ? ["ingress-a", "ingress-b"]
+  : ["ingress-a"];
 if (existsSync(results) && readdirSync(results).length !== 0)
   throw new Error(
     "RESULTS must be a fresh or empty directory; preserve earlier experiment artifacts",
@@ -169,7 +172,8 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
     compose(["start", "relay-a"]);
     intentionalRelayExit = false;
   } else if (["forwarding-blackhole", "publisher-blackhole", "udp-fallback"].includes(scenario)) {
-    const service = scenario === "forwarding-blackhole" ? "ingress" : "publishers";
+    const services: readonly RuntimeService[] =
+      scenario === "forwarding-blackhole" ? ingresses : ["publishers"];
     const relays: RuntimeService[] =
       scenario === "udp-fallback" ? ["relay-a", "relay-b"] : ["relay-a"];
     const protocols =
@@ -178,27 +182,28 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
         : [scenario === "udp-fallback" ? "udp" : "tcp"];
     const rules: string[][] = [];
     await withFaultCleanup(async (undo) => {
-      for (const relay of relays)
-        for (const protocol of protocols) {
-          const rule = [
-            "OUTPUT",
-            "-d",
-            address(relay),
-            "-p",
-            protocol,
-            "--dport",
-            scenario === "forwarding-blackhole" ? "8443" : "443",
-            "-m",
-            "comment",
-            "--comment",
-            "tnl-runtime-fault",
-            "-j",
-            "DROP",
-          ];
-          compose(["exec", "-T", service, "iptables", "-I", ...rule]);
-          undo.push(["exec", "-T", service, "iptables", "-D", ...rule]);
-          rules.push(rule);
-        }
+      for (const service of services)
+        for (const relay of relays)
+          for (const protocol of protocols) {
+            const rule = [
+              "OUTPUT",
+              "-d",
+              address(relay),
+              "-p",
+              protocol,
+              "--dport",
+              scenario === "forwarding-blackhole" ? "8443" : "443",
+              "-m",
+              "comment",
+              "--comment",
+              "tnl-runtime-fault",
+              "-j",
+              "DROP",
+            ];
+            compose(["exec", "-T", service, "iptables", "-I", ...rule]);
+            undo.push(["exec", "-T", service, "iptables", "-D", ...rule]);
+            rules.push(rule);
+          }
       await event("fault.applied", { Started: started, Exited: new Date().toISOString() });
       if (scenario === "udp-fallback") {
         await waitForEvent("publishers.ready");
@@ -213,33 +218,36 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
         await event("udp.cleaned", true);
       }
       await waitForEvent("fault.release");
-      const counters = compose([
-        "exec",
-        "-T",
-        service,
-        "iptables",
-        "-L",
-        "OUTPUT",
-        "-n",
-        "-v",
-        "-x",
-      ]);
-      writeFileSync(join(results, `${scenario}-counters.txt`), counters);
-      const dropped = counters.split("\n").filter((line) => line.includes("tnl-runtime-fault"));
-      if (
-        dropped.length !== rules.length ||
-        dropped.some((line) => Number(line.trim().split(/\s+/)[0]) <= 0)
-      )
-        throw new Error("blackhole rule dropped no packets");
+      for (const service of services) {
+        const counters = compose([
+          "exec",
+          "-T",
+          service,
+          "iptables",
+          "-L",
+          "OUTPUT",
+          "-n",
+          "-v",
+          "-x",
+        ]);
+        writeFileSync(join(results, `${scenario}-${service}-counters.txt`), counters);
+        const dropped = counters.split("\n").filter((line) => line.includes("tnl-runtime-fault"));
+        if (
+          dropped.length !== rules.length / services.length ||
+          dropped.some((line) => Number(line.trim().split(/\s+/)[0]) <= 0)
+        )
+          throw new Error(`${service} blackhole rule dropped no packets`);
+      }
     });
   } else if (scenario === "latency" || scenario === "packet-loss") {
     const addresses = {
-      ingress: address("ingress"),
+      "ingress-a": address("ingress-a"),
+      "ingress-b": haTopology ? address("ingress-b") : address("ingress-a"),
       publishers: address("publishers"),
       "relay-a": address("relay-a"),
       "relay-b": address("relay-b"),
     };
-    const endpoints = impairmentEndpoints(process.env.NETWORK_PATH, addresses);
+    const endpoints = impairmentEndpoints(process.env.NETWORK_PATH, addresses, ingresses);
     const options = netemOptions(scenario, process.env.RTT, process.env.LOSS, process.env.SEED);
     await withFaultCleanup(async (undo) => {
       const matched = new Set<RuntimeService>();
@@ -326,7 +334,9 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       // A healthy route may use only one relay. Require both directions of an
       // exercised path, while retaining zero counters for the unused alternate.
       if (
-        !matched.has(endpoints[0].service) ||
+        (process.env.NETWORK_PATH === "forwarding"
+          ? ingresses.some((service) => !matched.has(service))
+          : !matched.has("publishers")) ||
         !(["relay-a", "relay-b"] as const).some((service) => matched.has(service))
       )
         throw new Error("netem did not impair both directions of a visitor path");
@@ -350,9 +360,9 @@ try {
   compose([
     "up",
     "--detach",
-    "control",
+    "control-a",
     ...(haTopology ? ["control-b"] : []),
-    "ingress",
+    "ingress-a",
     ...(haTopology ? ["ingress-b"] : []),
     "relay-a",
     "relay-b",
@@ -442,8 +452,8 @@ try {
   for (const services of [
     ["visitor-1", "visitor-2", "visitor-3", "visitor-4"],
     ["app", "publishers"],
-    ["ingress", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
-    ["control", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
+    ["ingress-a", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
+    ["control-a", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
     ["postgres"],
   ])
     cleanup(["stop", ...services]);

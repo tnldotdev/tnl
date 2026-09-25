@@ -127,14 +127,14 @@ func sampleSeparatedResources(t *testing.T, phase string) func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		client := &http.Client{Timeout: 2 * time.Second}
-		components := []string{"control", "ingress", "relay-a", "relay-b", "publishers", "app", "visitor-1", "visitor-2", "visitor-3", "visitor-4"}
+		components := []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "app", "visitor-1", "visitor-2", "visitor-3", "visitor-4"}
 		if *runtimeLoadHATopology {
 			components = append(components, "control-b", "ingress-b")
 		}
 		for {
 			sample := separatedResourceSample{At: time.Now(), Components: make(map[string]separatedSampledResource, len(components))}
 			for _, component := range components {
-				address := separatedInspectionAddress(component) + ":9091"
+				address := component + ":9091"
 				if component == "app" {
 					address = "publishers:9092"
 				}

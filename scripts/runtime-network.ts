@@ -2,7 +2,7 @@
 // collection keep their ordinary paths. Each returned endpoint owns its qdisc.
 export type ImpairmentScenario = "latency" | "packet-loss";
 export type NetworkPath = "forwarding" | "publisher";
-export type RuntimeService = "ingress" | "publishers" | "relay-a" | "relay-b";
+export type RuntimeService = "ingress-a" | "ingress-b" | "publishers" | "relay-a" | "relay-b";
 
 export interface ImpairmentEndpoint {
   readonly filters: string[][];
@@ -12,49 +12,53 @@ export interface ImpairmentEndpoint {
 export function impairmentEndpoints(
   path: string | undefined,
   addresses: Readonly<Record<RuntimeService, string>>,
+  ingresses: readonly ("ingress-a" | "ingress-b")[],
 ): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
   if (path !== "forwarding" && path !== "publisher") throw new Error("invalid network path");
-  const source = path === "forwarding" ? "ingress" : "publishers";
+  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : ["publishers"];
   const port = path === "forwarding" ? "8443" : "443";
   const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
-  const forward: ImpairmentEndpoint = { service: source, filters: [] };
-  const endpoints: [ImpairmentEndpoint, ...ImpairmentEndpoint[]] = [forward];
+  const forwards = sources.map((service): ImpairmentEndpoint => ({ service, filters: [] }));
+  const first = forwards[0];
+  if (!first) throw new Error("network path requires a source");
+  const endpoints: [ImpairmentEndpoint, ...ImpairmentEndpoint[]] = [first, ...forwards.slice(1)];
   for (const relay of ["relay-a", "relay-b"] as const) {
     const reverse: ImpairmentEndpoint = { service: relay, filters: [] };
-    for (const protocol of protocols) {
-      forward.filters.push([
-        "match",
-        "ip",
-        "dst",
-        addresses[relay],
-        "match",
-        "ip",
-        "protocol",
-        protocol,
-        "0xff",
-        "match",
-        "ip",
-        "dport",
-        port,
-        "0xffff",
-      ]);
-      reverse.filters.push([
-        "match",
-        "ip",
-        "dst",
-        addresses[source],
-        "match",
-        "ip",
-        "protocol",
-        protocol,
-        "0xff",
-        "match",
-        "ip",
-        "sport",
-        port,
-        "0xffff",
-      ]);
-    }
+    for (const forward of forwards)
+      for (const protocol of protocols) {
+        forward.filters.push([
+          "match",
+          "ip",
+          "dst",
+          addresses[relay],
+          "match",
+          "ip",
+          "protocol",
+          protocol,
+          "0xff",
+          "match",
+          "ip",
+          "dport",
+          port,
+          "0xffff",
+        ]);
+        reverse.filters.push([
+          "match",
+          "ip",
+          "dst",
+          addresses[forward.service],
+          "match",
+          "ip",
+          "protocol",
+          protocol,
+          "0xff",
+          "match",
+          "ip",
+          "sport",
+          port,
+          "0xffff",
+        ]);
+      }
     endpoints.push(reverse);
   }
   return endpoints;

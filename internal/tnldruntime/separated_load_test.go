@@ -44,7 +44,7 @@ var (
 	runtimeLoadCPUProfile         = flag.Bool("tnl-runtime-load-cpu-profile", false, "capture on-demand relay CPU profiles during steady traffic")
 	runtimeLoadCapacityOnly       = flag.Bool("tnl-runtime-load-capacity-only", false, "measure direct and tunneled capacity without a fault phase")
 	runtimeLoadCombined           = flag.Bool("tnl-runtime-load-combined", false, "measure fresh connections, held streams, and bidirectional bandwidth at the same time")
-	runtimeLoadHATopology         = flag.Bool("tnl-runtime-load-ha-topology", false, "run two control and two ingress processes in the local separated topology")
+	runtimeLoadHATopology         = flag.Bool("tnl-runtime-load-ha-topology", true, "run two control and two ingress processes in the local separated topology")
 	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
@@ -423,7 +423,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
 	// Validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
-	separatedConfig(t, "ingress")
+	separatedConfig(t, "ingress-a")
 	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
 	if routes < 4 || routes > 10000 {
 		t.Fatal("separated runtime load routes must be between 4 and 10000")
@@ -480,9 +480,6 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadCombined && (!*runtimeLoadCapacityOnly || !*runtimeLoadDirectPath || *runtimeLoadHeldStreams == 0 || *runtimeLoadHeldWarmup == 0 || *runtimeLoadHeldMeasure == 0 || *runtimeLoadBandwidthDirection != benchworkload.BandwidthBidirectional ||
 		(*runtimeLoadBandwidthMeasure != 0 && *runtimeLoadBandwidthMeasure != *runtimeLoadHeldMeasure)) {
 		t.Fatal("combined workload requires capacity-only, direct path, held warmup/measurement, and matched bidirectional bandwidth")
-	}
-	if *runtimeLoadHATopology && !*runtimeLoadCapacityOnly {
-		t.Fatal("local HA topology currently requires a capacity-only workload")
 	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
@@ -758,7 +755,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	postgres.NetworkNamespace = "postgres"
 	result.Resources["postgres"] = postgres
 	for _, role := range separatedServerRoles() {
-		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+separatedInspectionAddress(role)+":9090/metrics")
+		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+role+":9090/metrics")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -976,7 +973,7 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" {
 					continue
 				}
-				response, err := integrationGET(ctx, client, "http://"+separatedInspectionAddress(role)+":9090/metrics")
+				response, err := integrationGET(ctx, client, "http://"+role+":9090/metrics")
 				if err != nil {
 					if ctx.Err() == nil {
 						t.Errorf("gauge sample %s: %v", role, err)
