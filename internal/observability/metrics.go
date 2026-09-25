@@ -18,6 +18,8 @@ type Metrics struct {
 	publisherConnections  *prometheus.GaugeVec
 	streams               *prometheus.GaugeVec
 	capacityRejections    *prometheus.CounterVec
+	inspectionFailures    *prometheus.CounterVec
+	challengeRejections   *prometheus.CounterVec
 	sourceLimiterRejects  prometheus.Counter
 	sourceLimiterEntries  prometheus.Gauge
 	ipAllowlistDenials    prometheus.Counter
@@ -62,6 +64,12 @@ func New(role string) *Metrics {
 		capacityRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_capacity_rejections_total", Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
+		inspectionFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_ingress_inspection_failures_total", Help: "Ingress connections rejected before classification by fixed failure stage.",
+		}, []string{"stage"}),
+		challengeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_ingress_challenge_rejections_total", Help: "ACME TLS-ALPN connections rejected before relay forwarding by fixed reason.",
+		}, []string{"reason"}),
 		sourceLimiterRejects: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tnl_source_limiter_rejections_total", Help: "Ordinary visitor starts rejected by per-source limiting.",
 		}),
@@ -129,6 +137,7 @@ func New(role string) *Metrics {
 		registered = append(registered,
 			metrics.streams, metrics.capacityRejections, metrics.sourceLimiterRejects,
 			metrics.sourceLimiterEntries, metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.relayAttempts,
+			metrics.inspectionFailures, metrics.challengeRejections,
 		)
 		metrics.streams.WithLabelValues("ingress").Set(0)
 	}
@@ -178,6 +187,21 @@ func (m *Metrics) AddRelayStreams(delta int) {
 
 func (m *Metrics) IncCapacityRejection(resource string) {
 	m.capacityRejections.WithLabelValues(resource).Inc()
+}
+
+func (m *Metrics) IncInspectionFailure(stage string) {
+	switch stage {
+	case "deadline", "metadata", "client_hello", "hostname":
+		m.inspectionFailures.WithLabelValues(stage).Inc()
+	}
+}
+
+func (m *Metrics) IncChallengeRejection(reason string) {
+	switch reason {
+	case "unconfigured", "unavailable", "invalid_hostname", "uninitialized", "missing", "tombstone",
+		"route_expired", "backend_expired", "ingress_unavailable", "invalid_projection":
+		m.challengeRejections.WithLabelValues(reason).Inc()
+	}
 }
 
 func (m *Metrics) IncSourceLimiterRejection() { m.sourceLimiterRejects.Inc() }

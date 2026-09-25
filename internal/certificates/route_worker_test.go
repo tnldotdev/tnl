@@ -36,7 +36,7 @@ func TestRouteWorkerAdvancesTLSALPNOrder(t *testing.T) {
 		certificatePEM:   certificatePEM,
 		challengeRetryAt: now.Add(2 * time.Minute),
 	}
-	worker := &RouteWorker{config: RouteConfig{Profile: "tlsserver", PollInterval: time.Second}}
+	worker := &RouteWorker{store: &certificateStoreStub{}, config: RouteConfig{Profile: "tlsserver", PollInterval: time.Second}}
 	work := controlstate.ACMEOrderWork{
 		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", CSRDER: csrDER,
 		State: "pending", AvailableAt: now,
@@ -134,6 +134,82 @@ func TestRouteWorkerReportsACMEChallengeProblem(t *testing.T) {
 	err := worker.advance(t.Context(), api, &work, now)
 	if err == nil || !strings.Contains(err.Error(), "urn:ietf:params:acme:error:connection: connection refused") {
 		t.Fatalf("challenge failure = %v", err)
+	}
+}
+
+func TestRouteWorkerWaitsForIngressBeforeAcceptingTLSALPNChallenge(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	const hostname = "route.example.test"
+	const authorizationURL = "https://acme.example.test/authorization/1"
+	const challengeURL = "https://acme.example.test/challenge/1"
+	api := &acmeStub{order: acmeclient.Order{
+		URL: "https://acme.example.test/order/1", Status: "pending",
+		Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+		Authorizations: []string{authorizationURL}, Finalize: "https://acme.example.test/finalize/1",
+	}}
+	ready := false
+	store := &certificateStoreStub{challengeReady: func(context.Context) (bool, error) { return ready, nil }}
+	worker := &RouteWorker{store: store, config: RouteConfig{PollInterval: time.Second}}
+	work := controlstate.ACMEOrderWork{
+		ID: "issuance_1", CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01",
+		State: "authorizing", OrderURL: api.order.URL,
+		Authorizations: []controlstate.ACMEAuthorizationWork{{
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			ChallengeURL: challengeURL, State: "presented",
+		}},
+	}
+	if err := worker.advance(t.Context(), api, &work, now); err != nil || api.acceptCalls != 0 ||
+		work.Authorizations[0].State != "presented" || !work.AvailableAt.Equal(now.Add(time.Second)) {
+		t.Fatalf("challenge accepted before ingress: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
+	}
+	ready = true
+	if err := worker.advance(t.Context(), api, &work, now.Add(time.Second)); err != nil || api.acceptCalls != 1 ||
+		work.Authorizations[0].State != "validating" {
+		t.Fatalf("challenge was not accepted after ingress: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
+	}
+}
+
+func TestRouteWorkerReportsChallengeWhenOrderInvalidatesBeforeAuthorizationPoll(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	const hostname = "route.example.test"
+	const authorizationURL = "https://acme.example.test/authorization/1"
+	const challengeURL = "https://acme.example.test/challenge/1"
+	api := &acmeStub{
+		order: acmeclient.Order{
+			URL: "https://acme.example.test/order/1", Status: "invalid",
+			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+			Authorizations: []string{authorizationURL}, Finalize: "https://acme.example.test/finalize/1",
+		},
+		authorization: acmeclient.Authorization{
+			URL: authorizationURL, Status: "invalid",
+			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
+			Challenges: []acmeclient.Challenge{{
+				Type: "tls-alpn-01", URL: challengeURL, Status: "invalid",
+				Error: &acmeclient.Problem{Type: "urn:ietf:params:acme:error:connection", Detail: "connection refused"},
+			}},
+		},
+	}
+	work := controlstate.ACMEOrderWork{
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", State: "authorizing",
+		OrderURL: api.order.URL,
+		Authorizations: []controlstate.ACMEAuthorizationWork{{
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			ChallengeURL: challengeURL, State: "validating",
+		}},
+	}
+	worker := &RouteWorker{config: RouteConfig{PollInterval: time.Second}}
+	err := worker.advance(t.Context(), api, &work, now)
+	if err == nil || !strings.Contains(err.Error(), "ACME order became invalid: authorization for") ||
+		!strings.Contains(err.Error(), "urn:ietf:params:acme:error:connection: connection refused") {
+		t.Fatalf("invalid order problem = %v", err)
+	}
+	if len(api.authorizationURLs) != 1 || api.authorizationURLs[0] != authorizationURL {
+		t.Fatalf("authorization fetches = %v", api.authorizationURLs)
+	}
+
+	api.getAuthorizationErr = errors.New("authorization temporarily unavailable")
+	if err := worker.advance(t.Context(), api, &work, now); err == nil || err.Error() != "certificates: ACME order became invalid" {
+		t.Fatalf("invalid order fallback = %v", err)
 	}
 }
 

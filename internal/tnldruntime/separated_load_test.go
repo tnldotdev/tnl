@@ -835,6 +835,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 	var first, firstExit time.Time
 	failures, missed, total, surviving := 0, 0, 0, 0
 	var merged benchworkload.VisitorResult
+	var successfulDurations []time.Duration
 	cohorts := make(map[string]benchworkload.VisitorResult)
 	healthy, progressing := 0, 0
 	for _, result := range results {
@@ -869,6 +870,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 				}
 				continue
 			}
+			successfulDurations = append(successfulDurations, row.Duration)
 			if !row.Started.Before(restart.Started) && (first.IsZero() || row.FirstByte.Before(first)) {
 				first = row.FirstByte
 			}
@@ -877,15 +879,27 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 			}
 		}
 	}
+	slices.Sort(successfulDurations)
+	var exactP95, exactP99 *float64
+	if len(successfulDurations) > 0 {
+		p95 := float64(exactLatencyPercentile(successfulDurations, 95)) / float64(time.Millisecond)
+		p99 := float64(exactLatencyPercentile(successfulDurations, 99)) / float64(time.Millisecond)
+		exactP95, exactP99 = &p95, &p99
+	}
 	format := func(value *float64) string {
 		if value == nil {
 			return "unavailable"
 		}
 		return fmt.Sprintf("%.3fms", *value)
 	}
-	t.Logf("separated_visitors phase=%s requests=%d success=%d failures=%d missed=%d p50=%s p95=%s maximum=%.3fms first_body_byte_p95=%s offer=%s drain=%s", phase, total, merged.Successes, failures, missed,
-		format(merged.Total.Percentile(50)), format(merged.Total.Percentile(95)), merged.Total.MaximumMilliseconds, format(merged.FirstByte.Percentile(95)), merged.OfferDuration, merged.DrainDuration)
+	t.Logf("separated_visitors phase=%s requests=%d success=%d failures=%d missed=%d p50=%s p95=%s p95_exact=%s p99_exact=%s maximum=%.3fms first_body_byte_p95=%s offer=%s drain=%s", phase, total, merged.Successes, failures, missed,
+		format(merged.Total.Percentile(50)), format(merged.Total.Percentile(95)), format(exactP95), format(exactP99), merged.Total.MaximumMilliseconds, format(merged.FirstByte.Percentile(95)), merged.OfferDuration, merged.DrainDuration)
 	separatedResult(t, phase+"-summary", merged)
+	separatedResult(t, phase+"-exact-latency", struct {
+		Samples         int      `json:"samples"`
+		P95Milliseconds *float64 `json:"p95_milliseconds"`
+		P99Milliseconds *float64 `json:"p99_milliseconds"`
+	}{len(successfulDurations), exactP95, exactP99})
 	if missed != 0 || total == 0 {
 		t.Errorf("phase %s: missed=%d requests=%d", phase, missed, total)
 	}
@@ -911,6 +925,23 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 			FirstSuccessfulBodyAfterApplied, VerifiedRecovery time.Time
 			HeldSurviving                                     int
 		}{phase, restart, firstExit, repaired, surviving})
+	}
+}
+
+func exactLatencyPercentile(sorted []time.Duration, percentile int) time.Duration {
+	return sorted[(len(sorted)*percentile+99)/100-1]
+}
+
+func TestExactLatencyPercentileUsesRequestSamples(t *testing.T) {
+	var sorted []time.Duration
+	for i := 1; i <= 100; i++ {
+		sorted = append(sorted, time.Duration(i)*time.Millisecond)
+	}
+	if got := exactLatencyPercentile(sorted, 95); got != 95*time.Millisecond {
+		t.Fatalf("exact p95 = %s", got)
+	}
+	if got := exactLatencyPercentile(sorted[:21], 95); got != 20*time.Millisecond {
+		t.Fatalf("exact p95 for 21 samples = %s", got)
 	}
 }
 

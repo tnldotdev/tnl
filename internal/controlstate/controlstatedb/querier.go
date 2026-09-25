@@ -30,6 +30,10 @@ type Querier interface {
 	CancelOpenRouteRecoveryEpisode(ctx context.Context, arg CancelOpenRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
 	CancelRouteSessionACMEAuthorizations(ctx context.Context, arg CancelRouteSessionACMEAuthorizationsParams) error
 	CancelRouteSessionACMEOrders(ctx context.Context, arg CancelRouteSessionACMEOrdersParams) error
+	// Claim-time checks can precede a publisher's challenge-ready transition.
+	// Recheck the current projection and every live ingress immediately before
+	// asking the CA to validate, while the authorization is still presented.
+	CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error)
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSRouteWork(ctx context.Context, arg ClaimDNSRouteWorkParams) (ControlRoute, error)

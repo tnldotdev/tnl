@@ -323,6 +323,45 @@ FROM candidate
 WHERE orders.id = candidate.id
 RETURNING orders.*;
 
+-- name: CheckACMEChallengeRoutingReady :one
+-- Claim-time checks can precede a publisher's challenge-ready transition.
+-- Recheck the current projection and every live ingress immediately before
+-- asking the CA to validate, while the authorization is still presented.
+SELECT coalesce(
+    events.event_kind = 'challenge_upsert'
+    AND events.route_expires_at > sqlc.arg(checked_at)
+    AND EXISTS (
+        SELECT 1 FROM control.acme_authorizations AS authorizations
+        WHERE authorizations.order_id = orders.id
+          AND authorizations.challenge_type = 'tls-alpn-01'
+          AND authorizations.state = 'presented'
+    )
+    AND EXISTS (
+        SELECT 1 FROM jsonb_to_recordset(
+            (convert_from(events.projection, 'UTF8')::jsonb)->'publisher_connections'
+        ) AS connections(lease_expires_at timestamptz)
+        WHERE connections.lease_expires_at > sqlc.arg(checked_at)
+    )
+    AND EXISTS (
+        SELECT 1 FROM control.ingress_leases AS ingresses
+        WHERE ingresses.lease_expires_at > sqlc.arg(checked_at)
+          AND NOT ingresses.draining
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.ingress_leases AS ingresses
+        WHERE ingresses.lease_expires_at > sqlc.arg(checked_at)
+          AND NOT ingresses.draining
+          AND ingresses.routing_table_revision < events.routing_table_revision
+    ), false
+)::boolean AS ready
+FROM control.acme_orders AS orders
+JOIN control.ingress_routing_table_events AS events
+  ON events.route_id = orders.route_id AND events.route_version = orders.route_version
+WHERE orders.id = sqlc.arg(issuance_id)
+  AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
+ORDER BY events.routing_table_revision DESC
+LIMIT 1;
+
 -- name: SaveACMEOrderWork :one
 UPDATE control.acme_orders
 SET state = sqlc.arg(state),

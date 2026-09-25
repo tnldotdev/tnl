@@ -30,8 +30,11 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 			ordinaryLookups.Add(1)
 			return Route{}, false
 		},
-		LookupChallenge: func(host string) ([]routebackend.Backend, bool) {
-			return []routebackend.Backend{backend}, host == "route.example" && active.Load()
+		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
+			if host != "route.example" || !active.Load() {
+				return nil, "missing"
+			}
+			return []routebackend.Backend{backend}, ""
 		},
 	}
 	server, address := startIngress(t, config)
@@ -187,8 +190,8 @@ func (b challengeDeadlineBackend) Open(ctx context.Context, _ string) (net.Conn,
 
 func TestChallengeDeadlineAndForcedDrain(t *testing.T) {
 	backend := challengeDeadlineBackend{deadline: make(chan time.Time, 1)}
-	config := Config{OpenTimeout: time.Minute, LookupChallenge: func(string) ([]routebackend.Backend, bool) {
-		return []routebackend.Backend{backend}, true
+	config := Config{OpenTimeout: time.Minute, LookupChallenge: func(string) ([]routebackend.Backend, string) {
+		return []routebackend.Backend{backend}, ""
 	}}
 	server, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "", "acme-tls/1")
@@ -229,8 +232,8 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 		defer origin.Close()
 		server, err := New(listener, Config{MaxConnections: 1, MaxRouteConnections: 1,
 			Lookup: func(string) (Route, bool) { return Route{}, false },
-			LookupChallenge: func(string) ([]routebackend.Backend, bool) {
-				return []routebackend.Backend{singleBackend{upstream}}, true
+			LookupChallenge: func(string) ([]routebackend.Backend, string) {
+				return []routebackend.Backend{singleBackend{upstream}}, ""
 			}})
 		if err != nil {
 			t.Fatal(err)

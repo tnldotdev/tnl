@@ -44,6 +44,7 @@ type RouteDNSChallenges interface {
 // RouteStore is the stored certificate work used by a RouteWorker.
 type RouteStore interface {
 	ClaimACMEOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.ACMEOrderWork, bool, error)
+	ACMEChallengeRoutingReady(context.Context, string, time.Time) (bool, error)
 	SaveACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (controlstate.ACMEOrderWork, error)
 }
 
@@ -224,6 +225,9 @@ func (w *RouteWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *
 		if order.Status == "ready" || order.Status == "processing" || order.Status == "valid" {
 			markAuthorizationsValid(work.Authorizations, now)
 		}
+		if order.Status == "invalid" {
+			return w.invalidOrder(ctx, client, work)
+		}
 		return w.applyOrderStatus(work, order.Status, order.RetryAfter, now)
 	}
 	if len(work.Authorizations) == 0 {
@@ -291,6 +295,17 @@ func (w *RouteWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *
 					return err
 				}
 				if !verified {
+					authorization.AvailableAt = now.Add(w.config.PollInterval)
+					work.AvailableAt = authorization.AvailableAt
+					return nil
+				}
+			}
+			if authorization.ChallengeType == "tls-alpn-01" {
+				ready, err := w.store.ACMEChallengeRoutingReady(ctx, work.ID, now)
+				if err != nil {
+					return err
+				}
+				if !ready {
 					authorization.AvailableAt = now.Add(w.config.PollInterval)
 					work.AvailableAt = authorization.AvailableAt
 					return nil
@@ -370,6 +385,26 @@ func authorizationChallengeProblem(authorization acmeclient.Authorization, chall
 	return ""
 }
 
+// An order can become invalid before the next authorization poll. Fetch the
+// failed challenge while the original order is still available, so replacement
+// issuance retains the CA's reason rather than only "order became invalid".
+func (w *RouteWorker) invalidOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork) error {
+	for _, authorization := range work.Authorizations {
+		if authorization.AuthorizationURL == "" || authorization.ChallengeURL == "" {
+			continue
+		}
+		remote, err := client.GetAuthorization(ctx, authorization.AuthorizationURL)
+		if err != nil || remote.URL != authorization.AuthorizationURL ||
+			remote.Identifier.Type != "dns" || authorizationIdentifier(remote) != authorization.Identifier {
+			continue
+		}
+		if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, authorization.ChallengeURL); problem != "" {
+			return terminalf("ACME order became invalid: authorization for %q: %s", authorization.Identifier, problem)
+		}
+	}
+	return terminalf("ACME order became invalid")
+}
+
 func (w *RouteWorker) finalizeOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	order, err := client.GetOrder(ctx, work.OrderURL)
 	if err != nil {
@@ -394,8 +429,14 @@ func (w *RouteWorker) finalizeOrder(ctx context.Context, client acmeAPI, work *c
 			return err
 		}
 		work.CertificateURL = order.Certificate
+		if order.Status == "invalid" {
+			return w.invalidOrder(ctx, client, work)
+		}
 		return w.applyOrderStatus(work, order.Status, order.RetryAfter, now)
 	case "processing", "valid", "invalid":
+		if order.Status == "invalid" {
+			return w.invalidOrder(ctx, client, work)
+		}
 		return w.applyOrderStatus(work, order.Status, order.RetryAfter, now)
 	default:
 		return fmt.Errorf("certificates: unknown route order status %q", order.Status)
@@ -434,7 +475,7 @@ func (w *RouteWorker) collectCertificate(ctx context.Context, client acmeAPI, wo
 		work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
 		return nil
 	case "invalid":
-		return terminalf("ACME order became invalid")
+		return w.invalidOrder(ctx, client, work)
 	case "valid":
 		if order.Certificate == "" {
 			return errors.New("certificates: valid route order has no certificate URL")

@@ -85,3 +85,71 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 		})
 	}
 }
+
+func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	entry := forwardingTestEntry(now, "relay.example:443")
+	entry.CanonicalHostname = "route.example"
+	entry.PolicyRevision = 1
+	entry.IpPolicy = ingressv1.AllowAll
+	event := ingressv1.IngressRoutingTableEvent{
+		RoutingTableRevision: 1, Kind: ingressv1.ChallengeUpsert,
+		RouteId: entry.RouteId, RouteVersion: entry.RouteVersion,
+		CanonicalHostname: entry.CanonicalHostname, EntryRevision: 1,
+		Entry: entry, RouteExpiresAt: &entry.RouteExpiresAt, CreatedAt: now,
+	}
+	for _, test := range []struct {
+		name, reason string
+		change       func(*ingressv1.IngressRoutingTableEvent)
+	}{
+		{"ready", "", func(*ingressv1.IngressRoutingTableEvent) {}},
+		{"backend expired", "backend_expired", func(e *ingressv1.IngressRoutingTableEvent) {
+			e.Entry.PublisherConnections[0].LeaseExpiresAt = now
+		}},
+		{"route expired", "route_expired", func(e *ingressv1.IngressRoutingTableEvent) {
+			e.Entry.RouteExpiresAt = now
+			e.RouteExpiresAt = &e.Entry.RouteExpiresAt
+		}},
+		{"tombstone", "tombstone", func(e *ingressv1.IngressRoutingTableEvent) {
+			e.Kind = ingressv1.ChallengeTombstone
+			e.RouteExpiresAt = nil
+			e.Entry.PublisherConnections = nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := event
+			current.Entry = cloneRoutingTableEntry(event.Entry)
+			test.change(&current)
+			var table RoutingTable
+			if test.name == "tombstone" {
+				if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{
+					ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{event},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				current.RoutingTableRevision, current.EntryRevision = 2, 2
+				if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{
+					ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{current},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{
+					ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{current},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, reason := table.LookupChallengeWithReason(entry.CanonicalHostname, now)
+			if reason != test.reason {
+				t.Fatalf("challenge lookup reason = %q, want %q", reason, test.reason)
+			}
+			if test.name == "ready" {
+				_, reason = table.LookupChallengeWithReason("missing.example", now)
+				if reason != "missing" {
+					t.Fatalf("missing challenge reason = %q", reason)
+				}
+			}
+		})
+	}
+}

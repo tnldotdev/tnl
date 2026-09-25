@@ -263,13 +263,22 @@ func (u *testUsageConnection) Close(at time.Time) {
 }
 
 type testMetrics struct {
-	sourceLimiterRejections, sourceLimiterEntries, ipAllowlistDenials atomic.Int32
-	forwardedMu                                                       sync.Mutex
-	forwardedBytes                                                    map[string]int64
-	entriesChanged                                                    chan int
+	sourceLimiterRejections, sourceLimiterEntries, ipAllowlistDenials, challengeUnavailable, challengeMissing atomic.Int32
+	forwardedMu                                                                                               sync.Mutex
+	forwardedBytes                                                                                            map[string]int64
+	entriesChanged                                                                                            chan int
 }
 
-func (*testMetrics) IncCapacityRejection(string)  {}
+func (*testMetrics) IncCapacityRejection(string) {}
+func (*testMetrics) IncInspectionFailure(string) {}
+func (m *testMetrics) IncChallengeRejection(reason string) {
+	if reason == "unavailable" {
+		m.challengeUnavailable.Add(1)
+	}
+	if reason == "missing" {
+		m.challengeMissing.Add(1)
+	}
+}
 func (m *testMetrics) IncSourceLimiterRejection() { m.sourceLimiterRejections.Add(1) }
 func (m *testMetrics) SetSourceLimiterEntries(n int) {
 	m.sourceLimiterEntries.Store(int32(n))

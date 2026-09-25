@@ -407,10 +407,15 @@ func (c *Controller) Lookup(canonicalHostname string, now time.Time) (ingressv1.
 }
 
 func (c *Controller) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
+	entry, reason := c.LookupChallengeWithReason(canonicalHostname, now)
+	return entry, reason == ""
+}
+
+func (c *Controller) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
 	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, false
+		return ingressv1.IngressRoutingTableEntry{}, "ingress_unavailable"
 	}
-	return c.routingTable.LookupChallenge(canonicalHostname, now)
+	return c.routingTable.LookupChallengeWithReason(canonicalHostname, now)
 }
 
 func (c *Controller) Lease() ingressv1.IngressLease {
