@@ -257,7 +257,7 @@ func serveWithRelayClientTLS(
 			return err
 		}
 	case tnldconfig.RoleControl:
-		if err := d.startControl(cfg.ControlListen, controlHandler); err != nil {
+		if err := d.startControl(cfg.ControlListen, cfg.RequireProxyHeader, controlHandler); err != nil {
 			return err
 		}
 		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg)); err != nil {

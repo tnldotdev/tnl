@@ -86,14 +86,18 @@ func newPublicAPIHandler(
 	return mux, nil
 }
 
-func (d *daemon) startControl(listenAddress string, handler http.Handler) error {
+func (d *daemon) startControl(listenAddress string, requireProxyHeader bool, handler http.Handler) error {
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen for control API: %w", err)
 	}
 	d.controlListener = listener
 	d.controlServer = controlHTTPServer(handler, d.controlTLS)
-	d.forward("serve control API", serveTLS(d.controlServer, listener))
+	publicListener := net.Listener(listener)
+	if requireProxyHeader {
+		publicListener = controlProxyListener{Listener: listener}
+	}
+	d.forward("serve control API", serveTLS(d.controlServer, publicListener))
 	log.Printf("control API listening on %s", listener.Addr())
 	return nil
 }

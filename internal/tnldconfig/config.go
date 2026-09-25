@@ -119,7 +119,7 @@ type Config struct {
 	RouteConnectionLimit             int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
 	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"4000" help:"Maximum publisher connections held by one relay process."`
 	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
-	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress traffic or the control API."`
 	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
 	QUICIdleTimeout                  time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
 	IngressLeaseDuration             time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
