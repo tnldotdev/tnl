@@ -199,9 +199,9 @@ services:
   publishers:
     <<: *runtime
     cap_add: [NET_ADMIN]
-    cpus: "${PUBLISHER_CPUS:-2}"
-    mem_limit: "${PUBLISHER_MEMORY:-512m}"
-    memswap_limit: "${PUBLISHER_MEMORY:-512m}"
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: publishers
