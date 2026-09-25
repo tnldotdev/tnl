@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"syscall"
+
+	quic "github.com/quic-go/quic-go"
 )
 
 const bufferSize = 32 << 10
@@ -48,7 +50,7 @@ func CopyObserved(
 		}
 		count, err := io.CopyBuffer(writer, source, *buffer)
 		buffers.Put(buffer)
-		if closer, ok := destination.(interface{ CloseWrite() error }); ok {
+		if closer, ok := destination.(interface{ CloseWrite() error }); err == nil && ok {
 			err = errors.Join(err, closer.CloseWrite())
 		}
 		results <- copyResult{leftToRight: leftToRight, bytes: count, err: normalize(err)}
@@ -88,7 +90,13 @@ func (w observedWriter) Write(data []byte) (int, error) {
 
 func normalize(err error) error {
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, errors.ErrUnsupported) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ENOTCONN) {
+		return nil
+	}
+	var canceled *quic.StreamError
+	if errors.As(err, &canceled) && canceled.ErrorCode == 0 {
+		// A peer's normal stream cancellation is part of closing visitor traffic,
+		// not a forwarding failure to log for every closed connection.
 		return nil
 	}
 	return err

@@ -41,6 +41,7 @@ var (
 	runtimeLoadHeldWarmup         = flag.Duration("tnl-runtime-load-held-warmup", 0, "optional held-stream warmup per path (0s-2m)")
 	runtimeLoadHeldMeasure        = flag.Duration("tnl-runtime-load-held-measure", 0, "optional held-stream measurement per path (0s-5m)")
 	runtimeLoadHeapProfile        = flag.Bool("tnl-runtime-load-heap-profile", false, "capture live Go heap profiles after steady held traffic")
+	runtimeLoadCPUProfile         = flag.Bool("tnl-runtime-load-cpu-profile", false, "capture on-demand relay CPU profiles during steady traffic")
 	runtimeLoadCapacityOnly       = flag.Bool("tnl-runtime-load-capacity-only", false, "measure direct and tunneled capacity without a fault phase")
 	runtimeLoadCombined           = flag.Bool("tnl-runtime-load-combined", false, "measure fresh connections, held streams, and bidirectional bandwidth at the same time")
 	runtimeLoadHATopology         = flag.Bool("tnl-runtime-load-ha-topology", false, "run two control and two ingress processes in the local separated topology")
@@ -271,6 +272,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), visitorPhase)
 		sequence++
 		waitUntilIntegrationTime(t, start.Add(time.Second))
+		if phase == "steady" && *runtimeLoadCPUProfile {
+			captureSeparatedCPUProfiles(t)
+		}
 		if phase == "publisher-blackhole" {
 			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
@@ -458,6 +462,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	}
 	if *runtimeLoadHeapProfile && *runtimeLoadHeldStreams == 0 {
 		t.Fatal("heap profiling requires held streams")
+	}
+	if *runtimeLoadCPUProfile && (!*runtimeLoadCapacityOnly || *runtimeLoadHeldMeasure < 40*time.Second) {
+		t.Fatal("CPU profiling requires a capacity-only steady window of at least 40 seconds")
 	}
 	if *runtimeLoadBandwidthDirection != "" {
 		if !slices.Contains([]string{benchworkload.BandwidthDownstream, benchworkload.BandwidthUpstream, benchworkload.BandwidthBidirectional}, *runtimeLoadBandwidthDirection) {

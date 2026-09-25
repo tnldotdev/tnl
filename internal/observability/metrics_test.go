@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"compress/gzip"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -31,6 +33,61 @@ func TestProcessHandlerHealthAndReadiness(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("ready status = %d", response.Code)
+	}
+}
+
+func TestPrivateCPUProfileIsBounded(t *testing.T) {
+	handler := ProcessHandler(New("relay").Handler(), nil)
+	for _, path := range []string{
+		"/debug/pprof/profile?seconds=0", "/debug/pprof/profile?seconds=31",
+		"/debug/pprof/profile?seconds=invalid", "/debug/pprof/profile?seconds=1&seconds=2",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("GET %s status = %d, want 400", path, response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/debug/pprof/cmdline", nil))
+	if response.Code != http.StatusNotFound {
+		t.Errorf("unexpected debug handler status = %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/debug/pprof/profile?seconds=1", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("CPU profile status = %d: %s", response.Code, response.Body.String())
+	}
+	compressed, err := gzip.NewReader(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := io.ReadAll(compressed)
+	if err != nil || len(profile) == 0 {
+		t.Fatalf("empty or invalid CPU profile: size=%d error=%v", len(profile), err)
+	}
+}
+
+func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
+	control := New("control")
+	control.ObserveRouteSessionReadiness("route_session_secret", time.Millisecond, 45*time.Second)
+	control.ObserveCertificateWork("challenge_token_secret", "error_secret", time.Millisecond)
+	ingress := New("ingress")
+	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
+	for _, metrics := range []*Metrics{control, ingress} {
+		response := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		body := response.Body.String()
+		if response.Code != http.StatusOK || strings.Contains(body, "secret") {
+			t.Fatalf("unbounded diagnostic labels: status=%d body=%s", response.Code, body)
+		}
+		if metrics == control && (!strings.Contains(body, `tnl_route_session_readiness_total{outcome="error"} 1`) ||
+			!strings.Contains(body, `tnl_route_certificate_work_total{outcome="retry",stage="other"} 1`)) {
+			t.Fatalf("missing bounded readiness or certificate outcomes: %s", body)
+		}
+		if metrics == ingress && !strings.Contains(body, `tnl_ingress_relay_attempts_total{connection_slot="unknown",outcome="open_failed"} 1`) {
+			t.Fatalf("missing bounded relay outcome: %s", body)
+		}
 	}
 }
 

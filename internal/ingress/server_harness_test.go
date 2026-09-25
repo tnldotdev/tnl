@@ -286,4 +286,5 @@ func (m *testMetrics) AddForwardedBytes(direction string, n int64) {
 	}
 	m.forwardedBytes[direction] += n
 }
-func (*testMetrics) SetIngressStreams(int) {}
+func (*testMetrics) SetIngressStreams(int)              {}
+func (*testMetrics) ObserveRelayAttempt(string, string) {}

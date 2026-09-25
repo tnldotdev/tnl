@@ -142,6 +142,7 @@ func (d *daemon) startIngressRuntime(
 	if err != nil {
 		return err
 	}
+	usage.SetObserver(metrics)
 	runtime.usage = usage
 	recovery, err := ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
 		log.Printf("ingress recovery: %v", err)
@@ -208,6 +209,10 @@ func (d *daemon) startIngressRuntime(
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
 		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },
+		OnForwardingFailure: func(routeID string, version uint64, visitorID, reason string, attempts int) {
+			log.Printf("ingress forwarding failed route_id=%s route_version=%d visitor_connection_id=%s reason=%s available_backends=%d",
+				routeID, version, visitorID, reason, attempts)
+		},
 	}
 	if runtimeConfig.configure != nil {
 		runtimeConfig.configure(&ingressConfig)

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -61,6 +62,7 @@ type Metrics interface {
 	IncIPAllowlistDenial()
 	AddForwardedBytes(string, int64)
 	SetIngressStreams(int)
+	ObserveRelayAttempt(string, string)
 }
 
 type Config struct {
@@ -87,6 +89,7 @@ type Config struct {
 	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
+	OnForwardingFailure             func(string, uint64, string, string, int)
 }
 
 type Server struct {
@@ -107,6 +110,7 @@ type Server struct {
 	closing     bool
 	done        chan struct{}
 	active      sync.WaitGroup
+	nextBackend atomic.Uint64
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -366,7 +370,15 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		lastErr      error
 		opened       bool
 	)
-	for index, backend := range backends {
+	// Rotate only ordinary visitors. Challenge forwarding retains control's
+	// connection order and still has its own bounded retry path.
+	firstBackend := 0
+	if !challenge && len(backends) > 1 {
+		firstBackend = int((s.nextBackend.Add(1) - 1) % uint64(len(backends)))
+	}
+	for attempt := range backends {
+		index := (firstBackend + attempt) % len(backends)
+		backend := backends[index]
 		if err := openCtx.Err(); err != nil {
 			lastErr = errors.Join(lastErr, err)
 			break
@@ -375,12 +387,13 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			lastErr = errors.New("ingress: route backend is nil")
 			continue
 		}
-		attemptCtx, stopAttempt := backendAttemptContext(openCtx, len(backends)-index)
+		attemptCtx, stopAttempt := backendAttemptContext(openCtx, len(backends)-attempt)
 		started := time.Now()
 		candidate, openErr := backend.Open(attemptCtx, visitorConnectionID)
 		if openErr != nil {
 			stopAttempt()
-			s.observeAttempt(index, openErr, started)
+			s.observeAttempt(attempt, openErr, started)
+			s.observeRelayAttempt(backend, "open_failed")
 			lastErr = fmt.Errorf("ingress: open route: %w", openErr)
 			continue
 		}
@@ -396,10 +409,16 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		written, writeErr := writeSetup(attemptCtx, candidate, header, hello.Prefix)
 		stopAttempt()
-		s.observeAttempt(index, writeErr, started)
+		s.observeAttempt(attempt, writeErr, started)
 		if writeErr != nil && written == 0 {
+			s.observeRelayAttempt(backend, "setup_failed")
 			lastErr = errors.Join(writeErr, s.releaseBackend(candidate))
 			continue
+		}
+		if writeErr != nil {
+			s.observeRelayAttempt(backend, "committed_failed")
+		} else {
+			s.observeRelayAttempt(backend, "committed")
 		}
 		stream = candidate
 		committed = written
@@ -411,6 +430,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		if lastErr == nil {
 			lastErr = errors.New("ingress: route has no usable backend")
 		}
+		s.reportForwardingFailure(challenge, route, visitorConnectionID, "no_backend", len(backends))
 		return lastErr
 	}
 	defer s.releaseBackend(stream)
@@ -423,6 +443,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", committed)
 	}
 	if committedErr != nil {
+		s.reportForwardingFailure(challenge, route, visitorConnectionID, "committed_write", len(backends))
 		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", committed, committedErr)
 	}
 	if challenge {
@@ -455,6 +476,23 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)
 	}
 	return err
+}
+
+func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome string) {
+	if s.config.Metrics == nil {
+		return
+	}
+	slot := "unknown"
+	if selected, ok := backend.(interface{ connectionSlot() string }); ok {
+		slot = selected.connectionSlot()
+	}
+	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
+}
+
+func (s *Server) reportForwardingFailure(challenge bool, route Route, visitorID, reason string, attempts int) {
+	if !challenge && s.config.OnForwardingFailure != nil {
+		s.config.OnForwardingFailure(route.ID, route.RouteVersion, visitorID, reason, attempts)
+	}
 }
 
 func (s *Server) handoff(

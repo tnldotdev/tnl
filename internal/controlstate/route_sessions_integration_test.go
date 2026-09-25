@@ -210,6 +210,14 @@ func TestIntegrationRouteSessionCreationRejectsExhaustedCounters(t *testing.T) {
 func TestIntegrationRouteSessionReadiness(t *testing.T) {
 	f := newRouteSessionFixture(t)
 	database, now, authentication := f.database, f.now, f.authentication()
+	if _, err := database.MarkRouteSessionReady(t.Context(), authentication, now); !errors.Is(err, ErrRouteSessionNotReady) {
+		t.Fatalf("early readiness: %v", err)
+	} else {
+		var blocked *RouteSessionNotReadyError
+		if !errors.As(err, &blocked) || blocked.Reason() != "certificate_and_connections_missing" || blocked.ReadyPublisherConnectionCount != 0 {
+			t.Fatalf("missing readiness prerequisites = %+v, %v", blocked, err)
+		}
+	}
 	claimTestConnection(t, f, 0, now)
 	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
 	lifecycle, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now)
@@ -218,6 +226,11 @@ func TestIntegrationRouteSessionReadiness(t *testing.T) {
 	}
 	if _, err := database.MarkRouteSessionReady(t.Context(), authentication, now); !errors.Is(err, ErrRouteSessionNotReady) {
 		t.Fatalf("early readiness: %v", err)
+	} else {
+		var blocked *RouteSessionNotReadyError
+		if !errors.As(err, &blocked) || blocked.Reason() != "connections_missing" || blocked.ReadyPublisherConnectionCount != 1 || !blocked.CertificateInstalled {
+			t.Fatalf("missing second ready connection = %+v, %v", blocked, err)
+		}
 	}
 	issuance, err := database.GetCertificateIssuance(t.Context(), work.ID, authentication.RouteSessionToken, now)
 	if err != nil || issuance.State != "installed" {

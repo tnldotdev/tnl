@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"net/netip"
 	"slices"
@@ -74,6 +75,7 @@ type UsageReporter struct {
 	control  usageControl
 	interval time.Duration
 	report   func(error)
+	observer OperationObserver
 
 	flushMu         sync.Mutex
 	mu              sync.Mutex
@@ -86,6 +88,9 @@ type UsageReporter struct {
 	err             error
 	closed          bool
 }
+
+// SetObserver configures per-page and final-flush timing before Run begins.
+func (r *UsageReporter) SetObserver(observer OperationObserver) { r.observer = observer }
 
 // NewUsageReporter constructs an in-memory ingress usage reporter.
 func NewUsageReporter(control usageControl, interval time.Duration, report func(error)) (*UsageReporter, error) {
@@ -146,13 +151,31 @@ func (r *UsageReporter) Run(ctx context.Context) error {
 // Close advances active accounting through now and acknowledges final reports.
 // The caller must first stop and drain public ingress connections.
 func (r *UsageReporter) Close(ctx context.Context) error {
-	if err := r.flush(ctx, time.Now().UTC(), true); err != nil {
+	started := time.Now()
+	err := r.flush(ctx, started.UTC(), true)
+	if r.observer != nil {
+		r.observer.ObserveOperation("IngressUsageFinalFlush", err, time.Since(started))
+	}
+	if err != nil {
+		log.Printf("ingress usage final flush failed elapsed=%s reason=%s", time.Since(started).Round(time.Millisecond), usageFailureReason(err))
 		return err
 	}
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
+	log.Printf("ingress usage final flush complete elapsed=%s", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+func usageFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "error"
+	}
 }
 
 func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) error {
@@ -177,7 +200,12 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 		r.mu.Lock()
 		batch := r.pendingPages[0]
 		r.mu.Unlock()
-		if err := r.control.ReportUsage(ctx, batch); err != nil {
+		started := time.Now()
+		err := r.control.ReportUsage(ctx, batch)
+		if r.observer != nil {
+			r.observer.ObserveOperation("IngressUsagePage", err, time.Since(started))
+		}
+		if err != nil {
 			// Idle watermarks contain no accounting state. Regenerate a rejected
 			// watermark so startup does not remain pinned before lease registration.
 			if len(batch.reports) == 0 && !batch.complete {

@@ -285,6 +285,12 @@ percentage-of-memory pass threshold.
 `HEAP_PROFILE=1` captures test-only Go heap profiles after steady traffic and
 forces GC in each profiled process; run it as a separate diagnostic trial, not as
 one of the repeated capacity measurements.
+`CPU_PROFILE=1` captures ten seconds of CPU work on each relay in turn during
+the steady tunneled phase and writes `steady-relay-{a,b}-cpu.pb.gz` to `RESULTS`.
+It requires `CAPACITY_ONLY=1` and `HELD_MEASURE` of at least 40 seconds. Run it
+as a separate diagnostic trial; profiling changes the measured CPU profile.
+Inspect an artifact with `mise exec -- go tool pprof -http=127.0.0.1:0
+bench-results/<run>/steady-relay-a-cpu.pb.gz`.
 
 For example, a longer stream measurement with generator memory held fixed:
 

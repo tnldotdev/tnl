@@ -41,6 +41,7 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 		"IngressApplySnapshot", "IngressApplyEvents",
 		"IngressRelayConnect", "IngressForwardingAck", "IngressForwardingCleanup",
 		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback",
+		"IngressUsagePage", "IngressUsageFinalFlush",
 		"RelayRegister", "RelayRenewLease", "RelayBeginDrain", "RelayDrain",
 		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream":
 		m.operationDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())

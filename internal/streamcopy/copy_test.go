@@ -7,10 +7,13 @@ import (
 	"os"
 	"syscall"
 	"testing"
+
+	quic "github.com/quic-go/quic-go"
 )
 
 func TestNormalize(t *testing.T) {
 	other := errors.New("other stream copy error")
+	quicFailure := &quic.StreamError{ErrorCode: 1, Remote: true}
 	tests := []struct {
 		name string
 		err  error
@@ -32,7 +35,15 @@ func TestNormalize(t *testing.T) {
 				Syscall: "write", Err: syscall.EPIPE,
 			}},
 		},
+		{
+			name: "disconnected half-close",
+			err: &net.OpError{Op: "close", Net: "tcp", Err: &os.SyscallError{
+				Syscall: "shutdown", Err: syscall.ENOTCONN,
+			}},
+		},
 		{name: "other", err: other, want: other},
+		{name: "normal QUIC cancel", err: &quic.StreamError{ErrorCode: 0, Remote: true}},
+		{name: "QUIC error", err: quicFailure, want: quicFailure},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

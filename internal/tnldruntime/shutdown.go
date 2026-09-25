@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -12,19 +13,20 @@ import (
 )
 
 func (d *daemon) shutdown(timeout time.Duration) error {
+	started := time.Now()
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), timeout)
 	defer cancelDrain()
 	var result error
 	deadline := time.Now().Add(timeout)
 	for _, runtime := range d.ingresses {
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
-			result = errors.Join(result, runtime.controller.Drain(drainCtx, deadline))
+			result = errors.Join(result, shutdownStep("ingress_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))
 		}
 		if runtime.server != nil {
-			result = errors.Join(result, runtime.server.Drain(drainCtx))
+			result = errors.Join(result, shutdownStep("ingress_visitors", func() error { return runtime.server.Drain(drainCtx) }))
 		}
 		if runtime.usage != nil {
-			result = errors.Join(result, runtime.usage.Close(drainCtx))
+			result = errors.Join(result, shutdownStep("ingress_usage", func() error { return runtime.usage.Close(drainCtx) }))
 		}
 		if runtime.recovery != nil {
 			result = errors.Join(result, runtime.recovery.Close(drainCtx))
@@ -32,7 +34,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	}
 	for _, runtime := range d.relays {
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
-			result = errors.Join(result, runtime.controller.Drain(drainCtx, deadline))
+			result = errors.Join(result, shutdownStep("relay_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))
 		}
 		for _, listener := range []net.Listener{runtime.tcpListener, runtime.internalListener} {
 			if listener != nil {
@@ -47,7 +49,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			}
 		}
 		if runtime.registry != nil {
-			err := runtime.registry.Drain(drainCtx)
+			err := shutdownStep("relay_connections", func() error { return runtime.registry.Drain(drainCtx) })
 			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
 				!errors.Is(err, net.ErrClosed) {
 				result = errors.Join(result, fmt.Errorf("drain relay publisher connections: %w", err))
@@ -129,7 +131,28 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	if d.database != nil {
 		d.database.Close()
 	}
+	log.Printf("tnld shutdown elapsed=%s outcome=%s", time.Since(started).Round(time.Millisecond), shutdownOutcome(result))
 	return result
+}
+
+func shutdownStep(stage string, run func() error) error {
+	started := time.Now()
+	err := run()
+	log.Printf("tnld shutdown stage=%s elapsed=%s outcome=%s", stage, time.Since(started).Round(time.Millisecond), shutdownOutcome(err))
+	return err
+}
+
+func shutdownOutcome(err error) string {
+	switch {
+	case err == nil:
+		return "success"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "error"
+	}
 }
 
 func closeNetworkListener(listener io.Closer) error {

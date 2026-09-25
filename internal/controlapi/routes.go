@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -382,10 +383,33 @@ func (h *handler) MarkRouteSessionReady(response http.ResponseWriter, request *h
 	if !ok {
 		return
 	}
-	lifecycle, err := h.store.MarkRouteSessionReady(request.Context(), authentication, time.Now())
+	started := time.Now()
+	lifecycle, err := h.store.MarkRouteSessionReady(request.Context(), authentication, started)
+	if h.config.Metrics != nil {
+		outcome := "ready"
+		age := time.Since(lifecycle.CreatedAt)
+		var notReady *controlstate.RouteSessionNotReadyError
+		if errors.As(err, &notReady) {
+			outcome = notReady.Reason()
+			age = time.Since(notReady.CreatedAt)
+		} else if err != nil {
+			outcome = "error"
+		}
+		h.config.Metrics.ObserveRouteSessionReadiness(outcome, time.Since(started), age)
+	}
 	if err != nil {
+		var notReady *controlstate.RouteSessionNotReadyError
+		if errors.As(err, &notReady) {
+			log.Printf("route session readiness blocked route_session_id=%s route_version=%d reason=%s certificate_installed=%t ready_publisher_connections=%d age=%s",
+				authentication.RouteSessionID, authentication.RouteVersion, notReady.Reason(), notReady.CertificateInstalled,
+				notReady.ReadyPublisherConnectionCount, time.Since(notReady.CreatedAt).Round(time.Second))
+		}
 		writeControlStateProblem(response, "mark route session ready", err)
 		return
+	}
+	if age := time.Since(lifecycle.CreatedAt); age >= 30*time.Second {
+		log.Printf("route session ready route_session_id=%s route_version=%d age=%s ready_publisher_connections=%d",
+			authentication.RouteSessionID, authentication.RouteVersion, age.Round(time.Second), lifecycle.ReadyPublisherConnectionCount)
 	}
 	writeJSON(response, http.StatusOK, routeSessionLifecycleResponse(lifecycle))
 }

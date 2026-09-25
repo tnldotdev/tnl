@@ -74,6 +74,19 @@ Record queue, connection, TLS, first-body-byte, and total time for every step. U
 the resulting curves to find the latency knee instead of choosing a latency target
 in advance.
 
+When CPU saturates, capture an on-demand Go CPU profile from the affected `tnld`
+process's private observability listener (`GET /debug/pprof/profile?seconds=30`;
+1–30 seconds allowed). For a Fly.io Machine, configure that listener on its
+private metrics port and use `fly proxy 9091:9090 -a APP --select` to select the
+Machine. From another terminal, save the profile with
+`curl --fail --max-time 40 -o relay.cpu.pprof
+'http://127.0.0.1:9091/debug/pprof/profile?seconds=30'`, then inspect it with
+`go tool pprof -http=127.0.0.1:0 relay.cpu.pprof`. The listener must not be a
+public Fly service. Fly retains searchable app logs for seven days and managed
+metrics for approximately 15 days; neither stores historical CPU profiles.
+Save profiles only for diagnostic runs and compare ordinary capacity results
+without profiling enabled.
+
 ## combined test
 
 After the first tests:

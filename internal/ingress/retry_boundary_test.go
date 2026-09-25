@@ -51,6 +51,45 @@ func TestIngressRetryBoundary(t *testing.T) {
 	}
 }
 
+func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {
+	first, second := newTLSBackend(t), newTLSBackend(t)
+	_, address := startIngress(t, routeConfig(first, second))
+	for _, backend := range []*tlsBackend{first, second} {
+		client := ingressClient(t, address, "route.example", "")
+		if err := client.Handshake(); err != nil {
+			t.Fatal(err)
+		}
+		exchangePing(t, client)
+		if result := ingressAwait(t, backend.result); result.err != nil || result.request != "ping" {
+			t.Fatalf("backend result = %+v", result)
+		}
+	}
+	if first.opens.Load() != 1 || second.opens.Load() != 1 {
+		t.Fatalf("selected first=%d second=%d, want one each", first.opens.Load(), second.opens.Load())
+	}
+}
+
+func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
+	first := newTLSBackend(t)
+	second := newFailAfterProxyBackend(t, 1)
+	_, address := startIngress(t, routeConfig(first, second))
+	client := ingressClient(t, address, "route.example", "")
+	if err := client.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	exchangePing(t, client)
+	if result := ingressAwait(t, first.result); result.err != nil {
+		t.Fatal(result.err)
+	}
+	client = ingressClient(t, address, "route.example", "")
+	if err := client.Handshake(); err == nil {
+		t.Fatal("partial ClientHello completed TLS")
+	}
+	if first.opens.Load() != 1 || second.opens.Load() != 1 {
+		t.Fatalf("retried committed visitor bytes: first=%d second=%d", first.opens.Load(), second.opens.Load())
+	}
+}
+
 type waitingBackend struct{ entered chan struct{} }
 
 type contextBackend struct{ routebackend.Backend }

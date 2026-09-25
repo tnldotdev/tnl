@@ -168,7 +168,7 @@ func serveWithRelayClientTLS(
 				}
 				routeWorker, err := certificates.NewRouteWorker(database, certificates.RouteConfig{
 					WorkerID: routeWorkerID, Profile: cfg.ACMEProfile,
-					HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges,
+					HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges, Observer: metrics,
 				})
 				if err != nil {
 					return err

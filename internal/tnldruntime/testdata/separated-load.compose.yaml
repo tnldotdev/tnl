@@ -35,6 +35,7 @@ x-runtime: &runtime
         -tnl-runtime-load-held-warmup='${HELD_WARMUP:-0s}' \
         -tnl-runtime-load-held-measure='${HELD_MEASURE:-0s}' \
         -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
+        -tnl-runtime-load-cpu-profile='${CPU_PROFILE:-0}' \
         -tnl-runtime-load-capacity-only='${CAPACITY_ONLY:-0}' \
         -tnl-runtime-load-combined='${COMBINED:-0}' \
         -tnl-runtime-load-ha-topology='${HA_TOPOLOGY:-0}' \
@@ -274,6 +275,7 @@ services:
       - "-tnl-runtime-load-held-warmup=${HELD_WARMUP:-0s}"
       - "-tnl-runtime-load-held-measure=${HELD_MEASURE:-0s}"
       - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
+      - "-tnl-runtime-load-cpu-profile=${CPU_PROFILE:-0}"
       - "-tnl-runtime-load-capacity-only=${CAPACITY_ONLY:-0}"
       - "-tnl-runtime-load-combined=${COMBINED:-0}"
       - "-tnl-runtime-load-ha-topology=${HA_TOPOLOGY:-0}"

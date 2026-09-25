@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/pprof"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +24,28 @@ func ProcessHandler(metrics http.Handler, ready func() bool) http.Handler {
 		response.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("GET /metrics", metrics)
+	// CPU profiling is on demand, confined to the private process listener and
+	// bounded so a request cannot leave profiling enabled indefinitely.
+	mux.HandleFunc("GET /debug/pprof/profile", func(response http.ResponseWriter, request *http.Request) {
+		seconds := request.URL.Query()["seconds"]
+		if len(seconds) > 1 {
+			http.Error(response, "invalid profile duration", http.StatusBadRequest)
+			return
+		}
+		if len(seconds) == 1 {
+			value, err := strconv.Atoi(seconds[0])
+			if err != nil || value < 1 || value > 30 {
+				http.Error(response, "profile duration must be 1-30 seconds", http.StatusBadRequest)
+				return
+			}
+		} else {
+			request = request.Clone(request.Context())
+			query := request.URL.Query()
+			query.Set("seconds", "30")
+			request.URL.RawQuery = query.Encode()
+		}
+		pprof.Profile(response, request)
+	})
 	return mux
 }
 

@@ -27,6 +27,12 @@ type RouteConfig struct {
 	PollInterval     time.Duration
 	IdleInterval     time.Duration
 	DNSChallenges    RouteDNSChallenges
+	Observer         RouteWorkObserver
+}
+
+// RouteWorkObserver records only fixed worker stages and outcomes.
+type RouteWorkObserver interface {
+	ObserveCertificateWork(stage, outcome string, elapsed time.Duration)
 }
 
 type RouteDNSChallenges interface {
@@ -89,6 +95,8 @@ func (w *RouteWorker) processOne(ctx context.Context) (bool, error) {
 	if err != nil || !found {
 		return found, err
 	}
+	stage := work.State
+	started := time.Now()
 	client, err := w.clientFor(work.Account)
 	if err == nil && work.Account.AccountURL == "" {
 		err = errors.New("certificates: route worker ACME account is not registered")
@@ -104,12 +112,41 @@ func (w *RouteWorker) processOne(ctx context.Context) (bool, error) {
 		w.applyFailure(&work, err, completedAt)
 	}
 	if _, saveErr := w.store.SaveACMEOrderWork(ctx, work, completedAt); saveErr != nil {
+		if ctx.Err() == nil {
+			w.observeWork(stage, "save_failed", started)
+			w.logWork(work, stage, "save_failed", completedAt)
+		}
 		return true, saveErr
+	}
+	outcome := "progress"
+	if work.State == "failed" || work.State == "canceled" {
+		outcome = "terminal"
+	} else if err != nil {
+		outcome = "retry"
+	}
+	w.observeWork(stage, outcome, started)
+	if err != nil || work.State != stage && (work.State == "waiting_for_install" || work.State == "failed") && completedAt.Sub(work.CreatedAt) >= 30*time.Second {
+		w.logWork(work, stage, outcome, completedAt)
 	}
 	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
 		return true, err
 	}
 	return true, nil
+}
+
+func (w *RouteWorker) observeWork(stage, outcome string, started time.Time) {
+	if w.config.Observer != nil {
+		w.config.Observer.ObserveCertificateWork(stage, outcome, time.Since(started))
+	}
+}
+
+func (w *RouteWorker) logWork(work controlstate.ACMEOrderWork, stage, outcome string, now time.Time) {
+	if w.config.Logger == nil {
+		return
+	}
+	w.config.Logger.Info("route certificate work", "route_session_id", work.RouteSessionID, "route_version", work.RouteVersion,
+		"issuance_id", work.ID, "stage", stage, "state", work.State, "outcome", outcome,
+		"attempts", work.Attempts, "age", now.Sub(work.CreatedAt).Round(time.Second), "next_available_at", work.AvailableAt)
 }
 
 func (w *RouteWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, error) {

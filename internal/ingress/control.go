@@ -250,12 +250,18 @@ func (c *Controller) renewLoop(ctx context.Context, acknowledge <-chan struct{})
 			if ctx.Err() != nil {
 				return nil
 			}
+			log.Printf("ingress routing acknowledgment failed ingress_id=%s ingress_run_id=%s applied_revision=%d acknowledged_revision=%d",
+				c.registration.IngressId, c.registration.IngressRunId, revision, acknowledged)
 			return c.responseError("renew ingress", err)
 		}
 		if err := c.setLease(lease); err != nil {
 			return err
 		}
 		acknowledged = revision
+		c.mu.Lock()
+		c.routingStatus.AcknowledgedRevision = revision
+		c.routingStatus.LastAcknowledged = c.now()
+		c.mu.Unlock()
 		periodic.Reset(c.renewalInterval)
 	}
 }

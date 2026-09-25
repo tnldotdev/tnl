@@ -22,6 +22,28 @@ var (
 	ErrRouteCertificate       = errors.New("controlstate: route certificate acknowledgement is invalid")
 )
 
+// RouteSessionNotReadyError reports the prerequisites checked under the route
+// session lock. It does not contain credentials or certificate material.
+type RouteSessionNotReadyError struct {
+	CertificateInstalled          bool
+	ReadyPublisherConnectionCount int
+	CreatedAt                     time.Time
+}
+
+func (e *RouteSessionNotReadyError) Error() string { return ErrRouteSessionNotReady.Error() }
+func (e *RouteSessionNotReadyError) Unwrap() error { return ErrRouteSessionNotReady }
+
+func (e *RouteSessionNotReadyError) Reason() string {
+	switch {
+	case !e.CertificateInstalled && e.ReadyPublisherConnectionCount != routeSessionConnectionCount:
+		return "certificate_and_connections_missing"
+	case !e.CertificateInstalled:
+		return "certificate_missing"
+	default:
+		return "connections_missing"
+	}
+}
+
 // RouteSessionAuthentication binds a route session credential to one exact route version.
 type RouteSessionAuthentication struct {
 	RouteSessionID    string
@@ -114,7 +136,10 @@ func (d *Database) MarkRouteSessionReady(
 	var publishedEvent *publishedIngressRoutingTableEvent
 	if !session.ReadyAt.Valid {
 		if !session.CertificateInstalledAt.Valid || len(connections) != routeSessionConnectionCount {
-			return RouteSessionLifecycle{}, ErrRouteSessionNotReady
+			return RouteSessionLifecycle{}, &RouteSessionNotReadyError{
+				CertificateInstalled:          session.CertificateInstalledAt.Valid,
+				ReadyPublisherConnectionCount: len(connections), CreatedAt: session.CreatedAt.Time,
+			}
 		}
 		session, err = queries.MarkRouteSessionReady(ctx, controlstatedb.MarkRouteSessionReadyParams{
 			ReadyAt: timestamptz(now), RouteSessionID: session.ID,
