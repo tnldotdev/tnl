@@ -57,6 +57,8 @@ type UsageConnection interface {
 
 type Metrics interface {
 	IncCapacityRejection(string)
+	IncInspectionFailure(string)
+	IncChallengeRejection(string)
 	IncSourceLimiterRejection()
 	SetSourceLimiterEntries(int)
 	IncIPAllowlistDenial()
@@ -67,7 +69,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
-	LookupChallenge                 BackendLookupFunc
+	LookupChallenge                 func(string) ([]routebackend.Backend, string)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
 	RelayHostname                   string
@@ -239,20 +241,32 @@ func (s *Server) Load() int64 {
 
 func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	if err := public.SetReadDeadline(time.Now().Add(router.ClientHelloReadTimeout)); err != nil {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncInspectionFailure("deadline")
+		}
 		return nil
 	}
 	source, destination, reader, err := s.connectionMetadata(public)
 	if err != nil {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncInspectionFailure("metadata")
+		}
 		return nil
 	}
 	_ = public.SetReadDeadline(time.Time{})
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
 	if err != nil {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncInspectionFailure("client_hello")
+		}
 		return nil
 	}
 	serverName, err := naming.CanonicalizeHostname(hello.ServerName)
 	if err != nil {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncInspectionFailure("hostname")
+		}
 		return nil
 	}
 	hello.ServerName = serverName
@@ -280,14 +294,18 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	var route Route
 	var backends []routebackend.Backend
 	var ok bool
+	var challengeReason string
 	challenge := hello.ACMETLSALPN
 	// An ALPN claim alone cannot authorize challenge forwarding. Require an
 	// exact, currently live challenge from control; never fall back to a route.
 	if challenge {
 		if s.config.LookupChallenge == nil {
+			if s.config.Metrics != nil {
+				s.config.Metrics.IncChallengeRejection("unconfigured")
+			}
 			return nil
 		}
-		backends, ok = s.config.LookupChallenge(hello.ServerName)
+		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
 	} else {
 		if !s.limiter.Allow(source.Addr()) {
 			if s.config.Metrics != nil {
@@ -298,7 +316,13 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		route, ok = s.config.Lookup(hello.ServerName)
 		backends = route.Backends
 	}
-	if !ok || len(backends) == 0 {
+	if challengeReason != "" || (!challenge && !ok) || len(backends) == 0 {
+		if challenge && s.config.Metrics != nil {
+			if challengeReason == "" {
+				challengeReason = "unavailable"
+			}
+			s.config.Metrics.IncChallengeRejection(challengeReason)
+		}
 		return nil
 	}
 	var usage UsageConnection

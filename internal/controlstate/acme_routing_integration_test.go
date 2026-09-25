@@ -201,6 +201,43 @@ func TestIntegrationACMEWorkRequiresCurrentChallengeProjection(t *testing.T) {
 	}
 }
 
+func TestIntegrationACMEChallengeRoutingReadyBeforeValidation(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "acme_final_routing_barrier")
+	seedACMERoutingBarrierOrder(t, database, now)
+	first := registerTestIngress(t, database, now)
+	second, err := database.RegisterIngress(t.Context(), IngressRegistration{
+		IngressID: "second", IngressRunID: "second-run", ProtocolVersion: 1, ConnectionCapacity: 100,
+	}, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := func(want bool) {
+		t.Helper()
+		got, err := database.ACMEChallengeRoutingReady(t.Context(), "issuance_acme_barrier", now)
+		if err != nil || got != want {
+			t.Fatalf("challenge routing ready=%t, want %t: %v", got, want, err)
+		}
+	}
+	ready(false)
+	setACMERoutingBarrierRevision(t, database, 1, now)
+	ready(false)
+	first = renewACMEBarrierIngress(t, database, first, 1, now, time.Hour)
+	ready(false)
+	second = renewACMEBarrierIngress(t, database, second, 1, now, time.Hour)
+	ready(true)
+	setACMERoutingBarrierRevision(t, database, 2, now)
+	ready(false)
+	_ = renewACMEBarrierIngress(t, database, first, 2, now, time.Hour)
+	ready(false)
+	_ = renewACMEBarrierIngress(t, database, second, 2, now, time.Hour)
+	ready(true)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
+		SET projection = $1 WHERE routing_table_revision = 2`, acmeRoutingBarrierProjection(now)); err != nil {
+		t.Fatal(err)
+	}
+	ready(false)
+}
+
 func renewACMEBarrierIngress(
 	t *testing.T,
 	database *Database,

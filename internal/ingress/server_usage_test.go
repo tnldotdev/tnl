@@ -61,8 +61,11 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 		Lookup: func(string) (Route, bool) {
 			return Route{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
 		},
-		LookupChallenge: func(host string) ([]routebackend.Backend, bool) {
-			return []routebackend.Backend{backend}, host == "route.example"
+		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
+			if host != "route.example" {
+				return nil, "missing"
+			}
+			return []routebackend.Backend{backend}, ""
 		},
 		OpenUsage: func(string, uint64, netip.Addr, time.Time) UsageConnection { opened.Store(true); return nil },
 	}
@@ -87,6 +90,27 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	}
 	if backend.opens.Load() != 1 {
 		t.Fatal("ordinary visitor opened challenge backend")
+	}
+}
+
+func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
+	metrics := new(testMetrics)
+	_, address := startIngress(t, Config{
+		Metrics: metrics,
+		Lookup:  func(string) (Route, bool) { return Route{}, false },
+		LookupChallenge: func(string) ([]routebackend.Backend, string) {
+			return nil, "missing"
+		},
+	})
+	client := ingressClient(t, address, "route.example", "", "acme-tls/1")
+	if err := client.Handshake(); err == nil {
+		t.Fatal("missing challenge reached a backend")
+	}
+	if got := metrics.challengeMissing.Load(); got != 1 {
+		t.Fatalf("missing challenge rejections = %d, want 1", got)
+	}
+	if got := metrics.challengeUnavailable.Load(); got != 0 {
+		t.Fatalf("duplicate generic challenge rejections = %d", got)
 	}
 }
 

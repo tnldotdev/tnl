@@ -74,6 +74,8 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control.ObserveCertificateWork("challenge_token_secret", "error_secret", time.Millisecond)
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
+	ingress.IncInspectionFailure("challenge_token_secret")
+	ingress.IncChallengeRejection("challenge_token_secret")
 	for _, metrics := range []*Metrics{control, ingress} {
 		response := httptest.NewRecorder()
 		metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -100,6 +102,8 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.SetIngressStreams(4)
 	metrics.AddRelayStreams(2)
 	metrics.IncCapacityRejection("route_connections")
+	metrics.IncInspectionFailure("client_hello")
+	metrics.IncChallengeRejection("unavailable")
 	metrics.IncSourceLimiterRejection()
 	metrics.SetSourceLimiterEntries(5)
 	metrics.IncIPAllowlistDenial()
@@ -121,17 +125,19 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	want := map[string]sample{
 		"tnl_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
 		"tnl_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
-		"tnl_info":                             {"GAUGE", map[string]string{"role": "standalone"}, 1},
-		"tnl_relay_leases":                     {"GAUGE", map[string]string{"state": "active"}, 2},
-		"tnl_publisher_connections":            {"GAUGE", map[string]string{"state": "ready"}, 3},
-		"tnl_streams_active":                   {kind: "GAUGE"},
-		"tnl_capacity_rejections_total":        {"COUNTER", map[string]string{"resource": "route_connections"}, 1},
-		"tnl_source_limiter_rejections_total":  {kind: "COUNTER", value: 1},
-		"tnl_source_limiter_entries":           {kind: "GAUGE", value: 5},
-		"tnl_ip_allowlist_denials_total":       {kind: "COUNTER", value: 1},
-		"tnl_forwarded_bytes_total":            {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
-		"tnl_control_requests_total":           {"COUNTER", map[string]string{"operation": "routes.create", "outcome": "success"}, 1},
-		"tnl_control_request_duration_seconds": {"HISTOGRAM", map[string]string{"operation": "routes.create", "outcome": "success"}, 0.01},
+		"tnl_info":                               {"GAUGE", map[string]string{"role": "standalone"}, 1},
+		"tnl_relay_leases":                       {"GAUGE", map[string]string{"state": "active"}, 2},
+		"tnl_publisher_connections":              {"GAUGE", map[string]string{"state": "ready"}, 3},
+		"tnl_streams_active":                     {kind: "GAUGE"},
+		"tnl_capacity_rejections_total":          {"COUNTER", map[string]string{"resource": "route_connections"}, 1},
+		"tnl_ingress_inspection_failures_total":  {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
+		"tnl_ingress_challenge_rejections_total": {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
+		"tnl_source_limiter_rejections_total":    {kind: "COUNTER", value: 1},
+		"tnl_source_limiter_entries":             {kind: "GAUGE", value: 5},
+		"tnl_ip_allowlist_denials_total":         {kind: "COUNTER", value: 1},
+		"tnl_forwarded_bytes_total":              {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
+		"tnl_control_requests_total":             {"COUNTER", map[string]string{"operation": "routes.create", "outcome": "success"}, 1},
+		"tnl_control_request_duration_seconds":   {"HISTOGRAM", map[string]string{"operation": "routes.create", "outcome": "success"}, 0.01},
 	}
 	for _, family := range families {
 		name := family.GetName()

@@ -145,6 +145,25 @@ func (d *Database) ClaimACMEOrderWork(
 	return work, true, nil
 }
 
+func (d *Database) ACMEChallengeRoutingReady(ctx context.Context, issuanceID string, now time.Time) (bool, error) {
+	if !validStateText(issuanceID) {
+		return false, ErrCertificateIssuanceInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return false, err
+	}
+	ready, err := controlstatedb.New(d.pool).CheckACMEChallengeRoutingReady(ctx, controlstatedb.CheckACMEChallengeRoutingReadyParams{
+		IssuanceID: issuanceID, CheckedAt: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("controlstate: check ACME challenge routing: %w", err)
+	}
+	return ready, nil
+}
+
 func (d *Database) SaveACMEOrderWork(
 	ctx context.Context,
 	work ACMEOrderWork,

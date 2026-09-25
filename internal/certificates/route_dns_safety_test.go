@@ -267,11 +267,12 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 }
 
 type certificateStoreStub struct {
-	work  controlstate.ACMEOrderWork
-	saved controlstate.ACMEOrderWork
-	saves int
-	claim func(context.Context) (controlstate.ACMEOrderWork, bool, error)
-	save  func(controlstate.ACMEOrderWork)
+	work           controlstate.ACMEOrderWork
+	saved          controlstate.ACMEOrderWork
+	saves          int
+	claim          func(context.Context) (controlstate.ACMEOrderWork, bool, error)
+	challengeReady func(context.Context) (bool, error)
+	save           func(controlstate.ACMEOrderWork)
 }
 
 func (s *certificateStoreStub) ClaimACMEOrderWork(ctx context.Context, _ string, _ time.Time, _ time.Duration) (controlstate.ACMEOrderWork, bool, error) {
@@ -281,6 +282,12 @@ func (s *certificateStoreStub) ClaimACMEOrderWork(ctx context.Context, _ string,
 	work := s.work
 	work.Authorizations = append([]controlstate.ACMEAuthorizationWork(nil), work.Authorizations...)
 	return work, true, nil
+}
+func (s *certificateStoreStub) ACMEChallengeRoutingReady(ctx context.Context, _ string, _ time.Time) (bool, error) {
+	if s.challengeReady != nil {
+		return s.challengeReady(ctx)
+	}
+	return true, nil
 }
 func (s *certificateStoreStub) SaveACMEOrderWork(_ context.Context, work controlstate.ACMEOrderWork, _ time.Time) (controlstate.ACMEOrderWork, error) {
 	s.saves++

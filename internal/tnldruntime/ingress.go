@@ -186,17 +186,17 @@ func (d *daemon) startIngressRuntime(
 			}
 			return route, true
 		},
-		LookupChallenge: func(hostname string) ([]routebackend.Backend, bool) {
-			entry, ok := controller.LookupChallenge(hostname, time.Now())
-			if !ok {
-				return nil, false
+		LookupChallenge: func(hostname string) ([]routebackend.Backend, string) {
+			entry, reason := controller.LookupChallengeWithReason(hostname, time.Now())
+			if reason != "" {
+				return nil, reason
 			}
 			backends, err := forwarder.Backends(entry)
 			if err != nil {
 				log.Printf("ingress challenge route %q: %v", hostname, err)
-				return nil, false
+				return nil, "invalid_projection"
 			}
-			return backends, true
+			return backends, ""
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
 		MaxClientHelloConnections:       settings.clientHelloConnectionLimit,

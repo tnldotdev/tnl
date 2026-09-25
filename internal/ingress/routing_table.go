@@ -128,10 +128,16 @@ func (t *RoutingTable) Revision() (int64, bool) {
 }
 
 func (t *RoutingTable) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
-	return t.lookup(canonicalHostname, now, false)
+	entry, reason := t.lookup(canonicalHostname, now, false)
+	return entry, reason == ""
 }
 
 func (t *RoutingTable) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
+	entry, reason := t.lookup(canonicalHostname, now, true)
+	return entry, reason == ""
+}
+
+func (t *RoutingTable) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
 	return t.lookup(canonicalHostname, now, true)
 }
 
@@ -139,10 +145,10 @@ func (t *RoutingTable) lookup(
 	canonicalHostname string,
 	now time.Time,
 	challenge bool,
-) (ingressv1.IngressRoutingTableEntry, bool) {
+) (ingressv1.IngressRoutingTableEntry, string) {
 	canonical, err := naming.CanonicalizeHostname(canonicalHostname)
 	if err != nil {
-		return ingressv1.IngressRoutingTableEntry{}, false
+		return ingressv1.IngressRoutingTableEntry{}, "invalid_hostname"
 	}
 	t.mu.RLock()
 	entries := t.routes
@@ -152,8 +158,17 @@ func (t *RoutingTable) lookup(
 	stored, exists := entries[canonical]
 	initialized := t.initialized
 	t.mu.RUnlock()
-	if !initialized || !exists || stored.tombstone || !stored.entry.RouteExpiresAt.After(now) {
-		return ingressv1.IngressRoutingTableEntry{}, false
+	if !initialized {
+		return ingressv1.IngressRoutingTableEntry{}, "uninitialized"
+	}
+	if !exists {
+		return ingressv1.IngressRoutingTableEntry{}, "missing"
+	}
+	if stored.tombstone {
+		return ingressv1.IngressRoutingTableEntry{}, "tombstone"
+	}
+	if !stored.entry.RouteExpiresAt.After(now) {
+		return ingressv1.IngressRoutingTableEntry{}, "route_expired"
 	}
 	entry := cloneRoutingTableEntry(stored.entry)
 	entry.PublisherConnections = entry.PublisherConnections[:0]
@@ -163,9 +178,9 @@ func (t *RoutingTable) lookup(
 		}
 	}
 	if len(entry.PublisherConnections) == 0 {
-		return ingressv1.IngressRoutingTableEntry{}, false
+		return ingressv1.IngressRoutingTableEntry{}, "backend_expired"
 	}
-	return entry, true
+	return entry, ""
 }
 
 func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {

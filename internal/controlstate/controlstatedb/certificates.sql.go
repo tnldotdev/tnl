@@ -63,6 +63,58 @@ func (q *Queries) CancelRouteSessionACMEOrders(ctx context.Context, arg CancelRo
 	return err
 }
 
+const checkACMEChallengeRoutingReady = `-- name: CheckACMEChallengeRoutingReady :one
+SELECT coalesce(
+    events.event_kind = 'challenge_upsert'
+    AND events.route_expires_at > $1
+    AND EXISTS (
+        SELECT 1 FROM control.acme_authorizations AS authorizations
+        WHERE authorizations.order_id = orders.id
+          AND authorizations.challenge_type = 'tls-alpn-01'
+          AND authorizations.state = 'presented'
+    )
+    AND EXISTS (
+        SELECT 1 FROM jsonb_to_recordset(
+            (convert_from(events.projection, 'UTF8')::jsonb)->'publisher_connections'
+        ) AS connections(lease_expires_at timestamptz)
+        WHERE connections.lease_expires_at > $1
+    )
+    AND EXISTS (
+        SELECT 1 FROM control.ingress_leases AS ingresses
+        WHERE ingresses.lease_expires_at > $1
+          AND NOT ingresses.draining
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.ingress_leases AS ingresses
+        WHERE ingresses.lease_expires_at > $1
+          AND NOT ingresses.draining
+          AND ingresses.routing_table_revision < events.routing_table_revision
+    ), false
+)::boolean AS ready
+FROM control.acme_orders AS orders
+JOIN control.ingress_routing_table_events AS events
+  ON events.route_id = orders.route_id AND events.route_version = orders.route_version
+WHERE orders.id = $2
+  AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
+ORDER BY events.routing_table_revision DESC
+LIMIT 1
+`
+
+type CheckACMEChallengeRoutingReadyParams struct {
+	CheckedAt  pgtype.Timestamptz
+	IssuanceID string
+}
+
+// Claim-time checks can precede a publisher's challenge-ready transition.
+// Recheck the current projection and every live ingress immediately before
+// asking the CA to validate, while the authorization is still presented.
+func (q *Queries) CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkACMEChallengeRoutingReady, arg.CheckedAt, arg.IssuanceID)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
 const claimACMEOrderWork = `-- name: ClaimACMEOrderWork :one
 WITH candidate AS (
     SELECT orders.id
