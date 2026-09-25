@@ -818,7 +818,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") {
 			continue
 		} // New runtime registry.
-		summaries, err := observability.DurationSummaries(before.Metrics[role], after.Metrics[role])
+		summaries, err := separatedDurationSummaries(before, after, role)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -827,6 +827,50 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 				t.Logf("separated_duration phase=%s role=%s metric=%s labels=%v calls=%d mean_seconds=%g", phase, role, summary.Name, summary.Labels, summary.Count, summary.MeanSeconds)
 			}
 		}
+	}
+}
+
+// The observer's process run ID is stable across clock adjustments. On Docker
+// Desktop, process_start_time_seconds can move by a second for every process
+// without any process restarting; retain the run-ID check and difference only
+// the histograms when the same process produced both snapshots.
+func separatedDurationSummaries(before, after separatedSnapshot, role string) ([]observability.DurationSummary, error) {
+	start, end := before.Resources[role].ProcessRunID, after.Resources[role].ProcessRunID
+	if start == "" || start != end {
+		return nil, fmt.Errorf("%s: process restarted", role)
+	}
+	withoutStartTime := func(families []*dto.MetricFamily) []*dto.MetricFamily {
+		result := make([]*dto.MetricFamily, 0, len(families))
+		for _, family := range families {
+			if family.GetName() != "process_start_time_seconds" {
+				result = append(result, family)
+			}
+		}
+		return result
+	}
+	return observability.DurationSummaries(withoutStartTime(before.Metrics[role]), withoutStartTime(after.Metrics[role]))
+}
+
+func TestSeparatedDurationSummariesUsesProcessRunID(t *testing.T) {
+	startFamily := func(value float64) *dto.MetricFamily {
+		name := "process_start_time_seconds"
+		kind := dto.MetricType_GAUGE
+		return &dto.MetricFamily{Name: &name, Type: &kind, Metric: []*dto.Metric{{Gauge: &dto.Gauge{Value: &value}}}}
+	}
+	before := separatedSnapshot{
+		Resources: map[string]separatedResources{"ingress-a": {ProcessRunID: "original"}},
+		Metrics:   map[string][]*dto.MetricFamily{"ingress-a": {startFamily(100)}},
+	}
+	after := separatedSnapshot{
+		Resources: map[string]separatedResources{"ingress-a": {ProcessRunID: "original"}},
+		Metrics:   map[string][]*dto.MetricFamily{"ingress-a": {startFamily(101)}},
+	}
+	if _, err := separatedDurationSummaries(before, after, "ingress-a"); err != nil {
+		t.Fatalf("clock adjustment incorrectly indicated restart: %v", err)
+	}
+	after.Resources["ingress-a"] = separatedResources{ProcessRunID: "replacement"}
+	if _, err := separatedDurationSummaries(before, after, "ingress-a"); err == nil || !strings.Contains(err.Error(), "process restarted") {
+		t.Fatalf("missed process restart: %v", err)
 	}
 }
 

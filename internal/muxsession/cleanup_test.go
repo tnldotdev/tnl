@@ -2,6 +2,8 @@ package muxsession
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"testing/synctest"
@@ -53,7 +55,30 @@ func TestYamuxCleanupWithBlockedWriter(t *testing.T) {
 				default:
 					t.Fatal("unusable writer retained by session")
 				}
+				if !errors.Is(session.Err(), errStreamCleanupBlocked) {
+					t.Fatalf("lost stream-cleanup shutdown reason: %v", session.Err())
+				}
 			})
 		})
+	}
+}
+
+func TestYamuxErrRetainsPeerCloseReason(t *testing.T) {
+	local, peer := net.Pipe()
+	session, err := newYamuxSession(local, true, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := peer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("peer close did not stop yamux session")
+	}
+	if err := session.Err(); !errors.Is(err, io.EOF) {
+		t.Fatalf("lost peer close reason: %v", err)
 	}
 }

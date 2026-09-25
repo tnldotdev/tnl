@@ -24,15 +24,17 @@ type ForwarderConfig struct {
 	ClusterSecret   string
 	TransportConfig muxsession.TLSYamuxConfig
 	Observer        OperationObserver
+	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and creates
 // route backends that open acknowledged internal-forwarding streams.
 type Forwarder struct {
-	connector relayConnector
-	observer  OperationObserver
-	context   context.Context
-	cancel    context.CancelFunc
+	connector       relayConnector
+	observer        OperationObserver
+	context         context.Context
+	cancel          context.CancelFunc
+	onSessionClosed func(relayServiceID, relayID, origin string, cause error)
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -48,6 +50,7 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 	}
 	f := newForwarder(connector)
 	f.observer = config.Observer
+	f.onSessionClosed = config.OnSessionClosed
 	return f, nil
 }
 
@@ -324,6 +327,7 @@ func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) err
 	f.mu.Unlock()
 	if entry != nil {
 		entry.cancel()
+		f.reportSessionClosed(key, "local_invalidation", session.Err())
 		started := time.Now()
 		err := session.Close()
 		f.observe("IngressForwardingCleanup", err, started)
@@ -341,10 +345,20 @@ func (f *Forwarder) observe(operation string, err error, started time.Time) {
 func (f *Forwarder) removeWhenDone(key relaySessionKey, entry *relaySession, session *tunnel.Session) {
 	<-session.Done()
 	f.mu.Lock()
-	if f.sessions[key] == entry {
+	unexpected := !f.closed && f.sessions[key] == entry
+	if unexpected {
 		delete(f.sessions, key)
 	}
 	f.mu.Unlock()
+	if unexpected {
+		f.reportSessionClosed(key, "observed_close", session.Err())
+	}
+}
+
+func (f *Forwarder) reportSessionClosed(key relaySessionKey, origin string, cause error) {
+	if f.onSessionClosed != nil {
+		f.onSessionClosed(key.relayServiceID, key.relayID, origin, cause)
+	}
 }
 
 func closeRelaySessions(entries []*relaySession) error {

@@ -160,6 +160,9 @@ func (d *daemon) startIngressRuntime(
 	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
 		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
+		OnSessionClosed: func(relayServiceID, relayID, origin string, cause error) {
+			log.Printf("ingress pooled relay session closed relay_service_id=%s relay_id=%s origin=%s cause=%v", relayServiceID, relayID, origin, cause)
+		},
 	})
 	if err != nil {
 		return err

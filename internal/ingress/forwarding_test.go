@@ -96,6 +96,34 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 	}
 }
 
+func TestForwarderReportsUnexpectedRelaySessionClose(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	relaySessions := make(chan muxsession.Session, 1)
+	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
+		relaySessions <- transport
+		return captureForwardingRequests(ctx, transport, make(chan forwardingTestRequest, 1))
+	})
+	forwarder := newTestForwarder(t, material)
+	closed := make(chan error, 1)
+	forwarder.onSessionClosed = func(serviceID, relayID, origin string, cause error) {
+		if serviceID != "relay_service_1" || relayID != "relay_1" || origin != "observed_close" {
+			closed <- errors.New("unexpected relay session closure")
+			return
+		}
+		closed <- cause
+	}
+	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address())).(forwardingBackend)
+	if _, _, err := forwarder.session(ingressContext(t), backend.target); err != nil {
+		t.Fatal(err)
+	}
+	if err := ingressAwait(t, relaySessions).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ingressAwait(t, closed); !errors.Is(err, io.EOF) {
+		t.Fatalf("unexpected session close cause = %v", err)
+	}
+}
+
 func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 	material := newForwardingTestMaterial(t)
 	wrongCertificate := issueForwardingTestCertificate(t, material.authority, material.authorityKey, "wrong.example")

@@ -19,6 +19,8 @@ const defaultMaxIncomingStreams = 4096
 // enqueue even a control frame in this interval, abort the owned transport.
 const streamCloseTimeout = time.Second
 
+var errStreamCleanupBlocked = errors.New("muxsession: stream cleanup blocked transport writer")
+
 // TLSYamuxConfig configures the raw TLS/TCP plus yamux transport.
 type TLSYamuxConfig struct {
 	MaxIncomingStreams int
@@ -137,8 +139,9 @@ type yamuxSession struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	mu  sync.Mutex
-	err error
+	mu       sync.Mutex
+	err      error
+	abortErr error
 }
 
 func newYamuxSession(network net.Conn, client bool, maxIncoming int) (Session, error) {
@@ -212,9 +215,20 @@ func (s *yamuxSession) Err() error {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return normalizeYamuxError(s.err)
+	abortErr := s.abortErr
+	recorded := s.err
+	s.mu.Unlock()
+	if abortErr != nil {
+		return abortErr
+	}
+	// A closed yamux session returns its shutdown reason immediately, even if
+	// the accept loop has not yet observed the close.
+	_, err := s.session.OpenStream(context.Background())
+	if err != nil {
+		return normalizeYamuxError(err)
+	}
+	if recorded != nil {
+		return normalizeYamuxError(recorded)
 	}
 	return ErrClosed
 }
@@ -243,6 +257,12 @@ func (s *yamuxSession) recordError(err error) {
 	if s.err == nil {
 		s.err = err
 	}
+	s.mu.Unlock()
+}
+
+func (s *yamuxSession) recordAbort(err error) {
+	s.mu.Lock()
+	s.abortErr = err
 	s.mu.Unlock()
 }
 
@@ -279,7 +299,8 @@ func (s *yamuxStream) closeBounded(closeStream func() error) error {
 	done := make(chan struct{})
 	var abortErr error
 	timer := time.AfterFunc(streamCloseTimeout, func() {
-		abortErr = errors.Join(errors.New("muxsession: stream cleanup blocked transport writer"), s.owner.Close())
+		s.owner.recordAbort(errStreamCleanupBlocked)
+		abortErr = errors.Join(errStreamCleanupBlocked, s.owner.Close())
 		close(done)
 	})
 	err := closeStream()
