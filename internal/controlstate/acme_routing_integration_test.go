@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"testing"
 	"time"
 
@@ -134,7 +135,7 @@ func setACMERoutingBarrierRevision(t *testing.T, database *Database, revision in
 	got, err := controlstatedb.New(database.pool).InsertFinalIngressRoutingTableEvent(t.Context(), controlstatedb.InsertFinalIngressRoutingTableEventParams{
 		EventKind: "challenge_upsert", RouteID: "route_acmebarrier", RouteVersion: 1,
 		CanonicalHostname: "route-acmebarrier.example.test", EntryRevision: revision,
-		Projection: []byte(`{}`), RouteExpiresAt: timestamptz(now.Add(time.Hour)),
+		Projection: acmeRoutingBarrierProjection(now.Add(time.Hour)), RouteExpiresAt: timestamptz(now.Add(time.Hour)),
 		CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now),
 	})
 	if err != nil || got != revision {
@@ -142,8 +143,15 @@ func setACMERoutingBarrierRevision(t *testing.T, database *Database, revision in
 	}
 }
 
+func acmeRoutingBarrierProjection(leaseExpiresAt time.Time) []byte {
+	return []byte(fmt.Sprintf(
+		`{"publisher_connections":[{"lease_expires_at":%q}]}`,
+		leaseExpiresAt.Format(time.RFC3339Nano),
+	))
+}
+
 func TestIntegrationACMEWorkRequiresCurrentChallengeProjection(t *testing.T) {
-	for _, kind := range []string{"missing", "tombstone", "expired", "different_version", "retained"} {
+	for _, kind := range []string{"missing", "tombstone", "expired", "expired_backend", "different_version", "retained"} {
 		t.Run(kind, func(t *testing.T) {
 			database, now := newControlStateIntegrationDatabase(t, "acme_projection")
 			seedACMERoutingBarrierOrder(t, database, now)
@@ -171,6 +179,12 @@ func TestIntegrationACMEWorkRequiresCurrentChallengeProjection(t *testing.T) {
 			case "expired":
 				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
 					SET route_expires_at = $1 WHERE routing_table_revision = 2`, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "expired_backend":
+				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
+					SET projection = $1 WHERE routing_table_revision = 2`, acmeRoutingBarrierProjection(now))
 				if err != nil {
 					t.Fatal(err)
 				}

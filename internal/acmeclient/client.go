@@ -74,6 +74,13 @@ type Challenge struct {
 	Status    string     `json:"status"`
 	Token     string     `json:"token"`
 	Validated *time.Time `json:"validated"`
+	Error     *Problem   `json:"error"`
+}
+
+type Problem struct {
+	Type   string `json:"type"`
+	Detail string `json:"detail"`
+	Status int    `json:"status"`
 }
 
 type Error struct {

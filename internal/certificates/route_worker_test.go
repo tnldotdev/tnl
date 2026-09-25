@@ -99,6 +99,44 @@ func TestRouteWorkerAdvancesTLSALPNOrder(t *testing.T) {
 	}
 }
 
+func TestRouteWorkerReportsACMEChallengeProblem(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	const hostname = "route.example.test"
+	const authorizationURL = "https://acme.example.test/authorization/1"
+	const challengeURL = "https://acme.example.test/challenge/1"
+	api := &acmeStub{
+		order: acmeclient.Order{
+			URL:            "https://acme.example.test/order/1",
+			Status:         "pending",
+			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+			Authorizations: []string{authorizationURL},
+			Finalize:       "https://acme.example.test/finalize/1",
+		},
+		authorization: acmeclient.Authorization{
+			URL:        authorizationURL,
+			Status:     "invalid",
+			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
+			Challenges: []acmeclient.Challenge{{
+				Type: "tls-alpn-01", URL: challengeURL, Status: "invalid", Token: "token-1",
+				Error: &acmeclient.Problem{Type: "urn:ietf:params:acme:error:connection", Detail: "connection refused"},
+			}},
+		},
+	}
+	worker := &RouteWorker{config: RouteConfig{PollInterval: time.Second}}
+	work := controlstate.ACMEOrderWork{
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", State: "authorizing",
+		OrderURL: api.order.URL,
+		Authorizations: []controlstate.ACMEAuthorizationWork{{
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			ChallengeURL: challengeURL, State: "validating",
+		}},
+	}
+	err := worker.advance(t.Context(), api, &work, now)
+	if err == nil || !strings.Contains(err.Error(), "urn:ietf:params:acme:error:connection: connection refused") {
+		t.Fatalf("challenge failure = %v", err)
+	}
+}
+
 func TestRouteWorkerReusesACMEClient(t *testing.T) {
 	account := controlstate.ACMEAccount{
 		DirectoryURL:  "https://acme.example.test/directory",

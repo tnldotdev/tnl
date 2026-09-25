@@ -326,6 +326,9 @@ func (w *RouteWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *
 				authorization.AvailableAt = now
 			case "invalid", "deactivated", "expired", "revoked":
 				authorization.State = "failed"
+				if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, authorization.ChallengeURL); problem != "" {
+					return terminalf("authorization for %q became %q: %s", authorization.Identifier, remote.Status, problem)
+				}
 				return terminalf("authorization for %q became %q", authorization.Identifier, remote.Status)
 			default:
 				return fmt.Errorf("certificates: unknown route authorization status %q", remote.Status)
@@ -347,6 +350,24 @@ func (w *RouteWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *
 		work.AvailableAt = now.Add(w.config.PollInterval)
 	}
 	return nil
+}
+
+func authorizationChallengeProblem(authorization acmeclient.Authorization, challengeType, challengeURL string) string {
+	for _, challenge := range authorization.Challenges {
+		if challenge.Type != challengeType || challenge.URL != challengeURL || challenge.Error == nil {
+			continue
+		}
+		problem := challenge.Error
+		switch {
+		case problem.Type != "" && problem.Detail != "":
+			return fmt.Sprintf("%s: %s", problem.Type, problem.Detail)
+		case problem.Type != "":
+			return problem.Type
+		default:
+			return problem.Detail
+		}
+	}
+	return ""
 }
 
 func (w *RouteWorker) finalizeOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {

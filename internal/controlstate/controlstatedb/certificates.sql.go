@@ -93,7 +93,7 @@ WITH candidate AS (
           OR EXISTS (
               SELECT 1
               FROM (
-                  SELECT events.routing_table_revision, events.event_kind, events.route_expires_at
+                  SELECT events.routing_table_revision, events.event_kind, events.projection, events.route_expires_at
                   FROM control.ingress_routing_table_events AS events
                   WHERE events.route_id = orders.route_id
                     AND events.route_version = orders.route_version
@@ -103,6 +103,13 @@ WITH candidate AS (
               ) AS challenge
               WHERE challenge.event_kind = 'challenge_upsert'
                 AND challenge.route_expires_at > $3
+                AND EXISTS (
+                    SELECT 1
+                    FROM jsonb_to_recordset(
+                        (convert_from(challenge.projection, 'UTF8')::jsonb)->'publisher_connections'
+                    ) AS connections(lease_expires_at timestamptz)
+                    WHERE connections.lease_expires_at > $3
+                )
                 AND EXISTS (
                     SELECT 1
                     FROM control.ingress_leases AS ingresses

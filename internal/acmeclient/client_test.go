@@ -71,6 +71,29 @@ func TestClientRegistersAccountAndCreatesProfileOrder(t *testing.T) {
 	}
 }
 
+func TestAuthorizationDecodesChallengeProblem(t *testing.T) {
+	var authorization Authorization
+	err := json.Unmarshal([]byte(`{
+		"status":"invalid",
+		"identifier":{"type":"dns","value":"route.example.test"},
+		"challenges":[{
+			"type":"tls-alpn-01",
+			"url":"https://acme.example.test/challenge/1",
+			"status":"invalid",
+			"token":"token-1",
+			"error":{"type":"urn:ietf:params:acme:error:connection","detail":"connection refused","status":400}
+		}]
+	}`), &authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	problem := authorization.Challenges[0].Error
+	if problem == nil || problem.Type != "urn:ietf:params:acme:error:connection" ||
+		problem.Detail != "connection refused" || problem.Status != 400 {
+		t.Fatalf("challenge problem = %#v", problem)
+	}
+}
+
 // Each step supplies a response and records the request for assertions on the
 // test goroutine. Distinct nonces make stale reuse and extra HEADs observable.
 type acmeStep struct {
