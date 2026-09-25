@@ -507,7 +507,7 @@
         },
         "require_proxy_header": {
           "type": "boolean",
-          "description": "Require one trusted outer PROXY v2 header on public ingress."
+          "description": "Require one trusted outer PROXY v2 header on public ingress traffic or the control API."
         },
         "quic_max_incoming_streams": {
           "type": "integer",
