@@ -529,10 +529,10 @@ the private development socket is not an extension API. The
 versions.
 
 All npm runtime code, including the launcher and config helper, compiles from
-`packages/tnl/src` into `dist`. Repository tools run as TypeScript using the pinned
-Node.js version and are checked by `tsconfig.tooling.json`. Keep JSON and other
-external values `unknown` until validated; tooling uses Zod schemas and inferred
-types for the fields it consumes.
+`packages/tnl/src` into `dist`. Repository tests and tools run as TypeScript using
+the pinned Node.js version and are checked by the root `tsconfig.json`. Keep JSON
+and other external values `unknown` until validated; tooling uses Zod schemas and
+inferred types for the fields it consumes.
 
 The shared compiler configuration enforces strict optional properties, checked
 indexed access, control flow, and unused symbols. Lint rejects explicit `any`,

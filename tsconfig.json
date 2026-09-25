@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "declaration": false,
     "jsx": "react-jsx",
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
@@ -9,11 +10,13 @@
     "types": ["node", "vitest"]
   },
   "include": [
-    "vitest.config.ts",
+    "internal/projectconfig/loader.ts",
     "packages/**/*.test.ts",
     "packages/tnl/test-helper/**/*.ts",
     "packages/tnl/fixtures/**/*.ts",
-    "packages/tnl/fixtures/**/*.tsx"
+    "packages/tnl/fixtures/**/*.tsx",
+    "scripts/**/*.ts",
+    "vitest.config.ts"
   ],
-  "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**", "packages/tnl/launcher.test.ts"]
+  "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**"]
 }

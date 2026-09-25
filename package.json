@@ -13,7 +13,7 @@
     "test:run": "vitest run && node --test packages/tnl/launcher.test.ts",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json && tsc --project tsconfig.tooling.json"
+    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "22.20.3",
