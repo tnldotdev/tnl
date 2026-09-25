@@ -9,6 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -105,5 +106,15 @@ func TestPublisherAcceptorReportsConnectionCapacity(t *testing.T) {
 	}})
 	if code != tunnelv1.StaleConnectionAssignment || rejections != 1 {
 		t.Fatalf("non-capacity error: code=%s rejections=%d", code, rejections)
+	}
+}
+
+func TestPublisherAcceptorPreservesControlErrorBehindProtocolCode(t *testing.T) {
+	cause := errors.New("control request failed")
+	acceptor := &PublisherAcceptor{capacity: func() {}}
+	err := acceptor.controlError(cause)
+	var protocolError *tunnel.ProtocolError
+	if !errors.Is(err, cause) || !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.Internal {
+		t.Fatalf("control error = %v", err)
 	}
 }

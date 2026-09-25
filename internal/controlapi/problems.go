@@ -53,8 +53,8 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	case errors.Is(err, controlstate.ErrInsufficientRelayServices):
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
 	default:
-		log.Printf("%s: %v", operation, err)
-		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		log.Printf("%s request_id=%s: %v", operation, requestID, err)
 	}
 }
 
@@ -72,13 +72,14 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 	writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 }
 
-func writeProblem(response http.ResponseWriter, status int, code controlv1.ProblemCode, title string) {
+func writeProblem(response http.ResponseWriter, status int, code controlv1.ProblemCode, title string) string {
 	requestID := newRequestID()
 	details := map[string]any{}
-	writeJSON(response, status, controlv1.Problem{
+	httpjson.WriteProblem(response, status, controlv1.Problem{
 		Type: "https://tnl.dev/problems/" + string(code), Title: title,
 		Status: status, Code: code, RequestId: requestID, Details: &details,
 	})
+	return requestID
 }
 
 func newRequestID() string {

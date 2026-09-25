@@ -1,6 +1,7 @@
 package clientstate
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -199,6 +200,27 @@ func TestConcurrentStoreInitialization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMigrationLockWaitCanBeCanceled(t *testing.T) {
+	root, err := prepareRoot(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	locksDir, err := privateSubdir(root, "locks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := openLock(filepath.Join(locksDir, "migrations.lock"), "migration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	if database, err := Open(ctx, root); database != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contending open = %v, %v", database, err)
 	}
 }
 

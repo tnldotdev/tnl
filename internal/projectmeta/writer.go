@@ -2,6 +2,7 @@ package projectmeta
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,10 @@ const (
 // holding the writer lock. Each file replacement is atomic, but both files do
 // not become visible at the same instant. If the second replacement fails,
 // Write tries to restore the first file.
-func Write(projectRoot string, metadata Metadata) error {
+func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 	if !filepath.IsAbs(projectRoot) {
 		return errors.New("project metadata root must be absolute")
 	}
@@ -36,7 +40,7 @@ func Write(projectRoot string, metadata Metadata) error {
 	if err := prepareDirectory(directory); err != nil {
 		return err
 	}
-	lock, err := filelock.Acquire(filepath.Join(directory, "project.lock"), filelock.Blocking, os.Geteuid())
+	lock, err := filelock.AcquireContext(ctx, filepath.Join(directory, "project.lock"), os.Geteuid())
 	if err != nil {
 		return fmt.Errorf("lock project metadata: %w", err)
 	}

@@ -87,7 +87,7 @@ func Open(ctx context.Context, root string) (*Database, error) {
 		return nil, err
 	}
 	path := DatabasePath(root)
-	migrationLock, err := openBlockingLock(filepath.Join(locksDir, "migrations.lock"), "migration")
+	migrationLock, err := openLockContext(ctx, filepath.Join(locksDir, "migrations.lock"), "migration")
 	if err != nil {
 		return nil, err
 	}

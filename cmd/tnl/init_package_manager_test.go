@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
@@ -36,6 +39,21 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 	want := []string{cwd, "add", "--save-dev", "--reporter=silent", "@tnldotdev/tnl"}
 	if !slices.Equal(strings.Split(strings.TrimSuffix(string(arguments), "\n"), "\n"), want) || !strings.Contains(stdout.String(), "installed") || stderr.Len() != 0 {
 		t.Fatalf("arguments = %q, want %v; stdout = %q, stderr = %q", arguments, want, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunInitInstallPreservesCommandContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	err := runInitInstall(ctx, t.TempDir(), []string{"sh", "-c", "exec sleep 30"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("install error = %v", err)
+	}
+	if code, render := terminalResult(err); code != 0 || render != nil {
+		t.Fatalf("terminal result = %d, %v", code, render)
 	}
 }
 

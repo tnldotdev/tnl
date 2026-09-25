@@ -31,26 +31,14 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	fail := func(err error) error {
-		err = classifyCommandError(err)
-		if cause := context.Cause(ctx); cause != nil {
-			cause = classifyCommandError(cause)
-			if errors.Is(cause, context.Canceled) {
-				return errors.Join(cause, output.stopped())
-			}
-			_ = output.failed(cause)
-			return cause
-		}
-		_ = output.failed(err)
-		return err
-	}
+	defer func() { result = output.finish(ctx, result) }()
 	target, err := localproxy.NormalizeTarget(flags.Target)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	defer state.Close()
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
@@ -58,7 +46,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		Project: flags.projectRoot, Service: flags.Service,
 	})
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	ctx = tunnel.Context()
 	defer func() {
@@ -70,15 +58,15 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	if err := localproxy.Preflight(ctx, target); err != nil {
-		return fail(err)
+		return err
 	}
 	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl publish", os.Stdin, stderr)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	if currentIP != "" {
 		if err := output.currentIP(currentIP); err != nil {
@@ -89,7 +77,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		ctx, state, serverURL, flags.Host, flags.Subdomain, flags.selectedTeam, flags.Ephemeral, authenticated,
 	)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	publisherConfig := services.config(target, allowedIPPrefixes, flags.requestLimit())
 	publisherConfig.Logf = output.logf
@@ -98,10 +86,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	})
 	err = publisher.Run(ctx, publisherConfig)
 	if cause := context.Cause(ctx); cause != nil {
-		return fail(cause)
+		return cause
 	}
 	if err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
-		return fail(err)
+		return err
 	}
 	return output.stopped()
 }

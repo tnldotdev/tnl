@@ -25,6 +25,7 @@ import (
 const (
 	refreshSafetyMargin            = 30 * time.Second
 	defaultInteractiveLoginTimeout = 10 * time.Minute
+	issuedSessionCleanupTimeout    = 5 * time.Second
 )
 
 var ErrAuthenticationTimeout = errors.New("clientauth: authentication timed out")
@@ -171,19 +172,22 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 }
 
 type tokenSource struct {
-	mu       sync.Mutex
-	control  control
-	config   Config
-	store    *clientstate.Store
-	explicit string
+	serializeOnce sync.Once
+	serialize     chan struct{}
+	control       control
+	config        Config
+	store         *clientstate.Store
+	explicit      string
 }
 
 func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken string) (string, error) {
 	if s.explicit != "" {
 		return s.explicit, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return "", err
+	}
+	defer s.unlock()
 	lock, err := clientstate.LockControlSessionContext(ctx, s.store)
 	if err != nil {
 		return "", err
@@ -223,16 +227,36 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 	if found {
 		if err := revokeSession(ctx, s.control, stored, s.store); err != nil &&
 			!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
-			_ = revokeSession(ctx, s.control, issued, nil)
-			return "", fmt.Errorf("revoke previous control session: %w", err)
+			primary := fmt.Errorf("revoke previous control session: %w", err)
+			return "", errors.Join(primary, cleanupIssuedSession(ctx, s.control, issued))
 		}
 	}
 	if err := s.store.SaveControlSession(ctx, issued); err != nil {
-		_ = revokeSession(ctx, s.control, issued, nil)
-		return "", err
+		return "", errors.Join(err, cleanupIssuedSession(ctx, s.control, issued))
 	}
 	s.config.ForceLogin = false
 	return issued.AccessToken, nil
+}
+
+func (s *tokenSource) lock(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	s.serializeOnce.Do(func() { s.serialize = make(chan struct{}, 1) })
+	select {
+	case s.serialize <- struct{}{}:
+		if cause := context.Cause(ctx); cause != nil {
+			s.unlock()
+			return cause
+		}
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
+func (s *tokenSource) unlock() {
+	<-s.serialize
 }
 
 func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, error) {
@@ -343,6 +367,16 @@ func revokeSession(
 	return resolved.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(refreshed.AccessToken))
 }
 
+func cleanupIssuedSession(ctx context.Context, resolved control, issued clientstate.ControlSession) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
+	defer cancel()
+	err := revokeSession(cleanupCtx, resolved, issued, nil)
+	if err == nil || errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+		return nil
+	}
+	return fmt.Errorf("revoke newly issued control session: %w", err)
+}
+
 func authoritySession(
 	response authorityv1.ControlSessionResponse,
 	expectedSessionID string,
@@ -389,10 +423,16 @@ func authenticatedClient(base *http.Client, source *tokenSource) *http.Client {
 func (t *bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	origin := request.URL.Scheme + "://" + request.URL.Host
 	if origin != t.source.control.serverEndpoint && origin != t.source.control.authorityEndpoint {
+		if request.Body != nil {
+			_ = request.Body.Close()
+		}
 		return nil, errors.New("clientauth: refused to send credentials to an unexpected origin")
 	}
 	if request.Header.Get("Authorization") != "" {
 		return t.base.RoundTrip(request)
+	}
+	if request.Body != nil {
+		defer request.Body.Close()
 	}
 	token, err := t.source.accessToken(request.Context(), false, "")
 	if err != nil {

@@ -87,6 +87,11 @@ func TestWrite(t *testing.T) {
 	if response.Code != http.StatusCreated || response.Header().Get("Content-Type") != "application/json" || response.Body.String() != "{\"value\":1}\n" {
 		t.Fatalf("response = %#v", response)
 	}
+	problem := httptest.NewRecorder()
+	WriteProblem(problem, http.StatusBadRequest, map[string]string{"title": "invalid request"})
+	if problem.Code != http.StatusBadRequest || problem.Header().Get("Content-Type") != "application/problem+json" || problem.Body.String() != "{\"title\":\"invalid request\"}\n" {
+		t.Fatalf("problem response = %#v", problem)
+	}
 	for _, writer := range []http.ResponseWriter{httptest.NewRecorder(), failingWriter{httptest.NewRecorder()}} {
 		func() {
 			defer func() {

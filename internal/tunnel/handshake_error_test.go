@@ -18,7 +18,7 @@ func TestIsTerminalHandshakeError(t *testing.T) {
 		{tunnelv1.StaleRouteVersion, true},
 		{tunnelv1.StaleConnectionAssignment, true},
 		{tunnelv1.DuplicatePublisherConnection, true},
-		{tunnelv1.DrainingPublisherConnection, true},
+		{tunnelv1.DrainingPublisherConnection, false},
 		{tunnelv1.CapacityExceeded, false},
 		{tunnelv1.Unavailable, false},
 		{tunnelv1.Internal, false},

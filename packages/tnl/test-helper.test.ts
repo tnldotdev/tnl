@@ -133,10 +133,24 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
     }),
   ).rejects.toThrow("callback failed");
   expect(process.env).toEqual(inherited);
-  const sanitized = subprocessEnvironment({ TNL_DEV_PORT: "4321" });
+  const sanitized = subprocessEnvironment({
+    TEST_SAFE_OVERRIDE: "preserved",
+    TNL_ACCESS_TOKEN: "explicit-secret",
+    TNL_DEV_PORT: "4321",
+  });
   expect(sanitized.TNL_DEV_PORT).toBe("4321");
+  expect(sanitized.TEST_SAFE_OVERRIDE).toBe("preserved");
   expect(sanitized.NODE_OPTIONS).toBeUndefined();
   expect(sanitized.NODE_ENV).toBe("development");
+  for (const name of [
+    "TNL_ACCESS_TOKEN",
+    "TNL_LOGIN_TOKEN",
+    "TNL_TUNNEL_ID",
+    "TNL_PUBLIC_HOSTNAME",
+    "TNL_PUBLIC_URL",
+  ]) {
+    expect(Object.hasOwn(sanitized, name)).toBe(false);
+  }
   for (const name of Object.keys(environmentBaseline).filter(
     (name) => name !== "TNL_DEV_PORT" && name !== "NODE_ENV",
   )) {

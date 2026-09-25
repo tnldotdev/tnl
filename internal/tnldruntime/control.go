@@ -157,6 +157,7 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 func controlHTTPServer(handler http.Handler, tlsConfig *tls.Config) *http.Server {
 	return &http.Server{
 		Handler: handler, TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 3 * time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 }

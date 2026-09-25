@@ -2,6 +2,7 @@ package clientstate
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"errors"
@@ -24,7 +25,7 @@ func TestKeychainProtectorPersistsAndAuthenticatesContext(t *testing.T) {
 	ring := &memoryKeyring{values: make(map[string]string)}
 	lockPath := filepath.Join(t.TempDir(), "keychain.lock")
 	first := &keychainSecretProtector{account: "profile", lockPath: lockPath, keyring: ring}
-	sealed, err := first.Seal("access-credential", []byte("secret"))
+	sealed, err := first.Seal(t.Context(), "access-credential", []byte("secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,19 +34,19 @@ func TestKeychainProtectorPersistsAndAuthenticatesContext(t *testing.T) {
 	}
 
 	second := &keychainSecretProtector{account: "profile", lockPath: lockPath, keyring: ring}
-	opened, err := second.Open("access-credential", sealed)
+	opened, err := second.Open(t.Context(), "access-credential", sealed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(opened) != "secret" {
 		t.Fatalf("opened value = %q", opened)
 	}
-	if _, err := second.Open("route-private-key:route_other", sealed); err == nil {
+	if _, err := second.Open(t.Context(), "route-private-key:route_other", sealed); err == nil {
 		t.Fatal("sealed value opened under a different context")
 	}
 	corrupted := bytes.Clone(sealed)
 	corrupted[len(corrupted)-1] ^= 1
-	if _, err := second.Open("access-credential", corrupted); err == nil {
+	if _, err := second.Open(t.Context(), "access-credential", corrupted); err == nil {
 		t.Fatal("corrupted sealed value opened")
 	}
 }
@@ -64,7 +65,7 @@ func TestKeychainProtectorSerializesWrappingKeyCreation(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			sealed[index], errorsFound[index] = protector.Seal("value", []byte("secret"))
+			sealed[index], errorsFound[index] = protector.Seal(t.Context(), "value", []byte("secret"))
 		}()
 	}
 	wait.Wait()
@@ -77,7 +78,7 @@ func TestKeychainProtectorSerializesWrappingKeyCreation(t *testing.T) {
 		t.Fatalf("Keychain writes = %d, want 1", ring.sets)
 	}
 	for index, value := range sealed {
-		opened, err := protectors[(index+1)%len(protectors)].Open("value", value)
+		opened, err := protectors[(index+1)%len(protectors)].Open(t.Context(), "value", value)
 		if err != nil || string(opened) != "secret" {
 			t.Fatalf("opened value = %q, error = %v", opened, err)
 		}
@@ -89,18 +90,74 @@ func TestKeychainProtectorDoesNotReplaceMissingOrInvalidKey(t *testing.T) {
 	protector := &keychainSecretProtector{
 		account: "profile", lockPath: filepath.Join(t.TempDir(), "keychain.lock"), keyring: ring,
 	}
-	if _, err := protector.Open("value", []byte("encrypted")); err == nil {
+	if _, err := protector.Open(t.Context(), "value", []byte("encrypted")); err == nil {
 		t.Fatal("missing wrapping key accepted")
 	}
 	if ring.sets != 0 {
 		t.Fatalf("Keychain writes after open = %d, want 0", ring.sets)
 	}
 	ring.values[keychainService+"\x00profile"] = "invalid"
-	if _, err := protector.Seal("value", []byte("secret")); err == nil {
+	if _, err := protector.Seal(t.Context(), "value", []byte("secret")); err == nil {
 		t.Fatal("invalid wrapping key replaced")
 	}
 	if ring.sets != 0 {
 		t.Fatalf("Keychain writes after invalid key = %d, want 0", ring.sets)
+	}
+}
+
+func TestKeychainProtectorLockWaitCanBeCanceled(t *testing.T) {
+	ring := &memoryKeyring{values: make(map[string]string)}
+	observed := &observedKeyring{keyringClient: ring, gets: make(chan struct{}, 1)}
+	lockPath := filepath.Join(t.TempDir(), "keychain.lock")
+	lock, err := openLock(lockPath, "test Keychain initialization")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	protector := &keychainSecretProtector{account: "profile", lockPath: lockPath, keyring: observed}
+	firstCtx, cancelFirst := context.WithCancel(t.Context())
+	first := make(chan error, 1)
+	go func() {
+		_, err := protector.Seal(firstCtx, "value", []byte("secret"))
+		first <- err
+	}()
+	select {
+	case <-observed.gets:
+	case <-time.After(time.Second):
+		cancelFirst()
+		<-first
+		t.Fatal("first protector did not attempt initialization")
+	}
+
+	waiterCtx, cancelWaiter := context.WithCancel(t.Context())
+	cancelWaiter()
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := protector.Seal(waiterCtx, "value", []byte("secret"))
+		waiter <- err
+	}()
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("contending protector error = %v", err)
+		}
+	case <-time.After(time.Second):
+		cancelFirst()
+		<-first
+		<-waiter
+		t.Fatal("contending protector did not honor cancellation")
+	}
+	cancelFirst()
+	select {
+	case err := <-first:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("first protector error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first protector did not finish after cancellation")
+	}
+	if ring.sets != 0 {
+		t.Fatalf("Keychain writes = %d, want 0", ring.sets)
 	}
 }
 
@@ -215,6 +272,20 @@ type memoryKeyring struct {
 	mu     sync.Mutex
 	values map[string]string
 	sets   int
+}
+
+type observedKeyring struct {
+	keyringClient
+	gets chan struct{}
+}
+
+func (o *observedKeyring) Get(service, account string) (string, error) {
+	value, err := o.keyringClient.Get(service, account)
+	select {
+	case o.gets <- struct{}{}:
+	default:
+	}
+	return value, err
 }
 
 func (m *memoryKeyring) Get(service, account string) (string, error) {

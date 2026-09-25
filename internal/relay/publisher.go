@@ -90,7 +90,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 			authCtx, *message.PublisherConnection, claimID, message.Credential,
 		)
 		if err != nil {
-			return &tunnel.ProtocolError{Code: a.controlErrorCode(err)}
+			return a.controlError(err)
 		}
 		return nil
 	})
@@ -160,6 +160,10 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		retErr = nil
 	}
 	return retErr
+}
+
+func (a *PublisherAcceptor) controlError(err error) error {
+	return errors.Join(err, &tunnel.ProtocolError{Code: a.controlErrorCode(err)})
 }
 
 func (a *PublisherAcceptor) controlErrorCode(err error) tunnelv1.ErrorCode {

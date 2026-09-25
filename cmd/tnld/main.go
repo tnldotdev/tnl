@@ -24,9 +24,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "tnld: %v\n", err)
+		writeTerminalError(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func writeTerminalError(output io.Writer, err error) {
+	var text strings.Builder
+	lineBreak := false
+	for _, character := range err.Error() {
+		if character == '\r' || character == '\n' {
+			lineBreak = true
+			continue
+		}
+		if lineBreak && text.Len() != 0 {
+			text.WriteString("; ")
+		}
+		lineBreak = false
+		if character < 0x20 || character == 0x7f {
+			fmt.Fprintf(&text, `\x%02x`, character)
+			continue
+		}
+		text.WriteRune(character)
+	}
+	_, _ = fmt.Fprintf(output, "tnld: %s\n", text.String())
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {

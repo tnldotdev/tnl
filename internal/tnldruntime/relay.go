@@ -22,6 +22,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+const relaySessionSetupTimeout = 10 * time.Second
+
 type relayRuntime struct {
 	controller       *relay.Controller
 	registry         *relay.Registry
@@ -90,6 +92,24 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		transportTLS = certificateSource.TLSConfig()
 		certificateChanged = certificateSource.Install
 	}
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
+	if err != nil {
+		_ = internalListener.Close()
+		return err
+	}
+	tcpListener, err := net.Listen("tcp", settings.tcpListen)
+	if err != nil {
+		_ = internalListener.Close()
+		return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
+	}
+	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+	}})
+	if err != nil {
+		_ = tcpListener.Close()
+		_ = internalListener.Close()
+		return fmt.Errorf("listen for QUIC publisher connections: %w", err)
+	}
 	runtime, err := d.startRelayRuntime(ctx, settings.runtime, relayRuntimeConfig{
 		client: privateClient, relayServiceID: settings.relayServiceID, relayID: settings.relayID,
 		relayAddress: settings.relayAddress, tlsServerName: settings.tlsServerName,
@@ -97,25 +117,13 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		internalAddress: settings.internalAddress, internalListener: internalListener, metrics: metrics,
 	})
 	if err != nil {
+		_ = udpListener.Close()
+		_ = tcpListener.Close()
 		_ = internalListener.Close()
 		return err
 	}
-	tcpListener, err := net.Listen("tcp", settings.tcpListen)
-	if err != nil {
-		return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
-	}
 	runtime.tcpListener = tcpListener
-	udpListener, err := muxsession.ListenQUIC(settings.udpListen, runtime.transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-	}})
-	if err != nil {
-		return fmt.Errorf("listen for QUIC publisher connections: %w", err)
-	}
 	runtime.udpListener = udpListener
-	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
-	if err != nil {
-		return err
-	}
 	d.forward("serve TLS/TCP publisher connections", serveTLSYamuxSessions(
 		ctx, tcpListener, runtime.transportTLS,
 		muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept,
@@ -313,7 +321,9 @@ func serveTLSYamuxSessions(
 				return err
 			}
 			active.Go(func() {
-				transport, err := muxsession.AcceptTLSYamux(ctx, connection, tlsConfig, transportConfig)
+				setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
+				transport, err := muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
+				cancel()
 				if err == nil {
 					err = accept(ctx, transport)
 				}

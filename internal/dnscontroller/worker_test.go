@@ -71,6 +71,39 @@ func TestWorkerPersistsProviderFailureForRetry(t *testing.T) {
 	}
 }
 
+func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
+	started := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	for _, kind := range []string{"authority", "route"} {
+		t.Run(kind, func(t *testing.T) {
+			now := started
+			store := new(dnsStoreStub)
+			if kind == "authority" {
+				store.work = testDNSWork(started)
+			} else {
+				store.routeWork = claimedRouteWork(started)
+			}
+			provider := &providerStub{err: errors.New("provider unavailable"), beforeCall: func() {
+				now = now.Add(5 * time.Second)
+			}}
+			worker := testDNSWorker(t, store, provider, &verifierStub{}, started)
+			worker.now = func() time.Time { return now }
+			worker.config.ManagedDomain, worker.config.ManagedZoneID = "claimed.example.test", "Z123"
+			if found, err := worker.processOne(t.Context()); !found || err != nil {
+				t.Fatalf("process = %v, %v", found, err)
+			}
+			availableAt := store.saved.AvailableAt
+			delay := time.Second
+			if kind == "route" {
+				availableAt = store.routeSaved.AvailableAt
+				delay = 4 * time.Second
+			}
+			if want := now.Add(delay); !availableAt.Equal(want) {
+				t.Fatalf("available at = %s, want %s", availableAt, want)
+			}
+		})
+	}
+}
+
 func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	store := &dnsStoreStub{routeWork: controlstate.DNSRouteWork{

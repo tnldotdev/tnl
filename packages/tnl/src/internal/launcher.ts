@@ -6,6 +6,8 @@ import { nativeTargets } from "./native-targets.js";
 
 const require = createRequire(import.meta.url);
 const launcherManifest = new URL("../../package.json", import.meta.url);
+const packageVersionPattern =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 const nativePackages = new Map(
   nativeTargets.map(({ platform, architecture, packageName }) => [
@@ -57,11 +59,11 @@ export function resolveNativeBinary(options: NativeBinaryOptions = {}): string {
     throw error;
   }
 
-  const mainManifest = readManifest(launcherManifest);
-  const nativeManifest = readManifest(nativeManifestPath);
+  const mainManifest = readManifest(launcherManifest, "@tnldotdev/tnl");
+  const nativeManifest = readManifest(nativeManifestPath, packageName);
   if (nativeManifest.version !== mainManifest.version) {
     throw new Error(
-      `${packageName}@${String(nativeManifest.version)} does not match @tnldotdev/tnl@${String(mainManifest.version)}`,
+      `${packageName}@${nativeManifest.version} does not match @tnldotdev/tnl@${mainManifest.version}`,
     );
   }
 
@@ -74,15 +76,37 @@ export function resolveNativeBinary(options: NativeBinaryOptions = {}): string {
   return binary;
 }
 
-function readManifest(file: string | URL): PackageManifest {
-  const value = JSON.parse(readFileSync(file, "utf8")) as unknown;
+function readManifest(file: string | URL, packageName: string): PackageManifest {
+  let serialized: string;
+  try {
+    serialized = readFileSync(file, "utf8");
+  } catch (error) {
+    throw new Error(`failed to read ${packageName} package manifest`, { cause: error });
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized) as unknown;
+  } catch (error) {
+    throw new Error(`${packageName} package manifest is not valid JSON`, { cause: error });
+  }
+  try {
+    return parseManifest(value);
+  } catch (error) {
+    throw new Error(`${packageName} package manifest has an invalid shape`, { cause: error });
+  }
+}
+
+function parseManifest(value: unknown): PackageManifest {
   if (
     value === null ||
     typeof value !== "object" ||
+    Array.isArray(value) ||
     !("version" in value) ||
-    typeof value.version !== "string"
+    typeof value.version !== "string" ||
+    value.version.length > 256 ||
+    !packageVersionPattern.test(value.version)
   ) {
-    throw new Error("package manifest has an invalid shape");
+    throw new TypeError("package manifest version must be a valid semantic version");
   }
   return { version: value.version };
 }

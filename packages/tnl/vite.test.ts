@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createProjectFixture,
@@ -117,6 +117,39 @@ describe("tnl", () => {
         server: { port: 5300, strictPort: false },
       });
     });
+  });
+
+  test("preserves listener and cleanup failures when registration cannot start", async () => {
+    const bootstrap = await startTestBootstrap();
+    const plugin = tnl();
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      await runConfigHook(plugin, {});
+    });
+    const closeError = new Error("close failed");
+    const close = vi.fn(async () => {
+      throw closeError;
+    });
+    const server = {
+      close,
+      httpServer: { address: () => null },
+      listen: vi.fn(async () => undefined),
+    };
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer !== "function") {
+      throw new Error("tnl plugin does not have a configureServer hook");
+    }
+    configureServer.call({} as never, server as never);
+
+    const failure = await rejection(server.listen());
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) return;
+    expect(failure.message).toBe("Vite listener setup failed and server cleanup also failed");
+    expect(failure.errors).toEqual([
+      expect.objectContaining({ message: "Vite did not report its listening port to tnl dev" }),
+      closeError,
+    ]);
+    expect(failure.cause).toBe(failure.errors[0]);
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 
@@ -292,4 +325,14 @@ function startViteFixture(
     TNL_FIXTURE_HOST: host,
     TNL_FIXTURE_PORT: String(port),
   });
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error("promise rejected with a non-Error value", { cause: error });
+  }
+  throw new Error("promise unexpectedly resolved");
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,9 @@ func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
+	if response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("content type = %q", response.Header().Get("Content-Type"))
+	}
 	if store.createTeam.IdentityID != "identity_1" || store.createTeam.IdempotencyKey != "create-team-1" ||
 		store.createTeam.DisplayName != "Example team" || store.createTeam.MemberSlug != "member" ||
 		store.createTeam.RequestDigest == ([32]byte{}) {
@@ -53,7 +57,7 @@ func TestCreateTeamHandlerMapsAuthorityConflict(t *testing.T) {
 	handler := NewHandler(Config{}, store)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, newCreateTeamRequest())
-	if response.Code != http.StatusConflict {
+	if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/problem+json" {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
 	}
 	var problem authorityv1.Problem
@@ -99,6 +103,20 @@ func TestExchangeLoginTokenUsesVerifierSourceRevision(t *testing.T) {
 	}
 }
 
+func TestExchangeLoginTokenMapsSessionCreationFailureToUnavailable(t *testing.T) {
+	store := &authorityMutationStoreStub{builtinError: controlstate.ErrControlAuthentication}
+	handler := NewHandler(Config{LoginToken: testLoginToken}, store)
+	request := httptest.NewRequest(
+		http.MethodPost, "/v1/auth/token", strings.NewReader(`{"login_token":"`+testLoginToken+`"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestExchangeOIDCTokenCreatesLocalSession(t *testing.T) {
 	digest := sha256.Sum256([]byte("id-token"))
 	verified := oidcauth.Identity{
@@ -135,6 +153,7 @@ func TestExchangeOIDCTokenMapsAuthenticationFailures(t *testing.T) {
 		{name: "invalid token", verifier: oidcVerifierStub{err: oidcauth.ErrUnauthenticated}, status: http.StatusUnauthorized},
 		{name: "provider unavailable", verifier: oidcVerifierStub{err: oidcauth.ErrUnavailable}, status: http.StatusServiceUnavailable},
 		{name: "replayed token", verifier: oidcVerifierStub{identity: validOIDCTestIdentity()}, storeErr: controlstate.ErrOIDCAssertionReplay, status: http.StatusUnauthorized},
+		{name: "store unavailable", verifier: oidcVerifierStub{identity: validOIDCTestIdentity()}, storeErr: errors.New("database unavailable"), status: http.StatusServiceUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &authorityMutationStoreStub{oidcError: test.storeErr}
@@ -200,6 +219,7 @@ type authorityMutationStoreStub struct {
 	createTeam          controlstate.CreateTeamRequest
 	createTeamError     error
 	loginSourceRevision int64
+	builtinError        error
 	oidcManagedDomain   string
 	oidcIdentity        controlstate.OIDCIdentity
 	oidcError           error
@@ -247,7 +267,7 @@ func (s *authorityMutationStoreStub) CreateBuiltinControlSession(
 	_ time.Time,
 ) (controlstate.ControlSession, error) {
 	s.loginSourceRevision = sourceRevision
-	return controlstate.ControlSession{}, nil
+	return controlstate.ControlSession{}, s.builtinError
 }
 
 func (s *authorityMutationStoreStub) CreateOIDCControlSession(

@@ -74,18 +74,23 @@ func TestSessionHandshakeAndVisitorStream(t *testing.T) {
 func TestSessionRejectsHello(t *testing.T) {
 	a, b := newMemoryPair(t)
 	ctx := tunnelContext(t)
+	cause := errors.New("claim failed")
 	result := tunnelWorker(t, func() { _ = b.Close() }, func() error {
 		_, _, err := Accept(ctx, b, func(context.Context, tunnelv1.Message) error {
-			return &ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			return errors.Join(cause, &ProtocolError{Code: tunnelv1.StaleConnectionAssignment})
 		})
 		return err
 	})
-	_, err := Dial(ctx, a, publisherHello())
-	for _, err := range []error{err, await(t, result)} {
+	_, peerErr := Dial(ctx, a, publisherHello())
+	localErr := await(t, result)
+	for _, err := range []error{peerErr, localErr} {
 		var p *ProtocolError
 		if !errors.As(err, &p) || p.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("handshake=%v", err)
 		}
+	}
+	if errors.Is(peerErr, cause) || !errors.Is(localErr, cause) {
+		t.Fatalf("claim cause leaked to peer or was lost locally: peer=%v local=%v", peerErr, localErr)
 	}
 }
 

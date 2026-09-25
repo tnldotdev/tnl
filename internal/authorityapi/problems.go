@@ -24,8 +24,8 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	case errors.Is(err, controlstate.ErrAuthorityConflict), errors.Is(err, controlstate.ErrAuthorityIdempotency):
 		writeProblem(response, http.StatusConflict, authorityv1.Conflict, "authority state conflict")
 	default:
-		log.Printf("%s: %v", operation, err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		log.Printf("%s request_id=%s: %v", operation, requestID, err)
 	}
 }
 
@@ -43,16 +43,22 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 	writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
 }
 
-func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) {
-	requestID, err := opaqueid.New("request_")
-	if err != nil {
-		requestID = "request_unavailable"
-	}
+func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) string {
+	requestID := newRequestID()
 	details := map[string]any{}
-	writeJSON(response, status, authorityv1.Problem{
+	httpjson.WriteProblem(response, status, authorityv1.Problem{
 		Type: "https://tnl.dev/problems/" + string(code), Title: title,
 		Status: status, Code: code, RequestId: requestID, Details: &details,
 	})
+	return requestID
+}
+
+func newRequestID() string {
+	requestID, err := opaqueid.New("request_")
+	if err != nil {
+		return "request_unavailable"
+	}
+	return requestID
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

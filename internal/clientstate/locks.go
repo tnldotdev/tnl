@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/filelock"
 )
@@ -36,23 +35,7 @@ func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error)
 	if store == nil {
 		return nil, errors.New("clientstate: state store is required")
 	}
-	return retryLock(ctx, store.LockControlSession)
-}
-
-func retryLock(ctx context.Context, acquire func() (*Lock, error)) (*Lock, error) {
-	for {
-		lock, err := acquire()
-		if !errors.Is(err, ErrLocked) {
-			return lock, err
-		}
-		timer := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return openLockContext(ctx, filepath.Join(store.locksDir, "control-session.lock"), "control session")
 }
 
 func prepareRoot(root string) (string, error) {
@@ -139,15 +122,16 @@ func validateTrustedAncestors(path string) error {
 }
 
 func openLock(path, kind string) (*Lock, error) {
-	return openLockOperation(path, kind, filelock.Nonblocking)
+	lock, err := filelock.Acquire(path, filelock.Nonblocking, os.Geteuid())
+	return lockResult(lock, err, kind)
 }
 
-func openBlockingLock(path, kind string) (*Lock, error) {
-	return openLockOperation(path, kind, filelock.Blocking)
+func openLockContext(ctx context.Context, path, kind string) (*Lock, error) {
+	lock, err := filelock.AcquireContext(ctx, path, os.Geteuid())
+	return lockResult(lock, err, kind)
 }
 
-func openLockOperation(path, kind string, mode filelock.Mode) (*Lock, error) {
-	lock, err := filelock.Acquire(path, mode, os.Geteuid())
+func lockResult(lock *Lock, err error, kind string) (*Lock, error) {
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil, ErrLocked
 	}
@@ -214,20 +198,12 @@ func validatePrivateFile(info os.FileInfo, directory bool) error {
 }
 
 func LockHostnameContext(ctx context.Context, store *Store, hostname string) (*Lock, error) {
-	for {
-		lock, err := store.LockHostname(hostname)
-		if err == nil {
-			return lock, nil
-		}
-		if !errors.Is(err, ErrLocked) {
-			return nil, err
-		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
+	if store == nil {
+		return nil, errors.New("clientstate: state store is required")
 	}
+	if strings.TrimSpace(hostname) == "" {
+		return nil, errors.New("clientstate: hostname is required")
+	}
+	digest := sha256.Sum256([]byte(hostname))
+	return openLockContext(ctx, filepath.Join(store.locksDir, hex.EncodeToString(digest[:])+".lock"), "hostname")
 }

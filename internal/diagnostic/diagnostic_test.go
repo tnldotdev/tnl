@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"html"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -88,6 +89,12 @@ func TestWriteWarningUsesDiagnosticFrame(t *testing.T) {
 	}
 }
 
+func TestWriteWarningRejectsShortWrite(t *testing.T) {
+	if err := WriteWarning(shortWriter{}, "tnl publish", ProvisioningStalled); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("WriteWarning error = %v", err)
+	}
+}
+
 func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -151,3 +158,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 		})
 	}
 }
+
+type shortWriter struct{}
+
+func (shortWriter) Write(payload []byte) (int, error) { return len(payload) - 1, nil }

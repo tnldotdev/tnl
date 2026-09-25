@@ -501,7 +501,13 @@ func runInitInstall(ctx context.Context, root string, arguments []string) error 
 	command.Env = append(os.Environ(), "NO_COLOR=1")
 	command.Stdout, command.Stderr = io.Discard, io.Discard
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("install tnl project dependencies; run %s: %w", shellCommand(arguments), err)
+		if cause := context.Cause(ctx); cause != nil {
+			return fmt.Errorf("install tnl project dependencies: %w", cause)
+		}
+		return fmt.Errorf(
+			"install tnl project dependencies; run %s: %w",
+			shellCommand(arguments), err,
+		)
 	}
 	return nil
 }

@@ -22,6 +22,8 @@ var (
 	ErrRouteCertificate       = errors.New("controlstate: route certificate acknowledgement is invalid")
 )
 
+const transactionRollbackTimeout = 5 * time.Second
+
 // RouteSessionNotReadyError reports the prerequisites checked under the route
 // session lock. It does not contain credentials or certificate material.
 type RouteSessionNotReadyError struct {
@@ -922,7 +924,9 @@ func disconnectPublisherConnectionParams(
 
 func rollback(ctx context.Context, tx pgx.Tx, operation string, retErr *error) func() {
 	return func() {
-		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), transactionRollbackTimeout)
+		defer cancel()
+		if err := tx.Rollback(rollbackCtx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			*retErr = errors.Join(*retErr, fmt.Errorf("controlstate: %s: rollback: %w", operation, err))
 		}
 	}

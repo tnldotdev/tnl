@@ -97,6 +97,22 @@ func (d *daemon) startStandalone(
 		transportTLS = certificateSource.TLSConfig()
 		certificateChanged = certificateSource.Install
 	}
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
+	if err != nil {
+		return err
+	}
+	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+	}})
+	if err != nil {
+		return fmt.Errorf("listen for standalone QUIC publisher connections: %w", err)
+	}
+	udpOwned := false
+	defer func() {
+		if !udpOwned {
+			_ = udpListener.Close()
+		}
+	}()
 	targets := make(map[string]*relayRuntime, len(standaloneRelays))
 	relayClient, err := relayapi.NewDirectClient(relayapi.DirectConfig{
 		Store: d.database, LeaseDuration: settings.relayLeaseDuration,
@@ -137,16 +153,6 @@ func (d *daemon) startStandalone(
 	if err != nil {
 		return err
 	}
-	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
-	if err != nil {
-		return err
-	}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-	}})
-	if err != nil {
-		return fmt.Errorf("listen for standalone QUIC publisher connections: %w", err)
-	}
 	d.relays[0].tcpListener = relayListener
 	d.relays[0].udpListener = udpListener
 	d.forward("serve TLS/TCP publisher connections", serveTLSYamuxSessions(
@@ -175,6 +181,7 @@ func (d *daemon) startStandalone(
 		return err
 	}
 	publicOwned = true
+	udpOwned = true
 	log.Printf("control API listening on %s for %s", publicListener.Addr(), settings.serverHostname)
 	log.Printf("relay publisher TCP listening on %s for %s", publicListener.Addr(), settings.relayHostname)
 	log.Printf("relay publisher UDP listening on %s", udpListener.Addr())

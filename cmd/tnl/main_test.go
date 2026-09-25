@@ -287,6 +287,34 @@ func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	}
 }
 
+func TestTerminalResultUsesErrorLeaves(t *testing.T) {
+	failure := errors.New("cleanup failed")
+	for _, test := range []struct {
+		name       string
+		err        error
+		wantCode   int
+		wantRender bool
+	}{
+		{
+			name: "pure cancellation",
+			err: errors.Join(
+				context.Canceled,
+				fmt.Errorf("wrapped cancellation: %w", context.Canceled),
+			),
+		},
+		{name: "cancellation with failure", err: errors.Join(context.Canceled, failure), wantCode: 1, wantRender: true},
+		{name: "child exit", err: fmt.Errorf("child: %w", &childExitError{code: 23}), wantCode: 23},
+		{name: "child exit with failure", err: errors.Join(&childExitError{code: 23}, failure), wantCode: 1, wantRender: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, render := terminalResult(test.err)
+			if code != test.wantCode || (render != nil) != test.wantRender {
+				t.Fatalf("terminalResult() = %d, %v", code, render)
+			}
+		})
+	}
+}
+
 func TestClassifyCommandErrorMapsAuthenticationTimeout(t *testing.T) {
 	err := classifyCommandError(fmt.Errorf("login: %w", clientauth.ErrAuthenticationTimeout))
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.AuthenticationTimeout ||

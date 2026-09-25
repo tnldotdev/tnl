@@ -130,7 +130,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	if flags.project.Found() {
-		if err := projectmeta.Write(flags.project.Root, metadata); err != nil {
+		if err := projectmeta.Write(ctx, flags.project.Root, metadata); err != nil {
 			return err
 		}
 	}
@@ -170,7 +170,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if err != nil {
 		return err
 	}
-	defer bootstrap.Close()
+	defer func() { result = errors.Join(result, bootstrap.Close()) }()
 
 	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port), stdin, stdout, stderr, flags.commandDir)
 	if err != nil {

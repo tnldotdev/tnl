@@ -1,9 +1,35 @@
 package projectconfig
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestResolveWorktreePreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := ResolveWorktree(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ResolveWorktree error = %v, want context.Canceled", err)
+	}
+}
+
+func TestResolveWorktreePreservesGitCommandDeadline(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := ResolveWorktree(ctx, t.TempDir()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ResolveWorktree error = %v, want context.DeadlineExceeded", err)
+	}
+}
 
 func TestWorktreeLabelIsCanonicalAndStable(t *testing.T) {
 	var salt [32]byte

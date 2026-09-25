@@ -1,4 +1,5 @@
-// Package oidcauth implements OIDC authentication and CLI login flows.
+// Package oidcauth implements OIDC authentication and CLI login flows. OIDC
+// back-channel requests do not follow redirects.
 package oidcauth
 
 import (
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"golang.org/x/oauth2"
 )
 
@@ -53,6 +55,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
+	client = httpclient.NoRedirects(client)
 	ctx = oidc.ClientContext(ctx, client)
 	provider, err := oidc.NewProvider(ctx, config.Issuer)
 	if err != nil {

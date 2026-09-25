@@ -20,6 +20,9 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 		wantError     bool
 	}{
 		{"empty", "", 204, false},
+		{"empty body-bearing response", "", 200, true},
+		{"null", `null`, 200, true},
+		{"whitespace null", " \nnull\t", 200, true},
 		{"numbers", `{"value":9007199254740993}`, 200, false},
 		{"unknown", `{"other":1}`, 200, true},
 		{"partial unknown", `{"value":1,"other":2}`, 200, true},
@@ -83,6 +86,15 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 	}
 	if err := responseError(400, nil, []byte(`{"code":"unavailable"}`)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("problem mapping=%v", err)
+	}
+	if err := responseError(500, nil, []byte(`{"code":"internal"}`)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("internal problem mapping=%v", err)
+	}
+	if err := responseError(502, nil, []byte(`{"code":"forbidden"}`)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("valid 5xx problem mapping=%v", err)
+	}
+	if err := responseError(500, nil, []byte(`{"code":"future_code"}`)); errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unknown 5xx problem mapping=%v", err)
 	}
 }
 

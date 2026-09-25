@@ -2,15 +2,18 @@
 
 package clientstate
 
-import "bytes"
+import (
+	"bytes"
+	"context"
+)
 
 type plaintextSecretProtector struct{}
 
-func (plaintextSecretProtector) Seal(_ string, value []byte) ([]byte, error) {
+func (plaintextSecretProtector) Seal(_ context.Context, _ string, value []byte) ([]byte, error) {
 	return bytes.Clone(value), nil
 }
 
-func (plaintextSecretProtector) Open(_ string, value []byte) ([]byte, error) {
+func (plaintextSecretProtector) Open(_ context.Context, _ string, value []byte) ([]byte, error) {
 	return bytes.Clone(value), nil
 }
 

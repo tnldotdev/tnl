@@ -3,6 +3,7 @@ package controlapi
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"net/http"
 	"slices"
@@ -42,7 +43,7 @@ func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken st
 		return routeReadPrincipal{}, authorization.ErrUnauthenticated
 	}
 	if err != nil {
-		return routeReadPrincipal{}, authorization.ErrUnavailable
+		return routeReadPrincipal{}, errors.Join(authorization.ErrUnavailable, err)
 	}
 	identity, err := a.store.IdentityContext(ctx, principal.IdentityID)
 	if err != nil {
@@ -65,7 +66,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		return authorization.Decision{}, authorization.ErrUnauthenticated
 	}
 	if err != nil {
-		return authorization.Decision{}, authorization.ErrUnavailable
+		return authorization.Decision{}, errors.Join(authorization.ErrUnavailable, err)
 	}
 	identity, err := a.store.IdentityContext(ctx, principal.IdentityID)
 	if err != nil {
@@ -300,7 +301,8 @@ func (h *handler) authorizeMutation(
 	case errors.Is(err, authorization.ErrForbidden):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+		log.Printf("authorize route mutation request_id=%s: %v", requestID, err)
 	default:
 		return decision, true
 	}
@@ -340,7 +342,8 @@ func (h *handler) authorizeRouteReads(
 	case errors.Is(err, authorization.ErrForbidden):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+		log.Printf("authorize route reads request_id=%s: %v", requestID, err)
 	default:
 		return principal, true
 	}

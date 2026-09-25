@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -170,6 +172,52 @@ func TestAuthorizationCodePKCELogin(t *testing.T) {
 	if err != nil || result.IDToken != idToken || result.Identity.Subject != "user-123" ||
 		openCount != 1 || authorizeCalls != 1 || tokenCalls != 1 || !strings.Contains(output.String(), p.issuer+"/authorize") {
 		t.Fatalf("result=%#v error=%v output=%q calls=%d/%d/%d", result, err, output.String(), openCount, authorizeCalls, tokenCalls)
+	}
+}
+
+func TestLoginDoesNotFollowTokenRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			p := newTestProvider(t, "")
+			destinationCalls := 0
+			destination := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				destinationCalls++
+				_, _ = io.Copy(io.Discard, request.Body)
+			}))
+			defer destination.Close()
+
+			p.mux.HandleFunc("/device", func(response http.ResponseWriter, _ *http.Request) {
+				writeProviderJSON(t, response, map[string]any{
+					"device_code": "device-secret", "user_code": "ABCD-1234",
+					"verification_uri": p.issuer + "/device-login", "expires_in": 60, "interval": 1,
+				})
+			})
+			p.mux.HandleFunc("/token", func(response http.ResponseWriter, request *http.Request) {
+				if err := request.ParseForm(); err != nil {
+					t.Error(err)
+				}
+				if request.Form.Get("device_code") != "device-secret" || request.Form.Get("client_id") != "tnl-cli" {
+					t.Errorf("unexpected token request: %v", request.Form)
+				}
+				response.Header().Set("Location", destination.URL+"/record")
+				response.WriteHeader(status)
+			})
+
+			_, err := Login(loginTestContext(t), Config{
+				Issuer: p.issuer, ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode,
+				Scopes: []string{"openid"}, HTTPClient: p.client,
+				Prompt: func(Prompt) error { return nil },
+			}, io.Discard)
+			if err == nil {
+				t.Fatal("redirect response was accepted")
+			}
+			if destinationCalls != 0 {
+				t.Fatalf("token request reached redirect destination %d times", destinationCalls)
+			}
+			if p.client.CheckRedirect != nil {
+				t.Fatal("supplied client was mutated")
+			}
+		})
 	}
 }
 

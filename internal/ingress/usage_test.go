@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -390,6 +391,61 @@ func TestUsageReporterLostPageResponseRetriesFrozenPayloadBeforeClose(t *testing
 	}
 	if !found {
 		t.Fatal("close lost mutation made during retry")
+	}
+}
+
+func TestUsageReporterCloseDoesNotWaitForBlockedRunFlush(t *testing.T) {
+	control := new(usageControlStub)
+	reporter, err := NewUsageReporter(control, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	control.onReport = func(usageReportBatch) error {
+		close(started)
+		<-release
+		return nil
+	}
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- reporter.flush(t.Context(), time.Now(), false) }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run flush did not start")
+	}
+	closeCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- reporter.Close(closeCtx) }()
+	select {
+	case err := <-closeDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("close = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("close waited for blocked run flush")
+	}
+	unblock()
+	if err := <-flushDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUsageReporterCloseIsIdempotentAfterCancellation(t *testing.T) {
+	reporter, err := NewUsageReporter(new(usageControlStub), time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reporter.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := reporter.Close(ctx); err != nil {
+		t.Fatalf("second close = %v", err)
 	}
 }
 

@@ -68,29 +68,45 @@ export default function tnl(...arguments_: never[]): Plugin {
       }
       const originalListen = server.listen.bind(server);
       server.listen = async (port, isRestart) => {
-        const listening = await originalListen(port, isRestart);
+        let listening;
+        try {
+          listening = await originalListen(port, isRestart);
+        } catch (error) {
+          return await closeAfterFailure(server.close.bind(server), error);
+        }
         if (localPortRegistered) {
           return listening;
         }
-        const address = server.httpServer?.address();
-        if (address === null || address === undefined || typeof address === "string") {
-          await server.close();
-          throw new Error("Vite did not report its listening port to tnl dev");
-        }
         try {
+          const address = server.httpServer?.address();
+          if (address === null || address === undefined || typeof address === "string") {
+            throw new Error("Vite did not report its listening port to tnl dev");
+          }
           await registerLocalTarget(
             configured,
             canonicalLoopbackTarget(address.address, address.port),
           );
           localPortRegistered = true;
         } catch (error) {
-          await server.close();
-          throw error;
+          return await closeAfterFailure(server.close.bind(server), error);
         }
         return listening;
       };
     },
   };
+}
+
+async function closeAfterFailure(close: () => Promise<void>, error: unknown): Promise<never> {
+  try {
+    await close();
+  } catch (closeError) {
+    throw new AggregateError(
+      [error, closeError],
+      "Vite listener setup failed and server cleanup also failed",
+      { cause: error },
+    );
+  }
+  throw error;
 }
 
 function runtimeDefine(payload: string) {

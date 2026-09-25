@@ -22,8 +22,12 @@ func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http
 		return
 	}
 	token := credentials.LoginToken(body.LoginToken)
-	if h.store == nil || h.config.LoginToken == "" || !h.loginVerifier.Matches(token) {
+	if h.config.LoginToken == "" || !h.loginVerifier.Matches(token) {
 		writeBearerProblem(response)
+		return
+	}
+	if h.store == nil {
+		writeAuthenticationUnavailable(response, "exchange login token", nil)
 		return
 	}
 	issued, err := h.store.CreateBuiltinControlSession(
@@ -31,8 +35,7 @@ func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http
 		h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now(),
 	)
 	if err != nil {
-		log.Printf("exchange login token: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		writeAuthenticationUnavailable(response, "exchange login token", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
@@ -44,8 +47,12 @@ func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 		return
 	}
-	if h.store == nil || h.config.OIDCVerifier == nil {
+	if h.config.OIDCVerifier == nil {
 		writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
+		return
+	}
+	if h.store == nil {
+		writeAuthenticationUnavailable(response, "exchange OIDC token", nil)
 		return
 	}
 	identity, err := h.config.OIDCVerifier.Verify(request.Context(), body.IdToken)
@@ -72,8 +79,7 @@ func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.
 		return
 	}
 	if err != nil {
-		log.Printf("exchange OIDC token: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		writeAuthenticationUnavailable(response, "exchange OIDC token", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
@@ -86,7 +92,7 @@ func (h *handler) RefreshControlSession(response http.ResponseWriter, request *h
 		return
 	}
 	if h.store == nil {
-		writeBearerProblem(response)
+		writeAuthenticationUnavailable(response, "refresh control session", nil)
 		return
 	}
 	issued, err := h.store.RefreshControlSession(
@@ -98,8 +104,7 @@ func (h *handler) RefreshControlSession(response http.ResponseWriter, request *h
 		return
 	}
 	if err != nil {
-		log.Printf("refresh control session: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		writeAuthenticationUnavailable(response, "refresh control session", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
@@ -110,9 +115,11 @@ func (h *handler) LogoutControlSession(response http.ResponseWriter, request *ht
 	if !ok {
 		return
 	}
-	if err := h.store.RevokeControlSession(request.Context(), principal, time.Now()); err != nil {
-		log.Printf("revoke control session: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+	if err := h.store.RevokeControlSession(request.Context(), principal, time.Now()); errors.Is(err, controlstate.ErrControlAuthentication) {
+		writeBearerProblem(response)
+		return
+	} else if err != nil {
+		writeAuthenticationUnavailable(response, "revoke control session", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

@@ -31,6 +31,9 @@ func TestHealthAndReadiness(t *testing.T) {
 	if health.Code != http.StatusOK {
 		t.Fatalf("health status = %d", health.Code)
 	}
+	if health.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("health content type = %q", health.Header().Get("Content-Type"))
+	}
 	var healthBody controlv1.HealthResponse
 	if err := json.Unmarshal(health.Body.Bytes(), &healthBody); err != nil || healthBody.Status != controlv1.HealthResponseStatusOk {
 		t.Fatalf("health = %#v, %v", healthBody, err)
@@ -54,7 +57,7 @@ func TestUnknownOperationsReturnNotFound(t *testing.T) {
 	for _, path := range []string{"/v1/teams", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"code":"not_found"`) {
+		if response.Code != http.StatusNotFound || response.Header().Get("Content-Type") != "application/problem+json" || !strings.Contains(response.Body.String(), `"code":"not_found"`) {
 			t.Fatalf("%s status = %d", path, response.Code)
 		}
 	}

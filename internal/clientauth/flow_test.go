@@ -1,6 +1,7 @@
 package clientauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -218,7 +219,7 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 				case "/v1/auth/token":
 					return jsonResponse(200, issued), nil
 				case "/v1/auth/logout":
-					return jsonResponse(200, nil), nil
+					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
 				default:
 					return nil, errors.New("unexpected request")
 				}
@@ -379,7 +380,7 @@ func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
 				return problemResponse(503, "unavailable"), nil
 			}
-			return jsonResponse(200, nil), nil
+			return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
 		}
 		return nil, errors.New("unexpected request")
 	})
@@ -397,6 +398,78 @@ func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	}
 	assertAuthRequest(t, requests[2], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", old.AccessToken, nil)
 	assertAuthRequest(t, requests[3], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", issued.AccessToken, nil)
+}
+
+func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
+	type contextKey struct{}
+	old := storedSession(issuedSession(t))
+	issued := issuedSession(t)
+	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	cleanupCalled := false
+	cleanupContextValid := true
+	ctx := context.WithValue(t.Context(), contextKey{}, "cleanup-value")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v1/auth/token":
+			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/logout":
+			switch request.Header.Get("Authorization") {
+			case "Bearer " + old.AccessToken:
+				cancel()
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+			case "Bearer " + issued.AccessToken:
+				cleanupCalled = true
+				deadline, bounded := request.Context().Deadline()
+				cleanupContextValid = request.Context().Err() == nil &&
+					request.Context().Value(contextKey{}) == "cleanup-value" && bounded &&
+					time.Until(deadline) > 0 && time.Until(deadline) <= issuedSessionCleanupTimeout
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+			}
+		}
+		return nil, errors.New("unexpected request")
+	})
+	f.save(t, old)
+	f.config.ForceLogin = true
+	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
+	client, err := Authenticate(ctx, f.config)
+	if client != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Authenticate error = %v", err)
+	}
+	if !cleanupCalled || !cleanupContextValid {
+		t.Fatalf("cleanup called = %v, context valid = %v", cleanupCalled, cleanupContextValid)
+	}
+	f.assertSession(t, old)
+}
+
+func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
+	old := storedSession(issuedSession(t))
+	issued := issuedSession(t)
+	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	primaryFailure := errors.New("previous revocation failed")
+	cleanupFailure := errors.New("issued revocation failed")
+	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v1/auth/token":
+			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/logout":
+			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
+				return nil, primaryFailure
+			}
+			return nil, cleanupFailure
+		default:
+			return nil, errors.New("unexpected request")
+		}
+	})
+	f.save(t, old)
+	f.config.ForceLogin = true
+	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
+	client, err := Authenticate(t.Context(), f.config)
+	if client != nil || !errors.Is(err, primaryFailure) || !errors.Is(err, cleanupFailure) {
+		t.Fatalf("Authenticate error = %v", err)
+	}
+	f.assertSession(t, old)
 }
 
 func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {

@@ -83,15 +83,73 @@ func TestVerifierRejectsInvalidIdentityClaims(t *testing.T) {
 }
 
 func TestVerifierMapsDiscoveryFailureToUnavailable(t *testing.T) {
+	failure := errors.New("network failure")
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, context.DeadlineExceeded
+		return nil, failure
 	})}
 	verifier, err := NewVerifier(VerifierConfig{Issuer: "https://issuer.example", ClientID: "tnl-cli", HTTPClient: client})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifier.Verify(t.Context(), "header.payload.signature"); !errors.Is(err, ErrUnavailable) {
+	if _, err := verifier.Verify(t.Context(), "header.payload.signature"); !errors.Is(err, ErrUnavailable) || !errors.Is(err, failure) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestVerifierPreservesParentCancellationCause(t *testing.T) {
+	cause := errors.New("caller stopped")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		cancel(cause)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
+	verifier, err := NewVerifier(VerifierConfig{Issuer: "https://issuer.example", ClientID: "tnl-cli", HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.Verify(ctx, "header.payload.signature"); !errors.Is(err, cause) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("error = %v, want caller cause only", err)
+	}
+}
+
+func TestVerifierDiscoveryWaitHonorsCancellation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		close(started)
+		<-release
+		return nil, errors.New("discovery failed")
+	})}
+	verifier, err := NewVerifier(VerifierConfig{Issuer: "https://issuer.example", ClientID: "tnl-cli", HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := verifier.Verify(t.Context(), "header.payload.signature")
+		firstDone <- err
+	}()
+	<-started
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := verifier.Verify(ctx, "header.payload.signature")
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiting verification = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled verification remained blocked on discovery")
+	}
+	close(release)
+	if err := <-firstDone; !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("first verification = %v", err)
 	}
 }
 

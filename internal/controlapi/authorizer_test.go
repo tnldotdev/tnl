@@ -141,6 +141,11 @@ func TestLocalAuthorizerUsesCurrentMembershipAndDomain(t *testing.T) {
 	if _, err := (localAuthorizer{store: store}).Authorize(t.Context(), authorization.Request{}); !errors.Is(err, authorization.ErrUnauthenticated) {
 		t.Fatalf("authentication error = %v", err)
 	}
+	databaseFailure := errors.New("database unavailable")
+	store.authenticationError = databaseFailure
+	if _, err := (localAuthorizer{store: store}).Authorize(t.Context(), authorization.Request{}); !errors.Is(err, authorization.ErrUnavailable) || !errors.Is(err, databaseFailure) {
+		t.Fatalf("authentication store error = %v", err)
+	}
 }
 
 func TestLocalAuthorizerAllowsAdministratorsToDeleteMemberRoutes(t *testing.T) {

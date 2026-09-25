@@ -34,8 +34,9 @@ type candidateResult struct {
 
 // Race starts QUIC first, then starts the fallback after fallbackDelay. The first
 // connection accepted by tunnelv1 wins; completing TLS alone is not enough. A
-// permanent handshake rejection stops both attempts. Race only chooses the
-// publisher connection transport. It does not retry visitor streams.
+// duplicate claim waits for an already-running sibling; other permanent
+// handshake rejections stop both attempts. Race only chooses the publisher
+// connection transport. It does not retry visitor streams.
 func Race(
 	ctx context.Context,
 	primary Candidate,
@@ -58,6 +59,7 @@ func Race(
 	fallbackStarted := false
 	remaining := 1
 	var failures []error
+	var duplicateFailure error
 	for remaining > 0 {
 		select {
 		case <-ctx.Done():
@@ -79,6 +81,11 @@ func Race(
 			}
 			failures = append(failures, result.err)
 			if result.terminal {
+				var protocolError *ProtocolError
+				if errors.As(result.err, &protocolError) && protocolError.Code == tunnelv1.DuplicatePublisherConnection && remaining > 0 {
+					duplicateFailure = result.err
+					continue
+				}
 				cancel()
 				closeLateWinner(results, remaining)
 				return nil, "", result.err
@@ -96,15 +103,20 @@ func Race(
 			}
 		}
 	}
+	if duplicateFailure != nil {
+		return nil, "", duplicateFailure
+	}
 	return nil, "", fmt.Errorf("tunnel: all transport candidates failed: %w", errors.Join(failures...))
 }
 
 func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) candidateResult {
-	transport, err := candidate.Connector.Connect(ctx, candidate.Endpoint)
+	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	transport, err := candidate.Connector.Connect(setupCtx, candidate.Endpoint)
 	if err != nil {
 		return candidateResult{err: err}
 	}
-	session, err := Dial(ctx, transport, hello)
+	session, err := Dial(setupCtx, transport, hello)
 	if err == nil {
 		return candidateResult{session: session, transport: candidate.Transport}
 	}
@@ -118,7 +130,8 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 func IsTerminalHandshakeError(err error) bool {
 	var protocolError *ProtocolError
 	return errors.As(err, &protocolError) && protocolError.Code != tunnelv1.Unavailable &&
-		protocolError.Code != tunnelv1.CapacityExceeded && protocolError.Code != tunnelv1.Internal
+		protocolError.Code != tunnelv1.CapacityExceeded && protocolError.Code != tunnelv1.DrainingPublisherConnection &&
+		protocolError.Code != tunnelv1.Internal
 }
 
 func closeLateWinner(results <-chan candidateResult, remaining int) {

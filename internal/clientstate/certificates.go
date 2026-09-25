@@ -73,12 +73,7 @@ func (r *CertificateCache) Lock(ctx context.Context) (*Lock, error) {
 	encoded, _ := json.Marshal([]string{r.teamID, r.plan.CacheKey})
 	digest := sha256.Sum256(encoded)
 	path := filepath.Join(r.store.locksDir, fmt.Sprintf("certificate-%x.lock", digest))
-	return retryLock(ctx, func() (*Lock, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return openLock(path, "certificate")
-	})
+	return openLockContext(ctx, path, "certificate")
 }
 
 func (r *CertificateCache) Current(ctx context.Context, hostname string) (Material, bool, error) {
@@ -103,7 +98,7 @@ func (r *CertificateCache) material(ctx context.Context, hostname, phase string)
 	if len(stored.CsrDer) == 0 || !stored.RenewAt.Valid || stored.IssuanceID == "" {
 		return Material{}, true, errors.New("clientstate: certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.KeyDer)
 	if err != nil {
 		return Material{}, true, err
 	}
@@ -129,7 +124,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 	}
 	stored, err := r.record(ctx, certificatePhasePending)
 	if err == nil {
-		return r.pendingFromDB(stored, hostname)
+		return r.pendingFromDB(ctx, stored, hostname)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Pending{}, fmt.Errorf("clientstate: read pending route certificate: %w", err)
@@ -146,7 +141,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: create application CSR: %w", err)
 	}
-	protectedKey, err := r.store.secrets.Seal(r.secretContext(), keyDER)
+	protectedKey, err := r.store.secrets.Seal(ctx, r.secretContext(), keyDER)
 	if err != nil {
 		return Pending{}, err
 	}
@@ -186,7 +181,7 @@ func (r *CertificateCache) Stage(
 	if !renewAt.After(installed.Leaf.NotBefore) || !renewAt.Before(installed.Leaf.NotAfter) {
 		return Material{}, errors.New("clientstate: renewal time is outside certificate validity")
 	}
-	protectedKey, err := r.store.secrets.Seal(r.secretContext(), pending.keyDER)
+	protectedKey, err := r.store.secrets.Seal(ctx, r.secretContext(), pending.keyDER)
 	if err != nil {
 		return Material{}, err
 	}
@@ -253,11 +248,11 @@ func (r *CertificateCache) NewPending(ctx context.Context, hostname string) (Pen
 	return r.Pending(ctx, hostname)
 }
 
-func (r *CertificateCache) pendingFromDB(stored clientstatedb.CertificateMaterial, hostname string) (Pending, error) {
+func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstatedb.CertificateMaterial, hostname string) (Pending, error) {
 	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
 		return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.KeyDer)
 	if err != nil {
 		return Pending{}, err
 	}

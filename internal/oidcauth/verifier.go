@@ -4,15 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 var (
@@ -48,8 +49,8 @@ type providerVerifier struct {
 	clientID   string
 	httpClient *http.Client
 
-	mu       sync.Mutex
-	provider *oidc.Provider
+	discovery chan struct{}
+	provider  *oidc.Provider
 }
 
 // NewVerifier validates configuration without contacting the provider.
@@ -66,7 +67,11 @@ func NewVerifier(config VerifierConfig) (Verifier, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &providerVerifier{issuer: config.Issuer, clientID: config.ClientID, httpClient: client}, nil
+	client = httpclient.NoRedirects(client)
+	return &providerVerifier{
+		issuer: config.Issuer, clientID: config.ClientID, httpClient: client,
+		discovery: make(chan struct{}, 1),
+	}, nil
 }
 
 func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, error) {
@@ -81,14 +86,24 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, er
 }
 
 func (v *providerVerifier) getProvider(ctx context.Context) (*oidc.Provider, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	select {
+	case v.discovery <- struct{}{}:
+		defer func() { <-v.discovery }()
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	if v.provider != nil {
 		return v.provider, nil
 	}
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, v.httpClient), v.issuer)
 	if err != nil {
-		return nil, ErrUnavailable
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	v.provider = provider
 	return provider, nil
@@ -99,8 +114,11 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 		ClientID: clientID, SupportedSigningAlgs: []string{"RS256"},
 	}).Verify(ctx, raw)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return Identity{}, cause
+		}
 		if providerFailure(err) {
-			return Identity{}, ErrUnavailable
+			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 		}
 		return Identity{}, ErrUnauthenticated
 	}

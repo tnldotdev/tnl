@@ -1,6 +1,8 @@
+import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import * as http from "node:http";
 import * as path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 import * as z from "zod";
 import {
   canonicalLoopbackTarget,
@@ -280,6 +282,39 @@ describe("protocol v1", () => {
     ).rejects.toThrow(/oversized response/);
   });
 
+  test("wraps socket connection failures with configuration request context", async () => {
+    const directory = await temporaryDirectory("tnl-missing-socket-");
+    const failure = await rejection(
+      requestTunnelAssignment("vite", { socket: path.join(directory, "missing.sock") }),
+    );
+    expect(failure.message).toBe("tnl dev configuration request failed");
+    expect(failure.cause).toMatchObject({ code: "ENOENT" });
+  });
+
+  test("rejects a response that closes after a partial body", async () => {
+    const directory = await temporaryDirectory("tnl-partial-response-");
+    const socket = path.join(directory, "control.sock");
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, {
+        "Content-Length": "100",
+        "Content-Type": "application/json",
+      });
+      response.write("{");
+      setImmediate(() => response.destroy());
+    });
+    server.listen(socket);
+    await once(server, "listening");
+    onTestFinished(async () => {
+      const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+      server.closeAllConnections();
+      await closed;
+    });
+
+    const failure = await rejection(requestTunnelAssignment("vite", { socket }));
+    expect(failure.message).toBe("tnl dev configuration response failed");
+    expect(failure.cause).toMatchObject({ code: "ECONNRESET" });
+  });
+
   test.each([
     ["protocol", { protocol: 2 }, /inconsistent tunnel assignment/],
     ["tunnel ID", { tunnelID: "invalid" }, /invalid tunnel ID/],
@@ -372,4 +407,14 @@ function requiredBootstrap<T>(value: T | null): T {
     throw new Error("test bootstrap was not available");
   }
   return value;
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error("promise rejected with a non-Error value", { cause: error });
+  }
+  throw new Error("promise unexpectedly resolved");
 }

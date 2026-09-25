@@ -29,6 +29,9 @@ func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 	}
 	root := filepath.Clean(absolute)
 	isGit := false
+	if err := ctx.Err(); err != nil {
+		return Worktree{}, err
+	}
 	command := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	command.Dir = root
 	if output, commandErr := command.Output(); commandErr == nil {
@@ -37,6 +40,8 @@ func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 			root = filepath.Clean(discoveredRoot)
 			isGit = true
 		}
+	} else if err := ctx.Err(); err != nil {
+		return Worktree{}, err
 	}
 	name := filepath.Base(root)
 	if name == "" || name == string(filepath.Separator) || name == "." {

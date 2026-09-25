@@ -21,6 +21,9 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 		wantError, unavailable bool
 	}{
 		{"empty", "", 204, false, false},
+		{"empty body-bearing response", "", 200, true, false},
+		{"null", `null`, 200, true, false},
+		{"whitespace null", " \nnull\t", 200, true, false},
 		{"numbers", `{"value":9007199254740993}`, 200, false, false},
 		{"unknown", `{"other":1}`, 200, true, false},
 		{"partial unknown", `{"value":1,"other":2}`, 200, true, false},
@@ -31,6 +34,8 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 		{"oversized", strings.Repeat(" ", maxResponseBytes+1), 200, true, false},
 		{"malformed rate limit", `not JSON`, 429, true, false},
 		{"malformed unavailable", `not JSON`, 503, true, true},
+		{"oversized rate limit", strings.Repeat(" ", maxResponseBytes+1), 429, true, false},
+		{"oversized unavailable", strings.Repeat(" ", maxResponseBytes+1), 503, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := &responseBody{Reader: strings.NewReader(test.payload)}
@@ -60,6 +65,31 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 	})
 	if !body.closed || !errors.Is(err, ErrUnavailable) || !errors.Is(err, failure) {
 		t.Fatalf("read failure = %v, closed=%v", err, body.closed)
+	}
+	for _, test := range []struct {
+		status int
+		check  func(error) bool
+	}{
+		{http.StatusTooManyRequests, func(err error) bool { return errors.Is(err, ErrRateLimited) }},
+		{http.StatusServiceUnavailable, func(err error) bool { return errors.Is(err, ErrUnavailable) }},
+	} {
+		body := &responseBody{Reader: iotest.ErrReader(failure)}
+		_, err := request[struct{}](t.Context(), &Client{timeout: time.Second}, func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: test.status,
+				Header:     http.Header{"Retry-After": {"7"}},
+				Body:       body,
+			}, nil
+		})
+		if !body.closed || !test.check(err) || errors.Is(err, failure) {
+			t.Fatalf("HTTP %d unreadable body: closed=%v error=%v", test.status, body.closed, err)
+		}
+		if test.status == http.StatusTooManyRequests {
+			var rate *RateLimitError
+			if !errors.As(err, &rate) || rate.RetryAfter != 7*time.Second {
+				t.Fatalf("HTTP 429 retry after = %v", err)
+			}
+		}
 	}
 }
 

@@ -1,14 +1,16 @@
 // Package filelock acquires user-owned, mode-0600 regular lock files on Unix.
 // It protects the final path component with O_NOFOLLOW, not directory ancestry.
-// Callers own trusted directories, path derivation, retries, and lock lifetime.
+// Callers own trusted directories, path derivation, and lock lifetime.
 package filelock
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -24,6 +26,8 @@ const (
 // ErrLocked reports contention in Nonblocking mode.
 var ErrLocked = errors.New("filelock: already locked")
 
+const retryInterval = 100 * time.Millisecond
+
 // Lock owns a locked descriptor. Do not copy it; Close releases it exactly once.
 type Lock struct {
 	file *os.File
@@ -32,7 +36,7 @@ type Lock struct {
 }
 
 // Acquire opens or creates path and takes an exclusive lock. Blocking acquisition
-// has no cancellation; use Nonblocking and caller-owned retry for that behavior.
+// has no cancellation; use AcquireContext for a cancelable wait.
 // ownerUID is explicit because callers may require the real or effective UID.
 func Acquire(path string, mode Mode, ownerUID int) (*Lock, error) {
 	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
@@ -66,6 +70,27 @@ func Acquire(path string, mode Mode, ownerUID int) (*Lock, error) {
 	}
 	locked = true
 	return &Lock{file: file}, nil
+}
+
+// AcquireContext retries nonblocking acquisition until it succeeds or ctx is
+// canceled. It avoids an uncancelable wait in the kernel.
+func AcquireContext(ctx context.Context, path string, ownerUID int) (*Lock, error) {
+	for {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+		lock, err := Acquire(path, Nonblocking, ownerUID)
+		if !errors.Is(err, ErrLocked) {
+			return lock, err
+		}
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
 }
 
 // Close unlocks and closes the descriptor, without removing the lock file. It is

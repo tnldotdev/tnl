@@ -223,7 +223,11 @@ func TextForCommandError(command string, err error) (string, bool) {
 
 // WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
 func WriteWarning(output io.Writer, command string, code Code) error {
-	_, err := io.WriteString(output, renderText(command, code, definitionFor(code).summary))
+	text := renderText(command, code, definitionFor(code).summary)
+	written, err := io.WriteString(output, text)
+	if err == nil && written != len(text) {
+		err = io.ErrShortWrite
+	}
 	return err
 }
 

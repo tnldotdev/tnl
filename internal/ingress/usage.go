@@ -77,7 +77,7 @@ type UsageReporter struct {
 	report   func(error)
 	observer OperationObserver
 
-	flushMu         sync.Mutex
+	flushToken      chan struct{}
 	mu              sync.Mutex
 	buckets         map[usageBucketKey]*usageBucket
 	visitors        map[usageVisitorKey]*routeusage.VisitorSketch
@@ -109,7 +109,7 @@ func NewUsageReporter(control usageControl, interval time.Duration, report func(
 	return &UsageReporter{
 		control: control, interval: interval, report: report,
 		buckets: make(map[usageBucketKey]*usageBucket), visitors: make(map[usageVisitorKey]*routeusage.VisitorSketch),
-		active: make(map[*usageConnection]struct{}),
+		active: make(map[*usageConnection]struct{}), flushToken: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -179,13 +179,26 @@ func usageFailureReason(err error) string {
 }
 
 func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) error {
-	r.flushMu.Lock()
-	defer r.flushMu.Unlock()
 	r.mu.Lock()
 	closed := r.closed
 	r.mu.Unlock()
 	if closed {
 		return nil
+	}
+	select {
+	case r.flushToken <- struct{}{}:
+		defer func() { <-r.flushToken }()
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	r.mu.Lock()
+	closed = r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil
+	}
+	if err := context.Cause(ctx); err != nil {
+		return err
 	}
 	now = now.UTC()
 	for {

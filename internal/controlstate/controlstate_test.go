@@ -1,9 +1,12 @@
 package controlstate
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -112,4 +115,42 @@ func TestDatabaseNilHealthAndReadiness(t *testing.T) {
 		t.Fatal("Readiness succeeded for a nil database")
 	}
 	database.Close()
+}
+
+func TestRollbackUsesBoundedContextAfterRequestCancellation(t *testing.T) {
+	requestCtx, cancel := context.WithCancel(context.WithValue(t.Context(), rollbackContextKey{}, "request value"))
+	cancel()
+	operationErr := errors.New("operation failed")
+	rollbackErr := errors.New("rollback failed")
+	tx := &rollbackContextTx{rollbackErr: rollbackErr}
+
+	result := error(operationErr)
+	rollback(requestCtx, tx, "test transaction", &result)()
+
+	if tx.contextErr != nil || tx.contextValue != "request value" || !tx.hasDeadline || tx.remaining <= 0 || tx.remaining > transactionRollbackTimeout {
+		t.Fatalf("rollback context: err=%v value=%v deadline=%t remaining=%s", tx.contextErr, tx.contextValue, tx.hasDeadline, tx.remaining)
+	}
+	if !errors.Is(result, operationErr) || !errors.Is(result, rollbackErr) {
+		t.Fatalf("rollback result = %v", result)
+	}
+}
+
+type rollbackContextKey struct{}
+
+type rollbackContextTx struct {
+	pgx.Tx
+	rollbackErr  error
+	contextErr   error
+	contextValue any
+	hasDeadline  bool
+	remaining    time.Duration
+}
+
+func (tx *rollbackContextTx) Rollback(ctx context.Context) error {
+	tx.contextErr = ctx.Err()
+	tx.contextValue = ctx.Value(rollbackContextKey{})
+	deadline, ok := ctx.Deadline()
+	tx.hasDeadline = ok
+	tx.remaining = time.Until(deadline)
+	return tx.rollbackErr
 }

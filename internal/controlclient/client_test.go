@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -80,6 +81,74 @@ func TestClientBoundsRequests(t *testing.T) {
 	client.timeout = 20 * time.Millisecond
 	if _, err := client.Discovery(context.Background()); !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Discovery error = %v, want unavailable deadline", err)
+	}
+}
+
+func TestClientPreservesParentCancellationCause(t *testing.T) {
+	cause := errors.New("caller stopped")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	client, err := New("https://server.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		cancel(cause)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Discovery(ctx); !errors.Is(err, cause) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Discovery error = %v, want caller cause only", err)
+	}
+}
+
+func TestClientPreservesParentDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	client, err := New("https://server.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Discovery(ctx); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Discovery error = %v, want caller deadline only", err)
+	}
+}
+
+func TestClientDoesNotFollowAuthenticatedRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			destinationCalls := 0
+			destination := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				destinationCalls++
+				_, _ = io.Copy(io.Discard, request.Body)
+			}))
+			defer destination.Close()
+
+			source := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/v1/routes/route_1" || request.Header.Get("Authorization") != "Bearer access" {
+					t.Errorf("unexpected authenticated request: %s %s", request.Method, request.URL)
+				}
+				response.Header().Set("Location", destination.URL+"/record")
+				response.WriteHeader(status)
+			}))
+			defer source.Close()
+
+			supplied := source.Client()
+			client, err := New(source.URL, supplied, "access")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.GetRoute(t.Context(), "route_1"); err == nil {
+				t.Fatal("redirect response was accepted")
+			}
+			if destinationCalls != 0 {
+				t.Fatalf("credential-bearing request reached redirect destination %d times", destinationCalls)
+			}
+			if supplied.CheckRedirect != nil {
+				t.Fatal("supplied client was mutated")
+			}
+		})
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 )
@@ -132,6 +133,103 @@ func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 	if event.Code != string(diagnostic.TargetUnavailable) || event.HelpURL != diagnostic.HelpURL(diagnostic.TargetUnavailable) ||
 		event.Message != "connection refused" {
 		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("publisher failed")
+	result := output.finish(t.Context(), failure)
+	if !errors.Is(result, failure) {
+		t.Fatalf("finish error = %v", result)
+	}
+	if code, render := terminalResult(result); code != 1 || render != nil {
+		t.Fatalf("terminal result = %d, %v", code, render)
+	}
+	decoder := json.NewDecoder(&stdout)
+	var event publishEvent
+	if err := decoder.Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != "error" || event.Message != failure.Error() {
+		t.Fatalf("event = %#v", event)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("duplicate event: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunPublishNDJSONFailureHasSingleOwner(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	result := runPublish(t.Context(), publishCommand{Target: "https://example.com", Output: "ndjson"}, &stdout, &stderr)
+	if code, render := terminalResult(result); code != 1 || render != nil {
+		t.Fatalf("terminal result = %d, %v", code, render)
+	}
+	decoder := json.NewDecoder(&stdout)
+	var event publishEvent
+	if err := decoder.Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != "error" || event.Message == "" {
+		t.Fatalf("event = %#v", event)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("duplicate event: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPublishOutputNDJSONRetainsFailedErrorEventWrite(t *testing.T) {
+	writeErr := errors.New("output closed")
+	output, err := newPublishOutput("ndjson", "tnl publish", errorWriter{writeErr}, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("publisher failed")
+	result := output.finish(t.Context(), failure)
+	if !errors.Is(result, failure) || !errors.Is(result, writeErr) {
+		t.Fatalf("finish error = %v", result)
+	}
+	if code, render := terminalResult(result); code != 1 || render == nil {
+		t.Fatalf("terminal result = %d, %v", code, render)
+	}
+}
+
+func TestPublishOutputNDJSONAuthorityRetryMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantRetryAt bool
+	}{
+		{name: "unavailable", err: authorityclient.ErrUnavailable},
+		{name: "rate limited", err: &authorityclient.RateLimitError{RetryAfter: time.Second}, wantRetryAt: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			output, err := newPublishOutput("ndjson", "tnl dev", &stdout, io.Discard, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := output.failed(test.err); err != nil {
+				t.Fatal(err)
+			}
+			var event publishEvent
+			if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
+				t.Fatal(err)
+			}
+			if event.Retryable == nil || !*event.Retryable || (event.RetryAt != nil) != test.wantRetryAt {
+				t.Fatalf("event = %#v", event)
+			}
+		})
 	}
 }
 
@@ -278,7 +376,7 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	openCount := 0
 	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, func(string) error {
 		openCount++
-		return errors.New("browser unavailable")
+		return errors.New("browser\x1b unavailable")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +390,8 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	if openCount != 1 {
 		t.Fatalf("open count = %d", openCount)
 	}
-	if got := stderr.String(); got != "tnl: could not open https://demo.example: browser unavailable\n" {
+	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- browser not opened ") ||
+		!strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 	var first, second publishEvent
@@ -340,6 +439,20 @@ func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
 	got := stderr.String()
 	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
 		!strings.Contains(got, "connection lost") || !strings.Contains(got, "+-- reconnecting ") {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl dev", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.logf("connection %s", "lost\x1b")
+	got := stderr.String()
+	if !strings.HasPrefix(got, "+--[ tnl dev ]-- publisher connection disrupted ") ||
+		!strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -423,3 +536,7 @@ func TestBoundedOutputError(t *testing.T) {
 		t.Fatalf("message length = %d", len(message))
 	}
 }
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }

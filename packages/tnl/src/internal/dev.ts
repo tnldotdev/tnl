@@ -20,6 +20,7 @@ const protocolVersion = "1";
 const maximumDocumentBytes = 64 * 1024;
 const maximumResponseBytes = 64 * 1024;
 const registrationTimeoutMilliseconds = 10 * 60 * 1000;
+type TnlDevOperation = "configuration" | "target registration";
 
 export type TnlDevEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -100,7 +101,14 @@ export async function requestTunnelAssignment(
     throw new Error("tnl framework name is invalid");
   }
   const body = JSON.stringify({ protocol: 1, framework });
-  const response = await sendRequest(bootstrap, framework, "/v1/configure", body, 200);
+  const response = await sendRequest(
+    bootstrap,
+    framework,
+    "/v1/configure",
+    body,
+    200,
+    "configuration",
+  );
   return parseAssignment(response, bootstrap, framework);
 }
 
@@ -130,7 +138,14 @@ export async function registerLocalTarget(
   target: CanonicalLoopbackTarget,
 ): Promise<void> {
   const body = JSON.stringify({ protocol: 1, framework: assignment.framework, target });
-  await sendRequest(assignment, assignment.framework, "/v1/target", body, 204);
+  await sendRequest(
+    assignment,
+    assignment.framework,
+    "/v1/target",
+    body,
+    204,
+    "target registration",
+  );
 }
 
 export function runtimePayload(project: ProjectMetadata, runningUnderTnlDev: boolean): string {
@@ -391,70 +406,111 @@ function sendRequest(
   requestPath: string,
   body: string,
   expectedStatus: number,
+  operation: TnlDevOperation,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const request = http.request(
-      {
-        socketPath: bootstrap.socket,
-        path: requestPath,
-        method: "POST",
-        headers: {
-          "Content-Length": Buffer.byteLength(body),
-          "Content-Type": "application/json",
+    let settled = false;
+    const succeed = (value: unknown) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const failTransport = (phase: "request" | "response", cause: unknown) => {
+      fail(new Error(`tnl dev ${operation} ${phase} failed`, { cause }));
+    };
+
+    let request: http.ClientRequest;
+    try {
+      request = http.request(
+        {
+          socketPath: bootstrap.socket,
+          path: requestPath,
+          method: "POST",
+          headers: {
+            "Content-Length": Buffer.byteLength(body),
+            "Content-Type": "application/json",
+          },
         },
-      },
-      (response) => {
-        response.on("error", reject);
-        const declaredLength = Number(response.headers["content-length"]);
-        if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
-          response.destroy(new Error("tnl dev returned an oversized response"));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let size = 0;
-        response.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (size > maximumResponseBytes) {
-            response.destroy(new Error("tnl dev returned an oversized response"));
+        (response) => {
+          response.on("error", (error) => failTransport("response", error));
+          response.on("close", () => {
+            if (!response.complete) {
+              failTransport(
+                "response",
+                new Error("tnl dev response closed before it was complete"),
+              );
+            }
+          });
+          const declaredLength = Number(response.headers["content-length"]);
+          if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
+            fail(new Error("tnl dev returned an oversized response"));
+            response.destroy();
             return;
           }
-          chunks.push(chunk);
-        });
-        response.on("end", () => {
-          const data = Buffer.concat(chunks).toString("utf8").trim();
-          if (response.statusCode !== expectedStatus) {
-            reject(
-              new Error(
-                `tnl dev rejected the ${framework} request with status ${response.statusCode}${data ? `: ${data}` : ""}`,
-              ),
-            );
-            return;
-          }
-          if (expectedStatus === 204) {
-            if (data !== "") {
-              reject(new Error("tnl dev returned an unexpected target response"));
+          const chunks: Buffer[] = [];
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            if (settled) return;
+            size += chunk.length;
+            if (size > maximumResponseBytes) {
+              fail(new Error("tnl dev returned an oversized response"));
+              response.destroy();
               return;
             }
-            resolve(undefined);
-            return;
-          }
-          if (response.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
-            reject(new Error("tnl dev returned a non-JSON configuration"));
-            return;
-          }
-          try {
-            resolve(JSON.parse(data));
-          } catch (error) {
-            reject(new Error("tnl dev returned an invalid configuration", { cause: error }));
-          }
-        });
-      },
-    );
+            chunks.push(chunk);
+          });
+          response.on("end", () => {
+            if (!response.complete) {
+              failTransport("response", new Error("tnl dev response ended before it was complete"));
+              return;
+            }
+            const data = Buffer.concat(chunks).toString("utf8").trim();
+            if (response.statusCode !== expectedStatus) {
+              fail(
+                new Error(
+                  `tnl dev rejected the ${framework} request with status ${response.statusCode}${data ? `: ${data}` : ""}`,
+                ),
+              );
+              return;
+            }
+            if (expectedStatus === 204) {
+              if (data !== "") {
+                fail(new Error("tnl dev returned an unexpected target response"));
+                return;
+              }
+              succeed(undefined);
+              return;
+            }
+            if (response.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+              fail(new Error("tnl dev returned a non-JSON configuration"));
+              return;
+            }
+            try {
+              succeed(JSON.parse(data));
+            } catch (error) {
+              fail(new Error("tnl dev returned an invalid configuration", { cause: error }));
+            }
+          });
+        },
+      );
+    } catch (error) {
+      failTransport("request", error);
+      return;
+    }
     request.setTimeout(registrationTimeoutMilliseconds, () => {
       request.destroy(new Error("timed out configuring the target with tnl dev"));
     });
-    request.on("error", reject);
-    request.end(body);
+    request.on("error", (error) => failTransport("request", error));
+    try {
+      request.end(body);
+    } catch (error) {
+      failTransport("request", error);
+    }
   });
 }
 

@@ -47,11 +47,11 @@ func TestBearerTransportReplaysOnceAndTransfersFinalBody(t *testing.T) {
 			source := f.source(t)
 			transport := &bearerTransport{base: f.transport, source: source}
 			const payload = `{"target":"http://127.0.0.1:3000"}`
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes?test=replay", strings.NewReader(payload))
+			originalBody := &trackedBody{Reader: strings.NewReader(payload)}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes?test=replay", originalBody)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer request.Body.Close()
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Idempotency-Key", "stable-key")
 			originalHeaders := request.Header.Clone()
@@ -74,6 +74,9 @@ func TestBearerTransportReplaysOnceAndTransfersFinalBody(t *testing.T) {
 			}
 			if calls != 2 || len(sentBodies) != 2 || sentBodies[0] == sentBodies[1] {
 				t.Fatalf("replay calls=%d bodies=%d", calls, len(sentBodies))
+			}
+			if originalBody.closes != 1 || originalBody.read != 0 {
+				t.Fatalf("original body closes=%d bytes=%d", originalBody.closes, originalBody.read)
 			}
 			for _, body := range sentBodies {
 				if body.closes != 1 || body.read != len(payload) {
@@ -221,12 +224,11 @@ func TestAuthenticatedRequestBodyFailuresDoNotSendPartialRequests(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer request.Body.Close()
 			if replayable {
 				request.GetBody = func() (io.ReadCloser, error) { return nil, failure }
 			}
 			response, err := (&bearerTransport{base: base, source: source}).RoundTrip(request)
-			if response != nil || err == nil || replayable && !errors.Is(err, failure) || len(base.snapshot()) != 0 || original.read != 0 || request.Header.Get("Authorization") != "" {
+			if response != nil || err == nil || replayable && !errors.Is(err, failure) || len(base.snapshot()) != 0 || original.read != 0 || original.closes != 1 || request.Header.Get("Authorization") != "" {
 				t.Fatalf("body preparation failure: %v", err)
 			}
 		})
@@ -245,11 +247,11 @@ func TestBearerTransportReplayBodyFailureKeepsRefreshedSession(t *testing.T) {
 		return &http.Response{StatusCode: 401, Header: http.Header{"Www-Authenticate": {"Bearer"}}, Body: unauthorizedBody}, nil
 	})
 	f.save(t, old)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", strings.NewReader("payload"))
+	originalBody := &trackedBody{Reader: strings.NewReader("payload")}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", originalBody)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Body.Close()
 	calls := 0
 	failure := errors.New("replay unavailable")
 	firstBody := &trackedBody{Reader: strings.NewReader("payload")}
@@ -261,7 +263,7 @@ func TestBearerTransportReplayBodyFailureKeepsRefreshedSession(t *testing.T) {
 		return nil, failure
 	}
 	response, err := (&bearerTransport{base: f.transport, source: f.source(t)}).RoundTrip(request)
-	if response != nil || !errors.Is(err, failure) || calls != 2 || unauthorizedBody.closes != 1 || firstBody.closes != 1 || len(f.transport.snapshot()) != 3 {
+	if response != nil || !errors.Is(err, failure) || calls != 2 || originalBody.closes != 1 || originalBody.read != 0 || unauthorizedBody.closes != 1 || firstBody.closes != 1 || len(f.transport.snapshot()) != 3 {
 		t.Fatalf("replay failure: calls=%d error=%v", calls, err)
 	}
 	f.assertSession(t, storedSession(rotated))
@@ -291,12 +293,17 @@ func TestBearerTransportNetworkFailureDoesNotRetryAgain(t *testing.T) {
 				return nil, failure
 			})
 			f.save(t, old)
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testControlOrigin+"/v1/routes", nil)
+			const payload = "request body"
+			originalBody := &trackedBody{Reader: strings.NewReader(payload)}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", originalBody)
 			if err != nil {
 				t.Fatal(err)
 			}
+			request.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader(payload)), nil
+			}
 			response, err := (&bearerTransport{base: f.transport, source: f.source(t)}).RoundTrip(request)
-			if response != nil || !errors.Is(err, failure) {
+			if response != nil || !errors.Is(err, failure) || originalBody.closes != 1 || originalBody.read != 0 {
 				t.Fatalf("network failure=%v", err)
 			}
 			wantCalls, wantRequests := 1, 2

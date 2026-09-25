@@ -1,6 +1,7 @@
 package filelock
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -103,6 +104,31 @@ func TestBlockingLockWaitsForRelease(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("blocking acquisition did not finish")
+	}
+}
+
+func TestContextLockWaitCanBeCanceled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.lock")
+	first, err := Acquire(path, Nonblocking, os.Geteuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		lock, err := AcquireContext(ctx, path, os.Geteuid())
+		result <- errors.Join(err, lock.Close())
+	}()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("contending acquisition error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("contending acquisition did not honor cancellation")
 	}
 }
 

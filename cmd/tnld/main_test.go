@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,14 @@ func TestRunVersion(t *testing.T) {
 	}
 	if output.String() != buildinfo.Line("tnld")+"\n" {
 		t.Fatalf("version output = %q", output.String())
+	}
+}
+
+func TestWriteTerminalErrorRendersJoinedErrorsOnOneSafeLine(t *testing.T) {
+	var output bytes.Buffer
+	writeTerminalError(&output, errors.Join(errors.New("first"), errors.New("second\x1b")))
+	if got, want := output.String(), `tnld: first; second\x1b`+"\n"; got != want {
+		t.Fatalf("terminal error = %q, want %q", got, want)
 	}
 }
 

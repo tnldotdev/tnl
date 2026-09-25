@@ -99,11 +99,7 @@ func (d *Database) CreateBuiltinControlSession(
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: begin builtin authentication: %w", err)
 	}
-	defer func() {
-		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			retErr = errors.Join(retErr, fmt.Errorf("controlstate: roll back builtin authentication: %w", err))
-		}
-	}()
+	defer rollback(ctx, tx, "builtin authentication", &retErr)()
 	queries := controlstatedb.New(tx)
 	if err := queries.LockIdentityBootstrap(ctx); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: lock identity bootstrap: %w", err)
@@ -499,11 +495,7 @@ func (d *Database) RefreshControlSession(
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: begin control-session refresh: %w", err)
 	}
-	defer func() {
-		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			retErr = errors.Join(retErr, fmt.Errorf("controlstate: roll back control-session refresh: %w", err))
-		}
-	}()
+	defer rollback(ctx, tx, "control-session refresh", &retErr)()
 	queries := controlstatedb.New(tx)
 	row, err := queries.LockControlSessionByRefreshID(ctx, tokenID.String())
 	if errors.Is(err, pgx.ErrNoRows) {

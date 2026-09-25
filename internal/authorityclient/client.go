@@ -1,10 +1,11 @@
 // Package authorityclient calls the authority API.
 //
-// Responses cannot exceed 64 KiB. A nonempty successful response must contain
-// one JSON value that matches the generated schema. Numbers in open objects stay
-// as json.Number. Requests time out after 20 seconds. Network and read failures
-// wrap ErrUnavailable, but invalid or oversized responses do not. HTTP 429 and
-// 503 are handled before the client reads a problem response.
+// Responses cannot exceed 64 KiB. A successful response other than HTTP 204
+// must contain one non-null JSON value that matches the generated schema.
+// Numbers in open objects stay as json.Number. Requests time out after 20
+// seconds and do not follow redirects. Network and read failures wrap
+// ErrUnavailable, but caller cancellation, invalid responses, and oversized
+// responses do not. HTTP 429 and 503 are classified before their bodies are read.
 package authorityclient
 
 import (
@@ -19,6 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -48,9 +50,7 @@ func New(endpoint string, httpClient *http.Client, access credentials.AccessToke
 	if err != nil || canonical != endpoint {
 		return nil, errors.New("authorityclient: endpoint must be a canonical HTTPS origin")
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
+	httpClient = httpclient.NoRedirects(httpClient)
 	apiClient, err := authorityv1.NewClient(
 		canonical,
 		authorityv1.WithHTTPClient(httpClient),
@@ -227,21 +227,30 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 		return nil
 	})
 	if err != nil {
-		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return zero, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable {
+		return zero, responseError(response.StatusCode, response.Header, nil)
+	}
 	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
 	if errors.Is(err, httpjson.ErrTooLarge) {
 		return zero, errors.New("authorityclient: response exceeds limit")
 	}
 	if err != nil {
-		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return zero, unavailableError(ctx, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return zero, responseError(response.StatusCode, response.Header, payload)
 	}
-	if len(payload) == 0 {
+	if response.StatusCode == http.StatusNoContent && len(payload) == 0 {
 		return zero, nil
+	}
+	if len(payload) == 0 {
+		return zero, errors.New("authorityclient: successful response has an empty body")
+	}
+	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+		return zero, errors.New("authorityclient: successful response has a null body")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
@@ -254,6 +263,13 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 		return zero, fmt.Errorf("authorityclient: decode response: %w", err)
 	}
 	return result, nil
+}
+
+func unavailableError(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
 // ValidateControlSessionResponse checks credentials and session data returned by the authority.

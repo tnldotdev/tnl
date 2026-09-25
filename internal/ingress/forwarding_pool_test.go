@@ -149,3 +149,44 @@ func TestForwarderWaiterCancellationAndCloseWhileConnecting(t *testing.T) {
 		})
 	}
 }
+
+func TestForwarderSessionSetupOutlivesFirstWaiter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		failure := errors.New("connect failed")
+		connector := &gatedRelayConnector{started: make(chan struct{}), release: release, failure: failure}
+		forwarder := newForwarder(connector)
+		t.Cleanup(func() { _ = forwarder.Close() })
+		target := relayTarget{address: "relay:443", relayID: "relay_1"}
+
+		firstCtx, cancelFirst := context.WithCancel(t.Context())
+		first := ingressWorker(t, cancelFirst, func() error {
+			_, _, err := forwarder.session(firstCtx, target)
+			return err
+		})
+		ingressAwait(t, connector.started)
+		second := ingressWorker(t, func() {}, func() error {
+			_, _, err := forwarder.session(t.Context(), target)
+			return err
+		})
+		t.Cleanup(unblock)
+		synctest.Wait()
+		cancelFirst()
+		if err := ingressAwait(t, first); !errors.Is(err, context.Canceled) {
+			t.Fatalf("first waiter = %v", err)
+		}
+		select {
+		case err := <-second:
+			t.Fatalf("first waiter canceled shared setup: %v", err)
+		default:
+		}
+		unblock()
+		if err := ingressAwait(t, second); !errors.Is(err, failure) {
+			t.Fatalf("second waiter = %v", err)
+		}
+		if connector.calls.Load() != 1 {
+			t.Fatalf("connect calls = %d", connector.calls.Load())
+		}
+	})
+}

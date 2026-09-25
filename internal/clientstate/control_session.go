@@ -38,11 +38,12 @@ func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error
 	if stored.SessionID == "" {
 		return ControlSession{}, true, errors.New("clientstate: saved control session is invalid")
 	}
-	accessToken, err := s.secrets.Open(controlSessionContext(stored.SessionID, "access"), stored.AccessToken)
+	accessToken, err := s.secrets.Open(ctx, controlSessionContext(stored.SessionID, "access"), stored.AccessToken)
 	if err != nil {
 		return ControlSession{}, true, err
 	}
 	refreshToken, err := s.secrets.Open(
+		ctx,
 		controlSessionContext(stored.SessionID, "refresh"), stored.RefreshToken,
 	)
 	if err != nil {
@@ -63,11 +64,12 @@ func (s *Store) SaveControlSession(ctx context.Context, session ControlSession) 
 	if err := s.validateControlSession(session); err != nil {
 		return err
 	}
-	accessToken, err := s.secrets.Seal(controlSessionContext(session.SessionID, "access"), []byte(session.AccessToken))
+	accessToken, err := s.secrets.Seal(ctx, controlSessionContext(session.SessionID, "access"), []byte(session.AccessToken))
 	if err != nil {
 		return err
 	}
 	refreshToken, err := s.secrets.Seal(
+		ctx,
 		controlSessionContext(session.SessionID, "refresh"), []byte(session.RefreshToken),
 	)
 	if err != nil {

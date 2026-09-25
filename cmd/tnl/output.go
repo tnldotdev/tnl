@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -55,6 +56,11 @@ type publishOutput struct {
 	framework         string
 	openURL           func(string) error
 }
+
+type reportedError struct{ err error }
+
+func (e *reportedError) Error() string { return e.err.Error() }
+func (e *reportedError) Unwrap() error { return e.err }
 
 func (o *publishOutput) provisioning(hostname string, routeVersion uint64) error {
 	o.mu.Lock()
@@ -205,7 +211,12 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 	if o.mode != "human" && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openURL(url); err != nil {
-			_, _ = fmt.Fprintf(o.stderr, "tnl: could not open %s: %v\n", url, err)
+			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "route remains ready",
+				clioutput.Fields(
+					clioutput.Field{Label: "URL", Value: url},
+					clioutput.Field{Label: "reason", Value: err.Error()},
+				),
+			)
 		}
 	}
 	return nil
@@ -231,18 +242,15 @@ func (o *publishOutput) logf(format string, arguments ...any) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	message := fmt.Sprintf(format, arguments...)
-	if o.mode == "human" {
-		_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(message))
-		return
-	}
-	_, _ = fmt.Fprintf(o.stderr, "tnl: %s\n", message)
+	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(message))
 }
 
 func (o *publishOutput) failed(err error) error {
 	if o.mode == "human" {
 		return nil
 	}
-	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited)
+	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) ||
+		errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited)
 	event := publishEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		event.Code = string(code)
@@ -252,8 +260,37 @@ func (o *publishOutput) failed(err error) error {
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		retryAt := time.Now().Add(limited.RetryAfter).UTC()
 		event.RetryAt = &retryAt
+	} else {
+		var authorityLimited *authorityclient.RateLimitError
+		if errors.As(err, &authorityLimited) && authorityLimited.RetryAfter > 0 {
+			retryAt := time.Now().Add(authorityLimited.RetryAfter).UTC()
+			event.RetryAt = &retryAt
+		}
 	}
 	return o.emit(event)
+}
+
+func (o *publishOutput) finish(ctx context.Context, result error) error {
+	cause := context.Cause(ctx)
+	if result == nil {
+		result = cause
+	} else if cause != nil && !errors.Is(result, cause) {
+		result = errors.Join(result, cause)
+	}
+	result = classifyCommandError(result)
+	if result == nil {
+		return nil
+	}
+	if code, render := terminalResult(result); code == 0 && render == nil {
+		return errors.Join(result, o.stopped())
+	}
+	if o.mode == "human" {
+		return result
+	}
+	if writeErr := o.failed(result); writeErr != nil {
+		return errors.Join(result, fmt.Errorf("write machine error event: %w", writeErr))
+	}
+	return &reportedError{err: result}
 }
 
 func (o *publishOutput) stopped() error {

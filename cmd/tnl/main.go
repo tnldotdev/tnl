@@ -103,14 +103,72 @@ func main() {
 		telemetry.Wait(waitCtx)
 		cancel()
 	}
-	if err != nil && !errors.Is(err, context.Canceled) {
-		var commandErr *childExitError
-		if errors.As(err, &commandErr) {
-			os.Exit(commandErr.code)
+	if err != nil {
+		code, render := terminalResult(err)
+		if render != nil {
+			writeCommandError(os.Stderr, render)
 		}
-		writeCommandError(os.Stderr, err)
-		os.Exit(1)
+		if code != 0 {
+			os.Exit(code)
+		}
 	}
+}
+
+func terminalResult(err error) (int, error) {
+	var child *childExitError
+	children, failures, unowned := 0, 0, 0
+	var visit func(error, bool)
+	visit = func(err error, owned bool) {
+		if err == nil {
+			return
+		}
+		if reported, ok := err.(*reportedError); ok {
+			visit(reported.err, true)
+			return
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			unwrapped := false
+			for _, inner := range joined.Unwrap() {
+				if inner != nil {
+					visit(inner, owned)
+					unwrapped = true
+				}
+			}
+			if unwrapped {
+				return
+			}
+		}
+		if wrapped, ok := err.(interface{ Unwrap() error }); ok && wrapped.Unwrap() != nil {
+			visit(wrapped.Unwrap(), owned)
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		if exit, ok := err.(*childExitError); ok {
+			children++
+			child = exit
+			if !owned {
+				unowned++
+			}
+			return
+		}
+		failures++
+		if !owned {
+			unowned++
+		}
+	}
+	visit(err, false)
+	if failures != 0 || children > 1 {
+		if unowned != 0 {
+			return 1, err
+		}
+		return 1, nil
+	}
+	if children == 1 {
+		return child.code, nil
+	}
+	return 0, nil
 }
 
 func writeCommandError(output io.Writer, err error) {

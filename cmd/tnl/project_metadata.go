@@ -37,7 +37,7 @@ func runConfigGenerate(
 	if err != nil {
 		return err
 	}
-	if err := projectmeta.Write(project.Root, metadata); err != nil {
+	if err := projectmeta.Write(ctx, project.Root, metadata); err != nil {
 		return err
 	}
 	actions, err := projectTypeIncludeActions(project)

@@ -142,7 +142,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 			if ctx.Err() != nil {
 				return true, ctx.Err()
 			}
-			w.applyFailure(&work, err, now)
+			w.applyFailure(&work, err, w.now())
 		}
 		if _, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now()); err != nil {
 			return true, err
@@ -157,7 +157,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
-		w.applyRouteFailure(&route, err, now)
+		w.applyRouteFailure(&route, err, w.now())
 	}
 	if _, err := w.store.SaveDNSRouteWork(ctx, route, w.now()); err != nil {
 		return true, err

@@ -2,11 +2,14 @@ package projectmeta
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/filelock"
 )
 
 func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
@@ -81,7 +84,7 @@ func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 		},
 		ServiceDirectories: map[string]string{"api": "."},
 	}
-	if err := Write(root, metadata); err != nil {
+	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
 	jsonPath := filepath.Join(root, DirectoryName, JSONName)
@@ -96,7 +99,7 @@ func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 	}
 	invalid := metadata
 	invalid.MemberNamespace = "INVALID"
-	if err := Write(root, invalid); err == nil {
+	if err := Write(t.Context(), root, invalid); err == nil {
 		t.Fatal("invalid metadata was written")
 	}
 	after, err := os.ReadFile(jsonPath)
@@ -150,12 +153,12 @@ func TestStagedWriteRollbackReportsRestoreFailure(t *testing.T) {
 func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
 	root := t.TempDir()
 	metadata := Metadata{Version: Version, MemberNamespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{}}
-	if err := Write(root, metadata); err != nil {
+	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
 	metadata.Services["api"] = Service{MemberNamespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
 	metadata.ServiceDirectories["api"] = "."
-	if err := Write(root, metadata); err != nil {
+	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
 	jsonData, declarations, err := Render(metadata)
@@ -167,6 +170,28 @@ func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("%s = %s, %v", name, got, err)
 		}
+	}
+}
+
+func TestWriteLockWaitHonorsCancellation(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, DirectoryName)
+	if err := prepareDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(directory, "project.lock"), filelock.Blocking, os.Geteuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	metadata := Metadata{
+		Version: Version, MemberNamespace: "member.example",
+		Services: map[string]Service{}, ServiceDirectories: map[string]string{},
+	}
+	if err := Write(ctx, root, metadata); !errors.Is(err, context.Canceled) {
+		t.Fatalf("write = %v", err)
 	}
 }
 

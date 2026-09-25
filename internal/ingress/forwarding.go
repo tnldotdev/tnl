@@ -17,6 +17,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+const relaySessionSetupTimeout = 10 * time.Second
+
 type ForwarderConfig struct {
 	TLSConfig       *tls.Config
 	ClusterSecret   string
@@ -29,6 +31,8 @@ type ForwarderConfig struct {
 type Forwarder struct {
 	connector relayConnector
 	observer  OperationObserver
+	context   context.Context
+	cancel    context.CancelFunc
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -48,7 +52,8 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 }
 
 func newForwarder(connector relayConnector) *Forwarder {
-	return &Forwarder{connector: connector, sessions: make(map[relaySessionKey]*relaySession)}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession)}
 }
 
 // Backends preserves control's publisher-connection order. Every returned
@@ -134,6 +139,7 @@ func (f *Forwarder) Close() error {
 		return f.closeErr
 	}
 	f.closed = true
+	f.cancel()
 	f.closeDone = make(chan struct{})
 	done := f.closeDone
 	entries := make([]*relaySession, 0, len(f.sessions))
@@ -226,70 +232,74 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 			f.mu.Unlock()
 			return nil, false, net.ErrClosed
 		}
-		if entry := f.sessions[key]; entry != nil {
-			ready := entry.ready
+		entry := f.sessions[key]
+		created := false
+		if entry == nil {
+			connectCtx, cancel := context.WithTimeout(f.context, relaySessionSetupTimeout)
+			entry = &relaySession{ready: make(chan struct{}), cancel: cancel}
+			obsolete := f.removeSupersededLocked(key)
+			f.sessions[key] = entry
+			created = true
 			f.mu.Unlock()
-			select {
-			case <-ready:
-			case <-ctx.Done():
-				return nil, false, context.Cause(ctx)
-			}
-			if entry.err != nil {
-				return nil, false, entry.err
-			}
-			select {
-			case <-entry.session.Done():
-				f.invalidate(key, entry.session)
-				continue
-			default:
-				return entry.session, true, nil
-			}
-		}
-
-		connectCtx, cancel := context.WithCancel(ctx)
-		entry := &relaySession{ready: make(chan struct{}), cancel: cancel}
-		obsolete := f.removeSupersededLocked(key)
-		f.sessions[key] = entry
-		f.mu.Unlock()
-		_ = closeRelaySessions(obsolete)
-
-		started := time.Now()
-		transport, err := f.connector.Connect(connectCtx, target)
-		var session *tunnel.Session
-		if err == nil {
-			session, err = tunnel.Dial(connectCtx, transport, tunnelv1.Message{
-				Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress,
-				Credential: f.connector.Credential(),
-			})
-		}
-		cancel()
-		f.observe("IngressRelayConnect", err, started)
-
-		f.mu.Lock()
-		current := !f.closed && f.sessions[key] == entry
-		if current && err == nil {
-			entry.session = session
+			_ = closeRelaySessions(obsolete)
+			go f.connect(connectCtx, key, target, entry)
 		} else {
-			if current {
-				delete(f.sessions, key)
-			}
-			if err == nil {
-				err = net.ErrClosed
-			}
-			entry.err = err
+			f.mu.Unlock()
 		}
-		close(entry.ready)
-		f.mu.Unlock()
-
-		if err != nil {
-			if session != nil {
-				_ = session.Close()
-			}
-			return nil, false, fmt.Errorf("ingress: connect to relay process: %w", err)
+		select {
+		case <-entry.ready:
+		case <-ctx.Done():
+			return nil, false, context.Cause(ctx)
 		}
-		go f.removeWhenDone(key, entry, session)
-		return session, false, nil
+		if entry.err != nil {
+			return nil, false, fmt.Errorf("ingress: connect to relay process: %w", entry.err)
+		}
+		select {
+		case <-entry.session.Done():
+			f.invalidate(key, entry.session)
+			continue
+		default:
+			return entry.session, !created, nil
+		}
 	}
+}
+
+func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target relayTarget, entry *relaySession) {
+	started := time.Now()
+	transport, err := f.connector.Connect(ctx, target)
+	var session *tunnel.Session
+	if err == nil {
+		session, err = tunnel.Dial(ctx, transport, tunnelv1.Message{
+			Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress,
+			Credential: f.connector.Credential(),
+		})
+	}
+	entry.cancel()
+	f.observe("IngressRelayConnect", err, started)
+
+	f.mu.Lock()
+	current := !f.closed && f.sessions[key] == entry
+	if current && err == nil {
+		entry.session = session
+	} else {
+		if current {
+			delete(f.sessions, key)
+		}
+		if err == nil {
+			err = net.ErrClosed
+		}
+		entry.err = err
+	}
+	close(entry.ready)
+	f.mu.Unlock()
+
+	if err != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return
+	}
+	go f.removeWhenDone(key, entry, session)
 }
 
 func (f *Forwarder) removeSupersededLocked(current relaySessionKey) []*relaySession {

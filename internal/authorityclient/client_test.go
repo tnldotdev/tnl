@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -101,13 +102,13 @@ func TestExplicitAccessTokenOverridesConfiguredToken(t *testing.T) {
 }
 
 func TestRequestCancellationPreservesCauseAndReturnsNoSession(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	cause := errors.New("caller stopped")
+	ctx, cancel := context.WithCancelCause(t.Context())
 	calls := 0
 	client, err := New("https://authority.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
 		defer request.Body.Close()
-		cancel()
+		cancel(cause)
 		<-request.Context().Done()
 		return nil, request.Context().Err()
 	})}, "")
@@ -115,7 +116,48 @@ func TestRequestCancellationPreservesCauseAndReturnsNoSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := client.Refresh(ctx, "refresh")
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnavailable) || !reflect.DeepEqual(got, authorityv1.ControlSessionResponse{}) || calls != 1 {
+	if !errors.Is(err, cause) || errors.Is(err, ErrUnavailable) || !reflect.DeepEqual(got, authorityv1.ControlSessionResponse{}) || calls != 1 {
 		t.Fatalf("canceled refresh: calls=%d error=%v", calls, err)
+	}
+}
+
+func TestCredentialExchangeDoesNotFollowRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			destinationCalls := 0
+			destination := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				destinationCalls++
+				_, _ = io.Copy(io.Discard, request.Body)
+			}))
+			defer destination.Close()
+
+			source := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				payload, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				if request.URL.Path != "/v1/auth/token" || string(payload) != `{"login_token":"login-secret"}` {
+					t.Errorf("unexpected credential exchange: %s %s", request.Method, request.URL)
+				}
+				response.Header().Set("Location", destination.URL+"/record")
+				response.WriteHeader(status)
+			}))
+			defer source.Close()
+
+			supplied := source.Client()
+			client, err := New(source.URL, supplied, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Exchange(t.Context(), "login-secret"); err == nil {
+				t.Fatal("redirect response was accepted")
+			}
+			if destinationCalls != 0 {
+				t.Fatalf("credential exchange reached redirect destination %d times", destinationCalls)
+			}
+			if supplied.CheckRedirect != nil {
+				t.Fatal("supplied client was mutated")
+			}
+		})
 	}
 }

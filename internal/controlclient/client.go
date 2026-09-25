@@ -1,10 +1,11 @@
 // Package controlclient calls the tnl control API.
 //
-// Responses cannot exceed 64 KiB. A nonempty successful response must contain
-// one JSON value that matches the generated schema. Most requests time out after
-// 20 seconds; certificate requests time out after 150 seconds. Network and read
-// failures wrap ErrUnavailable, but invalid or oversized responses do not. The
-// server problem code, not only the HTTP status, determines the returned error.
+// Responses cannot exceed 64 KiB. A successful response other than HTTP 204
+// must contain one non-null JSON value that matches the generated schema. Most
+// requests time out after 20 seconds; certificate requests time out after 150
+// seconds. Requests do not follow redirects. Network and read failures wrap
+// ErrUnavailable, but caller cancellation, invalid responses, and oversized
+// responses do not. Known server problem codes take precedence over status.
 package controlclient
 
 import (
@@ -19,6 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -64,9 +66,7 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 	if err != nil {
 		return nil, errors.New("controlclient: tnl server must be an HTTPS origin")
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
+	httpClient = httpclient.NoRedirects(httpClient)
 	apiClient, err := controlv1.NewClient(
 		server,
 		controlv1.WithHTTPClient(httpClient),
@@ -268,7 +268,7 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return nil
 	})
 	if err != nil {
-		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return zero, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
 	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
@@ -276,13 +276,19 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, errors.New("controlclient: response exceeds limit")
 	}
 	if err != nil {
-		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return zero, unavailableError(ctx, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return zero, responseError(response.StatusCode, response.Header, payload)
 	}
-	if len(payload) == 0 {
+	if response.StatusCode == http.StatusNoContent && len(payload) == 0 {
 		return zero, nil
+	}
+	if len(payload) == 0 {
+		return zero, errors.New("controlclient: successful response has an empty body")
+	}
+	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+		return zero, errors.New("controlclient: successful response has a null body")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	var result T
@@ -294,6 +300,13 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, fmt.Errorf("controlclient: decode response: %w", err)
 	}
 	return result, nil
+}
+
+func unavailableError(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
 func responseError(status int, header http.Header, payload []byte) error {
@@ -320,9 +333,12 @@ func responseError(status int, header http.Header, payload []byte) error {
 			seconds = 1
 		}
 		return &RateLimitError{RetryAfter: time.Duration(min(seconds, 86400)) * time.Second}
-	case controlv1.Unavailable, controlv1.PlacementUnavailable:
+	case controlv1.Unavailable, controlv1.PlacementUnavailable, controlv1.Internal:
 		return ErrUnavailable
 	default:
+		if status >= 500 && status < 600 && problem.Code.Valid() {
+			return ErrUnavailable
+		}
 		return &ProblemError{Status: status, Problem: problem}
 	}
 }

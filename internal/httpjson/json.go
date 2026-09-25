@@ -49,7 +49,16 @@ func Decode(decoder *json.Decoder, destination any) error {
 // Write sends an application/json response. If encoding fails after writing has
 // started, it aborts the response instead of adding a second error body.
 func Write(response http.ResponseWriter, status int, value any) {
-	response.Header().Set("Content-Type", "application/json")
+	write(response, status, "application/json", value)
+}
+
+// WriteProblem sends an application/problem+json response.
+func WriteProblem(response http.ResponseWriter, status int, value any) {
+	write(response, status, "application/problem+json", value)
+}
+
+func write(response http.ResponseWriter, status int, contentType string, value any) {
+	response.Header().Set("Content-Type", contentType)
 	response.WriteHeader(status)
 	if err := json.NewEncoder(response).Encode(value); err != nil {
 		panic(http.ErrAbortHandler)

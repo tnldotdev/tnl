@@ -147,6 +147,67 @@ func TestRefreshWaitingForPersistedLockCanBeCanceled(t *testing.T) {
 	f.assertSession(t, old)
 }
 
+func TestRefreshWaitingForTokenSourceCanBeCanceled(t *testing.T) {
+	old := storedSession(issuedSession(t))
+	rotated := issuedSession(t)
+	rotated.RefreshExpiresAt = old.RefreshExpiresAt
+	entered, release := make(chan struct{}), make(chan struct{})
+	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/auth/refresh" {
+			return nil, errors.New("unexpected request")
+		}
+		close(entered)
+		select {
+		case <-release:
+			return jsonResponse(http.StatusOK, rotated), nil
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	})
+	f.save(t, old)
+	source := f.source(t)
+	first := make(chan error, 1)
+	go func() {
+		_, err := source.accessToken(t.Context(), true, old.AccessToken)
+		first <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("first refresh did not start")
+	}
+	waiterCtx, cancel := context.WithCancel(t.Context())
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := source.accessToken(waiterCtx, true, old.AccessToken)
+		waiter <- err
+	}()
+	cancel()
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("contending refresh error = %v", err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("contending refresh did not honor cancellation")
+	}
+	if len(f.transport.snapshot()) != 2 {
+		close(release)
+		t.Fatal("contending refresh sent a request")
+	}
+	close(release)
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not finish")
+	}
+}
+
 func TestForcedRefreshFailureNeverPromptsOrChangesSession(t *testing.T) {
 	for _, test := range []struct {
 		name    string

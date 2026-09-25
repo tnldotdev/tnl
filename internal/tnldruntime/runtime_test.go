@@ -3,7 +3,9 @@ package tnldruntime
 import (
 	"errors"
 	"net"
+	"net/http"
 	"testing"
+	"time"
 )
 
 func TestConnectionListenerTransfersOwnership(t *testing.T) {
@@ -27,5 +29,13 @@ func TestConnectionListenerTransfersOwnership(t *testing.T) {
 	}
 	if listener.Enqueue(client) {
 		t.Fatal("closed listener accepted a connection")
+	}
+}
+
+func TestControlHTTPServerBoundsRequestAndResponseIO(t *testing.T) {
+	server := controlHTTPServer(http.NotFoundHandler(), nil)
+	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 30*time.Second ||
+		server.WriteTimeout != 3*time.Minute || server.IdleTimeout != 30*time.Second || server.MaxHeaderBytes != 16<<10 {
+		t.Fatalf("HTTP server limits = %#v", server)
 	}
 }
