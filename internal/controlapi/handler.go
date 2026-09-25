@@ -3,6 +3,7 @@ package controlapi
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"slices"
@@ -96,14 +97,17 @@ func NewHandler(
 	store Store,
 	builtinAuthorizationStore BuiltinAuthorizationStore,
 	readiness func(context.Context) error,
-) *http.ServeMux {
+) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, readiness: readiness}
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
 	}
 	loginSourceRevision := int64(0)
 	if cfg.LoginToken != "" {
-		verifier, _ := credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
+		verifier, err := credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
+		if err != nil {
+			return nil, fmt.Errorf("controlapi: configure login token: %w", err)
+		}
 		loginSourceRevision = verifier.SourceRevision()
 	}
 	if builtinAuthorizationStore != nil {
@@ -111,13 +115,18 @@ func NewHandler(
 			store: builtinAuthorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
 		}
 	}
-	if store != nil && cfg.HostedSecret != "" {
+	if cfg.HostedSecret != "" || cfg.HostedSecretPrevious != "" {
+		var err error
+		h.hostedSecrets, err = serviceapi.NewBearerSecrets(cfg.HostedSecret, cfg.HostedSecretPrevious)
+		if err != nil {
+			return nil, fmt.Errorf("controlapi: configure hosted secret: %w", err)
+		}
 		client, err := authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
-		h.hostedSecrets, _ = serviceapi.NewBearerSecrets(cfg.HostedSecret, cfg.HostedSecretPrevious)
-		if err == nil && h.hostedSecrets.Valid() {
+		if err != nil {
+			return nil, fmt.Errorf("controlapi: configure authority client: %w", err)
+		}
+		if store != nil {
 			h.authorizer = hostedAuthorizer{client: client, secret: cfg.HostedSecret, store: store}
-		} else {
-			h.authorizer = nil
 		}
 	}
 	mux := http.NewServeMux()
@@ -133,7 +142,7 @@ func NewHandler(
 		Middlewares: middleware,
 	})
 	mux.HandleFunc("/", notFound)
-	return mux
+	return mux, nil
 }
 
 func (h *handler) GetHealth(response http.ResponseWriter, _ *http.Request) {

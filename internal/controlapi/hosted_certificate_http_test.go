@@ -100,10 +100,13 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 		}
 	}))
 	t.Cleanup(authority.Close)
-	handler := controlapi.NewHandler(controlapi.Config{
+	handler, err := controlapi.NewHandler(controlapi.Config{
 		AuthorityEndpoint: authority.URL, HostedSecret: hostedSecret, HTTPClient: authority.Client(),
 		DNSAutomation: true, CertificateIssuance: true, ACMEDirectoryURL: directory,
 	}, database, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	post := func(t *testing.T, path, token, idempotencyKey string, body any, wantStatus int, result any) {
 		t.Helper()
 		wire, err := json.Marshal(body)

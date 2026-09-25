@@ -80,7 +80,7 @@ func TestLogoutMapsConcurrentRevocationToUnauthenticated(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
-	NewHandler(Config{}, store).ServeHTTP(response, request)
+	testHandler(t, Config{}, store).ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized || response.Header().Get("Content-Type") != "application/problem+json" || response.Header().Get("WWW-Authenticate") == "" || store.revocations != 1 {
 		t.Fatalf("logout response = %d %q %q, revocations = %d", response.Code, response.Header().Get("Content-Type"), response.Body.String(), store.revocations)
 	}

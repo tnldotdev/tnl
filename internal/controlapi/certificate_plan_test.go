@@ -56,7 +56,7 @@ func TestBuiltinRouteSessionCertificatePlan(t *testing.T) {
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}
-			h := NewHandler(Config{DNSAutomation: test.dns}, store, store, nil)
+			h := testHandler(t, Config{DNSAutomation: test.dns}, store, store, nil)
 			request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1/sessions", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			request.Header.Set("Idempotency-Key", "session-plan")
@@ -109,7 +109,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
 				ManagedDeploymentDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
-			h := NewHandler(Config{ManagedDeploymentDomain: cfg.ManagedDomain(),
+			h := testHandler(t, Config{ManagedDeploymentDomain: cfg.ManagedDomain(),
 				AuthorityEndpoint: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))

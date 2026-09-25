@@ -16,10 +16,19 @@ import (
 
 const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
 
+func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
+	if _, err := NewHandler(Config{LoginToken: "invalid"}, nil, nil, nil); err == nil {
+		t.Fatal("invalid login token accepted")
+	}
+	if _, err := NewHandler(Config{HostedSecret: "short", AuthorityEndpoint: "https://authority.example.test"}, &routeMutationStoreStub{}, nil, nil); err == nil {
+		t.Fatal("invalid hosted secret accepted")
+	}
+}
+
 func TestHealthAndReadiness(t *testing.T) {
 	cfg := Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}
 	ready := new(bool)
-	handler := NewHandler(cfg, nil, nil, func(context.Context) error {
+	handler := testHandler(t, cfg, nil, nil, func(context.Context) error {
 		if !*ready {
 			return errors.New("database unavailable")
 		}
@@ -53,7 +62,7 @@ func TestHealthAndReadiness(t *testing.T) {
 }
 
 func TestUnknownOperationsReturnNotFound(t *testing.T) {
-	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
 	for _, path := range []string{"/v1/teams", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -64,7 +73,7 @@ func TestUnknownOperationsReturnNotFound(t *testing.T) {
 }
 
 func TestAdminOperationsRequireAuthentication(t *testing.T) {
-	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil))
 	if response.Code != http.StatusUnauthorized {

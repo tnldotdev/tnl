@@ -12,6 +12,10 @@ import (
 
 func TestLoadPlacementWithHostnameLookup(t *testing.T) {
 	controlstate.RunPlacementLoad(t, func(database *controlstate.Database, loginToken credentials.LoginToken, metrics *observability.Metrics) http.Handler {
-		return controlapi.NewHandler(controlapi.Config{LoginToken: string(loginToken), Metrics: metrics}, database, database, nil)
+		handler, err := controlapi.NewHandler(controlapi.Config{LoginToken: string(loginToken), Metrics: metrics}, database, database, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return handler
 	})
 }

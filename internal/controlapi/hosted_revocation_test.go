@@ -16,7 +16,7 @@ const (
 
 func TestRevokeHostedPolicyAuthenticatesAndAppliesRevision(t *testing.T) {
 	store := &hostedRevocationStoreStub{}
-	handler := NewHandler(Config{
+	handler := testHandler(t, Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HostedSecretPrevious: testHostedSecretPrevious, HTTPClient: http.DefaultClient,
 	}, store, nil, nil)
@@ -45,7 +45,7 @@ func TestRevokeHostedPolicyAuthenticatesAndAppliesRevision(t *testing.T) {
 
 func TestRevokeHostedPolicyRejectsWrongSecret(t *testing.T) {
 	store := &hostedRevocationStoreStub{}
-	handler := NewHandler(Config{
+	handler := testHandler(t, Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient,
 	}, store, nil, nil)

@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -123,7 +122,7 @@ func serveWithRelayClientTLS(
 			IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
 		}
 		if cfg.DNSProviderEnabled() {
-			awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
+			awsConfig, err := route53AWSConfig(ctx, cfg.Route53Region)
 			if err != nil {
 				return fmt.Errorf("load Route 53 configuration: %w", err)
 			}

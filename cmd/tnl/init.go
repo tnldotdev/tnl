@@ -229,7 +229,7 @@ func pathInside(path, root string) bool {
 
 func existingInitConfigs(root string) []string {
 	var paths []string
-	for _, name := range projectconfig.ProjectConfigNames {
+	for _, name := range projectconfig.ConfigNames() {
 		path := filepath.Join(root, name)
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			paths = append(paths, path)

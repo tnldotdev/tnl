@@ -40,6 +40,7 @@ func CopyObserved(
 		leftToRight bool
 		bytes       int64
 		err         error
+		stopOther   bool
 	}
 	results := make(chan copyResult, 2)
 	copyDirection := func(destination, source net.Conn, leftToRight bool, observe func(int64)) {
@@ -50,16 +51,19 @@ func CopyObserved(
 		}
 		count, err := io.CopyBuffer(writer, source, *buffer)
 		buffers.Put(buffer)
+		// A reset is normal to report, but it is not a half-close: the other
+		// direction may otherwise wait forever for a peer that has gone away.
+		stopOther := err != nil && !errors.Is(err, io.EOF)
 		if closer, ok := destination.(interface{ CloseWrite() error }); err == nil && ok {
 			err = errors.Join(err, closer.CloseWrite())
 		}
-		results <- copyResult{leftToRight: leftToRight, bytes: count, err: normalize(err)}
+		results <- copyResult{leftToRight: leftToRight, bytes: count, err: normalize(err), stopOther: stopOther}
 	}
 	go copyDirection(right, left, true, onLeftToRight)
 	go copyDirection(left, right, false, onRightToLeft)
 
 	first := <-results
-	if first.err != nil {
+	if first.stopOther || first.err != nil {
 		_ = left.Close()
 		_ = right.Close()
 	}

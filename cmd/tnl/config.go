@@ -21,12 +21,12 @@ type projectConfiguration struct {
 	projectconfig.Project
 }
 
-func selectProjectConfiguration(flags cli) (projectconfig.Selection, string, error) {
+func selectProjectConfiguration(ctx context.Context, flags cli) (projectconfig.Selection, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return projectconfig.Selection{}, "", fmt.Errorf("read working directory: %w", err)
 	}
-	selection, err := projectconfig.SelectProjectConfig(cwd, flags.ConfigPath, os.Getenv("TNL_CONFIG"), flags.NoConfig)
+	selection, err := projectconfig.SelectProjectConfig(ctx, cwd, flags.ConfigPath, os.Getenv("TNL_CONFIG"), flags.NoConfig)
 	return selection, cwd, err
 }
 
@@ -47,7 +47,7 @@ func loadProjectConfiguration(ctx context.Context, flags cli, stateRoot string) 
 }
 
 func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]byte) (projectConfiguration, error) {
-	selection, cwd, err := selectProjectConfiguration(flags)
+	selection, cwd, err := selectProjectConfiguration(ctx, flags)
 	if err != nil {
 		return projectConfiguration{}, err
 	}
@@ -59,7 +59,7 @@ func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]b
 }
 
 func projectRoot(ctx context.Context, flags cli) (string, error) {
-	selection, cwd, err := selectProjectConfiguration(flags)
+	selection, cwd, err := selectProjectConfiguration(ctx, flags)
 	if err != nil {
 		return "", err
 	}
@@ -241,8 +241,8 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	return nil
 }
 
-func runConfigPath(flags cli, stdout io.Writer) error {
-	selection, _, err := selectProjectConfiguration(flags)
+func runConfigPath(ctx context.Context, flags cli, stdout io.Writer) error {
+	selection, _, err := selectProjectConfiguration(ctx, flags)
 	if err != nil {
 		return err
 	}

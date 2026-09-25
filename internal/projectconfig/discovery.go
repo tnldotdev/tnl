@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-var ProjectConfigNames = []string{"tnl.yml", "tnl.yaml", "tnl.json", "tnl.config.ts"}
+var projectConfigNames = [...]string{"tnl.yml", "tnl.yaml", "tnl.json", "tnl.config.ts"}
+
+// ConfigNames returns the supported project configuration filenames in discovery order.
+func ConfigNames() []string { return slices.Clone(projectConfigNames[:]) }
 
 type Selection struct {
 	Path     string
@@ -18,7 +21,7 @@ type Selection struct {
 }
 
 // SelectProjectConfig applies explicit selection before nearest-file discovery.
-func SelectProjectConfig(cwd, flagPath, environmentPath string, disabled bool) (Selection, error) {
+func SelectProjectConfig(ctx context.Context, cwd, flagPath, environmentPath string, disabled bool) (Selection, error) {
 	if disabled && flagPath != "" {
 		return Selection{}, errors.New("--config and --no-config are mutually exclusive")
 	}
@@ -49,7 +52,10 @@ func SelectProjectConfig(cwd, flagPath, environmentPath string, disabled bool) (
 	if err != nil {
 		return Selection{}, err
 	}
-	root := gitWorktreeRoot(start)
+	root, err := gitWorktreeRoot(ctx, start)
+	if err != nil {
+		return Selection{}, err
+	}
 	if root == "" {
 		root = start
 	}
@@ -73,8 +79,8 @@ func SelectProjectConfig(cwd, flagPath, environmentPath string, disabled bool) (
 }
 
 func existingConfigFiles(directory string) []string {
-	result := make([]string, 0, len(ProjectConfigNames))
-	for _, name := range ProjectConfigNames {
+	result := make([]string, 0, len(projectConfigNames))
+	for _, name := range projectConfigNames {
 		path := filepath.Join(directory, name)
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			result = append(result, path)
@@ -84,12 +90,15 @@ func existingConfigFiles(directory string) []string {
 	return result
 }
 
-func gitWorktreeRoot(cwd string) string {
-	worktree, err := ResolveWorktree(context.Background(), cwd)
-	if err != nil || !worktree.IsGit {
-		return ""
+func gitWorktreeRoot(ctx context.Context, cwd string) (string, error) {
+	worktree, err := ResolveWorktree(ctx, cwd)
+	if err != nil {
+		return "", err
 	}
-	return worktree.Root
+	if !worktree.IsGit {
+		return "", nil
+	}
+	return worktree.Root, nil
 }
 
 func absolutePath(cwd, path string) (string, error) {

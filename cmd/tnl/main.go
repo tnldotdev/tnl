@@ -234,7 +234,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	flags.Dev.Command = devCommand
-	applyTunnelCLIUnits(parseArgs, parsedCommand, &flags)
+	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
 	var project projectConfiguration
 	projectStateRoot := ""
@@ -286,7 +286,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
 	case "config path":
-		return runConfigPath(flags, stdout)
+		return runConfigPath(ctx, flags, stdout)
 	case "config check":
 		return runConfigCheck(project, stdout)
 	case "config generate":
@@ -372,23 +372,22 @@ func canonicalParsedCommand(command string) string {
 	}
 }
 
-func applyTunnelCLIUnits(args []string, command string, flags *cli) {
+func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	host, subdomain, allowIP, allowAllIPs, ephemeral := false, false, false, false, false
-	commandIndex := rootCommandIndex(args)
-	for index, argument := range args {
-		if index <= commandIndex {
+	for _, path := range parsed.Path {
+		if path.Flag == nil {
 			continue
 		}
-		switch {
-		case argument == "--host" || strings.HasPrefix(argument, "--host="):
+		switch path.Flag.Name {
+		case "host":
 			host = true
-		case argument == "--subdomain" || strings.HasPrefix(argument, "--subdomain="):
+		case "subdomain":
 			subdomain = true
-		case argument == "--allow-ip" || strings.HasPrefix(argument, "--allow-ip="):
+		case "allow-ip":
 			allowIP = true
-		case argument == "--allow-all-ips" || argument == "--no-allow-all-ips" || strings.HasPrefix(argument, "--allow-all-ips="):
+		case "allow-all-ips":
 			allowAllIPs = true
-		case argument == "--ephemeral" || argument == "--no-ephemeral" || strings.HasPrefix(argument, "--ephemeral="):
+		case "ephemeral":
 			ephemeral = true
 		}
 	}
@@ -405,7 +404,7 @@ func applyTunnelCLIUnits(args []string, command string, flags *cli) {
 			tunnel.AllowAllIPs = false
 		}
 	}
-	switch command {
+	switch canonicalParsedCommand(parsed.Command()) {
 	case "publish <service-or-target>":
 		apply(&flags.Publish.tunnelFlags)
 	case "dev <service>":

@@ -2,6 +2,7 @@ package authorityapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -55,10 +56,14 @@ type handler struct {
 var _ authorityv1.ServerInterface = (*handler)(nil)
 
 // Register adds the built-in authority API routes to mux.
-func Register(mux *http.ServeMux, cfg Config, store Store) {
+func Register(mux *http.ServeMux, cfg Config, store Store) error {
 	h := &handler{config: cfg, store: store}
 	if cfg.LoginToken != "" {
-		h.loginVerifier, _ = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
+		var err error
+		h.loginVerifier, err = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
+		if err != nil {
+			return fmt.Errorf("authorityapi: configure login token: %w", err)
+		}
 		h.loginSourceRevision = h.loginVerifier.SourceRevision()
 	}
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
@@ -67,14 +72,17 @@ func Register(mux *http.ServeMux, cfg Config, store Store) {
 	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
 		BaseRouter: mux, ErrorHandlerFunc: parameterError,
 	})
+	return nil
 }
 
 // NewHandler constructs a standalone HTTP handler for the built-in authority API.
-func NewHandler(cfg Config, store Store) *http.ServeMux {
+func NewHandler(cfg Config, store Store) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
-	Register(mux, cfg, store)
+	if err := Register(mux, cfg, store); err != nil {
+		return nil, err
+	}
 	mux.HandleFunc("/", notFound)
-	return mux
+	return mux, nil
 }
 
 // AuthorizeServiceOperation belongs to the external authority and is

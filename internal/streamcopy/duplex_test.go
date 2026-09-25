@@ -3,9 +3,11 @@ package streamcopy
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -167,5 +169,16 @@ func TestCopyErrorsCloseBothDirectionsAndJoinWorkers(t *testing.T) {
 				t.Fatalf("peer received %q, %v", payload, err)
 			}
 		})
+	}
+}
+
+func TestCopyResetClosesIdleOtherDirection(t *testing.T) {
+	_, leftTCP := tcpPair(t)
+	rightTCP, _ := tcpPair(t)
+	reset := &failingConn{Conn: leftTCP, readErr: fmt.Errorf("read: %w", syscall.ECONNRESET)}
+	result := startCopy(t, reset, rightTCP, nil, nil)
+	got := copyResult(t, result)
+	if got.err != nil || !reset.closed.Load() {
+		t.Fatalf("reset did not close the idle direction: result=%+v, err=%v, closed=%v", got.result, got.err, reset.closed.Load())
 	}
 }

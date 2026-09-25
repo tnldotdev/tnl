@@ -21,7 +21,7 @@ func TestDNSAuthorityServiceLifecycle(t *testing.T) {
 		RequiredRecords: []controlstate.DNSRecord{{Name: "example.test", Type: "NS", Value: "ns-1.example.test"}},
 		CreatedAt:       now, UpdatedAt: now,
 	}}
-	handler := NewHandler(Config{
+	handler := testHandler(t, Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient, DNSAutomation: true,
 	}, store, nil, nil)
@@ -69,7 +69,7 @@ func TestDNSAuthorityServiceLifecycle(t *testing.T) {
 
 func TestDNSAuthorityServiceRejectsWrongSecret(t *testing.T) {
 	store := &dnsAuthorityStoreStub{}
-	handler := NewHandler(Config{
+	handler := testHandler(t, Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient,
 	}, store, nil, nil)

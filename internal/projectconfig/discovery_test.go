@@ -1,10 +1,13 @@
 package projectconfig
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSelectProjectConfigExplicitAndNonGitSelection(t *testing.T) {
@@ -20,17 +23,17 @@ func TestSelectProjectConfigExplicitAndNonGitSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	selection, err := SelectProjectConfig(nested, nearConfig, "", false)
+	selection, err := SelectProjectConfig(t.Context(), nested, nearConfig, "", false)
 	if err != nil || selection.Path != nearConfig || !selection.Explicit {
 		t.Fatalf("explicit selection = %#v, %v", selection, err)
 	}
 
 	// Discovery outside a Git worktree intentionally inspects cwd only.
-	selection, err = SelectProjectConfig(filepath.Join(root, "a"), "", "", false)
+	selection, err = SelectProjectConfig(t.Context(), filepath.Join(root, "a"), "", "", false)
 	if err != nil || selection.Path != nearConfig || selection.Explicit {
 		t.Fatalf("discovered selection = %#v, %v", selection, err)
 	}
-	selection, err = SelectProjectConfig(nested, "", "", false)
+	selection, err = SelectProjectConfig(t.Context(), nested, "", "", false)
 	if err != nil || selection.Path != "" {
 		t.Fatalf("non-Git discovery escaped cwd: %#v, %v", selection, err)
 	}
@@ -59,7 +62,7 @@ func TestSelectProjectConfigWalksAncestorsAndStopsAtRepositoryBoundary(t *testin
 		}
 	}
 	for _, want := range []string{nearConfig, rootConfig, ""} {
-		selection, err := SelectProjectConfig(nested, "", "", false)
+		selection, err := SelectProjectConfig(t.Context(), nested, "", "", false)
 		if err != nil || selection.Path != want || selection.Explicit {
 			t.Fatalf("discovery = %#v, %v; want %q", selection, err, want)
 		}
@@ -70,7 +73,7 @@ func TestSelectProjectConfigWalksAncestorsAndStopsAtRepositoryBoundary(t *testin
 		}
 	}
 	// Explicit selection is allowed to cross the boundary and flags beat env.
-	selection, err := SelectProjectConfig(nested, outerConfig, "missing.yml", false)
+	selection, err := SelectProjectConfig(t.Context(), nested, outerConfig, "missing.yml", false)
 	if err != nil || selection.Path != outerConfig || !selection.Explicit {
 		t.Fatalf("explicit outside selection = %#v, %v", selection, err)
 	}
@@ -83,10 +86,10 @@ func TestSelectProjectConfigRejectsAmbiguity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := SelectProjectConfig(directory, "", "", false); err == nil {
+	if _, err := SelectProjectConfig(t.Context(), directory, "", "", false); err == nil {
 		t.Fatal("ambiguous configuration was accepted")
 	}
-	if selection, err := SelectProjectConfig(directory, "", "ignored", true); err != nil || selection.Path != "" {
+	if selection, err := SelectProjectConfig(t.Context(), directory, "", "ignored", true); err != nil || selection.Path != "" {
 		t.Fatalf("disabled selection = %#v, %v", selection, err)
 	}
 }
@@ -97,7 +100,28 @@ func TestSelectProjectConfigRejectsOtherTypeScriptNames(t *testing.T) {
 	if err := os.WriteFile(path, []byte("export default {};"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SelectProjectConfig(directory, path, "", false); err == nil {
+	if _, err := SelectProjectConfig(t.Context(), directory, path, "", false); err == nil {
 		t.Fatal("noncanonical TypeScript configuration name was accepted")
+	}
+}
+
+func TestSelectProjectConfigCancelsGitDiscovery(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := SelectProjectConfig(ctx, t.TempDir(), "", "", false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("discovery error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestConfigNamesReturnsIndependentSlice(t *testing.T) {
+	names := ConfigNames()
+	names[0] = "other.yml"
+	if got := ConfigNames()[0]; got != "tnl.yml" {
+		t.Fatalf("first configuration filename = %q", got)
 	}
 }

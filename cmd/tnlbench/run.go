@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
@@ -37,6 +38,7 @@ type runCommand struct {
 	ParentDomain string `name:"parent-domain" env:"BENCH_PARENT_DOMAIN" required:"" help:"Existing public Route 53 parent domain."`
 	ParentZoneID string `name:"parent-zone-id" env:"BENCH_PARENT_ZONE_ID" required:"" help:"Bare Route 53 hosted-zone ID for the parent domain."`
 	ACMEEmail    string `name:"acme-email" env:"BENCH_ACME_EMAIL" required:"" help:"ACME account contact email."`
+	AWSRoleARN   string `name:"aws-role-arn" env:"BENCH_AWS_ROLE_ARN" help:"AWS role trusted to accept Fly Machine OIDC tokens for renewable control Route 53 access."`
 	ResultsRoot  string `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Directory for run manifests and results."`
 }
 
@@ -158,6 +160,9 @@ func (c runCommand) Validate() error {
 	if !validFlySlug(c.FlyOrg) {
 		return errors.New("BENCH_FLY_ORG must be a canonical Fly organization slug")
 	}
+	if c.AWSRoleARN != "" && (!strings.HasPrefix(c.AWSRoleARN, "arn:aws:iam::") || !strings.Contains(c.AWSRoleARN, ":role/") || strings.ContainsAny(c.AWSRoleARN, " \t\r\n")) {
+		return errors.New("BENCH_AWS_ROLE_ARN must be an AWS IAM role ARN")
+	}
 	return validateBenchmarkInfrastructure(c.ParentDomain, c.ParentZoneID, c.ACMEEmail)
 }
 
@@ -240,6 +245,9 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("retrieve AWS credentials: %w", err)
 	}
+	if err := validateBenchmarkAWSCredentials(awsCredentials, c.AWSRoleARN, time.Now().Add(time.Duration(plan.MaximumDurationSeconds)*time.Second)); err != nil {
+		return err
+	}
 	dns := benchmarkDNS{client: route53.NewFromConfig(awsConfig)}
 	fly := flyPlatform{
 		binary: c.FlyBinary, org: c.FlyOrg, region: plan.Region, executor: osCommandExecutor{}, progress: progress,
@@ -276,9 +284,11 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err != nil {
 		return err
 	}
-	secrets.AWSAccessKeyID = awsCredentials.AccessKeyID
-	secrets.AWSSecretKey = awsCredentials.SecretAccessKey
-	secrets.AWSSessionToken = awsCredentials.SessionToken
+	if c.AWSRoleARN == "" {
+		secrets.AWSAccessKeyID = awsCredentials.AccessKeyID
+		secrets.AWSSecretKey = awsCredentials.SecretAccessKey
+		secrets.AWSSessionToken = awsCredentials.SessionToken
+	}
 	benchmark, err := provisionBenchmark(ctx, progress, fly, dns, plan, c, manifestPath, &manifest, secrets)
 	if err != nil {
 		return err
@@ -315,6 +325,13 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	progress.printf("report: complete")
 	if status != "passed" {
 		return fmt.Errorf("benchmark failed; see %s", filepath.Join(runDirectory, "report.json"))
+	}
+	return nil
+}
+
+func validateBenchmarkAWSCredentials(credentials aws.Credentials, roleARN string, requiredUntil time.Time) error {
+	if roleARN == "" && credentials.CanExpire && credentials.Expires.Before(requiredUntil) {
+		return errors.New("AWS credentials expire before the benchmark can finish; configure BENCH_AWS_ROLE_ARN for renewable control credentials")
 	}
 	return nil
 }
@@ -511,13 +528,18 @@ func provisionBenchmark(
 		progress.printf("certificates: Pebble ready with real DNS validation")
 	}
 
+	controlSecrets := map[string]string{
+		"TNLD_DATABASE_URL": databaseCredentials.PooledURL, "TNLD_DATABASE_DIRECT_URL": databaseCredentials.DirectURL,
+		"TNLD_LOGIN_TOKEN": secrets.LoginToken, "TNLD_CLUSTER_SECRET": secrets.ClusterSecret,
+		"TNLD_STORAGE_KEY": secrets.StorageKey,
+	}
+	if command.AWSRoleARN == "" {
+		controlSecrets["AWS_ACCESS_KEY_ID"] = secrets.AWSAccessKeyID
+		controlSecrets["AWS_SECRET_ACCESS_KEY"] = secrets.AWSSecretKey
+		controlSecrets["AWS_SESSION_TOKEN"] = secrets.AWSSessionToken
+	}
 	appSecrets := map[string]map[string]string{
-		"control": {
-			"TNLD_DATABASE_URL": databaseCredentials.PooledURL, "TNLD_DATABASE_DIRECT_URL": databaseCredentials.DirectURL,
-			"TNLD_LOGIN_TOKEN": secrets.LoginToken, "TNLD_CLUSTER_SECRET": secrets.ClusterSecret,
-			"TNLD_STORAGE_KEY": secrets.StorageKey, "AWS_ACCESS_KEY_ID": secrets.AWSAccessKeyID,
-			"AWS_SECRET_ACCESS_KEY": secrets.AWSSecretKey, "AWS_SESSION_TOKEN": secrets.AWSSessionToken,
-		},
+		"control":     controlSecrets,
 		"ingress":     {"TNLD_CLUSTER_SECRET": secrets.ClusterSecret},
 		"coordinator": {"TNL_BENCH_COORDINATOR_TOKEN": secrets.CoordinatorToken},
 		"publisher": {
@@ -568,6 +590,9 @@ func provisionBenchmark(
 		"TNLD_ROUTE53_MANAGED_ZONE_ID": managedZone.ID,
 		"TNLD_INGRESS_IPV4_ADDRESSES":  strings.Join(manifest.Addresses["ingress"].IPv4, ","),
 		"TNLD_INGRESS_IPV6_ADDRESSES":  strings.Join(manifest.Addresses["ingress"].IPv6, ","),
+	}
+	if command.AWSRoleARN != "" {
+		controlEnvironment["AWS_ROLE_ARN"] = command.AWSRoleARN
 	}
 	if plan.CertificateAuthority == benchmarkCertificateAuthorityPebble {
 		controlEnvironment["TNLD_ACME_DIRECTORY_URL"] = "https://" + apps["pebble"] + ".internal:14000/dir"

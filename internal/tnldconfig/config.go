@@ -182,14 +182,14 @@ func (c Config) Validate() error {
 	if c.Role != RoleRelay && c.Role != RoleStandalone && (c.RelayTLSCertificateFile != "" || c.RelayTLSPrivateKeyFile != "") {
 		return errors.New("relay TLS overrides are valid only for relay and standalone roles")
 	}
-	for name, address := range map[string]string{
-		"metrics": c.MetricsListen, "control": c.ControlListen, "private control": c.PrivateControlListen,
-		"ingress": c.IngressListen, "relay TCP": c.RelayTCPListen,
-		"relay UDP": c.RelayUDPListen, "internal relay": c.InternalRelayListen,
-		"DNS server": c.DNSServer,
+	for _, listener := range []struct{ name, address string }{
+		{"metrics", c.MetricsListen}, {"control", c.ControlListen}, {"private control", c.PrivateControlListen},
+		{"ingress", c.IngressListen}, {"relay TCP", c.RelayTCPListen},
+		{"relay UDP", c.RelayUDPListen}, {"internal relay", c.InternalRelayListen},
+		{"DNS server", c.DNSServer},
 	} {
-		if err := validateListenAddress(address); err != nil {
-			return fmt.Errorf("%s listen address: %w", name, err)
+		if err := validateListenAddress(listener.address); err != nil {
+			return fmt.Errorf("%s listen address: %w", listener.name, err)
 		}
 	}
 	if c.SourceConnectionRate <= 0 || math.IsNaN(c.SourceConnectionRate) || math.IsInf(c.SourceConnectionRate, 0) || c.SourceConnectionBurst <= 0 {
@@ -323,11 +323,11 @@ func (c Config) validateDNSAutomation() error {
 	if !configured {
 		return nil
 	}
-	for name, zoneID := range map[string]string{
-		"managed": c.Route53ManagedZoneID, "server": c.Route53ServerZoneID,
+	for _, zone := range []struct{ name, id string }{
+		{"managed", c.Route53ManagedZoneID}, {"server", c.Route53ServerZoneID},
 	} {
-		if zoneID != "" && (strings.TrimSpace(zoneID) != zoneID || strings.ContainsAny(zoneID, "/ ")) {
-			return fmt.Errorf("route 53 %s zone ID must be a canonical bare hosted zone ID", name)
+		if zone.id != "" && (strings.TrimSpace(zone.id) != zone.id || strings.ContainsAny(zone.id, "/ ")) {
+			return fmt.Errorf("route 53 %s zone ID must be a canonical bare hosted zone ID", zone.name)
 		}
 	}
 	if !validDNSLabel(c.Route53Region) {

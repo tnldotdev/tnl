@@ -119,7 +119,7 @@ func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyTunnelCLIUnits(args, parsed.Command(), &flags)
+	applyTunnelCLIUnits(parsed, &flags)
 	if flags.Publish.Host != "" || flags.Publish.Subdomain != "api" || flags.Publish.AllowAllIPs ||
 		len(flags.Publish.AllowIP) != 1 {
 		t.Fatalf("publish flags = %#v", flags.Publish)
@@ -137,7 +137,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyTunnelCLIUnits(args, parsed.Command(), &flags)
+	applyTunnelCLIUnits(parsed, &flags)
 	configured := true
 	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
 		AllowAllIPs: &configured, Ephemeral: &configured,

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 )
 
 func TestRunValidationRequiresBothPaidResourceGates(t *testing.T) {
@@ -38,6 +40,21 @@ func TestRunValidationRequiresBothPaidResourceGates(t *testing.T) {
 				t.Fatal("invalid run command was accepted")
 			}
 		})
+	}
+}
+
+func TestBenchmarkAWSConfigRejectsExpiringCredentialSnapshot(t *testing.T) {
+	deadline := time.Now().Add(2 * time.Hour)
+	credentials := aws.Credentials{CanExpire: true, Expires: time.Now().Add(time.Hour)}
+	if err := validateBenchmarkAWSCredentials(credentials, "", deadline); err == nil {
+		t.Fatal("expired control credential snapshot was accepted")
+	}
+	if err := validateBenchmarkAWSCredentials(credentials, "arn:aws:iam::123456789012:role/bench", deadline); err != nil {
+		t.Fatalf("renewable role was rejected: %v", err)
+	}
+	credentials.CanExpire = false
+	if err := validateBenchmarkAWSCredentials(credentials, "", deadline); err != nil {
+		t.Fatalf("long-lived credentials were rejected: %v", err)
 	}
 }
 

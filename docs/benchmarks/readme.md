@@ -40,6 +40,13 @@ so it requires an explicit suite and approval with `BENCH_SUITE` and
 
 Credentials are passed through the deployment platform and are not written to
 the ownership manifest. Access checks run before resources are created.
+If local AWS credentials expire before the maximum run duration, set
+`BENCH_AWS_ROLE_ARN` to an IAM role that trusts the Fly Machine OIDC identity and
+permits the control processes to manage the benchmark's Route 53 zones. The
+runner continues to use its local AWS credential chain; control exchanges fresh
+Fly identity tokens for renewable AWS credentials instead of receiving a
+snapshot of the runner's session. Without a role, expiring credentials must
+remain valid for the entire maximum run duration.
 
 Public certificate checks must use a small smoke workload. Other runs use a
 private certificate authority with real DNS validation.

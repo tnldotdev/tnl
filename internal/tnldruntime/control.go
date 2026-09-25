@@ -67,9 +67,12 @@ func newPublicAPIHandler(
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
-	mux := controlapi.NewHandler(
+	mux, err := controlapi.NewHandler(
 		controlConfig, database, database, database.Readiness,
 	)
+	if err != nil {
+		return nil, err
+	}
 	if cfg.AuthorityEndpoint == "" {
 		var verifier oidcauth.Verifier
 		if cfg.OIDCEnabled() {
@@ -81,7 +84,9 @@ func newPublicAPIHandler(
 				return nil, err
 			}
 		}
-		authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier), database)
+		if err := authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier), database); err != nil {
+			return nil, err
+		}
 	}
 	return mux, nil
 }

@@ -22,13 +22,19 @@ import (
 
 const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
 
+func TestNewHandlerRejectsInvalidLoginToken(t *testing.T) {
+	if _, err := NewHandler(Config{LoginToken: "invalid"}, nil); err == nil {
+		t.Fatal("invalid login token accepted")
+	}
+}
+
 func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 	createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	store := &authorityMutationStoreStub{team: controlstate.Team{
 		ID: "team_1", Kind: "organization", DisplayName: "Example team", ManagedLabel: "quiet-lake",
 		DefaultDomainID: "domain_1", PolicyRevision: 1, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}}
-	handler := NewHandler(Config{}, store)
+	handler := testHandler(t, Config{}, store)
 	request := newCreateTeamRequest()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -54,7 +60,7 @@ func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 
 func TestCreateTeamHandlerMapsAuthorityConflict(t *testing.T) {
 	store := &authorityMutationStoreStub{createTeamError: controlstate.ErrAuthorityIdempotency}
-	handler := NewHandler(Config{}, store)
+	handler := testHandler(t, Config{}, store)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, newCreateTeamRequest())
 	if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/problem+json" {
@@ -68,7 +74,7 @@ func TestCreateTeamHandlerMapsAuthorityConflict(t *testing.T) {
 
 func TestClaimTeamDomainRequiresDNSAutomation(t *testing.T) {
 	store := &authorityMutationStoreStub{}
-	handler := NewHandler(Config{}, store)
+	handler := testHandler(t, Config{}, store)
 	request := httptest.NewRequest(
 		http.MethodPost, "/v1/teams/team_1/domains", strings.NewReader(`{"domain":"claim.example.test"}`),
 	)
@@ -84,7 +90,7 @@ func TestClaimTeamDomainRequiresDNSAutomation(t *testing.T) {
 
 func TestExchangeLoginTokenUsesVerifierSourceRevision(t *testing.T) {
 	store := &authorityMutationStoreStub{}
-	handler := NewHandler(Config{LoginToken: testLoginToken}, store)
+	handler := testHandler(t, Config{LoginToken: testLoginToken}, store)
 	request := httptest.NewRequest(
 		http.MethodPost, "/v1/auth/token", strings.NewReader(`{"login_token":"`+testLoginToken+`"}`),
 	)
@@ -105,7 +111,7 @@ func TestExchangeLoginTokenUsesVerifierSourceRevision(t *testing.T) {
 
 func TestExchangeLoginTokenMapsSessionCreationFailureToUnavailable(t *testing.T) {
 	store := &authorityMutationStoreStub{builtinError: controlstate.ErrControlAuthentication}
-	handler := NewHandler(Config{LoginToken: testLoginToken}, store)
+	handler := testHandler(t, Config{LoginToken: testLoginToken}, store)
 	request := httptest.NewRequest(
 		http.MethodPost, "/v1/auth/token", strings.NewReader(`{"login_token":"`+testLoginToken+`"}`),
 	)
@@ -125,7 +131,7 @@ func TestExchangeOIDCTokenCreatesLocalSession(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour), AssertionDigest: digest,
 	}
 	store := &authorityMutationStoreStub{}
-	handler := NewHandler(Config{
+	handler := testHandler(t, Config{
 		ManagedDeploymentDomain: "example.test", OIDCVerifier: oidcVerifierStub{identity: verified},
 		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour,
 	}, store)
@@ -157,7 +163,7 @@ func TestExchangeOIDCTokenMapsAuthenticationFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &authorityMutationStoreStub{oidcError: test.storeErr}
-			handler := NewHandler(Config{OIDCVerifier: test.verifier, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour}, store)
+			handler := testHandler(t, Config{OIDCVerifier: test.verifier, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour}, store)
 			request := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc", strings.NewReader(`{"id_token":"id-token"}`))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -171,8 +177,13 @@ func TestExchangeOIDCTokenMapsAuthenticationFailures(t *testing.T) {
 
 func TestRegisterComposesAuthorityAndControlRoutesOnOneMux(t *testing.T) {
 	store := &authorityMutationStoreStub{team: controlstate.Team{ID: "team_1", Kind: "organization"}}
-	mux := controlapi.NewHandler(controlapi.Config{}, nil, nil, nil)
-	Register(mux, Config{}, store)
+	mux, err := controlapi.NewHandler(controlapi.Config{}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(mux, Config{}, store); err != nil {
+		t.Fatal(err)
+	}
 
 	health := httptest.NewRecorder()
 	mux.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
@@ -192,7 +203,7 @@ func TestRegisterComposesAuthorityAndControlRoutesOnOneMux(t *testing.T) {
 }
 
 func TestBuiltinAuthorityDoesNotExposeHostedServiceAuthorization(t *testing.T) {
-	handler := NewHandler(Config{}, &authorityMutationStoreStub{})
+	handler := testHandler(t, Config{}, &authorityMutationStoreStub{})
 	for _, path := range []string{"/v1/service/authorize", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))

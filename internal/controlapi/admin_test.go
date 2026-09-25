@@ -42,7 +42,7 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 	store.drained = store.relayPage.Relays[0]
 	store.drained.Draining = true
 	store.drained.DrainDeadline = &deadline
-	handler := NewHandler(Config{Role: "control", StartedAt: now.Add(-time.Hour)}, store, store, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{Role: "control", StartedAt: now.Add(-time.Hour)}, store, store, func(context.Context) error { return nil })
 
 	status := serveAdminRequest(handler, http.MethodGet, "/v1/admin/status", "")
 	if status.Code != http.StatusOK {
@@ -78,7 +78,7 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 
 func TestAdminHandlersRejectNonAdministrators(t *testing.T) {
 	store := &adminStoreStub{principal: controlstate.ControlPrincipal{IdentityID: "identity_user"}}
-	handler := NewHandler(Config{}, store, store, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{}, store, store, func(context.Context) error { return nil })
 	response := serveAdminRequest(handler, http.MethodGet, "/v1/admin/status", "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())

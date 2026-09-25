@@ -10,7 +10,7 @@ import (
 
 func TestControlHandlersRecordMatchedOperations(t *testing.T) {
 	metrics := observability.New("control")
-	handler := NewHandler(Config{Metrics: metrics}, nil, nil, nil)
+	handler := testHandler(t, Config{Metrics: metrics}, nil, nil, nil)
 	for _, path := range []string{"/v1/health", "/v1/routes/route_private-id"} {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
 	}
