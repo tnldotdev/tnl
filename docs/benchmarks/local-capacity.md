@@ -298,15 +298,89 @@ activation, before it offered visitor traffic; its incomplete snapshot is not
 a failed five-minute capacity measurement. These runs do not establish a
 deployed combined capacity limit.
 
+### balanced replicated-process combined profile
+
+The next local combined profile spread visitor work across two ingress
+processes and both relay services, with two control processes sharing one
+disposable PostgreSQL instance. Each server-role process had a one-CPU quota
+and 2 GiB memory limit. The separate database had 4 CPUs / 2 GiB;
+publishers had 2 CPUs / 3 GiB; the local service had 4 CPUs / 1 GiB; each
+visitor had 2 CPUs / 512 MiB; Pebble had 512 MiB; and the coordinator had
+2 CPUs / 1 GiB. Activation used 1,000 concurrent starts, eight certificate
+workers per control process, and a five-minute publisher readiness timeout.
+The same four visitor sources used a 1,000/sec source rate and 4,000 burst.
+
+Every complete combined run offered 406 fresh requests/sec while keeping
+1,300 held streams progressing and carrying 447 Mbit/sec **in each direction**
+over 64 bandwidth streams per direction. Direct and tunneled paths each used
+two-minute held-stream warmups and five-minute measurements. The 1,625-route
+point had three complete clean trials (one before and two after the challenge
+projection fix):
+
+| 1,625-route trial    | Direct fresh p95 | Tunneled fresh p95 | Tunneled bandwidth per direction |
+| -------------------- | ---------------: | -----------------: | -------------------------------: |
+| Earlier complete run |          2.443ms |            9.327ms |                 446.542 Mbit/sec |
+| Projection-fix run 1 |          2.467ms |           16.481ms |                 446.510 Mbit/sec |
+| Projection-fix run 2 |          2.469ms |           12.342ms |                 446.438 Mbit/sec |
+
+Each of these runs completed 121,800/121,800 successful direct and tunneled
+steady fresh requests, with no failures, timeouts, missed offers, or queue
+expiry. All 1,300 held streams survived and progressed. Each transfer delivered
+exactly 16,762,500,000 bytes in each direction, and each run installed one
+certificate per route without replacement orders. Post-fix activation verified
+in 43.698s and 38.961s respectively. Usage reconciled and the final state
+contained no active route sessions, publisher connections, or reservations.
+In the two post-fix tunneled steady phases the relays averaged
+0.778–0.794 CPU cores each, with under 0.4 seconds of quota throttling each;
+the two ingresses averaged 0.619–0.645 cores. The generators and database
+retained CPU and memory headroom in these measurements.
+
+At the same combined workload, successful 1,750- and 2,000-route trials had
+tunneled fresh p95 of 44.110ms and 104.919ms respectively. A 1,500-route
+trial measured 9.386ms. This brackets the **local latency knee between 1,625
+and 1,750 routes**, rather than establishing a safe operating limit. The
+9.327–16.481ms variation among the three 1,625-route results and the absence
+of a declared p95 threshold remain important qualifications.
+
+Two other attempts, one at 1,625 routes and one at 1,750, stopped during
+activation after Pebble invalidated TLS-ALPN authorizations; replacement orders
+later succeeded, but these are not clean capacity trials. The ACME work-claim query
+now waits for an acknowledged challenge projection with an unexpired projected
+publisher backend, and terminal authorization errors retain Pebble's challenge
+problem details. The earlier failures lack those details, so their precise
+cause is **not proven** by the new passing trials.
+
+The runtime harness now defaults to the two-control/two-ingress process
+topology, with consistently named `control-a`/`control-b` and
+`ingress-a`/`ingress-b` processes; `control` and `ingress` remain shared Docker
+DNS names. On this replicated process topology, a four-route abrupt relay-a
+loss check completed 12,800/12,800 successful fresh requests at 160/sec during
+an 80-second fault/recovery phase, including 31 seconds with relay-a stopped.
+A forwarding blackhole on relay-a from **both** ingress processes completed
+800/800 requests and kept all four healthy-path held streams progressing.
+These small fault checks verify fallback correctness, **not** the combined
+1,625-route workload under degradation: the current fault harness does not
+combine the five-minute held/bandwidth workload with faults, and it does not
+inject loss of one ingress process. Docker DNS is not a health-aware ingress
+address, and PostgreSQL and the Docker host are single failure boundaries.
+
+Ignored local evidence: `bench-results/capacity-profile-balanced-relays-1625-full-{1,2}/`,
+`bench-results/capacity-profile-balanced-relays-1750-full-{1,2}/`,
+`bench-results/capacity-profile-balanced-relays-1625-projection-fix-{1,2}/`,
+`bench-results/runtime-ha-names-{relay-kill,forwarding-blackhole}-20260925/`.
+The `1625-full-2` and `1750-full-1` directories contain failed activation
+attempts. Earlier evidence was copied out of its temporary benchmark worktree
+into the main checkout's ignored `bench-results/` directory.
+
 ### remaining validation
 
-| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                            |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                    |
-| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                               |
-| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                     |
-| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                         |
-| Combined/degraded | A 500-route simultaneous point passed twice with replicated control/ingress processes, but traffic still concentrated on one relay. The single-ingress 1,000/2,000-route steps showed relay CPU/latency pressure. Test balanced relay traffic on an actual health-aware deployment before setting limits. |
+| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                                                                            |
+| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                                                                                       |
+| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                                                                             |
+| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                                                                                 |
+| Combined/degraded | Three complete 1,625-route balanced local combined runs bracket the latency knee before the successful 1,750-route point, but two other activation attempts had invalid TLS-ALPN authorizations. Small replicated-process relay-loss and forwarding-blackhole checks passed; combined degraded load, ingress loss, and a health-aware deployment remain untested. |
 
 The isolated local staircase is sufficient to identify relay CPU pressure in
 the fresh-connection and bandwidth profiles and to choose the high-route
@@ -314,6 +388,6 @@ certificate-readiness straggler for investigation. It has not found a server
 resource limit for active route sessions: the highest tested count reached
 configured harness and relay limits. It does not establish safe production
 limits or a highly available deployment's behavior. The combined local screens
-now locate a shared CPU bottleneck, with two replicated-process passes at the
-lower-headroom point but no balanced-relay measurement.
+and balanced-relay runs now locate a shared latency knee without establishing
+a degraded-state or production operating limit.
 Further isolated short screens alone would not close those gaps.
