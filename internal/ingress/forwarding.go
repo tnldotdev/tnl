@@ -189,6 +189,12 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
+		// A stream can fail while its pooled session is still usable. Closing
+		// that session would also drop unrelated held visitor streams. Let
+		// ingress try the other relay for this visitor instead.
+		if session.Err() == nil && b.forwarder.currentSession(b.target.key(), session) {
+			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
+		}
 		err = errors.Join(err, b.forwarder.invalidate(b.target.key(), session))
 		// Another visitor may populate the pool before our retry, so even the
 		// second attempt can reuse a session. Exhaustion is an ordinary error.
@@ -303,6 +309,13 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	go f.removeWhenDone(key, entry, session)
+}
+
+func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.sessions[key]
+	return entry != nil && entry.session == session
 }
 
 func (f *Forwarder) removeSupersededLocked(current relaySessionKey) []*relaySession {
