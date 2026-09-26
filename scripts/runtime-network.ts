@@ -24,9 +24,10 @@ export function impairmentEndpoints(
   path: string | undefined,
   addresses: Readonly<Record<RuntimeService, string>>,
   ingresses: readonly ("ingress-a" | "ingress-b")[],
+  activePublishers: readonly (typeof publisherServices)[number][],
 ): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
   if (path !== "forwarding" && path !== "publisher") throw new Error("invalid network path");
-  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : publisherServices;
+  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : activePublishers;
   const port = path === "forwarding" ? "8443" : "443";
   const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
   const forwards = sources.map((service): ImpairmentEndpoint => ({ service, filters: [] }));

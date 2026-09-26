@@ -44,8 +44,17 @@ type FaultEvents = {
 };
 
 const results = z.string().min(1).parse(process.env.RESULTS);
+const routes = z.coerce
+  .number()
+  .int()
+  .min(4)
+  .max(10_000)
+  .parse(process.env.ROUTES ?? "4");
 const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
 const replicatedRelays = process.env.SCENARIO === "control-restart";
+// Each publisher component owns striped pairs of routes. Small smoke runs
+// intentionally leave some publisher components without a route.
+const activePublishers = publisherServices.filter((_, shard) => shard * 2 < routes);
 const ingresses: readonly ("ingress-a" | "ingress-b")[] = haTopology
   ? ["ingress-a", "ingress-b"]
   : ["ingress-a"];
@@ -188,7 +197,7 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
     intentionalRelayExit = false;
   } else if (["forwarding-blackhole", "publisher-blackhole", "udp-fallback"].includes(scenario)) {
     const services: readonly RuntimeService[] =
-      scenario === "forwarding-blackhole" ? ingresses : publisherServices;
+      scenario === "forwarding-blackhole" ? ingresses : activePublishers;
     const relays: RuntimeService[] =
       scenario === "udp-fallback" ? ["relay-a", "relay-b"] : ["relay-a"];
     const protocols =
@@ -267,7 +276,12 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       "relay-a": address("relay-a"),
       "relay-b": address("relay-b"),
     };
-    const endpoints = impairmentEndpoints(process.env.NETWORK_PATH, addresses, ingresses);
+    const endpoints = impairmentEndpoints(
+      process.env.NETWORK_PATH,
+      addresses,
+      ingresses,
+      activePublishers,
+    );
     const options = netemOptions(scenario, process.env.RTT, process.env.LOSS, process.env.SEED);
     await withFaultCleanup(async (undo) => {
       const matched = new Set<RuntimeService>();
@@ -356,7 +370,7 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       if (
         (process.env.NETWORK_PATH === "forwarding"
           ? ingresses.some((service) => !matched.has(service))
-          : publisherServices.some((service) => !matched.has(service))) ||
+          : activePublishers.some((service) => !matched.has(service))) ||
         !(["relay-a", "relay-b"] as const).some((service) => matched.has(service))
       )
         throw new Error("netem did not impair both directions of a visitor path");

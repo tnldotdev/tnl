@@ -407,6 +407,10 @@ deadlines apply independently of visitor source rate.
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
 process run ID after restart. The relay exits before the measured fresh-request
 window begins, and every measured visitor must succeed through the alternate.
+The restored relay has 45 seconds to regain both publisher connections across
+the 15-second publisher heartbeat cadence; a missed deadline reports the slot
+states. In a four-route smoke run, only the first two publisher containers own
+routes, so network-fault checks require traffic from those active components.
 Preexisting held streams still cross the abrupt failure boundary and are not
 replayed. Ingress gives a preferred relay at most 250ms before trying the
 alternate. `forwarding-blackhole` drops ingress-to-relay-a TCP port 8443 from

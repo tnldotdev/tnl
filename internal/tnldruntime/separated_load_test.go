@@ -322,19 +322,21 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 				err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
 				return current != "" && current != oldRelayRun, err
 			})
-			repaired = separatedWaitForRecovery(t, database, publishers)
+			// A killed relay waits out its 30-second lease. The next 15-second
+			// publisher heartbeat can then assign replacement connections.
+			repaired = separatedWaitForRecovery(t, database, publishers, 45*time.Second)
 		}
 		switch phase {
 		case "relay-restart":
 			separatedWrite(t, "relay-a.restart", time.Now())
 			separatedWait(t, "relay-a.stopped", 10*time.Second, &restart)
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-			repaired = separatedWaitForRecovery(t, database, publishers)
+			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 		case "control-restart":
 			separatedWrite(t, "control-a.restart", time.Now())
 			separatedWait(t, "control-a.stopped", 15*time.Second, &restart)
 			separatedWait(t, "control-a.restarted", 70*time.Second, &restart.Restored)
-			repaired = separatedWaitForRecovery(t, database, publishers)
+			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 		case "shutdown":
 			separatedWrite(t, "close-half", time.Now())
 			var elapsed time.Duration
@@ -382,7 +384,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			}
 			separatedWrite(t, "fault.release", true)
 			separatedWait(t, "fault.restored", 15*time.Second, &restart.Restored)
-			repaired = separatedWaitForRecovery(t, database, publishers)
+			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-restored", URLs: publishers.URLs, CloseHeld: true})
 			separatedReportVisitors(t, phase, results, restart, repaired)
 		}

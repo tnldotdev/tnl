@@ -64,16 +64,20 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 	}
 }
 
-func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separatedPublishers) time.Time {
+func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separatedPublishers, timeout time.Duration) time.Time {
 	t.Helper()
-	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	if err := pollCondition(ctx, 25*time.Millisecond, 2*time.Second, func(ctx context.Context) (bool, error) {
 		var count int
 		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.route_session_connections c
 			JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
 			AND l.relay_lease_revision = c.connected_relay_lease_revision
 			WHERE c.state = 'ready' AND NOT l.draining AND l.lease_expires_at > now()`).Scan(&count)
 		return count == len(publishers.Ready)*2, err
-	})
+	}); err != nil {
+		t.Fatalf("publisher connections did not recover within %s: %v; current assignments=%s", timeout, err, separatedConnectionAssignments(t, database))
+	}
 	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
 	for _, ready := range publishers.Ready {
 		assertRouteVersion(t, database, ready.RouteID, ready.RouteVersion)
