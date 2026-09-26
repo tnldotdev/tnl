@@ -78,7 +78,8 @@ func TestYamuxErrRetainsPeerCloseReason(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("peer close did not stop yamux session")
 	}
-	if err := session.Err(); !errors.Is(err, io.EOF) {
+	// The send loop can observe the peer close before the receive loop does.
+	if err := session.Err(); !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("lost peer close reason: %v", err)
 	}
 }
