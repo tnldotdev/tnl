@@ -349,7 +349,7 @@ jobs:
           mkdir Formula
           cat > Formula/tnl.rb <<EOF
           class Tnl < Formula
-            desc "HTTPS URLs for every worktree"
+            desc "Public URLs for every worktree"
             homepage "https://github.com/tnldotdev/tnl"
             version "$version"
             license "MIT"

@@ -1,6 +1,6 @@
 # tnl
 
-**https urls for every worktree.**
+**public urls for every worktree.**
 
 tnl starts your app and gives it an HTTPS URL. Each Git worktree gets its own,
 so you can open changes side by side. Use [tnl.dev](https://tnl.dev), put the
