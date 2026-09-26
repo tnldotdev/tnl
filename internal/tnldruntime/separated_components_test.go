@@ -224,16 +224,18 @@ type separatedPublishers struct {
 
 func separatedPublisherIndexes(count, shard int) []int {
 	shards := len(separatedPublisherComponents())
-	start, end := shard*count/shards, (shard+1)*count/shards
-	indexes := make([]int, 0, end-start)
-	for i := start; i < end; i++ {
+	indexes := make([]int, 0, (count+shards-1)/shards)
+	for i := 2 * shard; i < count; i += 2 * shards {
 		indexes = append(indexes, i)
+		if i+1 < count {
+			indexes = append(indexes, i+1)
+		}
 	}
 	return indexes
 }
 
 func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
-	for _, total := range []int{4, 17, 3000} {
+	for _, total := range []int{4, 8, 17, 3000} {
 		seen := make([]bool, total)
 		for shard := range separatedPublisherComponents() {
 			indexes := separatedPublisherIndexes(total, shard)
@@ -243,8 +245,19 @@ func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 				}
 				seen[index] = true
 			}
-			if total > 4 && (indexes[0]%2 == indexes[1]%2) {
+			if total >= 8 && (indexes[0]%2 == indexes[1]%2) {
 				t.Fatalf("total=%d shard=%d has no mixed transports", total, shard)
+			}
+			if total >= 64 {
+				var firstWindow int
+				for _, index := range indexes {
+					if index < 64 {
+						firstWindow++
+					}
+				}
+				if firstWindow != 64/len(separatedPublisherComponents()) {
+					t.Fatalf("total=%d shard=%d owns %d of first 64 routes", total, shard, firstWindow)
+				}
 			}
 		}
 		for index, found := range seen {

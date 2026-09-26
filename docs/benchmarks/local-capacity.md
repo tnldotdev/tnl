@@ -409,6 +409,45 @@ runs did not reproduce the earlier simultaneous pooled-session closures;
 their original trigger remains unknown. The four-CPU profile is only one
 complete run per route count, not a repeated production operating limit.
 
+### sharded publisher-generator combined screens
+
+The local runtime harness now uses four separate publisher generators, each
+with a loopback local service, and stripes pairs of route indexes across them
+so both transports and the first 64 bandwidth routes reach every generator.
+Control, ingress, and both relay processes retain the 1 CPU / 2 GiB profile;
+each publisher generator has 4 CPUs / 4 GiB. PostgreSQL has 4 CPUs / 2 GiB,
+each local service 4 CPUs / 1 GiB, each visitor 2 CPUs / 512 MiB, Pebble
+512 MiB, and the coordinator 2 CPUs / 1 GiB. The publisher-connection
+capacity remains 4,000 per relay process. Startup was capped at 256 across
+the four generators. Each point had a direct-path comparison, 30-second held
+warmups per path, and one-minute combined direct and tunneled measurements;
+routes, fresh rate, held streams, and bidirectional bandwidth rose together.
+
+| Routes | Fresh/sec |  Held | Mbit/sec per direction | Direct p95 |   Tunneled p95 / p99 | Tunneled Mbit/sec per direction |
+| -----: | --------: | ----: | ---------------------: | ---------: | -------------------: | ------------------------------: |
+|  3,000 |       657 | 2,100 |                    722 |    2.313ms |  13.435ms / 32.006ms |                         720.943 |
+|  3,500 |       767 | 2,450 |                    842 |    2.338ms | 40.162ms / 134.288ms |                         840.317 |
+|  4,000 |       876 | 2,800 |                    962 |    2.341ms | 85.893ms / 256.512ms |                         959.122 |
+
+Each screen completed all offered fresh requests (39,420, 46,020, and
+52,560 respectively), kept every held stream progressing, delivered exact
+bandwidth bytes, reconciled usage, and shut down cleanly. No publisher
+generator was CPU-throttled in the measured phase; their CPU was balanced
+across the four shards. The relays rose from about 0.83 to 0.90 mean cores
+and accumulated some quota throttling, while tunneled latency increased.
+These are single short local observations, **not** a repeatable latency knee
+or operating limit. The 4,000-route point exactly reaches the configured
+publisher-connection capacity per relay; a higher route count requires an
+explicitly raised capacity setting and must be reported as a separate profile.
+
+An initial 3,000-route sharded activation at 1,000 concurrent starts timed
+out before visitor traffic; its certificate work had not completed. A later
+3,000-route screen at 256 concurrent starts passed, but contiguous route
+shards concentrated bandwidth on one publisher generator, so it is excluded
+from the balanced comparison above. Ignored local evidence:
+`bench-results/capacity-combined-sharded-{3000-striped,3500-striped,4000-striped}-1/`;
+setup diagnostics: `bench-results/capacity-combined-sharded-3000-screen-1/`.
+
 Two earlier attempts, one at 1,625 routes and one at 1,750, stopped during
 activation after Pebble invalidated TLS-ALPN authorizations; replacement orders
 later succeeded, but these are not clean capacity trials. A subsequent
@@ -456,13 +495,13 @@ runtime harness now checks those run IDs for restart detection.
 
 ### remaining validation
 
-| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                                                                                                                                                                                                                                                             |
-| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                                                                                                                                                                                                                                                                        |
-| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                                                                                                                                                                                                                                                              |
-| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                                                                                                                                                                                                                                                                  |
-| Combined/degraded | The apparent local route-count knee was primarily publisher-generator headroom: at the matched 1,875- and 2,000-route combined workload, raising only its CPU quota from two to four cut tunneled p95 to about 5ms. An earlier two-CPU 481 Mbit/sec run failed after pooled sessions closed, but later runs did not reproduce that loss. Repeat four-CPU candidate measurements and find a server-role boundary, then test under degradation with a health-aware ingress address and highly available PostgreSQL before setting production limits. |
+| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                                                                                                                                                                                                      |
+| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                                                                                                                                                                                                                 |
+| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                                                                                                                                                                                                       |
+| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                                                                                                                                                                                                           |
+| Combined/degraded | The apparent earlier route-count knee was primarily publisher-generator headroom. With four balanced generator shards, one-minute combined screens passed through 4,000 routes, but tunneled p95 rose as the relays approached one-CPU quotas and the configured 4,000-publisher-connection ceiling. Find a real failure point, then repeat longer windows and test under degradation with a health-aware ingress address and highly available PostgreSQL before setting production limits. |
 
 The isolated local staircase is sufficient to identify relay CPU pressure in
 the fresh-connection and bandwidth profiles and to choose the high-route

@@ -225,12 +225,13 @@ services, Pebble/DNS, PostgreSQL, and a coordinator. Publishers, visitors,
 histograms, and authenticated HTTP coordination are shared with deployed
 benchmarks through `internal/benchworkload`.
 Production `publisher.Run` and `clientauth` own publishing and session refresh.
-The publisher generators each own a contiguous share of route indexes, split
-the configured startup concurrency, and report to one readiness and shutdown
-barrier. Each generator has its own local-service sidecar in the same network
-namespace, preserving loopback targets. The direct baseline uses the first
-sidecar; all sidecars use the same origin implementation. CPU and memory
-limits below apply per generator and per sidecar, not to their combined total.
+The publisher generators each own striped pairs of route indexes (both QUIC
+and TLS/TCP), split the configured startup concurrency, and report to one
+readiness and shutdown barrier. Each generator has its own local-service
+sidecar in the same network namespace, preserving loopback targets. The direct
+baseline uses the first sidecar; all sidecars use the same origin
+implementation. CPU and memory limits below apply per generator and per
+sidecar, not to their combined total.
 
 The default smoke has four routes, both QUIC and TLS/TCP, 16 fresh requests/sec,
 ten-second steady/shutdown windows, **128 visitor workers**, **eight waiting
