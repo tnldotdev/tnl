@@ -1,7 +1,21 @@
 {
   "name": "@tnldotdev/tnl",
   "version": "0.0.0-development",
-  "description": "The tnl client and framework integrations for project-local development.",
+  "description": "public urls for every worktree.",
+  "keywords": [
+    "git-worktree",
+    "local-development",
+    "localhost",
+    "nextjs",
+    "ngrok-alternative",
+    "self-hosted",
+    "tunnel",
+    "vite"
+  ],
+  "homepage": "https://tnl.dev",
+  "bugs": {
+    "url": "https://github.com/tnldotdev/tnl/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
