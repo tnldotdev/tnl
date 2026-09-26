@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as z from "zod";
@@ -25,7 +25,13 @@ const containerSchema = z.object({
   Id: z.string(),
   Name: z.string(),
   Config: z.object({ Labels: z.object({ "com.docker.compose.service": z.string() }) }),
-  State: z.object({ Running: z.boolean(), ExitCode: z.number().int() }),
+  State: z.object({
+    Running: z.boolean(),
+    ExitCode: z.number().int(),
+    OOMKilled: z.boolean(),
+    Error: z.string(),
+    FinishedAt: z.string(),
+  }),
   NetworkSettings: z.object({
     Networks: z.record(z.string(), z.object({ IPAddress: z.string() })),
   }),
@@ -69,6 +75,7 @@ function docker(args: readonly string[], quiet = false): string {
 const compose = (args: readonly string[], quiet = false) =>
   docker([...composeArgs, ...args], quiet);
 let logs: ChildProcess | undefined;
+let dockerEvents: ChildProcess | undefined;
 let stopping = false;
 let coordinatorConnection: { readonly token: string; readonly endpoint: string } | undefined;
 let faultTask: Promise<void> | undefined;
@@ -368,6 +375,26 @@ try {
   compose(["run", "--rm", "build"]);
   compose(["up", "--wait", "postgres"]);
   compose(["run", "--rm", "setup"]);
+  const eventLog = openSync(join(results, "docker-exit-events.log"), "w");
+  try {
+    dockerEvents = spawn(
+      "docker",
+      [
+        "events",
+        "--filter",
+        "type=container",
+        "--filter",
+        "label=com.docker.compose.project=tnl-separated-load-test",
+        ...["die", "kill", "oom"].flatMap((action) => ["--filter", `event=${action}`]),
+        "--format",
+        "{{.TimeNano}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}} signal={{.Actor.Attributes.signal}}",
+      ],
+      { stdio: ["ignore", eventLog, "inherit"] },
+    );
+    dockerEvents.on("error", (error) => console.error(`docker events: ${error.message}`));
+  } finally {
+    closeSync(eventLog);
+  }
   compose([
     "up",
     "--detach",
@@ -418,6 +445,22 @@ try {
         container.State.ExitCode === 137
       )
         continue;
+      writeFileSync(
+        join(results, "unexpected-component-exit.json"),
+        JSON.stringify(
+          {
+            at: new Date().toISOString(),
+            exited: container.Name,
+            containers: states.map((state) => ({
+              name: state.Name,
+              service: state.Config.Labels["com.docker.compose.service"],
+              ...state.State,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
       throw new Error(`unexpected component exit: ${container.Name} (${container.State.ExitCode})`);
     }
     if (!coordinator.State.Running) {
@@ -440,6 +483,8 @@ try {
   status = 1;
 } finally {
   stopping = true;
+  if (dockerEvents && dockerEvents.exitCode === null && dockerEvents.signalCode === null)
+    dockerEvents.kill("SIGTERM");
   if (faultTask) await faultTask;
   if (faultError) {
     console.error(faultError);

@@ -448,6 +448,39 @@ from the balanced comparison above. Ignored local evidence:
 `bench-results/capacity-combined-sharded-{3000-striped,3500-striped,4000-striped}-1/`;
 setup diagnostics: `bench-results/capacity-combined-sharded-3000-screen-1/`.
 
+### raised publisher-connection ceiling
+
+With `PUBLISHER_CONNECTION_LIMIT=8000`, a separate 4,500-route screen passed
+at 986 fresh requests/sec, 3,150 held streams, and 1,082 Mbit/sec per direction.
+The direct comparison passed, as did all 59,160/59,160 tunneled fresh requests;
+exact tunneled p95/p99 were 269.024/397.278ms. Every held stream progressed,
+and exact transfer bytes arrived in both directions at 1,076.707 Mbit/sec
+per direction. Usage reconciled and shutdown was clean. The relays averaged
+0.967/0.968 cores and accumulated 5.45/7.05 seconds of CPU quota throttling;
+the balanced publisher generators retained CPU headroom. This is one short
+local passing screen with a **raised configured relay capacity**, not a
+repeatable latency threshold or a production limit. Evidence:
+`bench-results/capacity-combined-sharded-4500-ceiling8000-1/`.
+
+Two attempts at 5,000 routes with the same server-role 1 CPU / 2 GiB limits
+and an 8,000-publisher-connection ceiling activated every route and passed
+their direct comparisons: each completed 65,700/65,700 fresh requests and
+exactly 9,022,500,000 transfer bytes per direction at a 1,203 Mbit/sec
+target. Both kept 3,500 held streams progressing through the tunneled warmup,
+but a relay exited with code 137 about five seconds into tunneled steady
+traffic, before a complete steady measurement. The first attempt lost
+`relay-b`; its exit metadata was not retained. In the instrumented repeat,
+Docker reported an `oom` event for `relay-a` and marked its exit 137 as
+`OOMKilled: true`. The last sample before that exit showed 765 MB against
+its 2 GiB cgroup limit, no recorded cgroup OOM event, and about 7.1 GB of
+sampled test-container memory in an 8.3-GB Docker Desktop VM. An abrupt
+container-memory spike versus VM-wide pressure is not yet distinguished.
+Neither attempt is a passing tunneled result or a measured tnl server
+capacity boundary. Rerun with more Docker-host headroom while retaining the
+same server-role quotas, and preserve Docker exit events and immediate
+inspection. Evidence: `bench-results/capacity-combined-sharded-5000-ceiling8000-1/`
+and `bench-results/capacity-combined-sharded-5000-ceiling8000-diagnostic-2/`.
+
 Two earlier attempts, one at 1,625 routes and one at 1,750, stopped during
 activation after Pebble invalidated TLS-ALPN authorizations; replacement orders
 later succeeded, but these are not clean capacity trials. A subsequent
@@ -495,13 +528,13 @@ runtime harness now checks those run IDs for restart detection.
 
 ### remaining validation
 
-| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                                                                                                                                                                                                      |
-| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                                                                                                                                                                                                                 |
-| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                                                                                                                                                                                                       |
-| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                                                                                                                                                                                                           |
-| Combined/degraded | The apparent earlier route-count knee was primarily publisher-generator headroom. With four balanced generator shards, one-minute combined screens passed through 4,000 routes, but tunneled p95 rose as the relays approached one-CPU quotas and the configured 4,000-publisher-connection ceiling. Find a real failure point, then repeat longer windows and test under degradation with a health-aware ingress address and highly available PostgreSQL before setting production limits. |
+| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                                                                                                                                                                                                                                                                                                                                                         |
+| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Combined/degraded | The apparent earlier route-count knee was primarily publisher-generator headroom. Four balanced generator shards passed one-minute combined screens through 4,000 routes at the default relay-connection ceiling and one 4,500-route screen with that ceiling raised to 8,000. Two 5,000-route attempts ended in relay exit 137 before tunneled measurement; the instrumented repeat confirmed a Docker OOM kill, not its memory-pressure source. Resolve the local OOM boundary, then repeat longer windows and test under degradation with a health-aware ingress address and highly available PostgreSQL before setting production limits. |
 
 The isolated local staircase is sufficient to identify relay CPU pressure in
 the fresh-connection and bandwidth profiles and to choose the high-route
