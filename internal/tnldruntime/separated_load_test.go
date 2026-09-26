@@ -317,14 +317,16 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-			waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
-				var current string
-				err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
-				return current != "" && current != oldRelayRun, err
-			})
 			// A killed relay waits out its 30-second lease. The next 15-second
 			// publisher heartbeat can then assign replacement connections.
 			repaired = separatedWaitForRecovery(t, database, publishers, 45*time.Second)
+			var currentRelayRun string
+			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&currentRelayRun); err != nil {
+				t.Fatal(err)
+			}
+			if currentRelayRun == oldRelayRun {
+				t.Fatalf("killed relay retained process run ID %s after recovery", oldRelayRun)
+			}
 		}
 		switch phase {
 		case "relay-restart":

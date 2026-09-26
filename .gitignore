@@ -1,4 +1,5 @@
 .DS_Store
+/PAPERCUTS.md
 .env
 .env.*
 !.env.example
