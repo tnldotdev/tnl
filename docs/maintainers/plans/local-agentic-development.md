@@ -295,7 +295,7 @@ different address is not.
 
 Do not require overlapping route sessions or migration of live visitor
 connections for the initial experience. A later seamless handoff must respect
-route versions, explicit ownership, and the existing retry boundary.
+publish run numbers, explicit ownership, and the existing retry boundary.
 
 ## hosted and self-hosted scope
 

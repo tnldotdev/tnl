@@ -206,7 +206,7 @@ deadline and allow the final ingress routing revision the same bounded wait.
 The production usage reporter, its 16-report transaction pages, and the
 shorter fault-test profile were not changed. These local observations establish
 that 6,000 completes under the production drain profile; they do not establish
-a safe route-session operating limit.
+a safe publish-run operating limit.
 
 The initial 7,000-route trial stopped when a publisher exceeded the fixture's
 30-second readiness deadline; its second attempt lost Pebble while the test
@@ -582,7 +582,7 @@ sends and QUIC UDP sends. Profiling perturbed that run's traffic and is
 excluded from the matched comparison.
 
 This isolates a **relay CPU boundary for the combined visitor traffic**,
-independent of needing 5,000 routes: throttled relays take too long to accept
+independent of needing 5,000 public_urls: throttled relays take too long to accept
 some internal-forwarding streams, ingress exhausts its 250-ms alternate-attempt
 budget and tries the other relay, and slow requests occupy visitor workers
 until scheduled fresh offers are missed. Raising only relay CPU removed the

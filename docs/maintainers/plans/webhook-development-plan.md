@@ -417,7 +417,7 @@ Propagate a generic observer through:
 
 ```text
 publisher.Config
-  -> RouteServerConfig
+  -> PublicURLServerConfig
   -> localproxy
 ```
 

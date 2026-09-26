@@ -68,7 +68,7 @@ A step fails when:
 - CPU, network, file descriptors, PostgreSQL, or another bounded resource fills.
 - A limit rejects traffic outside a test that is meant to check that limit.
 - Latency rises sharply and stays high.
-- Route, publisher connection, visitor stream, byte, or usage totals do not match.
+- PublicURL, publisher connection, visitor stream, byte, or usage totals do not match.
 
 Record queue, connection, TLS, first-body-byte, and total time for every step. Use
 the resulting curves to find the latency knee instead of choosing a latency target

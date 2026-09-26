@@ -46,7 +46,7 @@ Prepare the integration prerequisites below before running that tier.
 
 PostgreSQL-backed tasks start an isolated, digest-pinned PostgreSQL container,
 wait for it to become healthy, and remove it after the test command. Focus a tier
-with `RUN`, for example `task go:test:integration RUN='^TestIntegrationRouteRecovery$'`.
+with `RUN`, for example `task go:test:integration RUN='^TestIntegrationPublicURLRecovery$'`.
 
 Binary tests change subprocess trust and configuration and bind privileged
 ports. They run only on Linux; use the
@@ -67,17 +67,17 @@ mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
 Run database load tests with `mise exec -- task go:test:load:database`. Task
 creates and removes their PostgreSQL container; CI uses the same command.
 
-PR CI passes `ROUTES=32` for the database smoke. Scheduled and manually selected
+PR CI passes `PUBLIC_URLS=32` for the database smoke. Scheduled and manually selected
 load runs use the full 1,000-route workload, followed by the runtime reference and
 fault scenarios. Routine Go and JavaScript stages run sequentially so package
 build cleanup cannot race Go's repository traversal.
 
 The default is 1,000 routes, with 64 workflows and two eight-connection request
-pools. `ROUTES=<positive count>` changes only the route count; `RUN=<Go test regex>`
+pools. `PUBLIC_URLS=<positive count>` changes only the route count; `RUN=<Go test regex>`
 selects scenarios (default `^TestLoad`). For example:
 
 ```console
-mise exec -- task go:test:load:database ROUTES=32 RUN='^TestLoadSteadyState$'
+mise exec -- task go:test:load:database PUBLIC_URLS=32 RUN='^TestLoadSteadyState$'
 ```
 
 - `TestLoadPlacement` creates route sessions and claims their two publisher
@@ -102,7 +102,7 @@ mise exec -- task go:test:load:database ROUTES=32 RUN='^TestLoadSteadyState$'
   routes and reports readiness time separately from final checks.
 
 `HISTORY=<positive count>` sets the initial routing events per route for steady
-state and recovery (default `1`). For example, `ROUTES=1000 HISTORY=1000` seeds
+state and recovery (default `1`). For example, `PUBLIC_URLS=1000 HISTORY=1000` seeds
 one million events before the timed workload. The fixture copies genuine ready
 projections, advances their entry/global revisions, and analyzes the event table;
 it logs setup time and relation size separately. Readers begin at the seeded
@@ -132,8 +132,8 @@ activity model, not a high-bandwidth or held-stream test.
 For example:
 
 ```console
-mise exec -- task go:test:load:database ROUTES=1000 DURATION=10m RUN='^TestLoadCadence$'
-mise exec -- task go:test:load:database ROUTES=10000 HISTORY=100 DURATION=10m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database PUBLIC_URLS=1000 DURATION=10m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database PUBLIC_URLS=10000 HISTORY=100 DURATION=10m RUN='^TestLoadCadence$'
 ```
 
 Cadence output includes scheduled/completed work, overdue work, scheduler delay,
@@ -166,7 +166,7 @@ floor checks, and two-second call deadlines. The test window must be at least
 30 seconds and less than half `DURATION`; production uses ten minutes. For example:
 
 ```console
-mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms DURATION=10m RETENTION=1m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database PUBLIC_URLS=1000 DELAY=5ms DURATION=10m RETENTION=1m RUN='^TestLoadCadence$'
 ```
 
 This forces ingress to replay an old cursor through the real resnapshot boundary,
@@ -178,8 +178,8 @@ they do not establish production-window or multi-day storage requirements.
 For isolated query-plan investigation, select `RUN='^TestProfile'` with
 `DELAY=0ms`. These opt-in tests
 log the actual generated queries' `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` plans:
-placement counts at up to 1,000, 2,500, and `ROUTES` sessions, and routing reads
-with 4, 10, and 100 events per live route. For example, `ROUTES=10000
+placement counts at up to 1,000, 2,500, and `PUBLIC_URLS` sessions, and routing reads
+with 4, 10, and 100 events per live route. For example, `PUBLIC_URLS=10000
 RUN='^TestProfileRoutingHistory$'` profiles 40,000 through one million events.
 History is bulk-copied from genuine ready-route projections; setup is untimed,
 and three serial snapshots/plans per size measure read amplification without
@@ -191,7 +191,7 @@ the same accumulated-history fixture, including an empty eligible range and a
 full retention floor. Destructive EXPLAIN statements run inside rolled-back
 transactions, and the test verifies the event count afterward.
 
-`ROUTES=16 DELAY=10ms RUN='^TestProfileIngressUsage$'` isolates a 16-report usage
+`PUBLIC_URLS=16 DELAY=10ms RUN='^TestProfileIngressUsage$'` isolates a 16-report usage
 page, its replay, and a cumulative update with the same two eight-connection
 pools. It logs production query/guard/operation histograms and verifies final
 accounting. Use it to separate sequential round-trip cost from the competing
@@ -214,7 +214,7 @@ accelerated finite database workload with one-hour logical leases, not a soak or
 an end-to-end publisher test. For example:
 
 ```console
-mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
+mise exec -- task go:test:load:database PUBLIC_URLS=1000 DELAY=5ms RUN='^TestLoadShutdown$'
 ```
 
 ### runtime load
@@ -242,9 +242,9 @@ Its five-second budget includes queue waiting; requests are never retried.
 
 ```console
 mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
-mise exec -- task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
-mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime ROUTES=1000 START_PARALLEL=1000 ROUTE_CERTIFICATE_WORKERS=8 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
-mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
+mise exec -- task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
+mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime PUBLIC_URLS=1000 START_PARALLEL=1000 PUBLIC_URL_CERTIFICATE_WORKERS=8 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
+mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime PUBLIC_URLS=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=control-restart RPS=4 HELD_STREAMS=0 RESULTS=bench-results/runtime-control-restart
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
@@ -304,20 +304,20 @@ bench-results/<run>/steady-relay-a-cpu.pb.gz`.
 For example, a longer stream measurement with generator memory held fixed:
 
 ```console
-mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-held-1200
+mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-held-1200
 ```
 
 For isolated stream capacity on the 1 CPU / 2 GiB server-role profile, give
 generators separate headroom and use a fresh results directory at each step:
 
 ```console
-mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-streams-4000
+mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-streams-4000
 ```
 
 The default relay stream capacity is 4,096 and the publisher's local proxy
 accepts 500 concurrent requests per route, including held streams. Above
 those limits, pass explicit `RELAY_STREAM_CAPACITY` and
-`PUBLISHER_REQUEST_LIMIT` values; also adjust `ROUTE_CONNECTION_LIMIT` above
+`PUBLISHER_REQUEST_LIMIT` values; also adjust `PUBLIC_URL_CONNECTION_LIMIT` above
 the per-route ingress limit. Record applied settings from
 `admission-limits.json`. These are distinct configured-capacity profiles even
 when CPU and memory stay fixed.
@@ -373,16 +373,16 @@ active route validation separately. They also appear in `admission-limits.json`.
 Source rate/burst apply to ordinary visitors after classification; Pebble's
 active TLS-ALPN checks do not consume visitor tokens.
 
-| Task input                   | Default | Scope                                                                        |
-| ---------------------------- | ------: | ---------------------------------------------------------------------------- |
-| `SOURCE_CONNECTION_RATE`     |      50 | New connections/sec per source IPv4 address or IPv6 /64, per ingress process |
-| `SOURCE_CONNECTION_BURST`    |     200 | Source token-bucket size on each ingress process                             |
-| `VISITOR_CONNECTION_LIMIT`   |   20000 | Concurrent visitor connections per ingress process                           |
-| `ROUTE_CONNECTION_LIMIT`     |     500 | Concurrent visitor connections per route on each ingress process             |
-| `PUBLISHER_CONNECTION_LIMIT` |    4000 | Publisher connections per relay process                                      |
-| `PUBLISHER_REQUEST_LIMIT`    |     500 | Concurrent requests forwarded by each publisher route                        |
-| `RELAY_STREAM_CAPACITY`      |    4096 | Concurrent visitor streams per relay process                                 |
-| `QUIC_MAX_INCOMING_STREAMS`  |    4096 | Incoming QUIC streams per publisher connection                               |
+| Task input                    | Default | Scope                                                                        |
+| ----------------------------- | ------: | ---------------------------------------------------------------------------- |
+| `SOURCE_CONNECTION_RATE`      |      50 | New connections/sec per source IPv4 address or IPv6 /64, per ingress process |
+| `SOURCE_CONNECTION_BURST`     |     200 | Source token-bucket size on each ingress process                             |
+| `VISITOR_CONNECTION_LIMIT`    |   20000 | Concurrent visitor connections per ingress process                           |
+| `PUBLIC_URL_CONNECTION_LIMIT` |     500 | Concurrent visitor connections per route on each ingress process             |
+| `PUBLISHER_CONNECTION_LIMIT`  |    4000 | Publisher connections per relay process                                      |
+| `PUBLISHER_REQUEST_LIMIT`     |     500 | Concurrent requests forwarded by each publisher route                        |
+| `RELAY_STREAM_CAPACITY`       |    4096 | Concurrent visitor streams per relay process                                 |
+| `QUIC_MAX_INCOMING_STREAMS`   |    4096 | Incoming QUIC streams per publisher connection                               |
 
 For a small configuration check above the default sustained source rate:
 
@@ -465,7 +465,7 @@ it disabled. `START_PARALLEL` bounds concurrently activating publishers (default
 sets each publisher's deadline from launch (default 30s, range 30s–5m); use a
 non-default value only to characterize a known miss. Shutdown uses four concurrent
 stops and a ten-second per-publisher deadline, independently of startup concurrency.
-`ROUTE_CERTIFICATE_WORKERS` selects the control process's certificate worker count
+`PUBLIC_URL_CERTIFICATE_WORKERS` selects the control process's certificate worker count
 (default 4, range 1–8) so larger trials can compare bounded issuance concurrency.
 For the local 7,000–10,000-route screens, the default 30-second publisher
 readiness deadline and 128 MiB Pebble memory limit interrupted activation;
@@ -477,7 +477,7 @@ screens set `PUBLISHER_CONNECTION_LIMIT=10000`. These are configured ceilings,
 not measured server resource limits. One 10,000-route attempt exceeded even
 the two-minute publisher readiness deadline; do not erase that failure when
 comparing runs with `READY_TIMEOUT=5m`.
-On publisher failure, `publisher-failure.json` captures unfinished route-session,
+On publisher failure, `publisher-failure.json` captures unfinished publish-run,
 certificate-order, authorization, and ready-connection state before the group
 cancels publishers; it excludes credential and challenge material.
 
@@ -525,7 +525,7 @@ Resource intervals include coordination/collection overhead and record their act
 duration; cgroup memory includes charged page cache. Quota and peak figures describe
 the whole container, including its test wrapper.
 
-Checks retain provisioning deadlines, one CA order per route, route versions,
+Checks retain provisioning deadlines, one CA order per route, publish run numbers,
 recovery, healthy-route traffic during shutdown, and zero final active sessions,
 connections, and reservations. Ingress stops while control/PostgreSQL remain up,
 flushing its final usage checkpoints; latest per-route/bucket reports must match

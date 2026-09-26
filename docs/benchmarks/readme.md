@@ -56,7 +56,7 @@ private certificate authority with real DNS validation.
 | Setting                              | Default | Meaning                                                    |
 | ------------------------------------ | ------: | ---------------------------------------------------------- |
 | `BENCH_SUITE`                        |   smoke | `smoke` or `target`; execution requires explicit selection |
-| `BENCH_ROUTES`                       |       4 | Active route sessions                                      |
+| `BENCH_PUBLIC_URLS`                  |       4 | Active publish runs                                        |
 | `BENCH_FRESH_CONNECTIONS_PER_SECOND` |      16 | Total offered fresh visitor connections per second         |
 | `BENCH_HELD_STREAMS`                 |       4 | Held visitor streams                                       |
 | `BENCH_CONCURRENCY`                  |     128 | Total fresh visitor request workers                        |

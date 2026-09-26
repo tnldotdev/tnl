@@ -82,7 +82,7 @@ Both retain the clock through commit. Revision visibility therefore follows
 commit order without another round trip in the common single-event path.
 
 Session operations use `NO KEY UPDATE` route guards. Route identity is
-immutable, and usage's `KEY SHARE` references can coexist with heartbeats. Route
+immutable, and usage's `KEY SHARE` references can coexist with heartbeats. PublicURL
 mutations still conflict.
 
 ## retain routing history safely
@@ -96,7 +96,7 @@ Cleanup keeps:
 - every recent committed event, even when timestamps are out of revision order;
 - the latest event for each hostname and route or challenge category;
 - tombstones and expired latest events;
-- each route version's latest event for entry-revision continuity.
+- each publish run number's latest event for entry-revision continuity.
 
 Selecting the latest event before filtering its kind or expiration prevents an
 older route or challenge from reappearing.
@@ -132,7 +132,7 @@ page.
 
 Before TLS-ALPN validation starts, control requires at least one live,
 non-draining ingress. Every such ingress must acknowledge the latest challenge
-projection for the order's route version.
+projection for the order's publish run number.
 
 Unrelated routing events do not move this barrier. Changes to the challenge's
 own forwarding projection require a new acknowledgement. Selecting the latest

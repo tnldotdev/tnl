@@ -64,12 +64,12 @@ removes untrusted forwarding headers before proxying the HTTP request.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
-route projection, so ingress does not treat that copied deadline as final.
+public URL projection, so ingress does not treat that copied deadline as final.
 The connected relay checks its current, unexpired lease and the exact process
 and connection assignment identities before accepting each visitor stream.
 
-Public route DNS points to ingress, never to a relay. Placement can therefore
-change without changing public route DNS.
+Public URL DNS points to ingress, never to a relay. Placement can therefore
+change without changing public URL DNS.
 
 ## understand the retry boundary
 
@@ -92,24 +92,24 @@ copy bytes without replay
 After the first visitor byte is sent to a relay, any failure closes that visitor
 connection. Live visitor connections are never replayed or migrated.
 
-## understand routes and publishing
+## understand public urls and publishing
 
 ```text
-route
+public URL
   durable hostname, ownership, target, policy, and state
     |
-    +-- route session
-          one publisher using the route
+    +-- publish run
+          one active publication of the public URL
             |
-            +-- route version
-                  one continuous publishing run
+            +-- publish run number
+                  next number for this public URL
 ```
 
 One local `tnl publish` or `tnl dev` invocation is a tunnel. Starting a new
-route session increments the route version. Stopping a normal tunnel ends the
-session but leaves the route available for a later run.
+publish run increments its public URL's publish run number. Stopping a normal
+tunnel ends the publish run but leaves the public URL available for a later run.
 
-Each route session has two publisher connection slots. Control assigns them to
+Each publish run has two publisher connection slots. Control assigns them to
 different relay services.
 
 ```text
@@ -118,9 +118,9 @@ publisher
   `-- connection slot 1 ----> relay service B
 ```
 
-Initial routability requires the route certificate and both publisher
+Initial routability requires the public URL certificate and both publisher
 connections. After that first transition, one ready connection can keep the
-route serving while the publisher replaces the other.
+public URL serving while the publisher replaces the other.
 
 Publishers try QUIC first. After a short delay, they also try TLS/TCP with yamux
 and keep the first authenticated transport that completes.
@@ -130,7 +130,7 @@ and keep the first authenticated transport that completes.
 | Credential or key               | Held by                           | Purpose                                         |
 | ------------------------------- | --------------------------------- | ----------------------------------------------- |
 | Access and refresh tokens       | `tnl` client                      | Authenticate a control session.                 |
-| Route session token             | Publisher                         | Update one route session.                       |
+| Publish run token               | Publisher                         | Update one publish run.                         |
 | Publisher connection credential | Publisher and assigned relay      | Authenticate one publisher connection.          |
 | Cluster secret                  | Split control, ingress, and relay | Authenticate private process coordination.      |
 | Login token                     | Built-in authority control        | Recover the built-in administrator identity.    |
@@ -146,7 +146,7 @@ Split ingress and relay authenticate to control with the cluster secret. Control
 also checks the configured process identity, process run ID, and lease revision.
 A restarted or expired process cannot continue using stale authorization.
 
-Route TLS is separate from relay transport TLS. Route TLS passes through ingress
+Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.
 
 ## place authority decisions
@@ -159,18 +159,18 @@ external authority maintained outside this repository. The control API does not
 become the owner of authority state in that arrangement.
 
 `TNLD_SERVER_DOMAIN` names server infrastructure. It is independent from
-`TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which provides managed public route
+`TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which provides managed public URL
 namespaces.
 
 ## own each api
 
-| Contract                                          | Implementer                              | Caller and authentication                                                             |
-| ------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Control](../api/control/v1/openapi.yaml)         | `internal/controlapi` on control         | CLI and publisher with access or route-session credentials                            |
-| [Authority](../api/authority/v1/openapi.yaml)     | Built-in authority or external authority | CLI sessions and team/domain operations; control uses the hosted secret when external |
-| [Ingress](../api/ingress/v1/openapi.yaml)         | `internal/ingressapi` on control         | Ingress with cluster authentication, or standalone direct calls                       |
-| [Relay](../api/relay/v1/openapi.yaml)             | `internal/relayapi` on control           | Relay with cluster authentication, or standalone direct calls                         |
-| [Route usage](../api/route-usage/v1/openapi.yaml) | External receiver                        | Control route-usage worker with a configured bearer token                             |
+| Contract                                                       | Implementer                              | Caller and authentication                                                             |
+| -------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control         | CLI and publisher with access or publish-run credentials                              |
+| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority or external authority | CLI sessions and team/domain operations; control uses the hosted secret when external |
+| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control         | Ingress with cluster authentication, or standalone direct calls                       |
+| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control           | Relay with cluster authentication, or standalone direct calls                         |
+| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                        | Control public URL usage worker with a configured bearer token                        |
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.
@@ -204,11 +204,11 @@ previews.
 - Control is the only source of durable runtime state.
 - Ingress and relay fail closed when leases or routing state expire.
 - Publisher connection slots use different relay services.
-- Route TLS terminates only in the publisher.
+- Visitor TLS terminates only in the publisher.
 - Ingress creates PROXY v2 metadata exactly once.
 - Visitor bytes are never replayed after the retry boundary.
 - Credentials stay within the smallest role that needs them.
-- Public route DNS points to ingress, not placement-selected relays.
+- Public URL DNS points to ingress, not placement-selected relays.
 
 Detailed PostgreSQL locking, routing publication, usage aggregation, and cleanup
 invariants are in the maintainer-only
