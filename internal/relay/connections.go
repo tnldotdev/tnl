@@ -277,12 +277,19 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 
 func (r *Registry) Candidate(
 	header tunnelv1.InternalForwardingHeader,
+	lease relayv1.RelayLease,
 	now time.Time,
 ) (*PublisherConnection, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	connection := r.connections[header.PublisherConnectionID]
-	if r.closed || r.draining || connection == nil || !header.RouteExpiresAt.After(now) || !header.LeaseExpiresAt.After(now) {
+	// Ingress copied the lease deadline when control published the route. Use
+	// this process's current lease instead: ordinary renewals do not republish
+	// every route, but an expired or replaced lease must still reject work.
+	if r.closed || r.draining || connection == nil || !header.RouteExpiresAt.After(now) ||
+		lease.RelayLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(now) || lease.Draining ||
+		lease.RelayServiceId != header.RelayServiceID || lease.RelayId != header.RelayID ||
+		lease.RelayRunId != header.RelayRunID || uint64(lease.RelayLeaseRevision) != header.RelayLeaseRevision {
 		return nil, false
 	}
 	ref, claimed := connection.ref, connection.claimed

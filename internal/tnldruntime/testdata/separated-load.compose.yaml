@@ -196,6 +196,34 @@ services:
       default:
         aliases: [relay-b.split.integration.test]
 
+  relay-a-2:
+    <<: *runtime
+    profiles: [replicated-relays]
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_A_CPUS:-1}"
+    mem_limit: "${RELAY_A_MEMORY:-2g}"
+    memswap_limit: "${RELAY_A_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-a-2
+    networks:
+      default:
+        aliases: [relay-a.split.integration.test]
+
+  relay-b-2:
+    <<: *runtime
+    profiles: [replicated-relays]
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_B_CPUS:-1}"
+    mem_limit: "${RELAY_B_MEMORY:-2g}"
+    memswap_limit: "${RELAY_B_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-b-2
+    networks:
+      default:
+        aliases: [relay-b.split.integration.test]
+
   publishers:
     <<: *runtime
     cap_add: [NET_ADMIN]

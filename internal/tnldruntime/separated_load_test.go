@@ -51,7 +51,7 @@ var (
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
 	runtimeLoadBandwidthStreams   = flag.Int("tnl-runtime-load-bandwidth-streams", 64, "bandwidth streams per direction")
 	runtimeLoadBandwidthMeasure   = flag.Duration("tnl-runtime-load-bandwidth-measure", 0, "optional bandwidth measurement per path (0s-5m)")
-	runtimeLoadScenario           = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
+	runtimeLoadScenario           = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, control-restart, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
 	runtimeLoadNetworkPath        = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
 	runtimeLoadRTT                = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
 	runtimeLoadLoss               = flag.Float64("tnl-runtime-load-loss", 0.1, "packet loss percent in each direction")
@@ -240,6 +240,10 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	}
 	for _, phase := range phases {
 		before := separatedCapture(t, database, phase+"-before")
+		var controlRestartAssignments string
+		if phase == "control-restart" {
+			controlRestartAssignments = separatedConnectionAssignments(t, database)
+		}
 		stopSamples := sampleSeparatedGauges(t, phase)
 		stopResources := func() {}
 		if phase == "steady" && *runtimeLoadHeldMeasure > 0 {
@@ -258,6 +262,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		}
 		if phase == "relay-kill" {
 			window = max(window, 80*time.Second)
+		}
+		if phase == "control-restart" {
+			window = max(window, 85*time.Second)
 		}
 		if runtimeBlackhole(phase) {
 			window = max(window, 50*time.Second)
@@ -323,6 +330,11 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedWait(t, "relay-a.stopped", 10*time.Second, &restart)
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
 			repaired = separatedWaitForRecovery(t, database, publishers)
+		case "control-restart":
+			separatedWrite(t, "control-a.restart", time.Now())
+			separatedWait(t, "control-a.stopped", 15*time.Second, &restart)
+			separatedWait(t, "control-a.restarted", 70*time.Second, &restart.Restored)
+			repaired = separatedWaitForRecovery(t, database, publishers)
 		case "shutdown":
 			separatedWrite(t, "close-half", time.Now())
 			var elapsed time.Duration
@@ -373,6 +385,11 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			repaired = separatedWaitForRecovery(t, database, publishers)
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-restored", URLs: publishers.URLs, CloseHeld: true})
 			separatedReportVisitors(t, phase, results, restart, repaired)
+		}
+		if phase == "control-restart" {
+			if assignments := separatedConnectionAssignments(t, database); assignments != controlRestartAssignments {
+				t.Errorf("control restart replaced ready publisher connections: before=%s after=%s", controlRestartAssignments, assignments)
+			}
 		}
 	}
 	separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Done: true})
@@ -511,8 +528,11 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		(*runtimeLoadBandwidthMeasure != 0 && *runtimeLoadBandwidthMeasure != *runtimeLoadHeldMeasure)) {
 		t.Fatal("combined workload requires capacity-only, direct path, held warmup/measurement, and matched bidirectional bandwidth")
 	}
-	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
+	if !slices.Contains([]string{"relay-restart", "relay-kill", "control-restart", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
+	}
+	if *runtimeLoadScenario == "control-restart" && !*runtimeLoadHATopology {
+		t.Fatal("control restart requires the two-control topology")
 	}
 	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" {
 		t.Fatal("capacity-only workload requires the default scenario")
@@ -848,7 +868,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 		}
 	}
 	for _, role := range separatedServerRoles() {
-		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") {
+		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") || role == "control-a" && phase == "control-restart" {
 			continue
 		} // New runtime registry.
 		summaries, err := separatedDurationSummaries(before, after, role)
@@ -942,7 +962,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 				if failures <= 3 {
 					t.Logf("separated_request_failure phase=%s started=%s error=%s", phase, row.Started, row.Error)
 				}
-				if phase != "relay-kill" && (runtimeControlledFault(phase) || phase != *runtimeLoadScenario || !row.Started.Before(repaired)) {
+				if phase == "control-restart" || phase != "relay-kill" && (runtimeControlledFault(phase) || phase != *runtimeLoadScenario || !row.Started.Before(repaired)) {
 					t.Errorf("visitor failed in %s after recovery=%t", phase, !row.Started.Before(repaired))
 				}
 				continue
@@ -1078,7 +1098,7 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 			case <-ticker.C:
 			}
 			for _, role := range separatedServerRoles() {
-				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" {
+				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" || phase == "control-restart" && role == "control-a" {
 					continue
 				}
 				response, err := integrationGET(ctx, client, "http://"+role+":9090/metrics")

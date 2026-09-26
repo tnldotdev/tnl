@@ -103,7 +103,7 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 		change       func(*ingressv1.IngressRoutingTableEvent)
 	}{
 		{"ready", "", func(*ingressv1.IngressRoutingTableEvent) {}},
-		{"backend expired", "backend_expired", func(e *ingressv1.IngressRoutingTableEvent) {
+		{"renewed relay with old projected deadline", "", func(e *ingressv1.IngressRoutingTableEvent) {
 			e.Entry.PublisherConnections[0].LeaseExpiresAt = now
 		}},
 		{"route expired", "route_expired", func(e *ingressv1.IngressRoutingTableEvent) {

@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -32,7 +33,8 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 		t.Fatal(err)
 	}
 	acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{
-		Registry: NewRegistry(), ClusterSecrets: secrets, StreamCapacity: 1, Observer: observer,
+		Registry: NewRegistry(), CurrentLease: func() relayv1.RelayLease { return relayv1.RelayLease{} },
+		ClusterSecrets: secrets, StreamCapacity: 1, Observer: observer,
 	})
 	if err != nil {
 		t.Fatal(err)

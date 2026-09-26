@@ -17,7 +17,7 @@ import (
 // the actual controller and routing-table expiry checks; wall time is used only
 // to schedule renewals and bound test failure, never to infer routing progress.
 func TestControllerStalledRoutingUpdates(t *testing.T) {
-	for _, mode := range []string{"route_expiry_event_recovery", "relay_expiry_resnapshot_recovery"} {
+	for _, mode := range []string{"route_expiry_event_recovery", "route_expiry_resnapshot_recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 			var clock atomic.Int64
@@ -25,13 +25,9 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 			expires := start.Add(10 * time.Second)
 			initial := routingReliabilityEvent(start, 1)
-			resnapshot := mode == "relay_expiry_resnapshot_recovery"
-			if resnapshot {
-				initial.Entry.PublisherConnections[0].LeaseExpiresAt = expires
-			} else {
-				initial.Entry.RouteExpiresAt = expires
-				initial.RouteExpiresAt = &initial.Entry.RouteExpiresAt
-			}
+			resnapshot := mode == "route_expiry_resnapshot_recovery"
+			initial.Entry.RouteExpiresAt = expires
+			initial.RouteExpiresAt = &initial.Entry.RouteExpiresAt
 			type eventReply struct {
 				page ingressv1.IngressRoutingTablePage
 				err  error

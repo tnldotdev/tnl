@@ -126,6 +126,10 @@ func lifecycleHeader(id string, revision uint64) tunnelv1.InternalForwardingHead
 	return tunnelv1.InternalForwardingHeader{ProtocolVersion: 1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_1", RouteID: "route_1", RouteSessionID: "session_1", RouteVersion: 2, PublisherConnectionID: id, ConnectionSlot: 0, ConnectionAssignmentRevision: revision, RelayServiceID: "service_1", RelayID: "relay_1", RelayRunID: "run_1", RelayLeaseRevision: 4, RouteExpiresAt: time.Now().Add(time.Minute), LeaseExpiresAt: time.Now().Add(time.Minute)}
 }
 
+func lifecycleLease() relayv1.RelayLease {
+	return relayv1.RelayLease{RelayServiceId: "service_1", RelayId: "relay_1", RelayRunId: "run_1", RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute)}
+}
+
 func TestRegistryInsertionReplacementAndStaleRemoval(t *testing.T) {
 	registry := NewRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
@@ -155,10 +159,10 @@ func TestRegistryInsertionReplacementAndStaleRemoval(t *testing.T) {
 	if registry.Remove(first) {
 		t.Fatal("stale removal succeeded")
 	}
-	if got, ok := registry.Candidate(lifecycleHeader("connection_2", 4), time.Now()); !ok || got != next {
+	if got, ok := registry.Candidate(lifecycleHeader("connection_2", 4), lifecycleLease(), time.Now()); !ok || got != next {
 		t.Fatal("stale removal removed replacement")
 	}
-	if got, ok := registry.Candidate(lifecycleHeader("connection_1", 3), time.Now()); ok || got != nil {
+	if got, ok := registry.Candidate(lifecycleHeader("connection_1", 3), lifecycleLease(), time.Now()); ok || got != nil {
 		t.Fatal("replaced assignment still selectable")
 	}
 	if !registry.Remove(next) || registry.Remove(next) {
@@ -235,7 +239,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	if err := registry.Insert(connection); !errors.Is(err, ErrDraining) {
 		t.Fatalf("insert during drain=%v", err)
 	}
-	if _, ok := registry.Candidate(lifecycleHeader("connection_1", 3), time.Now()); ok {
+	if _, ok := registry.Candidate(lifecycleHeader("connection_1", 3), lifecycleLease(), time.Now()); ok {
 		t.Fatal("draining registry selected candidate")
 	}
 	// Existing streams survive the admission gate.

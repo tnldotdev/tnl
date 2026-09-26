@@ -65,13 +65,20 @@ func separatedControls() []string {
 }
 
 func separatedServerRoles() []string {
-	return append(append(separatedControls(), separatedIngresses()...), "relay-a", "relay-b")
+	roles := append(append(separatedControls(), separatedIngresses()...), "relay-a", "relay-b")
+	if *runtimeLoadScenario == "control-restart" {
+		roles = append(roles, "relay-a-2", "relay-b-2")
+	}
+	return roles
 }
 
 func separatedActiveComponents() []string {
 	components := slices.Clone(separatedComponents)
 	if *runtimeLoadHATopology {
 		components = append(components, "control-b", "ingress-b")
+	}
+	if *runtimeLoadScenario == "control-restart" {
+		components = append(components, "relay-a-2", "relay-b-2")
 	}
 	return components
 }
@@ -235,9 +242,13 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.IngressListen = "0.0.0.0:443"
 	case tnldconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
-		cfg.RelayServiceID, cfg.RelayID = component, component+"-1"
-		cfg.RelayAddress = component + "." + separatedDomain + ":443"
-		cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = "/load/"+component+".pem", "/load/"+component+".key"
+		serviceID := strings.TrimSuffix(component, "-2")
+		cfg.RelayServiceID, cfg.RelayID = serviceID, serviceID+"-1"
+		if serviceID != component {
+			cfg.RelayID = serviceID + "-2"
+		}
+		cfg.RelayAddress = serviceID + "." + separatedDomain + ":443"
+		cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = "/load/"+serviceID+".pem", "/load/"+serviceID+".key"
 		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"
 		cfg.InternalRelayListen, cfg.InternalRelayAddress = "0.0.0.0:8443", component+":8443"
 	}

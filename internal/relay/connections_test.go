@@ -33,8 +33,17 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
 		RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 	}
-	if candidate, ok := registry.Candidate(header, now); !ok || candidate != connection {
+	lease := relayv1.RelayLease{
+		RelayServiceId: "relay_service_1", RelayId: "relay_1", RelayRunId: "relay_run_1",
+		RelayLeaseRevision: 4, LeaseExpiresAt: now.Add(time.Minute),
+	}
+	if candidate, ok := registry.Candidate(header, lease, now); !ok || candidate != connection {
 		t.Fatal("exact current publisher connection was not selected")
+	}
+	staleProjection := header
+	staleProjection.LeaseExpiresAt = now
+	if candidate, ok := registry.Candidate(staleProjection, lease, now); !ok || candidate != connection {
+		t.Fatal("renewed relay lease was rejected because ingress copied an old deadline")
 	}
 
 	tests := map[string]func(*tunnelv1.InternalForwardingHeader){
@@ -49,13 +58,26 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 		"relay process run ID":           func(value *tunnelv1.InternalForwardingHeader) { value.RelayRunID = "relay_run_2" },
 		"relay lease revision":           func(value *tunnelv1.InternalForwardingHeader) { value.RelayLeaseRevision++ },
 		"expired route":                  func(value *tunnelv1.InternalForwardingHeader) { value.RouteExpiresAt = now },
-		"expired relay lease":            func(value *tunnelv1.InternalForwardingHeader) { value.LeaseExpiresAt = now },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			stale := header
 			mutate(&stale)
-			if candidate, ok := registry.Candidate(stale, now); ok || candidate != nil {
+			if candidate, ok := registry.Candidate(stale, lease, now); ok || candidate != nil {
+				t.Fatalf("Candidate returned %#v, %t; want stale-state rejection", candidate, ok)
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*relayv1.RelayLease){
+		"expired relay lease": func(value *relayv1.RelayLease) { value.LeaseExpiresAt = now },
+		"draining relay":      func(value *relayv1.RelayLease) { value.Draining = true },
+		"restarted process":   func(value *relayv1.RelayLease) { value.RelayRunId = "relay_run_2" },
+		"replaced lease":      func(value *relayv1.RelayLease) { value.RelayLeaseRevision++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			stale := lease
+			mutate(&stale)
+			if candidate, ok := registry.Candidate(header, stale, now); ok || candidate != nil {
 				t.Fatalf("Candidate returned %#v, %t; want stale-state rejection", candidate, ok)
 			}
 		})

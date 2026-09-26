@@ -171,15 +171,9 @@ func (t *RoutingTable) lookup(
 		return ingressv1.IngressRoutingTableEntry{}, "route_expired"
 	}
 	entry := cloneRoutingTableEntry(stored.entry)
-	entry.PublisherConnections = entry.PublisherConnections[:0]
-	for _, connection := range stored.entry.PublisherConnections {
-		if connection.LeaseExpiresAt.After(now) {
-			entry.PublisherConnections = append(entry.PublisherConnections, connection)
-		}
-	}
-	if len(entry.PublisherConnections) == 0 {
-		return ingressv1.IngressRoutingTableEntry{}, "backend_expired"
-	}
+	// A relay can renew its lease without changing this route projection. Its
+	// copied deadline is therefore only a hint; the relay checks its current
+	// lease and exact process identity before accepting an internal stream.
 	return entry, ""
 }
 

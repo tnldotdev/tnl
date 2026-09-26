@@ -49,7 +49,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		runSeparatedPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
-	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b":
+	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "relay-a-2", "relay-b-2":
 		if !separatedRead(t, ctx, "pebble.ready", nil) {
 			return
 		}
@@ -107,6 +107,27 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			process = startIntegrationProcessWithOptions(t, cfg, options)
 			waitForProcessReady(t, process)
 			separatedWrite(t, "relay-a.restarted", time.Now())
+		}
+		if component == "control-a" && *runtimeLoadScenario == "control-restart" {
+			if !separatedRead(t, ctx, "control-a.restart", nil) {
+				return
+			}
+			stopped := separatedRestart{Started: time.Now()}
+			stopIntegrationProcess(t, process)
+			stopped.Exited = time.Now()
+			separatedWrite(t, "control-a.stopped", stopped)
+			// Keep one control unavailable beyond a process lease while the
+			// surviving control must continue renewing ingress and relay leases.
+			wait := time.NewTimer(35 * time.Second)
+			select {
+			case <-ctx.Done():
+				wait.Stop()
+				return
+			case <-wait.C:
+			}
+			process = startIntegrationProcessWithOptions(t, cfg, options)
+			waitForProcessReady(t, process)
+			separatedWrite(t, "control-a.restarted", time.Now())
 		}
 		select {
 		case <-ctx.Done():

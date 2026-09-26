@@ -12,11 +12,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type ForwardingAcceptorConfig struct {
 	Registry         *Registry
+	CurrentLease     func() relayv1.RelayLease
 	ClusterSecrets   serviceapi.BearerSecrets
 	StreamCapacity   int
 	StreamsDelta     func(int)
@@ -30,6 +32,7 @@ type ForwardingAcceptorConfig struct {
 // connected publishers. It never receives the ingress routing table.
 type ForwardingAcceptor struct {
 	registry         *Registry
+	currentLease     func() relayv1.RelayLease
 	secrets          serviceapi.BearerSecrets
 	streams          chan struct{}
 	streamsDelta     func(int)
@@ -40,8 +43,8 @@ type ForwardingAcceptor struct {
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
-	if config.Registry == nil || !config.ClusterSecrets.Valid() || config.StreamCapacity <= 0 {
-		return nil, errors.New("relay: forwarding registry, cluster secrets, and positive stream capacity are required")
+	if config.Registry == nil || config.CurrentLease == nil || !config.ClusterSecrets.Valid() || config.StreamCapacity <= 0 {
+		return nil, errors.New("relay: forwarding registry, current lease, cluster secrets, and positive stream capacity are required")
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -56,7 +59,7 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 		config.CapacityRejected = func() {}
 	}
 	return &ForwardingAcceptor{
-		registry: config.Registry, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
+		registry: config.Registry, currentLease: config.CurrentLease, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
 		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected,
 		now: config.Now, report: config.Report,
 		observer: config.Observer,
@@ -114,7 +117,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
 	defer a.releaseStream()
-	connection, ok := a.registry.Candidate(incoming.Header, a.now())
+	connection, ok := a.registry.Candidate(incoming.Header, a.currentLease(), a.now())
 	if !ok {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)

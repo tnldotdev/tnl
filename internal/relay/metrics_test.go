@@ -76,7 +76,8 @@ func TestForwardingAcceptorReportsStreamCapacity(t *testing.T) {
 	var deltas []int
 	rejections := 0
 	acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{
-		Registry: NewRegistry(), ClusterSecrets: secrets, StreamCapacity: 1,
+		Registry: NewRegistry(), CurrentLease: func() relayv1.RelayLease { return relayv1.RelayLease{} },
+		ClusterSecrets: secrets, StreamCapacity: 1,
 		StreamsDelta:     func(delta int) { deltas = append(deltas, delta) },
 		CapacityRejected: func() { rejections++ },
 	})

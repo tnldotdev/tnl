@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -157,7 +158,8 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	material := newForwardingTestMaterial(t)
 	registry := relay.NewRegistry()
 	acceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
-		Registry: registry, ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 8,
+		Registry: registry, CurrentLease: func() relayv1.RelayLease { return relayv1.RelayLease{} },
+		ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 8,
 	})
 	if err != nil {
 		t.Fatalf("NewForwardingAcceptor: %v", err)

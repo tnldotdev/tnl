@@ -250,7 +250,8 @@ func (d *daemon) startRelayRuntime(
 	}
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
 		Observer: runtimeConfig.metrics,
-		Registry: registry, ClusterSecrets: runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
+		Registry: registry, CurrentLease: controller.Lease,
+		ClusterSecrets: runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
 		StreamsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.AddRelayStreams(delta)

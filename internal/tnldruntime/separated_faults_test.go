@@ -80,3 +80,18 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	}
 	return time.Now()
 }
+
+func separatedConnectionAssignments(t *testing.T, database *sql.DB) string {
+	t.Helper()
+	var assignments string
+	if err := database.QueryRowContext(integrationOperationContext(t), `
+		SELECT coalesce(jsonb_agg(jsonb_build_array(route_id, route_version, connection_slot,
+			publisher_connection_id, connection_assignment_revision, relay_service_id,
+			connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, state)
+			ORDER BY route_id, connection_slot), '[]'::jsonb)::text
+		FROM control.route_session_connections WHERE state IN ('assigned', 'connected', 'ready')
+	`).Scan(&assignments); err != nil {
+		t.Fatal(err)
+	}
+	return assignments
+}

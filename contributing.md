@@ -246,6 +246,7 @@ mise exec -- task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURAT
 mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime ROUTES=1000 START_PARALLEL=1000 ROUTE_CERTIFICATE_WORKERS=8 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/runtime-kill
+mise exec -- task go:test:load:runtime SCENARIO=control-restart RPS=4 HELD_STREAMS=0 RESULTS=bench-results/runtime-control-restart
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
 mise exec -- task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/runtime-publisher-blackhole
 mise exec -- task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/runtime-udp-fallback
@@ -421,6 +422,12 @@ streams opened under a controlled fault must keep receiving bytes. Pre-existing
 held-stream disruption is recorded separately.
 Fault windows last at least 40 seconds for graceful restart, 80 seconds for kill
 and publisher blackhole, and 50 seconds for forwarding blackhole.
+
+`control-restart` requires the default two-control topology. It stops one control
+process for 35 seconds while the other renews ingress and relay leases across
+two ingress processes and two processes per relay service, then restarts it.
+All visitors must succeed throughout the 85-second window, and the existing
+publisher connection assignments must remain unchanged.
 
 `udp-fallback` blocks both relay UDP addresses before publishing, uses automatic
 transport selection, and requires a fallback event for each publisher and two ready

@@ -45,6 +45,7 @@ type FaultEvents = {
 
 const results = z.string().min(1).parse(process.env.RESULTS);
 const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
+const replicatedRelays = process.env.SCENARIO === "control-restart";
 const ingresses: readonly ("ingress-a" | "ingress-b")[] = haTopology
   ? ["ingress-a", "ingress-b"]
   : ["ingress-a"];
@@ -57,6 +58,7 @@ mkdirSync(results, { recursive: true });
 const composeArgs = [
   "compose",
   ...(haTopology ? ["--profile", "ha"] : []),
+  ...(replicatedRelays ? ["--profile", "replicated-relays"] : []),
   "--ansi",
   "never",
   "--progress",
@@ -404,6 +406,7 @@ try {
     ...(haTopology ? ["ingress-b"] : []),
     "relay-a",
     "relay-b",
+    ...(replicatedRelays ? ["relay-a-2", "relay-b-2"] : []),
     ...publisherServices,
     "visitor-1",
     "visitor-2",

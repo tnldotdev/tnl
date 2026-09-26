@@ -62,6 +62,12 @@ Ingress creates one PROXY v2 metadata header with the original source and
 destination. Relay preserves that header and the route TLS bytes. The publisher
 removes untrusted forwarding headers before proxying the HTTP request.
 
+The ingress routing table retains the relay process identity and the last
+advertised lease deadline. A relay can renew its lease without changing the
+route projection, so ingress does not treat that copied deadline as final.
+The connected relay checks its current, unexpired lease and the exact process
+and connection assignment identities before accepting each visitor stream.
+
 Public route DNS points to ingress, never to a relay. Placement can therefore
 change without changing public route DNS.
 
