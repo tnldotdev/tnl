@@ -4,7 +4,12 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as z from "zod";
-import { impairmentEndpoints, netemOptions, type RuntimeService } from "./runtime-network.ts";
+import {
+  impairmentEndpoints,
+  netemOptions,
+  publisherServices,
+  type RuntimeService,
+} from "./runtime-network.ts";
 import { parseJSON } from "./validation.ts";
 
 const faultSchema = z.enum([
@@ -37,6 +42,7 @@ const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === 
 const ingresses: readonly ("ingress-a" | "ingress-b")[] = haTopology
   ? ["ingress-a", "ingress-b"]
   : ["ingress-a"];
+const appServices = ["app", "app-2", "app-3", "app-4"] as const;
 if (existsSync(results) && readdirSync(results).length !== 0)
   throw new Error(
     "RESULTS must be a fresh or empty directory; preserve earlier experiment artifacts",
@@ -173,7 +179,7 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
     intentionalRelayExit = false;
   } else if (["forwarding-blackhole", "publisher-blackhole", "udp-fallback"].includes(scenario)) {
     const services: readonly RuntimeService[] =
-      scenario === "forwarding-blackhole" ? ingresses : ["publishers"];
+      scenario === "forwarding-blackhole" ? ingresses : publisherServices;
     const relays: RuntimeService[] =
       scenario === "udp-fallback" ? ["relay-a", "relay-b"] : ["relay-a"];
     const protocols =
@@ -207,14 +213,16 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       await event("fault.applied", { Started: started, Exited: new Date().toISOString() });
       if (scenario === "udp-fallback") {
         await waitForEvent("publishers.ready");
-        const sockets = compose(["exec", "-T", "publishers", "ss", "-H", "-uan"]);
-        writeFileSync(join(results, "publisher-udp-sockets-after-fallback.txt"), sockets);
-        // Docker's embedded DNS listener belongs to this network namespace.
-        const owned = sockets
-          .trim()
-          .split("\n")
-          .filter((line) => line && !line.trim().split(/\s+/)[3]?.startsWith("127.0.0.11:"));
-        if (owned.length) throw new Error("abandoned QUIC attempt retained a UDP socket");
+        for (const service of publisherServices) {
+          const sockets = compose(["exec", "-T", service, "ss", "-H", "-uan"]);
+          writeFileSync(join(results, `${service}-udp-sockets-after-fallback.txt`), sockets);
+          // Docker's embedded DNS listener belongs to this network namespace.
+          const owned = sockets
+            .trim()
+            .split("\n")
+            .filter((line) => line && !line.trim().split(/\s+/)[3]?.startsWith("127.0.0.11:"));
+          if (owned.length) throw new Error(`${service} retained an abandoned QUIC socket`);
+        }
         await event("udp.cleaned", true);
       }
       await waitForEvent("fault.release");
@@ -244,6 +252,9 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       "ingress-a": address("ingress-a"),
       "ingress-b": haTopology ? address("ingress-b") : address("ingress-a"),
       publishers: address("publishers"),
+      "publishers-2": address("publishers-2"),
+      "publishers-3": address("publishers-3"),
+      "publishers-4": address("publishers-4"),
       "relay-a": address("relay-a"),
       "relay-b": address("relay-b"),
     };
@@ -336,7 +347,7 @@ async function applyFault(scenario: Fault, containers: ReadonlyMap<string, strin
       if (
         (process.env.NETWORK_PATH === "forwarding"
           ? ingresses.some((service) => !matched.has(service))
-          : !matched.has("publishers")) ||
+          : publisherServices.some((service) => !matched.has(service))) ||
         !(["relay-a", "relay-b"] as const).some((service) => matched.has(service))
       )
         throw new Error("netem did not impair both directions of a visitor path");
@@ -366,12 +377,12 @@ try {
     ...(haTopology ? ["ingress-b"] : []),
     "relay-a",
     "relay-b",
-    "publishers",
+    ...publisherServices,
     "visitor-1",
     "visitor-2",
     "visitor-3",
     "visitor-4",
-    "app",
+    ...appServices,
     "pebble",
     "coordinator",
   ]);
@@ -451,7 +462,7 @@ try {
   );
   for (const services of [
     ["visitor-1", "visitor-2", "visitor-3", "visitor-4"],
-    ["app", "publishers"],
+    [...appServices, ...publisherServices],
     ["ingress-a", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
     ["control-a", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
     ["postgres"],

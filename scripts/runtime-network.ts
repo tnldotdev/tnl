@@ -2,7 +2,18 @@
 // collection keep their ordinary paths. Each returned endpoint owns its qdisc.
 export type ImpairmentScenario = "latency" | "packet-loss";
 export type NetworkPath = "forwarding" | "publisher";
-export type RuntimeService = "ingress-a" | "ingress-b" | "publishers" | "relay-a" | "relay-b";
+export const publisherServices = [
+  "publishers",
+  "publishers-2",
+  "publishers-3",
+  "publishers-4",
+] as const;
+export type RuntimeService =
+  | "ingress-a"
+  | "ingress-b"
+  | (typeof publisherServices)[number]
+  | "relay-a"
+  | "relay-b";
 
 export interface ImpairmentEndpoint {
   readonly filters: string[][];
@@ -15,7 +26,7 @@ export function impairmentEndpoints(
   ingresses: readonly ("ingress-a" | "ingress-b")[],
 ): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
   if (path !== "forwarding" && path !== "publisher") throw new Error("invalid network path");
-  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : ["publishers"];
+  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : publisherServices;
   const port = path === "forwarding" ? "8443" : "443";
   const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
   const forwards = sources.map((service): ImpairmentEndpoint => ({ service, filters: [] }));

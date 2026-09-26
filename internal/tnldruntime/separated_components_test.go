@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -42,10 +43,10 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	switch component {
 	case "pebble":
 		runSeparatedPebble(t, ctx)
-	case "app":
-		runSeparatedApp(t, ctx)
-	case "publishers":
-		runSeparatedPublishers(t, ctx, routes)
+	case "app", "app-2", "app-3", "app-4":
+		runSeparatedApp(t, ctx, component)
+	case "publishers", "publishers-2", "publishers-3", "publishers-4":
+		runSeparatedPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
 	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b":
@@ -184,7 +185,7 @@ func runSeparatedPebble(t *testing.T, ctx context.Context) {
 	}
 }
 
-func runSeparatedApp(t *testing.T, ctx context.Context) {
+func runSeparatedApp(t *testing.T, ctx context.Context, component string) {
 	handler := benchworkload.Origin(32768)
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -209,7 +210,7 @@ func runSeparatedApp(t *testing.T, ctx context.Context) {
 		<-done
 		<-tlsDone
 	})
-	separatedWrite(t, "app.ready", time.Now())
+	separatedWrite(t, component+".ready", time.Now())
 	<-ctx.Done()
 }
 
@@ -221,8 +222,41 @@ type separatedPublishers struct {
 	ActivationDuration time.Duration
 }
 
-func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
-	separatedWrite(t, "publishers.request-limit", runtimeLoadAdmission.PublisherRequestLimit)
+func separatedPublisherIndexes(count, shard int) []int {
+	shards := len(separatedPublisherComponents())
+	start, end := shard*count/shards, (shard+1)*count/shards
+	indexes := make([]int, 0, end-start)
+	for i := start; i < end; i++ {
+		indexes = append(indexes, i)
+	}
+	return indexes
+}
+
+func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
+	for _, total := range []int{4, 17, 3000} {
+		seen := make([]bool, total)
+		for shard := range separatedPublisherComponents() {
+			indexes := separatedPublisherIndexes(total, shard)
+			for _, index := range indexes {
+				if index < 0 || index >= total || seen[index] {
+					t.Fatalf("total=%d shard=%d duplicate/invalid index=%d", total, shard, index)
+				}
+				seen[index] = true
+			}
+			if total > 4 && (indexes[0]%2 == indexes[1]%2) {
+				t.Fatalf("total=%d shard=%d has no mixed transports", total, shard)
+			}
+		}
+		for index, found := range seen {
+			if !found {
+				t.Fatalf("total=%d missing index=%d", total, index)
+			}
+		}
+	}
+}
+
+func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int) {
+	separatedWrite(t, separatedPublisherShardKey(shard, "request-limit"), runtimeLoadAdmission.PublisherRequestLimit)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
@@ -252,7 +286,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
-		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
+		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
 		RequestLimit: runtimeLoadAdmission.PublisherRequestLimit,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
@@ -292,7 +326,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	}()
 	result := separatedPublishers{URLs: make([]string, count), Ready: make([]publisher.Event, count)}
 	started := time.Now()
-	ready, err := group.Start(monitor, benchworkload.RouteIndexes(count, 1, 0))
+	ready, err := group.Start(monitor, separatedPublisherIndexes(count, shard))
 	result.ActivationDuration = time.Since(started)
 	if err != nil {
 		t.Fatal(err)
@@ -304,22 +338,19 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	}
 	t.Logf("separated_activation_total=%s", time.Since(started))
 	result.Fallbacks = fallbacks.Load()
-	separatedWrite(t, "publishers.ready", result)
+	separatedWrite(t, separatedPublisherShardKey(shard, "ready"), result)
 	for _, phase := range []string{"close-half", "close-all"} {
 		if !separatedRead(t, monitor, phase, nil) {
 			return
 		}
 		at := time.Now()
-		indexes := benchworkload.RouteIndexes(count, 1, 0)
-		if phase == "close-half" {
-			indexes = indexes[:count/2]
-		} else {
-			indexes = indexes[count/2:]
-		}
+		indexes := slices.DeleteFunc(separatedPublisherIndexes(count, shard), func(index int) bool {
+			return (index < count/2) != (phase == "close-half")
+		})
 		if _, err := group.Stop(ctx, indexes); err != nil {
 			t.Fatal(err)
 		}
-		separatedWrite(t, phase+".done", time.Since(at))
+		separatedWrite(t, separatedPublisherShardKey(shard, phase+".done"), time.Since(at))
 	}
 	<-ctx.Done()
 }
@@ -591,8 +622,8 @@ func separatedResource(t *testing.T, component string) separatedResources {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
 	address := component + ":9091"
-	if component == "app" {
-		address = "publishers:9092"
+	if slices.Contains(separatedAppComponents(), component) {
+		address = separatedAppPublisher(component) + ":9092"
 	}
 	response, err := integrationGET(integrationOperationContext(t), client, "http://"+address+"/resources")
 	if err != nil {

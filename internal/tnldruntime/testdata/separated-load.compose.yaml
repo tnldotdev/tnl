@@ -206,6 +206,36 @@ services:
       <<: *environment
       SEPARATED_COMPONENT: publishers
 
+  publishers-2:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-2
+
+  publishers-3:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-3
+
+  publishers-4:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-4
+
   visitor-1:
     <<: *visitor
     environment:
@@ -236,6 +266,36 @@ services:
     environment:
       <<: *environment
       SEPARATED_COMPONENT: app
+
+  app-2:
+    <<: *runtime
+    network_mode: service:publishers-2
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-128m}"
+    memswap_limit: "${APP_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-2
+
+  app-3:
+    <<: *runtime
+    network_mode: service:publishers-3
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-128m}"
+    memswap_limit: "${APP_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-3
+
+  app-4:
+    <<: *runtime
+    network_mode: service:publishers-4
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-128m}"
+    memswap_limit: "${APP_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-4
 
   pebble:
     <<: *runtime

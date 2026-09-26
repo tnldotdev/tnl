@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -16,10 +17,13 @@ import (
 // Run a separate diagnostic trial rather than mixing them into capacity points.
 func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separatedSnapshot) {
 	t.Helper()
-	for _, component := range []string{"ingress-a", "relay-a", "publishers", "app", "visitor-1"} {
+	components := append([]string{"ingress-a", "relay-a"}, separatedPublisherComponents()...)
+	components = append(components, separatedAppComponents()...)
+	components = append(components, "visitor-1")
+	for _, component := range components {
 		address := component + ":9091"
-		if component == "app" {
-			address = "publishers:9092"
+		if slices.Contains(separatedAppComponents(), component) {
+			address = separatedAppPublisher(component) + ":9092"
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 		response, err := integrationGET(ctx, &http.Client{Timeout: 20 * time.Second}, "http://"+address+"/heap")
@@ -48,7 +52,7 @@ func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separat
 		}
 	}
 	after := separatedCapture(t, database, "steady-after-heap")
-	for _, component := range []string{"ingress-a", "relay-a", "publishers", "app", "visitor-1"} {
+	for _, component := range components {
 		t.Logf("separated_heap component=%s memory_before=%d memory_after_gc=%d profile=steady-%s-heap.pb.gz", component,
 			before.Resources[component].Memory, after.Resources[component].Memory, component)
 	}

@@ -20,6 +20,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -91,7 +92,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
-	for _, name := range append(separatedServerRoles(), "app", "pebble") {
+	for _, name := range append(append(separatedServerRoles(), separatedAppComponents()...), "pebble") {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
 	verifySeparatedAdmission(t)
@@ -112,15 +113,36 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	}
 	defer stopTrace()
 	separatedWrite(t, "publish.start", activation)
-	var publishers separatedPublishers
+	publishers := separatedPublishers{URLs: make([]string, routes), Ready: make([]publisher.Event, routes)}
 	// Each publisher retains its own readiness deadline, starting at launch.
 	parallel := min(routes, *runtimeLoadStartParallel)
 	waves := (routes + parallel - 1) / parallel
-	separatedWait(t, "publishers.ready", time.Duration(waves)*(*runtimeLoadReadyTimeout)+10*time.Second, &publishers)
-	stopTrace()
-	if len(publishers.Ready) != routes {
-		t.Fatal("publisher count mismatch")
+	for shard := range separatedPublisherComponents() {
+		var result separatedPublishers
+		separatedWait(t, separatedPublisherShardKey(shard, "ready"), time.Duration(waves)*(*runtimeLoadReadyTimeout)+10*time.Second, &result)
+		if len(result.URLs) != routes || len(result.Ready) != routes {
+			t.Fatalf("publisher shard %d has incomplete route slots", shard+1)
+		}
+		for index, url := range result.URLs {
+			if url == "" {
+				continue
+			}
+			if publishers.URLs[index] != "" || result.Ready[index].Type != publisher.EventReady || result.Ready[index].PublicURL != url {
+				t.Fatalf("publisher shard %d has duplicate or invalid route index %d", shard+1, index)
+			}
+			publishers.URLs[index], publishers.Ready[index] = url, result.Ready[index]
+		}
+		publishers.Activation = append(publishers.Activation, result.Activation...)
+		publishers.ActivationDuration = max(publishers.ActivationDuration, result.ActivationDuration)
+		publishers.Fallbacks += result.Fallbacks
 	}
+	stopTrace()
+	for index, url := range publishers.URLs {
+		if url == "" {
+			t.Fatalf("publisher route %d was not activated", index)
+		}
+	}
+	separatedWrite(t, "publishers.ready", publishers)
 	if *runtimeLoadScenario == "udp-fallback" && publishers.Fallbacks != int64(routes) {
 		t.Fatalf("fallback events=%d want=%d", publishers.Fallbacks, routes)
 	}
@@ -304,7 +326,11 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		case "shutdown":
 			separatedWrite(t, "close-half", time.Now())
 			var elapsed time.Duration
-			separatedWait(t, "close-half.done", time.Duration((routes/2+3)/4)*10*time.Second, &elapsed)
+			for shard := range separatedPublisherComponents() {
+				var duration time.Duration
+				separatedWait(t, separatedPublisherShardKey(shard, "close-half.done"), time.Duration((routes/2+3)/4)*10*time.Second, &duration)
+				elapsed = max(elapsed, duration)
+			}
 			t.Logf("separated_partial_shutdown publishers=%d elapsed=%s", routes/2, elapsed)
 		}
 		waitUntilIntegrationTime(t, start.Add(window))
@@ -359,7 +385,11 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	}
 	separatedWrite(t, "close-all", time.Now())
 	var elapsed time.Duration
-	separatedWait(t, "close-all.done", time.Duration(((routes+1)/2+3)/4)*10*time.Second, &elapsed)
+	for shard := range separatedPublisherComponents() {
+		var duration time.Duration
+		separatedWait(t, separatedPublisherShardKey(shard, "close-all.done"), time.Duration(((routes+1)/2+3)/4)*10*time.Second, &duration)
+		elapsed = max(elapsed, duration)
+	}
 	t.Logf("separated_final_shutdown publishers=%d elapsed=%s", (routes+1)/2, elapsed)
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var active int
@@ -699,7 +729,10 @@ func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot
 
 func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, component := range append(separatedIngresses(), "relay-a", "relay-b", "app", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4") {
+	components := append(append(separatedIngresses(), "relay-a", "relay-b"), separatedAppComponents()...)
+	components = append(components, separatedPublisherComponents()...)
+	components = append(components, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
+	for _, component := range components {
 		a, b := before.Resources[component], after.Resources[component]
 		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {
 			t.Errorf("%s: %s memory limit events=%d OOM kills=%d", phase, component, b.MemoryMaxEvents-a.MemoryMaxEvents, b.OOMKills-a.OOMKills)

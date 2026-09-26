@@ -220,10 +220,17 @@ mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms RUN='^TestLoadShut
 ### runtime load
 
 `task go:test:load:runtime` runs one separated topology: control, ingress, two
-relays, a publisher group, four visitor containers, a local service, Pebble/DNS,
-PostgreSQL, and a coordinator. Publishers, visitors, histograms, and authenticated
-HTTP coordination are shared with deployed benchmarks through `internal/benchworkload`.
+relays, four publisher-generator containers, four visitor containers, four local
+services, Pebble/DNS, PostgreSQL, and a coordinator. Publishers, visitors,
+histograms, and authenticated HTTP coordination are shared with deployed
+benchmarks through `internal/benchworkload`.
 Production `publisher.Run` and `clientauth` own publishing and session refresh.
+The publisher generators each own a contiguous share of route indexes, split
+the configured startup concurrency, and report to one readiness and shutdown
+barrier. Each generator has its own local-service sidecar in the same network
+namespace, preserving loopback targets. The direct baseline uses the first
+sidecar; all sidecars use the same origin implementation. CPU and memory
+limits below apply per generator and per sidecar, not to their combined total.
 
 The default smoke has four routes, both QUIC and TLS/TCP, 16 fresh requests/sec,
 ten-second steady/shutdown windows, **128 visitor workers**, **eight waiting
@@ -472,17 +479,17 @@ captured at the barrier. Later heartbeats do not advance that barrier's target.
 Compare startup concurrency explicitly: increasing it reduces whole-group wall
 time without necessarily reducing an individual publisher's activation latency.
 
-| Component     | CPU quota | Memory limit | Overrides                                |
-| ------------- | --------: | -----------: | ---------------------------------------- |
-| Control       |         1 |         2GiB | `CONTROL_CPUS`, `CONTROL_MEMORY`         |
-| Ingress       |         1 |         2GiB | `INGRESS_CPUS`, `INGRESS_MEMORY`         |
-| Each relay    |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`                 |
-| Publishers    |         4 |         4GiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY`     |
-| Each visitor  |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`         |
-| Local service |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`                 |
-| Pebble/DNS    |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`           |
-| PostgreSQL    |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`       |
-| Coordinator   |       0.5 |       128MiB | `COORDINATOR_CPUS`, `COORDINATOR_MEMORY` |
+| Component                | CPU quota | Memory limit | Overrides                                |
+| ------------------------ | --------: | -----------: | ---------------------------------------- |
+| Control                  |         1 |         2GiB | `CONTROL_CPUS`, `CONTROL_MEMORY`         |
+| Ingress                  |         1 |         2GiB | `INGRESS_CPUS`, `INGRESS_MEMORY`         |
+| Each relay               |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`                 |
+| Each publisher generator |         4 |         4GiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY`     |
+| Each visitor             |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`         |
+| Local service            |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`                 |
+| Pebble/DNS               |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`           |
+| PostgreSQL               |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`       |
+| Coordinator              |       0.5 |       128MiB | `COORDINATOR_CPUS`, `COORDINATOR_MEMORY` |
 
 Append `_CPUS` or `_MEMORY` to a prefix and pass it through `mise exec -- env`.
 The server-role defaults model the CPU/memory ratio of a Fly `performance-1x`

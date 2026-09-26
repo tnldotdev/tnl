@@ -32,7 +32,23 @@ const separatedDomain = "split.integration.test"
 
 var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
-var separatedComponents = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
+var separatedComponents = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "publishers-2", "publishers-3", "publishers-4", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "app-2", "app-3", "app-4", "pebble"}
+
+func separatedPublisherComponents() []string {
+	return []string{"publishers", "publishers-2", "publishers-3", "publishers-4"}
+}
+
+func separatedAppComponents() []string {
+	return []string{"app", "app-2", "app-3", "app-4"}
+}
+
+func separatedAppPublisher(component string) string {
+	return "publishers" + strings.TrimPrefix(component, "app")
+}
+
+func separatedPublisherShardKey(index int, event string) string {
+	return fmt.Sprintf("publishers-%d.%s", index+1, event)
+}
 
 func separatedIngresses() []string {
 	if *runtimeLoadHATopology {
@@ -352,7 +368,7 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 	t.Helper()
 	component := *separatedComponent
 	address := ":9091"
-	if component == "app" {
+	if slices.Contains(separatedAppComponents(), component) {
 		address = ":9092"
 	}
 	listener, err := net.Listen("tcp", address)
@@ -380,8 +396,8 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 		}
 		value.CAOrders = orders()
 		value.NetworkNamespace = component
-		if component == "app" {
-			value.NetworkNamespace = "publishers"
+		if slices.Contains(separatedAppComponents(), component) {
+			value.NetworkNamespace = separatedAppPublisher(component)
 		}
 		_ = json.NewEncoder(w).Encode(value)
 	})}

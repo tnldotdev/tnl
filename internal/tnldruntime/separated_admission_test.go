@@ -114,12 +114,14 @@ func recordSeparatedAdmission(t *testing.T, components map[string]any) {
 func verifySeparatedAdmission(t *testing.T) {
 	t.Helper()
 	components := make(map[string]any)
-	var publisherLimit int
-	separatedWait(t, "publishers.request-limit", 15*time.Second, &publisherLimit)
-	if publisherLimit != runtimeLoadAdmission.PublisherRequestLimit {
-		t.Fatalf("publisher request limit = %d, want %d", publisherLimit, runtimeLoadAdmission.PublisherRequestLimit)
+	for shard, component := range separatedPublisherComponents() {
+		var publisherLimit int
+		separatedWait(t, separatedPublisherShardKey(shard, "request-limit"), 15*time.Second, &publisherLimit)
+		if publisherLimit != runtimeLoadAdmission.PublisherRequestLimit {
+			t.Fatalf("%s request limit = %d, want %d", component, publisherLimit, runtimeLoadAdmission.PublisherRequestLimit)
+		}
+		components[component] = map[string]int{"request_limit": publisherLimit}
 	}
-	components["publishers"] = map[string]int{"request_limit": publisherLimit}
 	for _, component := range append(separatedIngresses(), "relay-a", "relay-b") {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)
