@@ -211,6 +211,41 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 	}
 }
 
+func TestHeartbeatCallDeadlineUsesConfirmedSessionUntilExpiry(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		expires time.Duration
+		wantErr error
+	}{
+		{name: "valid session", expires: 2 * heartbeatCallTimeout},
+		{name: "expired session", expires: heartbeatCallTimeout / 2, wantErr: controlclient.ErrStatusConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				control := &publisherControlStub{heartbeat: func(ctx context.Context, _ string, _ uint64, _ credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+					<-ctx.Done()
+					return controlv1.RouteSessionHeartbeat{}, ctx.Err()
+				}}
+				expiresAt := time.Now().Add(test.expires)
+				response, observed, err := heartbeatResponseOnce(t.Context(), control, "session_1", 1, "session-token", expiresAt)
+				if !errors.Is(err, test.wantErr) || observed || !response.RouteSession.ExpiresAt.Equal(expiresAt) {
+					t.Fatalf("fallback = %#v, observed = %t, error = %v; want %v", response, observed, err, test.wantErr)
+				}
+			})
+		})
+	}
+}
+
+func TestHeartbeatDoesNotHideUnrelatedDeadline(t *testing.T) {
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+		return controlv1.RouteSessionHeartbeat{}, context.DeadlineExceeded
+	}}
+	_, _, err := heartbeatResponseOnce(t.Context(), control, "session_1", 1, "session-token", time.Now().Add(time.Minute))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unrelated heartbeat deadline = %v, want deadline exceeded", err)
+	}
+}
+
 func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
 		return controlv1.RouteSessionHeartbeat{}, controlclient.ErrUnavailable

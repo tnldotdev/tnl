@@ -527,6 +527,80 @@ and degraded-state qualification. Evidence:
 `bench-results/capacity-combined-sharded-4500-ceiling8000-vm16-1/`, and
 `bench-results/capacity-combined-sharded-5000-ceiling8000-vm16-{1,2}/`.
 
+For rough local planning with **this combined traffic mix**, use about 4,000
+routes on the fixed 1 CPU / 2 GiB server-role profile. This is a short-window
+correctness observation, not a latency target: even the two matched passing
+screens had substantially different request latency.
+
+A follow-up diagnostic kept the 5,000-route workload but gave each relay two
+CPUs. One run was interrupted before measurement by another invocation using
+the same Compose project. In two uncontended runs, direct traffic passed, but
+a publisher's request to renew its route session exceeded its ten-second
+control-heartbeat deadline and ended that tunnel before a complete tunneled
+steady result could be collected. The first run completed all 32,850 fresh
+requests in tunneled warmup and sampled 1.12–1.13 CPU cores per relay with
+no throttling during the incomplete steady window; the second warmup had
+three failed requests. These runs **do not** establish that doubling relay
+CPU restores the full workload. In the source used for those diagnostics, a
+single timed-out control heartbeat could end the publisher even when the
+previous route session had not expired. Control responsiveness is a separate
+failure mode to investigate.
+
+Earlier CPU-profile attempts did not reach the traffic window: a 5,000-route attempt
+stalled in certificate finalization, and a 4,000-route attempt timed out at
+the fixture's ten-second ingress routing-acknowledgment check. Neither is a
+profile or a measured visitor-traffic result. Diagnostic artifacts:
+`bench-results/capacity-combined-sharded-5000-relay2cpu-vm16-{1,2,3}/`,
+`bench-results/capacity-combined-sharded-5000-relaycpu-profile-vm16-{1,isolated-2}/`,
+and `bench-results/capacity-combined-sharded-4000-5ktraffic-relaycpu-profile-vm16-1/`.
+
+### separating route count from traffic rate
+
+To test the forwarding failure without 5,000-route certificate activation,
+two otherwise matched one-minute runs used 3,000 routes while retaining the
+5,000-route traffic mix: 1,095 fresh requests/sec, 3,500 held streams, and
+1,203 Mbit/sec per direction. The 16-GiB Docker VM, publisher generators,
+database, and one-CPU control/ingress processes were unchanged; only each
+relay's CPU quota changed. Both direct baselines passed, and all held streams
+progressed through both tunneled measurements.
+
+| Relay CPUs each | Fresh successes / offered | Missed offers | Exact fresh p95 | Bandwidth bytes per direction | Relay mean cores | Relay throttle |
+| --------------: | ------------------------: | ------------: | --------------: | ----------------------------: | ---------------: | -------------: |
+|               1 |             65,570/65,700 |           130 |       903.838ms |               9.0225 GB exact |      0.975/0.970 |   17.54/17.64s |
+|               2 |             65,700/65,700 |             0 |       256.703ms |               9.0225 GB exact |      1.010/1.010 |           0/0s |
+
+With one-CPU relays, the fresh offer check failed even though every started
+request succeeded and bandwidth bytes were exact. Ingress recorded 4,548
+forwarding-ack errors or deadlines across its two processes. With two-CPU
+relays, that count fell to 40; all offered requests, bandwidth bytes, usage
+reconciliation, and shutdown passed. Ingress, control, and publisher generators
+retained CPU headroom. Both QUIC and TLS/TCP routes improved; DNS and TCP
+connection times remained low, while TLS and first-byte time fell sharply.
+A separate one-CPU diagnostic captured ten-second CPU profiles on both relays
+while carrying this load: packet and stream I/O dominated, notably TLS/yamux
+sends and QUIC UDP sends. Profiling perturbed that run's traffic and is
+excluded from the matched comparison.
+
+This isolates a **relay CPU boundary for the combined visitor traffic**,
+independent of needing 5,000 routes: throttled relays take too long to accept
+some internal-forwarding streams, ingress exhausts its 250-ms alternate-attempt
+budget and tries the other relay, and slow requests occupy visitor workers
+until scheduled fresh offers are missed. Raising only relay CPU removed the
+throttling and restored correctness in this 3,000-route diagnostic. It does
+not establish a passing 5,000-route point, which still has independent
+certificate-activation and control-heartbeat failure modes.
+
+The publisher previously treated its own ten-second control-heartbeat timeout
+as a fatal error even while its last confirmed route session remained valid;
+that distinct failure ended tunnels in the two-CPU 5,000-route diagnostics.
+The heartbeat now treats its own call timeout as temporary unavailability
+until the confirmed session expires. Focused tests cover both the temporary
+fallback and expiration; a completed 5,000-route runtime run after that
+change remains unavailable because the next attempt stopped during
+certificate activation. Evidence:
+`bench-results/capacity-combined-sharded-3000-5ktraffic-{1cpu,2cpu}-vm16-1/`
+and `bench-results/capacity-combined-sharded-3000-5ktraffic-cpuprofile-vm16-1/`.
+
 Two earlier attempts, one at 1,625 routes and one at 1,750, stopped during
 activation after Pebble invalidated TLS-ALPN authorizations; replacement orders
 later succeeded, but these are not clean capacity trials. A subsequent

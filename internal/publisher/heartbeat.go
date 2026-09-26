@@ -90,6 +90,7 @@ func heartbeatResponseOnce(
 ) (controlv1.RouteSessionHeartbeat, bool, error) {
 	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
 	response, err := server.HeartbeatRouteSession(callCtx, routeID, version, routeSessionToken)
+	callTimedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded)
 	cancel()
 	if err == nil {
 		return response, true, nil
@@ -98,10 +99,10 @@ func heartbeatResponseOnce(
 		return heartbeatFallback(expiresAt), false, nil
 	}
 	// A missed heartbeat is safe only while the last confirmed session remains valid.
-	if errors.Is(err, controlclient.ErrUnavailable) && time.Now().Before(expiresAt) {
-		return heartbeatFallback(expiresAt), false, nil
-	}
-	if errors.Is(err, controlclient.ErrUnavailable) {
+	if errors.Is(err, controlclient.ErrUnavailable) || callTimedOut {
+		if time.Now().Before(expiresAt) {
+			return heartbeatFallback(expiresAt), false, nil
+		}
 		return heartbeatFallback(expiresAt), false, controlclient.ErrStatusConflict
 	}
 	return heartbeatFallback(expiresAt), false, err
