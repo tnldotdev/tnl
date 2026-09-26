@@ -223,6 +223,7 @@ This works very similarly to `tnl dev`. [Read about `tnl publish`](https://tnl.d
 
 tnl.dev is free for now. Teams have a soft limit of 50 GiB of transfer per
 month across their public URLs, counting traffic in both directions.
+
 Accounts and teams created while it is free will keep a free plan
 if paid options arrive.
 
