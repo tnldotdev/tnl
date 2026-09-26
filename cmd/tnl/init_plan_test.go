@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -85,6 +86,77 @@ func TestInitCreatesAbsentKnownNextConfig(t *testing.T) {
 	if plan.frameworkPath != filepath.Join(root, "next.config.ts") || !bytes.Equal(plan.frameworkAfter, frameworkConfigSource("next")) {
 		t.Fatalf("plan = %#v", plan)
 	}
+}
+
+func TestInitPlansGenericDevSettings(t *testing.T) {
+	for _, test := range []struct {
+		name, script, manager, command, action string
+	}{
+		{"dev script", "node server.js", "pnpm", `["pnpm","dev"]`, "set services.app.dev.port in tnl.config.ts to your app's listening port."},
+		{"no dev script", "", "npm", "", "set services.app.dev.command and services.app.dev.port in tnl.config.ts."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := genericInitFixture(t, test.script, test.manager)
+			plan, err := planInit(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.framework != "" || !plan.genericDev || !slices.Equal(plan.actions, []string{test.action}) {
+				t.Fatalf("plan = %#v", plan)
+			}
+			if test.command == "" {
+				if strings.Contains(string(plan.configData), "dev:") {
+					t.Fatalf("planned a dev command without a script: %s", plan.configData)
+				}
+			} else if !strings.Contains(string(plan.configData), test.command) {
+				t.Fatalf("planned config is missing command %q: %s", test.command, plan.configData)
+			}
+			if strings.Contains(string(plan.configData), "port:") {
+				t.Fatalf("planned an unrequested port: %s", plan.configData)
+			}
+		})
+	}
+}
+
+func TestInitFrameworkWithoutDevScriptUsesDefaultCommand(t *testing.T) {
+	for _, test := range []struct {
+		framework, dependencies, command string
+	}{
+		{"next", `"next":"16.3.4"`, `["next","dev"]`},
+		{"vite", `"vite":"6.0.9"`, `["vite"]`},
+	} {
+		t.Run(test.framework, func(t *testing.T) {
+			root := copyInitFixture(t, test.framework)
+			data := fmt.Sprintf(`{"devDependencies":{"@tnldotdev/tnl":"1.0.0",%s}}`, test.dependencies)
+			if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := planInit(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.framework != test.framework || plan.genericDev || !strings.Contains(string(plan.configData), test.command) || strings.Contains(string(plan.configData), "port:") {
+				t.Fatalf("plan = %#v, config = %s", plan, plan.configData)
+			}
+		})
+	}
+}
+
+func genericInitFixture(t *testing.T, script, manager string) string {
+	t.Helper()
+	root := t.TempDir()
+	scripts := ""
+	if script != "" {
+		scripts = fmt.Sprintf(`"scripts":{"dev":%q},`, script)
+	}
+	data := fmt.Sprintf(`{"packageManager":%q,%s"devDependencies":{"@tnldotdev/tnl":"1.0.0"}}`, manager+"@1", scripts)
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"include":[".tnl/project.d.ts"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func copyInitFixture(t *testing.T, name string) string {

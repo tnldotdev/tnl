@@ -68,6 +68,10 @@ func TestInitDevCommandPrefersPackageScript(t *testing.T) {
 		{"npm next", "next", "npm", map[string]string{"dev": "next dev"}, []string{"npm", "run", "dev"}},
 		{"bun vite", "vite", "bun", map[string]string{"dev": "vite"}, []string{"bun", "run", "dev"}},
 		{"unknown manager", "next", "", map[string]string{"dev": "next dev"}, []string{"npm", "run", "dev"}},
+		{"pnpm generic", "", "pnpm", map[string]string{"dev": "node server.js"}, []string{"pnpm", "dev"}},
+		{"yarn generic", "", "yarn", map[string]string{"dev": "node server.js"}, []string{"yarn", "dev"}},
+		{"bun generic", "", "bun", map[string]string{"dev": "node server.js"}, []string{"bun", "run", "dev"}},
+		{"npm generic", "", "npm", map[string]string{"dev": "node server.js"}, []string{"npm", "run", "dev"}},
 		{"next fallback", "next", "", nil, []string{"next", "dev"}},
 		{"vite fallback", "vite", "", nil, []string{"vite"}},
 		{"no framework or script", "", "pnpm", nil, nil},
@@ -77,6 +81,23 @@ func TestInitDevCommandPrefersPackageScript(t *testing.T) {
 				t.Fatalf("initDevCommand() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestParseInitCommandKeepsQuotedArguments(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  []string
+	}{
+		{`node server.js --name "two words"`, []string{"node", "server.js", "--name", "two words"}},
+		{`node 'server file.js' escaped\ space`, []string{"node", "server file.js", "escaped space"}},
+		{`node "unclosed`, nil},
+		{`node ""`, nil},
+	} {
+		got, err := parseInitCommand(test.input)
+		if (err != nil) != (test.want == nil) || !slices.Equal(got, test.want) {
+			t.Fatalf("parseInitCommand(%q) = %v, %v; want %v", test.input, got, err, test.want)
+		}
 	}
 }
 

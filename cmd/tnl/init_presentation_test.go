@@ -101,3 +101,154 @@ func TestInitAmbiguousFrameworkOutputNeedsAction(t *testing.T) {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q", after, stdout.String(), stderr.String())
 	}
 }
+
+func TestInitGenericMissingSettingsRepeatUntilAnswered(t *testing.T) {
+	for _, test := range []struct {
+		name, script, action, command string
+	}{
+		{"script", "node server.js", "services.app.dev.port", `["npm","run","dev"]`},
+		{"no script", "", "services.app.dev.command and services.app.dev.port", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := genericInitFixture(t, test.script, "npm")
+			t.Chdir(root)
+			path := filepath.Join(root, "tnl.config.ts")
+			for run := 1; run <= 2; run++ {
+				var stdout, stderr bytes.Buffer
+				if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("7777\n"), false, &stdout, &stderr); err != nil {
+					t.Fatal(err)
+				}
+				for _, text := range []string{"[ tnl init ]-- needs action", test.action, "complete the actions above, then run tnl dev"} {
+					if !strings.Contains(stdout.String(), text) {
+						t.Fatalf("run %d missing %q: %s", run, text, stdout.String())
+					}
+				}
+				if stderr.Len() != 0 {
+					t.Fatalf("run %d stderr = %q", run, stderr.String())
+				}
+				config, err := os.ReadFile(path)
+				if err != nil || strings.Contains(string(config), "port:") || strings.Contains(string(config), "7777") || (test.command != "" && !strings.Contains(string(config), test.command)) || (test.command == "" && strings.Contains(string(config), "dev:")) {
+					t.Fatalf("run %d config = %s, %v", run, config, err)
+				}
+			}
+		})
+	}
+}
+
+func TestInitFrameworkIntegrationDoesNotPromptForPort(t *testing.T) {
+	for _, framework := range []string{"next", "vite"} {
+		t.Run(framework, func(t *testing.T) {
+			root := copyInitFixture(t, framework)
+			t.Chdir(root)
+			var stdout, stderr bytes.Buffer
+			if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader("4321\n"), true, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
+			if err != nil || strings.Contains(string(config), "port:") || strings.Contains(stdout.String(), "services.app.dev.port") || stderr.Len() != 0 {
+				t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
+			}
+		})
+	}
+}
+
+func TestInitGenericPromptsSaveAnswers(t *testing.T) {
+	for _, test := range []struct {
+		name, script, answers, command string
+	}{
+		{"script", "node server.js", "4321\n", `["yarn","dev"]`},
+		{"no script", "", "node 'server file.js' --name \"two words\"\n4321\n", `["node","server file.js","--name","two words"]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := genericInitFixture(t, test.script, "yarn")
+			t.Chdir(root)
+			var stdout, stderr bytes.Buffer
+			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(test.answers), true, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
+			if err != nil || !strings.Contains(string(config), test.command) || !strings.Contains(string(config), "port: 4321") {
+				t.Fatalf("config = %s, %v", config, err)
+			}
+			if !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "+-- run tnl dev") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "[ tnl init ]-- needs input") || !strings.Contains(stderr.String(), "dev port") {
+				t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+			}
+			stderr.Reset()
+			stdout.Reset()
+			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(""), true, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(stdout.String(), "[ tnl init ]-- already configured") || strings.Contains(stdout.String(), "needs action") || stderr.Len() != 0 {
+				t.Fatalf("rerun stdout = %q, stderr = %q", stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestInitGenericPartialAnswersAreRetained(t *testing.T) {
+	root := genericInitFixture(t, "", "npm")
+	t.Chdir(root)
+	path := filepath.Join(root, "tnl.config.ts")
+	var stdout, stderr bytes.Buffer
+	if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("\n0\n65536\nnot-a-port\n8123\n"), true, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(config), "dev: { port: 8123 }") {
+		t.Fatalf("config = %q, %v", config, err)
+	}
+	if !strings.Contains(stdout.String(), "set services.app.dev.command") || !strings.Contains(stdout.String(), "needs action") || strings.Count(stderr.String(), "invalid input") != 3 {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("node server.js\n"), true, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	config, err = os.ReadFile(path)
+	if err != nil || !strings.Contains(string(config), `dev: { command: ["node","server.js"], port: 8123 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || strings.Contains(stdout.String(), "needs action") || strings.Contains(stderr.String(), "dev port") {
+		t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
+	}
+}
+
+func TestInitGenericRerunUpdatesUntouchedConfigWithPort(t *testing.T) {
+	root := genericInitFixture(t, "node server.js", "bun")
+	t.Chdir(root)
+	path := filepath.Join(root, "tnl.config.ts")
+	if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(""), false, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("5174\n"), true, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(config), `dev: { command: ["bun","run","dev"], port: 5174 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "updated") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "dev port") {
+		t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
+	}
+}
+
+func TestInitPreservesCustomizedGenericService(t *testing.T) {
+	for _, test := range []struct{ name, script string }{{"script", "node server.js"}, {"no script", ""}} {
+		t.Run(test.name, func(t *testing.T) {
+			root := genericInitFixture(t, test.script, "npm")
+			t.Chdir(root)
+			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(""), false, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "tnl.config.ts")
+			custom := bytes.Replace(initConfigSourceWithPort("app", []string{"node", "server.js"}, 4173), []byte("  services:"), []byte("  // configured by the developer\n  services:"), 1)
+			if err := os.WriteFile(path, custom, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(""), true, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, custom) || !strings.Contains(stdout.String(), "[ tnl init ]-- already configured") || strings.Contains(stdout.String(), "services.app.dev.port") || stderr.Len() != 0 {
+				t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", after, stdout.String(), stderr.String(), err)
+			}
+		})
+	}
+}
