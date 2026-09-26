@@ -65,13 +65,19 @@ describe("test resource ownership", () => {
       setInterval(() => {}, 1000);
     `,
     ]);
+    let stdout = "";
+    // The bounded combined output can lose this marker if pending stderr
+    // arrives afterward. Observe stdout directly to prove both pipes drained.
+    child.child.stdout?.on("data", (chunk: Buffer | string) => {
+      stdout = `${stdout}${chunk.toString()}`.slice(-64);
+    });
     await child.ready();
-    await expect.poll(child.output).toContain("both pipes drained");
+    await expect.poll(() => stdout, { timeout: 10_000 }).toContain("both pipes drained");
     expect(child.output().length).toBeLessThanOrEqual(16_384);
     const closed = once(child.child, "close");
     await child.close();
     await expect(closed).resolves.toEqual([null, "SIGKILL"]);
-  });
+  }, 15_000);
 
   test("settles a response aborted after headers and partial body", async () => {
     const port = await serve((_request, response) => {
