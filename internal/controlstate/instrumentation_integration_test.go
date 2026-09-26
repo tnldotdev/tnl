@@ -12,20 +12,20 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 func TestIntegrationOperationMetricsExport(t *testing.T) {
-	database, now, request, leases := newRouteSessionPrerequisites(t)
+	database, now, request, leases := newPublishRunPrerequisites(t)
 	metrics := observability.New("control")
 	database.Instrument(metrics)
-	setup, err := database.CreateRouteSession(t.Context(), request, now, time.Hour, time.Hour)
+	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := routeSessionFixture{database, now, request, setup, leases}
+	f := publishRunFixture{database, now, request, setup, leases}
 	readyTestSession(t, f)
-	if _, err := database.HeartbeatRouteSession(t.Context(), f.authentication(), now.Add(time.Second), time.Hour, time.Hour); err != nil {
+	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(time.Second), time.Hour, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	ingress := registerTestIngress(t, database, now)
@@ -39,42 +39,42 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.ReportIngressUsage(t.Context(), ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{{
-		RouteID: setup.RouteID, RouteVersion: setup.RouteVersion, ReportRevision: 1,
+		PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, ReportRevision: 1,
 		BucketStart: now.Truncate(time.Minute), BucketEnd: now.Truncate(time.Minute).Add(time.Minute), ObservedThrough: now,
-		HistogramData: (routeusage.Checkpoint{}).MarshalBinary(),
+		HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
 	}}}, now); err != nil {
 		t.Fatal(err)
 	}
 	// Validation and pool-acquisition failures belong to the state operation,
 	// even when no SQL has started.
-	if _, err := database.CreateRouteSession(t.Context(), RouteSessionRequest{}, now, time.Hour, time.Hour); err == nil {
+	if _, err := database.CreatePublishRun(t.Context(), PublishRunRequest{}, now, time.Hour, time.Hour); err == nil {
 		t.Fatal("invalid request succeeded")
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := database.CreateRouteSession(canceled, request, now, time.Hour, time.Hour); !errors.Is(err, context.Canceled) {
+	if _, err := database.CreatePublishRun(canceled, request, now, time.Hour, time.Hour); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled create: %v", err)
 	}
 	expired, stop := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 	defer stop()
-	if _, err := database.CreateRouteSession(expired, request, now, time.Hour, time.Hour); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := database.CreatePublishRun(expired, request, now, time.Hour, time.Hour); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired create: %v", err)
 	}
 	families := exportedDurationMetrics(t, metrics)
 	for operation, count := range map[string]uint64{
-		"CreateRouteSession": 1, "HeartbeatRouteSession": 1, "ClaimPublisherConnection": 2,
+		"CreatePublishRun": 1, "HeartbeatPublishRun": 1, "ClaimPublisherConnection": 2,
 		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 1,
 		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 1, "ReportIngressUsage": 1,
 	} {
 		assertDurationCount(t, families, "tnl_operation_duration_seconds", operation, "success", count)
 	}
 	for _, outcome := range []string{"error", "canceled", "deadline_exceeded"} {
-		assertDurationCount(t, families, "tnl_operation_duration_seconds", "CreateRouteSession", outcome, 1)
+		assertDurationCount(t, families, "tnl_operation_duration_seconds", "CreatePublishRun", outcome, 1)
 	}
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockLocalTeamForSession", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRelayServicesForPlacement", "success", 1)
-	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRouteSessionForUsage", "success", 1)
+	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockPublishRunForUsage", "success", 1)
 }
 
 func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
@@ -173,7 +173,7 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 }
 
 func TestIntegrationQueryDelayPreservesProductionGuardWindow(t *testing.T) {
-	database, _, request, _ := newRouteSessionPrerequisites(t)
+	database, _, request, _ := newPublishRunPrerequisites(t)
 	metrics := observability.New("control")
 	activity := new(queryActivity)
 	activity.metrics.Store(metrics)

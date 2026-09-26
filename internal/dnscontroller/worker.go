@@ -25,14 +25,14 @@ type Zone struct {
 	Nameservers []string
 }
 
-type RouteRecord struct {
+type PublicURLRecord struct {
 	ZoneID               string
 	ZoneDomain           string
 	ClaimedZone          bool
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
-	RouteID              string
+	PublicURLID          string
 	CanonicalHostname    string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string
@@ -41,13 +41,13 @@ type RouteRecord struct {
 type Provider interface {
 	EnsureClaimedZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
 	ReleaseClaimedZone(context.Context, controlstate.DNSAuthorityWork) error
-	PublishRoute(context.Context, RouteRecord) (Zone, error)
-	RemoveRoute(context.Context, RouteRecord) (Zone, error)
+	PublishPublicURL(context.Context, PublicURLRecord) (Zone, error)
+	RemovePublicURL(context.Context, PublicURLRecord) (Zone, error)
 }
 
 type DNSVerifier interface {
 	Verify(context.Context, string, []string) (bool, error)
-	VerifyRoute(context.Context, string, []string, []string, []string) (bool, error)
+	VerifyPublicURL(context.Context, string, []string, []string, []string) (bool, error)
 }
 
 type Store interface {
@@ -55,8 +55,8 @@ type Store interface {
 	SaveDNSAuthorityWork(context.Context, controlstate.DNSAuthorityWork, time.Time) (controlstate.DNSAuthorityWork, error)
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
-	ClaimDNSRouteWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSRouteWork, bool, error)
-	SaveDNSRouteWork(context.Context, controlstate.DNSRouteWork, time.Time) (controlstate.DNSRouteWork, error)
+	ClaimDNSPublicURLWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSPublicURLWork, bool, error)
+	SaveDNSPublicURLWork(context.Context, controlstate.DNSPublicURLWork, time.Time) (controlstate.DNSPublicURLWork, error)
 }
 
 type Config struct {
@@ -149,25 +149,25 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	route, found, err := w.store.ClaimDNSRouteWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	route, found, err := w.store.ClaimDNSPublicURLWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if err != nil || !found {
 		return found, err
 	}
-	if err := w.advanceRoute(ctx, &route, now); err != nil {
+	if err := w.advancePublicURL(ctx, &route, now); err != nil {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
 		w.applyRouteFailure(&route, err, w.now())
 	}
-	if _, err := w.store.SaveDNSRouteWork(ctx, route, w.now()); err != nil {
+	if _, err := w.store.SaveDNSPublicURLWork(ctx, route, w.now()); err != nil {
 		return true, err
 	}
 	return true, nil
 }
 
-func (w *Worker) advanceRoute(ctx context.Context, work *controlstate.DNSRouteWork, now time.Time) error {
+func (w *Worker) advancePublicURL(ctx context.Context, work *controlstate.DNSPublicURLWork, now time.Time) error {
 	work.LastError = ""
-	record, nameservers, ready, err := w.routeRecord(ctx, *work)
+	record, nameservers, ready, err := w.publicURLRecord(ctx, *work)
 	if err != nil {
 		return err
 	}
@@ -176,83 +176,83 @@ func (w *Worker) advanceRoute(ctx context.Context, work *controlstate.DNSRouteWo
 		return nil
 	}
 	switch work.State {
-	case controlstate.RouteDNSPending:
-		zone, err := w.provider.PublishRoute(ctx, record)
+	case controlstate.PublicURLDNSPending:
+		zone, err := w.provider.PublishPublicURL(ctx, record)
 		if err != nil {
 			return err
 		}
 		if len(zone.Nameservers) != 0 {
 			nameservers = zone.Nameservers
 		}
-		verified, err := w.verifier.VerifyRoute(
+		verified, err := w.verifier.VerifyPublicURL(
 			ctx, work.CanonicalHostname, record.IngressIPv4Addresses, record.IngressIPv6Addresses, nameservers,
 		)
 		if err != nil {
 			return err
 		}
 		if verified {
-			work.State = controlstate.RouteDNSPublished
+			work.State = controlstate.PublicURLDNSPublished
 			work.AvailableAt = time.Time{}
 		} else {
 			work.AvailableAt = now.Add(w.config.PollInterval)
 		}
 		return nil
-	case controlstate.RouteDNSRemoving:
-		zone, err := w.provider.RemoveRoute(ctx, record)
+	case controlstate.PublicURLDNSRemoving:
+		zone, err := w.provider.RemovePublicURL(ctx, record)
 		if err != nil {
 			return err
 		}
 		if len(zone.Nameservers) != 0 {
 			nameservers = zone.Nameservers
 		}
-		verified, err := w.verifier.VerifyRoute(ctx, work.CanonicalHostname, nil, nil, nameservers)
+		verified, err := w.verifier.VerifyPublicURL(ctx, work.CanonicalHostname, nil, nil, nameservers)
 		if err != nil {
 			return err
 		}
 		if verified {
-			work.State = controlstate.RouteDNSRemoved
+			work.State = controlstate.PublicURLDNSRemoved
 			work.AvailableAt = time.Time{}
 		} else {
 			work.AvailableAt = now.Add(w.config.PollInterval)
 		}
 		return nil
 	default:
-		return terminalf("cannot process public route DNS in state %q", work.State)
+		return terminalf("cannot process public URL DNS in state %q", work.State)
 	}
 }
 
-func (w *Worker) routeRecord(
+func (w *Worker) publicURLRecord(
 	ctx context.Context,
-	work controlstate.DNSRouteWork,
-) (RouteRecord, []string, bool, error) {
-	record := RouteRecord{
-		RouteID: work.RouteID, DomainID: work.DomainID, CanonicalHostname: work.CanonicalHostname,
+	work controlstate.DNSPublicURLWork,
+) (PublicURLRecord, []string, bool, error) {
+	record := PublicURLRecord{
+		PublicURLID: work.PublicURLID, DomainID: work.DomainID, CanonicalHostname: work.CanonicalHostname,
 		IngressIPv4Addresses: append([]string(nil), w.config.IngressIPv4Addresses...),
 		IngressIPv6Addresses: append([]string(nil), w.config.IngressIPv6Addresses...),
 	}
 	if work.CanonicalHostname == w.config.ManagedDomain || strings.HasSuffix(work.CanonicalHostname, "."+w.config.ManagedDomain) {
 		record.ZoneID, record.ZoneDomain = w.config.ManagedZoneID, w.config.ManagedDomain
 		if record.ZoneID == "" {
-			return RouteRecord{}, nil, false, terminalf("managed Route 53 zone is not configured")
+			return PublicURLRecord{}, nil, false, terminalf("managed Route 53 zone is not configured")
 		}
 		return record, nil, true, nil
 	}
 	if work.DNSAuthorityReference == "" {
-		return RouteRecord{}, nil, false, terminalf("claimed route has no DNS authority reference")
+		return PublicURLRecord{}, nil, false, terminalf("claimed route has no DNS authority reference")
 	}
 	authority, err := w.store.GetDNSAuthority(ctx, work.DNSAuthorityReference)
 	if err != nil {
-		return RouteRecord{}, nil, false, err
+		return PublicURLRecord{}, nil, false, err
 	}
 	if authority.DomainID != work.DomainID ||
 		work.CanonicalHostname != authority.CanonicalDomain && !strings.HasSuffix(work.CanonicalHostname, "."+authority.CanonicalDomain) {
-		return RouteRecord{}, nil, false, terminalf("route does not match its DNS authority")
+		return PublicURLRecord{}, nil, false, terminalf("public URL does not match its DNS authority")
 	}
 	if authority.State == "pending" {
-		return RouteRecord{}, nil, false, nil
+		return PublicURLRecord{}, nil, false, nil
 	}
 	if authority.State != "ready" && authority.State != "releasing" || authority.ProviderZoneID == "" {
-		return RouteRecord{}, nil, false, terminalf("DNS authority is not available")
+		return PublicURLRecord{}, nil, false, terminalf("DNS authority is not available")
 	}
 	record.ZoneID, record.ZoneDomain, record.ClaimedZone = authority.ProviderZoneID, authority.CanonicalDomain, true
 	record.AuthorityReference, record.TeamID = authority.Reference, authority.TeamID
@@ -321,7 +321,7 @@ func (w *Worker) applyFailure(work *controlstate.DNSAuthorityWork, operationErr 
 	}
 }
 
-func (w *Worker) applyRouteFailure(work *controlstate.DNSRouteWork, operationErr error, now time.Time) {
+func (w *Worker) applyRouteFailure(work *controlstate.DNSPublicURLWork, operationErr error, now time.Time) {
 	work.LastError = truncateError(operationErr)
 	delay := w.config.RetryInterval
 	for attempt := uint64(1); attempt < work.Attempts && delay < time.Minute; attempt++ {
@@ -330,7 +330,7 @@ func (w *Worker) applyRouteFailure(work *controlstate.DNSRouteWork, operationErr
 	work.AvailableAt = now.Add(delay)
 	var terminal *terminalError
 	if errors.As(operationErr, &terminal) {
-		work.State = controlstate.RouteDNSFailed
+		work.State = controlstate.PublicURLDNSFailed
 		work.AvailableAt = time.Time{}
 	}
 }

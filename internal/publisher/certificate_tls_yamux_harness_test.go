@@ -24,9 +24,9 @@ func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestContr
 	t.Helper()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	t.Cleanup(upstream.Close)
-	control.setup.Route.Target = upstream.URL
-	control.routes = []controlv1.Route{control.setup.Route}
-	certificate := routeTestCertificate(t, "relay.example")
+	control.setup.PublicUrl.Target = upstream.URL
+	control.routes = []controlv1.PublicURL{control.setup.PublicUrl}
+	certificate := publicURLTestCertificate(t, "relay.example")
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers sync.WaitGroup
 	var listeners []net.Listener
@@ -86,8 +86,8 @@ func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestContr
 		})
 	}
 	return Config{
-		Control: control, State: control.store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", RouteScope: controlv1.Member,
-		Hostname: control.setup.Route.CanonicalHostname, Target: upstream.URL, FallbackDelay: time.Millisecond, DrainTime: time.Second,
+		Control: control, State: control.store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member,
+		Hostname: control.setup.PublicUrl.CanonicalHostname, Target: upstream.URL, FallbackDelay: time.Millisecond, DrainTime: time.Second,
 		QUICConnector: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			return nil, errors.New("test uses TLS/yamux")
 		}),

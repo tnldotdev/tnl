@@ -40,7 +40,7 @@ func TestRuntimeHarnessChild(t *testing.T) {
 		_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", (1<<20)+1))
 	}
 	for index := range 4096 {
-		if _, err := fmt.Fprintf(os.Stdout, "{\"type\":\"progress\",\"route_version\":%d}\n", index); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "{\"type\":\"progress\",\"publish_run_number\":%d}\n", index); err != nil {
 			os.Exit(2)
 		}
 	}
@@ -100,7 +100,7 @@ func TestBinaryRecorderDrainsWithoutConsumer(t *testing.T) {
 				t.Fatal("unread output stalled process reap:", err)
 			}
 			events, parseErr := recorder.snapshot()
-			if len(events) != 4097 || events[0].RouteVersion != 0 || events[4095].RouteVersion != 4095 || events[4096].Type != "ready" {
+			if len(events) != 4097 || events[0].PublishRunNumber != 0 || events[4095].PublishRunNumber != 4095 || events[4096].Type != "ready" {
 				t.Fatalf("lost/reordered output: %d events", len(events))
 			}
 			if mode == "malformed" || mode == "oversized" {

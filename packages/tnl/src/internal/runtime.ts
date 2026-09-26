@@ -3,13 +3,13 @@ const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 export interface ProjectServiceMetadata {
-  readonly memberNamespace: string;
+  readonly namespace: string;
   readonly hostname: string;
   readonly url: `https://${string}`;
 }
 
 export interface ProjectMetadata {
-  readonly memberNamespace: string;
+  readonly namespace: string;
   readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
 }
 
@@ -20,11 +20,8 @@ export interface ProjectRuntime extends ProjectMetadata {
 /** Checks browser-safe project metadata and makes it read-only. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);
-  exactKeys(object, ["memberNamespace", "services"], description);
-  const memberNamespace = requiredHostname(
-    object.memberNamespace,
-    `${description} member namespace`,
-  );
+  exactKeys(object, ["namespace", "services"], description);
+  const projectNamespace = requiredHostname(object.namespace, `${description} namespace`);
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
   if (entries.length > maximumServices) {
@@ -40,12 +37,12 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      ["hostname", "memberNamespace", "url"],
+      ["hostname", "namespace", "url"],
       `${description} service ${JSON.stringify(name)}`,
     );
-    const serviceMemberNamespace = requiredHostname(
-      service.memberNamespace,
-      `${description} service ${JSON.stringify(name)} member namespace`,
+    const serviceNamespace = requiredHostname(
+      service.namespace,
+      `${description} service ${JSON.stringify(name)} namespace`,
     );
     const hostname = requiredHostname(
       service.hostname,
@@ -60,14 +57,14 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     }
     hostnames.add(hostname);
     services[name] = Object.freeze({
-      memberNamespace: serviceMemberNamespace,
+      namespace: serviceNamespace,
       hostname,
       url,
     });
   }
 
   return Object.freeze({
-    memberNamespace,
+    namespace: projectNamespace,
     services: Object.freeze(services),
   });
 }
@@ -96,12 +93,12 @@ export function parseRuntimePayload(serialized: string | undefined): ProjectRunt
 
 export function parseProjectRuntime(value: unknown, description: string): ProjectRuntime {
   const object = record(value, description);
-  exactKeys(object, ["memberNamespace", "runningUnderTnlDev", "services"], description);
+  exactKeys(object, ["namespace", "runningUnderTnlDev", "services"], description);
   if (typeof object.runningUnderTnlDev !== "boolean") {
     throw new Error(`${description} has an invalid runningUnderTnlDev value`);
   }
   const project = parseProjectMetadata(
-    { memberNamespace: object.memberNamespace, services: object.services },
+    { namespace: object.namespace, services: object.services },
     description,
   );
   return Object.freeze({
@@ -115,7 +112,7 @@ export function serializeRuntimePayload(
   runningUnderTnlDev: boolean,
 ): string {
   const serialized = JSON.stringify({
-    memberNamespace: project.memberNamespace,
+    namespace: project.namespace,
     runningUnderTnlDev,
     services: project.services,
   });

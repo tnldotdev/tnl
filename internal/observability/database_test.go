@@ -31,8 +31,8 @@ func TestDatabaseMetricsUseOnePassiveSnapshot(t *testing.T) {
 				"request_pool": {Open: 2, Connecting: 1, Opened: 5, Closed: 3, Failed: 4},
 			},
 			ActiveOperations: []DatabaseOperationSnapshot{
-				{Operation: "HeartbeatRouteSession", ElapsedSeconds: 2},
-				{Operation: "HeartbeatRouteSession", ElapsedSeconds: 7},
+				{Operation: "HeartbeatPublishRun", ElapsedSeconds: 2},
+				{Operation: "HeartbeatPublishRun", ElapsedSeconds: 7},
 				{Operation: "unknown", ElapsedSeconds: 3},
 			},
 			OperationsOmitted: 6,
@@ -52,8 +52,8 @@ func TestDatabaseMetricsUseOnePassiveSnapshot(t *testing.T) {
 		`tnl_database_client_connection_events_total{event="opened",purpose="request_pool"} 5`,
 		`tnl_database_client_connection_events_total{event="closed",purpose="request_pool"} 3`,
 		`tnl_database_client_connection_events_total{event="failed",purpose="request_pool"} 4`,
-		`tnl_database_operations_active{operation="HeartbeatRouteSession"} 2`,
-		`tnl_database_operation_oldest_age_seconds{operation="HeartbeatRouteSession"} 7`,
+		`tnl_database_operations_active{operation="HeartbeatPublishRun"} 2`,
+		`tnl_database_operation_oldest_age_seconds{operation="HeartbeatPublishRun"} 7`,
 		`tnl_database_operations_active{operation="unknown"} 1`,
 		`tnl_database_operations_omitted 6`,
 	} {

@@ -74,7 +74,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 			if len(events) != 3 {
 				t.Fatalf("forwarded events = %d, want 3", len(events))
 			}
-			if len(payloads) != 1 || payloads[0].Event != "route_started" ||
+			if len(payloads) != 1 || payloads[0].Event != "publish_run_started" ||
 				payloads[0].Command != "publish" || payloads[0].ServerKind != test.serverKind {
 				t.Fatalf("telemetry payloads = %#v", payloads)
 			}

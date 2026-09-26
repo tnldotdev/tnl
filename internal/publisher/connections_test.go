@@ -121,7 +121,7 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 		ctx: ctx, config: publisherConnectionManagerConfig{
 			QUICConnector: quic, TCPConnector: tcp, ReconnectDelay: time.Second,
 		},
-		routeSessionID: "route_session_1", routeID: "route_1", routeVersion: 1,
+		publishRunID: "publish_run_1", publicURLID: "public_url_1", publishRunNumber: 1,
 		changed: make(chan struct{}), fallback: make(chan struct{}),
 	}
 	connectionCtx, cancel := context.WithCancel(ctx)

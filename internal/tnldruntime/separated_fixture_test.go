@@ -201,7 +201,7 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 		"httpPort": 80, "tlsPort": 443, "externalAccountBindingRequired": false,
 		"retryAfter": map[string]int{"authz": 0, "order": 0}, "keyAlgorithm": "ecdsa",
 		"profiles": map[string]any{"default": map[string]any{"description": "integration", "validityPeriod": 3600},
-			"tlsserver": map[string]any{"description": "tnl route TLS", "validityPeriod": 3600}},
+			"tlsserver": map[string]any{"description": "tnl visitor TLS", "validityPeriod": 3600}},
 	}})
 }
 
@@ -224,7 +224,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.DrainTimeout = 30 * time.Second
 	}
 	runtimeLoadAdmission.apply(&cfg)
-	cfg.RouteCertificateWorkers = *runtimeLoadCertificateWorkers
+	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	switch role {

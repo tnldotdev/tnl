@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 // Isolate page processing from the cadence scheduler and competing pool users.
@@ -20,15 +20,15 @@ func TestProfileIngressUsage(t *testing.T) {
 	bucket := f.now.Truncate(time.Minute)
 	reports := make([]IngressUsageReport, pageSize)
 	for index := range reports {
-		setup, err := f.database.CreateRouteSession(t.Context(), f.request(index), f.now, time.Hour, time.Hour)
+		setup, err := f.database.CreatePublishRun(t.Context(), f.request(index), f.now, time.Hour, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
 		reports[index] = IngressUsageReport{
-			RouteID: setup.RouteID, RouteVersion: setup.RouteVersion,
+			PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber,
 			BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: f.now,
 			ReportRevision: 1, ConnectionAttempts: 1, IngressBytes: 10,
-			HistogramData: (routeusage.Checkpoint{}).MarshalBinary(),
+			HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
 		}
 	}
 	for _, phase := range []string{"fresh", "replay", "advance"} {
@@ -63,7 +63,7 @@ func TestProfileIngressUsage(t *testing.T) {
 		}
 	}
 	var attempts, bytes int64
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT sum(connection_attempts), sum(ingress_bytes) FROM control.route_usage_buckets`).Scan(&attempts, &bytes); err != nil || attempts != 2*pageSize || bytes != 20*pageSize {
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT sum(connection_attempts), sum(ingress_bytes) FROM control.public_url_usage_buckets`).Scan(&attempts, &bytes); err != nil || attempts != 2*pageSize || bytes != 20*pageSize {
 		t.Fatalf("profile accounting: attempts=%d bytes=%d: %v", attempts, bytes, err)
 	}
 }

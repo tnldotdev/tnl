@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 func TestIntegrationIngressUsageReplayAndCompletion(t *testing.T) {
@@ -41,10 +41,10 @@ func TestIntegrationIngressUsageReplayAndCompletion(t *testing.T) {
 	}
 	var denials, attempts int64
 	var bucketObserved time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT policy_denials FROM control.route_sessions WHERE id = 'session_usage'`).Scan(&denials); err != nil || denials != 3 {
+	if err := database.pool.QueryRow(t.Context(), `SELECT policy_denials FROM control.publish_runs WHERE id = 'session_usage'`).Scan(&denials); err != nil || denials != 3 {
 		t.Fatalf("session denials = %d, %v", denials, err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.route_usage_buckets WHERE route_id = 'route_usage' AND route_version = 1 AND bucket_start = $1`, base).Scan(&attempts, &bucketObserved); err != nil || attempts != 3 || !bucketObserved.Equal(completeAt) {
+	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.public_url_usage_buckets WHERE public_url_id = 'public_url_usage' AND publish_run_number = 1 AND bucket_start = $1`, base).Scan(&attempts, &bucketObserved); err != nil || attempts != 3 || !bucketObserved.Equal(completeAt) {
 		t.Fatalf("bucket attempts/observed = %d/%v, %v", attempts, bucketObserved, err)
 	}
 	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{ObservedThrough: &completeAt}, base.Add(33*time.Second)); !errors.Is(err, ErrIngressUsageReportStale) {
@@ -52,18 +52,18 @@ func TestIntegrationIngressUsageReplayAndCompletion(t *testing.T) {
 	}
 }
 
-func TestIntegrationCompleteRouteUsageAdvancesObservedThrough(t *testing.T) {
+func TestIntegrationCompletePublicURLUsageAdvancesObservedThrough(t *testing.T) {
 	database, base, lease, report := newIngressUsageFixture(t)
 	seedCompletedUsageReport(t, database, base, lease, report)
-	if finalized, err := database.FinalizeRouteUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(time.Minute)); err != nil || finalized != 1 {
-		t.Fatalf("finalize route usage = %d, %v", finalized, err)
+	if finalized, err := database.FinalizePublicURLUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(time.Minute)); err != nil || finalized != 1 {
+		t.Fatalf("finalize public URL usage = %d, %v", finalized, err)
 	}
-	work, err := database.ClaimRouteUsageDeliveries(t.Context(), "usage_worker_complete", 32, base.Add(61*time.Second), time.Minute)
+	work, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "usage_worker_complete", 32, base.Add(61*time.Second), time.Minute)
 	if err != nil || len(work) != 1 {
-		t.Fatalf("claim route usage = %#v, %v", work, err)
+		t.Fatalf("claim public URL usage = %#v, %v", work, err)
 	}
 	if !work[0].Complete || !work[0].ObservedThrough.Equal(work[0].BucketEnd) {
-		t.Fatalf("route usage complete = %t, observed through = %s, bucket end = %s",
+		t.Fatalf("public URL usage complete = %t, observed through = %s, bucket end = %s",
 			work[0].Complete, work[0].ObservedThrough, work[0].BucketEnd)
 	}
 }
@@ -83,7 +83,7 @@ func TestIntegrationIngressUsageIncompleteCoverageBlocksFinalization(t *testing.
 	if !run.observed.Equal(base) || !run.expiry.Equal(base.Add(40*time.Second)) || run.complete {
 		t.Fatalf("idle renewal changed coverage = %#v", run)
 	}
-	if count, err := database.FinalizeRouteUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(time.Minute)); err != nil || count != 0 {
+	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(time.Minute)); err != nil || count != 0 {
 		t.Fatalf("premature finalization = %d, %v", count, err)
 	}
 	if count, err := database.MarkExpiredIngressUsageRunsIncomplete(t.Context(), base.Add(61*time.Second)); err != nil || count != 1 {
@@ -96,23 +96,23 @@ func TestIntegrationIngressUsageIncompleteCoverageBlocksFinalization(t *testing.
 	if !from.Equal(base) || !until.Equal(base.Add(40*time.Second)) {
 		t.Fatalf("incomplete interval = %v through %v", from, until)
 	}
-	if count, err := database.FinalizeRouteUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(62*time.Second)); err != nil || count != 1 {
+	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(62*time.Second)); err != nil || count != 1 {
 		t.Fatalf("finalization = %d, %v", count, err)
 	}
-	deliveries, err := database.ClaimRouteUsageDeliveries(t.Context(), "coverage", 1, base.Add(63*time.Second), time.Minute)
+	deliveries, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "coverage", 1, base.Add(63*time.Second), time.Minute)
 	if err != nil || len(deliveries) != 1 || deliveries[0].Complete {
 		t.Fatalf("incomplete delivery = %#v, %v", deliveries, err)
 	}
 }
 
-func TestIntegrationRouteUsageDeliveryRecovery(t *testing.T) {
+func TestIntegrationPublicURLUsageDeliveryRecovery(t *testing.T) {
 	database, base, lease, report := newIngressUsageFixture(t)
 	seedCompletedUsageReport(t, database, base, lease, report)
-	if _, err := database.FinalizeRouteUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(62*time.Second)); err != nil {
+	if _, err := database.FinalizePublicURLUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(62*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	claimedAt := base.Add(63 * time.Second)
-	first, err := database.ClaimRouteUsageDeliveries(t.Context(), "first", 1, claimedAt, 10*time.Second)
+	first, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "first", 1, claimedAt, 10*time.Second)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first delivery = %#v, %v", first, err)
 	}
@@ -120,36 +120,36 @@ func TestIntegrationRouteUsageDeliveryRecovery(t *testing.T) {
 	if work.DeliveryKey == "" || work.Attempts != 1 || work.WorkEpoch != 1 || work.TeamID != "team_usage" || work.ActingIdentityID != "identity_usage" || work.ConnectionAttempts != 3 || !work.Complete || work.Checkpoint.VisitorNetworks.Estimate() != 0 {
 		t.Fatalf("delivery work = %#v", work)
 	}
-	if other, err := database.ClaimRouteUsageDeliveries(t.Context(), "concurrent", 1, claimedAt.Add(time.Second), time.Minute); err != nil || len(other) != 0 {
+	if other, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "concurrent", 1, claimedAt.Add(time.Second), time.Minute); err != nil || len(other) != 0 {
 		t.Fatalf("concurrent delivery = %#v, %v", other, err)
 	}
 	reclaimedAt := claimedAt.Add(11 * time.Second)
-	reclaimed, err := database.ClaimRouteUsageDeliveries(t.Context(), "reclaimed", 1, reclaimedAt, 10*time.Second)
+	reclaimed, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "reclaimed", 1, reclaimedAt, 10*time.Second)
 	if err != nil || len(reclaimed) != 1 || reclaimed[0].WorkEpoch != 2 || reclaimed[0].Attempts != 2 {
 		t.Fatalf("reclaimed delivery = %#v, %v", reclaimed, err)
 	}
-	if err := database.CompleteRouteUsageDelivery(t.Context(), work, reclaimedAt); !errors.Is(err, ErrRouteUsageDeliveryWorkStale) {
+	if err := database.CompletePublicURLUsageDelivery(t.Context(), work, reclaimedAt); !errors.Is(err, ErrPublicURLUsageDeliveryWorkStale) {
 		t.Fatalf("stale delivery completion: %v", err)
 	}
 	retryAt := reclaimedAt.Add(5 * time.Second)
-	if err := database.RetryRouteUsageDelivery(t.Context(), reclaimed[0], retryAt, "receiver unavailable", reclaimedAt.Add(time.Second)); err != nil {
+	if err := database.RetryPublicURLUsageDelivery(t.Context(), reclaimed[0], retryAt, "receiver unavailable", reclaimedAt.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if early, err := database.ClaimRouteUsageDeliveries(t.Context(), "early", 1, retryAt.Add(-time.Microsecond), time.Minute); err != nil || len(early) != 0 {
+	if early, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "early", 1, retryAt.Add(-time.Microsecond), time.Minute); err != nil || len(early) != 0 {
 		t.Fatalf("early retry = %#v, %v", early, err)
 	}
-	replayed, err := database.ClaimRouteUsageDeliveries(t.Context(), "replay", 1, retryAt, time.Minute)
+	replayed, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "replay", 1, retryAt, time.Minute)
 	if err != nil || len(replayed) != 1 || replayed[0].WorkEpoch != 3 || replayed[0].Attempts != 3 {
 		t.Fatalf("replayed delivery = %#v, %v", replayed, err)
 	}
 	replay := replayed[0]
-	if replay.DeliveryKey != work.DeliveryKey || replay.SourceRevision != work.SourceRevision || replay.RouteID != work.RouteID || replay.RouteVersion != work.RouteVersion || replay.TeamID != work.TeamID || replay.ActingIdentityID != work.ActingIdentityID || !replay.BucketStart.Equal(work.BucketStart) || !replay.BucketEnd.Equal(work.BucketEnd) || !replay.ObservedThrough.Equal(work.ObservedThrough) || replay.ConnectionAttempts != work.ConnectionAttempts || !bytes.Equal(replay.Checkpoint.MarshalBinary(), work.Checkpoint.MarshalBinary()) {
+	if replay.DeliveryKey != work.DeliveryKey || replay.SourceRevision != work.SourceRevision || replay.PublicURLID != work.PublicURLID || replay.PublishRunNumber != work.PublishRunNumber || replay.TeamID != work.TeamID || replay.ActingIdentityID != work.ActingIdentityID || !replay.BucketStart.Equal(work.BucketStart) || !replay.BucketEnd.Equal(work.BucketEnd) || !replay.ObservedThrough.Equal(work.ObservedThrough) || replay.ConnectionAttempts != work.ConnectionAttempts || !bytes.Equal(replay.Checkpoint.MarshalBinary(), work.Checkpoint.MarshalBinary()) {
 		t.Fatal("retry changed delivery identity or payload")
 	}
-	if err := database.CompleteRouteUsageDelivery(t.Context(), replay, retryAt.Add(time.Second)); err != nil {
+	if err := database.CompletePublicURLUsageDelivery(t.Context(), replay, retryAt.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if remaining, err := database.ClaimRouteUsageDeliveries(t.Context(), "done", 1, retryAt.Add(time.Hour), time.Minute); err != nil || len(remaining) != 0 {
+	if remaining, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "done", 1, retryAt.Add(time.Hour), time.Minute); err != nil || len(remaining) != 0 {
 		t.Fatalf("completed delivery still claimable = %#v, %v", remaining, err)
 	}
 }
@@ -158,20 +158,20 @@ func newIngressUsageFixture(t *testing.T) (*Database, time.Time, IngressLease, I
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "usage")
 	base := now.Truncate(time.Minute)
-	seedControlRoute(t, database, base, "usage")
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.route_sessions (
-		id, route_id, team_id, acting_identity_id, route_version, idempotency_key, request_digest,
-		session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope,
+	seedControlPublicURL(t, database, base, "usage")
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
+		id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key, request_digest,
+		publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope,
 		certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at)
-		VALUES ('session_usage', 'route_usage', 'team_usage', 'identity_usage', 1, 'usage', decode(repeat('01',32),'hex'),
-		'token_usage', decode(repeat('02',32),'hex'), 1, 'usage', 'usage', ARRAY['route-usage.example.test'], 'dns-01', 'starting', $1, $1, $2)`, base, base.Add(time.Hour)); err != nil {
+		VALUES ('session_usage', 'public_url_usage', 'team_usage', 'identity_usage', 1, 'usage', decode(repeat('01',32),'hex'),
+		'token_usage', decode(repeat('02',32),'hex'), 1, 'usage', 'usage', ARRAY['public-url-usage.example.test'], 'dns-01', 'starting', $1, $1, $2)`, base, base.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{IngressID: "ingress_usage", IngressRunID: "run_usage", ProtocolVersion: 1, ConnectionCapacity: 10}, base, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return database, base, lease, IngressUsageReport{RouteID: "route_usage", RouteVersion: 1, BucketStart: base, BucketEnd: base.Add(time.Minute), ReportRevision: 1, HistogramData: (routeusage.Checkpoint{}).MarshalBinary()}
+	return database, base, lease, IngressUsageReport{PublicURLID: "public_url_usage", PublishRunNumber: 1, BucketStart: base, BucketEnd: base.Add(time.Minute), ReportRevision: 1, HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()}
 }
 
 func seedCompletedUsageReport(t *testing.T, database *Database, base time.Time, lease IngressLease, report IngressUsageReport) {

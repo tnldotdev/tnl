@@ -136,7 +136,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/usage-reports:
     post:
       operationId: reportIngressUsage
-      summary: Store cumulative route usage from one ingress process run
+      summary: Store cumulative public URL usage from one ingress process run
       parameters:
         - $ref: "#/components/parameters/IngressID"
       requestBody:
@@ -150,10 +150,10 @@ paths:
           description: Usage reports committed or replayed
         default:
           $ref: "#/components/responses/Problem"
-  /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed:
+  /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
     post:
-      operationId: observeRouteRecovery
-      summary: Record the first publisher byte after route recovery
+      operationId: observePublicURLRecovery
+      summary: Record the first publisher byte after public URL recovery
       parameters:
         - $ref: "#/components/parameters/IngressID"
         - name: recovery_episode_id
@@ -168,14 +168,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RouteRecoveryObservationRequest"
+              $ref: "#/components/schemas/PublicURLRecoveryObservationRequest"
       responses:
         "200":
           description: Recovery observation committed or replayed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteRecoveryObservation"
+                $ref: "#/components/schemas/PublicURLRecoveryObservation"
         default:
           $ref: "#/components/responses/Problem"
 components:
@@ -318,7 +318,7 @@ components:
           type: array
           minItems: 2
           maxItems: 2
-          description: Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one route.
+          description: Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one public URL.
           items:
             $ref: "#/components/schemas/VisitorNetworkHashKey"
         draining:
@@ -381,21 +381,21 @@ components:
       type: object
       additionalProperties: false
       required:
-        - route_id
-        - route_session_id
-        - route_version
+        - public_url_id
+        - publish_run_id
+        - publish_run_number
         - canonical_hostname
         - policy_revision
         - ip_policy
         - allowed_ip_prefixes
-        - route_expires_at
+        - public_url_expires_at
         - publisher_connections
       properties:
-        route_id:
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_session_id:
+        publish_run_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -416,7 +416,7 @@ components:
           uniqueItems: true
           items:
             type: string
-        route_expires_at:
+        public_url_expires_at:
           type: string
           format: date-time
         recovery_episode_id:
@@ -434,8 +434,8 @@ components:
       required:
         - routing_table_revision
         - kind
-        - route_id
-        - route_version
+        - public_url_id
+        - publish_run_number
         - canonical_hostname
         - entry_revision
         - entry
@@ -447,10 +447,10 @@ components:
           minimum: 1
         kind:
           type: string
-          enum: [route_upsert, route_tombstone, challenge_upsert, challenge_tombstone]
-        route_id:
+          enum: [public_url_upsert, public_url_tombstone, challenge_upsert, challenge_tombstone]
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -462,7 +462,7 @@ components:
           minimum: 1
         entry:
           $ref: "#/components/schemas/IngressRoutingTableEntry"
-        route_expires_at:
+        public_url_expires_at:
           type: string
           format: date-time
         created_at:
@@ -513,8 +513,8 @@ components:
       type: object
       additionalProperties: false
       required:
-        - route_id
-        - route_version
+        - public_url_id
+        - publish_run_number
         - bucket_start
         - bucket_end
         - observed_through
@@ -530,9 +530,9 @@ components:
         - histogram_data
         - final
       properties:
-        route_id:
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -614,35 +614,42 @@ components:
               maxItems: 256
               items:
                 $ref: "#/components/schemas/IngressUsageReport"
-    RouteRecoveryObservationRequest:
+    PublicURLRecoveryObservationRequest:
       unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/IngressLeaseIdentity"
         - type: object
-          required: [route_id, route_version, observed_at]
+          required: [public_url_id, publish_run_number, observed_at]
           properties:
-            route_id:
+            public_url_id:
               $ref: "#/components/schemas/Identifier"
-            route_version:
+            publish_run_number:
               type: integer
               format: int64
               minimum: 1
             observed_at:
               type: string
               format: date-time
-    RouteRecoveryObservation:
+    PublicURLRecoveryObservation:
       type: object
       additionalProperties: false
       required:
-        [recovery_episode_id, route_id, route_version, opened_at, observed_at, observed_seconds]
+        [
+          recovery_episode_id,
+          public_url_id,
+          publish_run_number,
+          opened_at,
+          observed_at,
+          observed_seconds,
+        ]
       properties:
         recovery_episode_id:
           type: integer
           format: int64
           minimum: 1
-        route_id:
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1

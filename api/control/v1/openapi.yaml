@@ -71,10 +71,10 @@ paths:
                 $ref: "#/components/schemas/ControlDiscovery"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/routes:
+  /v1/public-urls:
     get:
-      operationId: listRoutes
-      summary: List routes for one team
+      operationId: listPublicURLs
+      summary: List public URLs for one team
       security:
         - bearerAuth: []
       parameters:
@@ -83,16 +83,16 @@ paths:
         - $ref: "#/components/parameters/CanonicalHostnameQuery"
       responses:
         "200":
-          description: Route page
+          description: PublicURL page
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoutePage"
+                $ref: "#/components/schemas/PublicURLPage"
         default:
           $ref: "#/components/responses/Problem"
     post:
-      operationId: createRoute
-      summary: Create one team route
+      operationId: createPublicURL
+      summary: Create one team public URL
       security:
         - bearerAuth: []
       parameters:
@@ -102,139 +102,139 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateRouteRequest"
+              $ref: "#/components/schemas/CreatePublicURLRequest"
       responses:
         "201":
-          description: Route created
+          description: PublicURL created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Route"
+                $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/routes/{route_id}:
+  /v1/public-urls/{public_url_id}:
     get:
-      operationId: getRoute
-      summary: Read one route
+      operationId: getPublicURL
+      summary: Read one public URL
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteID"
+        - $ref: "#/components/parameters/PublicURLID"
       responses:
         "200":
-          description: Route
+          description: PublicURL
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Route"
+                $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
     patch:
-      operationId: updateRoute
-      summary: Update a route's target and IP policy
+      operationId: updatePublicURL
+      summary: Update a public URL's target and IP policy
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteID"
+        - $ref: "#/components/parameters/PublicURLID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateRouteRequest"
+              $ref: "#/components/schemas/UpdatePublicURLRequest"
       responses:
         "200":
-          description: Updated route
+          description: Updated public URL
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Route"
+                $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
     delete:
-      operationId: deleteRoute
-      summary: Delete one route and close its route session
+      operationId: deletePublicURL
+      summary: Delete one public URL and close its publish run
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteID"
+        - $ref: "#/components/parameters/PublicURLID"
       responses:
         "204":
-          description: Route deleted
+          description: PublicURL deleted
         default:
           $ref: "#/components/responses/Problem"
-  /v1/routes/{route_id}/sessions:
+  /v1/public-urls/{public_url_id}/publish-runs:
     post:
-      operationId: createRouteSession
-      summary: Create a route session and allocate its route version
+      operationId: createPublishRun
+      summary: Create a publish run and allocate its publish run number
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteID"
+        - $ref: "#/components/parameters/PublicURLID"
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "201":
-          description: Route session and two publisher connection assignments
+          description: PublicURL session and two publisher connection assignments
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteSessionSetup"
+                $ref: "#/components/schemas/PublishRunSetup"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/route-sessions/{route_session_id}/heartbeat:
+  /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
-      operationId: heartbeatRouteSession
-      summary: Renew a route session and replace missing publisher connections
+      operationId: heartbeatPublishRun
+      summary: Renew a publish run and replace missing publisher connections
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/PublishRunID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RouteSessionVersionRequest"
+              $ref: "#/components/schemas/PublishRunVersionRequest"
       responses:
         "200":
-          description: Renewed route session plan
+          description: Renewed publish run plan
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteSessionHeartbeat"
+                $ref: "#/components/schemas/PublishRunHeartbeat"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/route-sessions/{route_session_id}/ready:
+  /v1/publish-runs/{publish_run_id}/ready:
     post:
-      operationId: markRouteSessionReady
-      summary: Mark a route session ready after its certificate and two publisher connections are ready
+      operationId: markPublishRunReady
+      summary: Mark a publish run ready after its certificate and two publisher connections are ready
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/PublishRunID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RouteSessionVersionRequest"
+              $ref: "#/components/schemas/PublishRunVersionRequest"
       responses:
         "200":
-          description: Ready route session
+          description: Ready publish run
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteSession"
+                $ref: "#/components/schemas/PublishRun"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/route-sessions/{route_session_id}/certificate-installed:
+  /v1/publish-runs/{publish_run_id}/certificate-installed:
     post:
-      operationId: markRouteSessionCertificateInstalled
-      summary: Record installation of the current route certificate
+      operationId: markPublishRunCertificateInstalled
+      summary: Record installation of the current public URL certificate
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/PublishRunID"
       requestBody:
         required: true
         content:
@@ -243,34 +243,34 @@ paths:
               $ref: "#/components/schemas/CertificateInstalledRequest"
       responses:
         "200":
-          description: Updated route session
+          description: Updated publish run
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteSession"
+                $ref: "#/components/schemas/PublishRun"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/route-sessions/{route_session_id}:
+  /v1/publish-runs/{publish_run_id}:
     delete:
-      operationId: closeRouteSession
-      summary: Close and drain a route session without deleting its route
+      operationId: closePublishRun
+      summary: Close and drain a publish run without deleting its public URL
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/PublishRunID"
       responses:
         "204":
-          description: Route session closed
+          description: PublicURL session closed
         default:
           $ref: "#/components/responses/Problem"
-  /v1/route-sessions/{route_session_id}/certificate-issuances:
+  /v1/publish-runs/{publish_run_id}/certificate-issuances:
     post:
       operationId: createCertificateIssuance
-      summary: Begin issuance for the route session's certificate plan
+      summary: Begin issuance for the publish run's certificate plan
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
-        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/PublishRunID"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -290,9 +290,9 @@ paths:
   /v1/certificate-issuances/{issuance_id}:
     get:
       operationId: getCertificateIssuance
-      summary: Read one route-session certificate issuance
+      summary: Read one publish-run certificate issuance
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
         - $ref: "#/components/parameters/IssuanceID"
       responses:
@@ -309,7 +309,7 @@ paths:
       operationId: markCertificateChallengeReady
       summary: Confirm a TLS-ALPN-01 challenge is installed
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
         - $ref: "#/components/parameters/IssuanceID"
       responses:
@@ -326,7 +326,7 @@ paths:
       operationId: markCertificateChallengeRemoved
       summary: Confirm a TLS-ALPN-01 challenge is removed
       security:
-        - routeSessionAuth: []
+        - publishRunAuth: []
       parameters:
         - $ref: "#/components/parameters/IssuanceID"
       responses:
@@ -436,7 +436,7 @@ paths:
   /v1/service/revoke:
     post:
       operationId: revokeHostedPolicy
-      summary: Apply a policy revision from the external authority and close affected route sessions
+      summary: Apply a policy revision from the external authority and close affected publish runs
       security:
         - hostedServiceAuth: []
       requestBody:
@@ -517,10 +517,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl hosted service secret
-    routeSessionAuth:
+    publishRunAuth:
       type: http
       scheme: bearer
-      bearerFormat: tnl route-session token
+      bearerFormat: tnl publish-run token
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -544,21 +544,21 @@ components:
       name: canonical_hostname
       in: query
       required: false
-      description: Exact canonical hostname within the selected team. Returns zero or one non-deleted route with no next cursor. Cannot be combined with cursor.
+      description: Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
       schema:
         $ref: "#/components/schemas/CanonicalHostname"
-    RouteID:
-      name: route_id
+    PublicURLID:
+      name: public_url_id
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/RouteID"
-    RouteSessionID:
-      name: route_session_id
+        $ref: "#/components/schemas/PublicURLID"
+    PublishRunID:
+      name: publish_run_id
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/RouteSessionID"
+        $ref: "#/components/schemas/PublishRunID"
     IssuanceID:
       name: issuance_id
       in: path
@@ -607,9 +607,9 @@ components:
       $ref: "#/components/schemas/ResourceID"
     DomainID:
       $ref: "#/components/schemas/ResourceID"
-    RouteID:
+    PublicURLID:
       $ref: "#/components/schemas/ResourceID"
-    RouteSessionID:
+    PublishRunID:
       $ref: "#/components/schemas/ResourceID"
     PublisherConnectionID:
       $ref: "#/components/schemas/ResourceID"
@@ -806,13 +806,13 @@ components:
         updated_at:
           type: string
           format: date-time
-    RouteScope:
+    PublicURLScope:
       type: string
       enum: [member, shared]
-    RouteLifecycleState:
+    PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
-    Route:
+    PublicURL:
       type: object
       additionalProperties: false
       required:
@@ -822,17 +822,17 @@ components:
           domain_id,
           canonical_hostname,
           target,
-          route_scope,
+          public_url_scope,
           policy_revision,
           lifecycle_state,
-          next_route_version,
+          next_publish_run_number,
           ephemeral,
           created_at,
           updated_at,
         ]
       properties:
         id:
-          $ref: "#/components/schemas/RouteID"
+          $ref: "#/components/schemas/PublicURLID"
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -845,14 +845,14 @@ components:
           type: string
           format: uri
           pattern: "^http://"
-        route_scope:
-          $ref: "#/components/schemas/RouteScope"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
         policy_revision:
           type: integer
           format: int64
           minimum: 1
         lifecycle_state:
-          $ref: "#/components/schemas/RouteLifecycleState"
+          $ref: "#/components/schemas/PublicURLLifecycleState"
         allowed_ip_prefixes:
           type: array
           maxItems: 64
@@ -862,7 +862,7 @@ components:
             minLength: 1
             maxLength: 64
             pattern: "^\\S+$"
-        next_route_version:
+        next_publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -871,29 +871,29 @@ components:
         expires_at:
           type: string
           format: date-time
-        open_route_session_id:
-          $ref: "#/components/schemas/RouteSessionID"
+        open_publish_run_id:
+          $ref: "#/components/schemas/PublishRunID"
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-    RoutePage:
+    PublicURLPage:
       type: object
       additionalProperties: false
-      required: [routes]
+      required: [public_urls]
       properties:
-        routes:
+        public_urls:
           type: array
           items:
-            $ref: "#/components/schemas/Route"
+            $ref: "#/components/schemas/PublicURL"
         next_cursor:
-          $ref: "#/components/schemas/RouteID"
-    CreateRouteRequest:
+          $ref: "#/components/schemas/PublicURLID"
+    CreatePublicURLRequest:
       type: object
       additionalProperties: false
-      required: [team_id, domain_id, canonical_hostname, target, route_scope]
+      required: [team_id, domain_id, canonical_hostname, target, public_url_scope]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
@@ -907,8 +907,8 @@ components:
           type: string
           format: uri
           pattern: "^http://"
-        route_scope:
-          $ref: "#/components/schemas/RouteScope"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
         allowed_ip_prefixes:
           type: array
           maxItems: 64
@@ -921,7 +921,7 @@ components:
         ephemeral:
           type: boolean
           default: false
-    UpdateRouteRequest:
+    UpdatePublicURLRequest:
       type: object
       additionalProperties: false
       required: [target, allowed_ip_prefixes]
@@ -967,24 +967,33 @@ components:
             pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
         challenge_method:
           $ref: "#/components/schemas/CertificateChallengeMethod"
-    RouteSessionState:
+    PublishRunState:
       type: string
       enum: [starting, ready, draining, closed, expired, canceled]
-    RouteSession:
+    PublishRun:
       type: object
       additionalProperties: false
       required:
-        [id, route_id, team_id, route_version, policy_revision, state, created_at, expires_at]
+        [
+          id,
+          public_url_id,
+          team_id,
+          publish_run_number,
+          policy_revision,
+          state,
+          created_at,
+          expires_at,
+        ]
       properties:
         id:
-          $ref: "#/components/schemas/RouteSessionID"
-        route_id:
-          $ref: "#/components/schemas/RouteID"
+          $ref: "#/components/schemas/PublishRunID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
         team_id:
           $ref: "#/components/schemas/TeamID"
         membership_id:
           $ref: "#/components/schemas/MembershipID"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -993,7 +1002,7 @@ components:
           format: int64
           minimum: 1
         state:
-          $ref: "#/components/schemas/RouteSessionState"
+          $ref: "#/components/schemas/PublishRunState"
         ready_publisher_connections:
           type: integer
           minimum: 0
@@ -1056,16 +1065,17 @@ components:
           format: date-time
         state:
           $ref: "#/components/schemas/PublisherConnectionState"
-    RouteSessionSetup:
+    PublishRunSetup:
       type: object
       additionalProperties: false
-      required: [route, route_session, route_session_token, certificate_plan, publisher_connections]
+      required:
+        [public_url, publish_run, publish_run_token, certificate_plan, publisher_connections]
       properties:
-        route:
-          $ref: "#/components/schemas/Route"
-        route_session:
-          $ref: "#/components/schemas/RouteSession"
-        route_session_token:
+        public_url:
+          $ref: "#/components/schemas/PublicURL"
+        publish_run:
+          $ref: "#/components/schemas/PublishRun"
+        publish_run_token:
           type: string
           minLength: 1
           maxLength: 4096
@@ -1077,22 +1087,22 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/ConnectionAssignment"
-    RouteSessionVersionRequest:
+    PublishRunVersionRequest:
       type: object
       additionalProperties: false
-      required: [route_version]
+      required: [publish_run_number]
       properties:
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
-    RouteSessionHeartbeat:
+    PublishRunHeartbeat:
       type: object
       additionalProperties: false
-      required: [route_session, publisher_connections, policy_denials]
+      required: [publish_run, publisher_connections, policy_denials]
       properties:
-        route_session:
-          $ref: "#/components/schemas/RouteSession"
+        publish_run:
+          $ref: "#/components/schemas/PublishRun"
         publisher_connections:
           type: array
           minItems: 2
@@ -1100,16 +1110,16 @@ components:
           items:
             $ref: "#/components/schemas/ConnectionAssignment"
         policy_denials:
-          description: Total IP policy denials reported so far for this route version. The total may lag.
+          description: Total IP policy denials reported so far for this publish run number. The total may lag.
           type: integer
           format: int64
           minimum: 0
     CertificateInstalledRequest:
       type: object
       additionalProperties: false
-      required: [route_version, issuance_id, not_after]
+      required: [publish_run_number, issuance_id, not_after]
       properties:
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -1121,9 +1131,9 @@ components:
     CreateCertificateIssuanceRequest:
       type: object
       additionalProperties: false
-      required: [route_version, csr]
+      required: [publish_run_number, csr]
       properties:
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -1167,9 +1177,9 @@ components:
       required:
         [
           id,
-          route_session_id,
-          route_id,
-          route_version,
+          publish_run_id,
+          public_url_id,
+          publish_run_number,
           certificate_plan,
           state,
           created_at,
@@ -1178,11 +1188,11 @@ components:
       properties:
         id:
           $ref: "#/components/schemas/IssuanceID"
-        route_session_id:
-          $ref: "#/components/schemas/RouteSessionID"
-        route_id:
-          $ref: "#/components/schemas/RouteID"
-        route_version:
+        publish_run_id:
+          $ref: "#/components/schemas/PublishRunID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -1219,10 +1229,10 @@ components:
           role,
           started_at,
           current_time,
-          enabled_routes,
-          suspended_routes,
-          starting_route_sessions,
-          ready_route_sessions,
+          enabled_public_urls,
+          suspended_public_urls,
+          starting_publish_runs,
+          ready_publish_runs,
           ingress_leases,
           relay_leases,
         ]
@@ -1236,16 +1246,16 @@ components:
         current_time:
           type: string
           format: date-time
-        enabled_routes:
+        enabled_public_urls:
           type: integer
           minimum: 0
-        suspended_routes:
+        suspended_public_urls:
           type: integer
           minimum: 0
-        starting_route_sessions:
+        starting_publish_runs:
           type: integer
           minimum: 0
-        ready_route_sessions:
+        ready_publish_runs:
           type: integer
           minimum: 0
         ingress_leases:
@@ -1350,7 +1360,7 @@ components:
           format: date-time
     MaintenanceControlName:
       type: string
-      enum: [route_creation, route_session_creation, certificate_issuance]
+      enum: [public_url_creation, publish_run_creation, certificate_issuance]
     MaintenanceControl:
       type: object
       additionalProperties: false
@@ -1389,7 +1399,7 @@ components:
           unavailable,
           internal,
           name_unavailable,
-          route_session_open,
+          publish_run_open,
           policy_revision_stale,
           dns_setup_pending,
           placement_unavailable,

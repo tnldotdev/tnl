@@ -266,8 +266,8 @@ func (c *Controller) ClaimPublisherConnection(
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
 	request := relayv1.PublisherConnectionClaim{
-		RouteSessionId: transition.RouteSessionId, RouteId: transition.RouteId,
-		RouteVersion: transition.RouteVersion, PublisherConnectionId: transition.PublisherConnectionId,
+		PublishRunId: transition.PublishRunId, PublicUrlId: transition.PublicUrlId,
+		PublishRunNumber: transition.PublishRunNumber, PublisherConnectionId: transition.PublisherConnectionId,
 		ConnectionSlot:               transition.ConnectionSlot,
 		ConnectionAssignmentRevision: transition.ConnectionAssignmentRevision,
 		RelayServiceId:               transition.RelayServiceId, RelayId: transition.RelayId,
@@ -315,8 +315,8 @@ func (c *Controller) DisconnectPublisherConnection(
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
 	request := relayv1.PublisherConnectionDisconnect{
-		RouteSessionId: transition.RouteSessionId, RouteId: transition.RouteId,
-		RouteVersion: transition.RouteVersion, PublisherConnectionId: transition.PublisherConnectionId,
+		PublishRunId: transition.PublishRunId, PublicUrlId: transition.PublicUrlId,
+		PublishRunNumber: transition.PublishRunNumber, PublisherConnectionId: transition.PublisherConnectionId,
 		ConnectionSlot:               transition.ConnectionSlot,
 		ConnectionAssignmentRevision: transition.ConnectionAssignmentRevision,
 		RelayServiceId:               transition.RelayServiceId, RelayId: transition.RelayId,
@@ -349,14 +349,14 @@ func (c *Controller) connectionTransition(
 	lease relayv1.RelayLease,
 ) (relayv1.PublisherConnectionTransition, error) {
 	if err := ref.Validate(); err != nil || claimID == "" || len(claimID) > 256 || strings.TrimSpace(claimID) != claimID ||
-		ref.RouteVersion > math.MaxInt64 || ref.ConnectionAssignmentRevision > math.MaxInt64 {
+		ref.PublishRunNumber > math.MaxInt64 || ref.ConnectionAssignmentRevision > math.MaxInt64 {
 		return relayv1.PublisherConnectionTransition{}, errors.New("relay: publisher connection assignment is invalid")
 	}
 	if ref.RelayServiceID != c.registration.RelayServiceId {
 		return relayv1.PublisherConnectionTransition{}, errors.New("relay: publisher connection is assigned to another relay service")
 	}
 	return relayv1.PublisherConnectionTransition{
-		RouteSessionId: ref.RouteSessionID, RouteId: ref.RouteID, RouteVersion: int64(ref.RouteVersion),
+		PublishRunId: ref.PublishRunID, PublicUrlId: ref.PublicURLID, PublishRunNumber: int64(ref.PublishRunNumber),
 		PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: int(ref.ConnectionSlot),
 		ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision),
 		RelayServiceId:               c.registration.RelayServiceId, RelayId: c.registration.RelayId,
@@ -376,7 +376,7 @@ func (c *Controller) transitionForClaimedConnection(
 		return relayv1.PublisherConnectionTransition{}, errors.New("relay: claimed publisher connection is not held by the active relay lease")
 	}
 	request := relayv1.PublisherConnectionTransition{
-		RouteSessionId: claimed.RouteSessionId, RouteId: claimed.RouteId, RouteVersion: claimed.RouteVersion,
+		PublishRunId: claimed.PublishRunId, PublicUrlId: claimed.PublicUrlId, PublishRunNumber: claimed.PublishRunNumber,
 		PublisherConnectionId: claimed.PublisherConnectionId, ConnectionSlot: claimed.ConnectionSlot,
 		ConnectionAssignmentRevision: claimed.ConnectionAssignmentRevision,
 		RelayServiceId:               claimed.RelayServiceId, RelayId: claimed.RelayId,
@@ -394,8 +394,8 @@ func validateClaimedConnection(
 	claimed relayv1.ClaimedPublisherConnection,
 	requireReady bool,
 ) error {
-	if claimed.RouteSessionId != request.RouteSessionId || claimed.RouteId != request.RouteId ||
-		claimed.RouteVersion != request.RouteVersion || claimed.PublisherConnectionId != request.PublisherConnectionId ||
+	if claimed.PublishRunId != request.PublishRunId || claimed.PublicUrlId != request.PublicUrlId ||
+		claimed.PublishRunNumber != request.PublishRunNumber || claimed.PublisherConnectionId != request.PublisherConnectionId ||
 		claimed.ConnectionSlot != request.ConnectionSlot ||
 		claimed.ConnectionAssignmentRevision != request.ConnectionAssignmentRevision ||
 		claimed.RelayServiceId != request.RelayServiceId || claimed.RelayId != request.RelayId ||

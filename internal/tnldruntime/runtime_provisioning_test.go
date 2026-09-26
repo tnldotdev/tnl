@@ -24,7 +24,7 @@ func traceRuntimeCertificateHTTP(t *testing.T, client *http.Client, start time.T
 		response, err := base.RoundTrip(request)
 		path := request.URL.Path
 		if !strings.Contains(path, "/certificate-issuances") && !strings.HasSuffix(path, "/certificate-installed") &&
-			!(strings.Contains(path, "/route-sessions/") && strings.HasSuffix(path, "/ready")) {
+			!(strings.Contains(path, "/publish-runs/") && strings.HasSuffix(path, "/ready")) {
 			return response, err
 		}
 		if observations.Add(1) > 4096 {
@@ -87,10 +87,10 @@ func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Tim
 			coalesce((SELECT min(i.routing_table_revision) FROM control.ingress_leases i
 				WHERE NOT i.draining AND i.lease_expires_at > now()), -1),
 			coalesce((SELECT max(e.routing_table_revision) FROM control.ingress_routing_table_events e
-				WHERE e.route_id = o.route_id AND e.route_version = o.route_version
+				WHERE e.public_url_id = o.public_url_id AND e.publish_run_number = o.publish_run_number
 				AND e.event_kind IN ('challenge_upsert', 'challenge_tombstone')), 0)
-			FROM control.acme_orders o JOIN control.routes r ON r.id = o.route_id
-			JOIN control.route_sessions s ON s.id = o.route_session_id
+			FROM control.acme_orders o JOIN control.public_urls r ON r.id = o.public_url_id
+			JOIN control.publish_runs s ON s.id = o.publish_run_id
 			CROSS JOIN control.ingress_routing_table_clock clock ORDER BY o.id`)
 			if err == nil {
 				for rows.Next() {

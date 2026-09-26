@@ -452,7 +452,7 @@ func writeProtocolError(control muxsession.Stream, code tunnelv1.ErrorCode) erro
 
 func validAuthenticationError(code tunnelv1.ErrorCode) bool {
 	switch code {
-	case tunnelv1.Unauthenticated, tunnelv1.StaleRouteVersion, tunnelv1.StaleConnectionAssignment,
+	case tunnelv1.Unauthenticated, tunnelv1.StalePublishRunNumber, tunnelv1.StaleConnectionAssignment,
 		tunnelv1.DuplicatePublisherConnection, tunnelv1.DrainingPublisherConnection, tunnelv1.CapacityExceeded,
 		tunnelv1.Unavailable:
 		return true

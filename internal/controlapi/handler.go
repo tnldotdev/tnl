@@ -46,23 +46,23 @@ type Config struct {
 // Store is the stored state used by the control API.
 type Store interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
-	ListAuthorizedRoutes(context.Context, string, string) (controlstate.RoutePage, error)
-	GetAuthorizedRouteByHostname(context.Context, string, string) (controlstate.Route, error)
-	CreateRoute(context.Context, controlstate.CreateRouteRequest, time.Time) (controlstate.Route, error)
-	UpdateAuthorizedRoute(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.Route, error)
-	GetRouteForAuthorization(context.Context, string) (controlstate.Route, error)
-	GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.Route, error)
-	DeleteAuthorizedRoute(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
-	CreateRouteSession(context.Context, controlstate.RouteSessionRequest, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
-	RouteSessionAuthentication(context.Context, string, uint64, credentials.RouteSessionToken) (controlstate.RouteSessionAuthentication, error)
-	HeartbeatRouteSession(context.Context, controlstate.RouteSessionAuthentication, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
-	MarkRouteCertificateInstalled(context.Context, controlstate.RouteSessionAuthentication, string, time.Time, time.Time) (controlstate.RouteSessionLifecycle, error)
+	ListAuthorizedPublicURLs(context.Context, string, string) (controlstate.PublicURLPage, error)
+	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
+	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
+	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.PublicURL, error)
+	GetRouteForAuthorization(context.Context, string) (controlstate.PublicURL, error)
+	GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.PublicURL, error)
+	DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
+	CreatePublishRun(context.Context, controlstate.PublishRunRequest, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
+	PublishRunAuthentication(context.Context, string, uint64, credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error)
+	HeartbeatPublishRun(context.Context, controlstate.PublishRunAuthentication, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
+	MarkPublicURLCertificateInstalled(context.Context, controlstate.PublishRunAuthentication, string, time.Time, time.Time) (controlstate.PublishRunLifecycle, error)
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
-	GetCertificateIssuance(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkRouteSessionReady(context.Context, controlstate.RouteSessionAuthentication, time.Time) (controlstate.RouteSessionLifecycle, error)
-	CloseRouteSession(context.Context, string, credentials.RouteSessionToken, time.Time) error
+	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
+	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
+	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
+	MarkPublishRunReady(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.PublishRunLifecycle, error)
+	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
 	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
 	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
@@ -74,7 +74,7 @@ type Store interface {
 	SetMaintenanceControl(context.Context, controlstate.MaintenanceControlName, bool, string, string, time.Time) (controlstate.MaintenanceControl, error)
 }
 
-// BuiltinAuthorizationStore provides the identity state needed for local route authorization.
+// BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
 type BuiltinAuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
@@ -85,7 +85,7 @@ type handler struct {
 	config        Config
 	store         Store
 	readiness     func(context.Context) error
-	authorizer    routeAuthorizer
+	authorizer    publicURLAuthorizer
 	hostedSecrets serviceapi.BearerSecrets
 }
 

@@ -80,7 +80,7 @@ type ingressSettings struct {
 	sourceConnectionRate             float64
 	sourceConnectionBurst            int
 	visitorConnectionLimit           int64
-	routeConnectionLimit             int64
+	publicURLConnectionLimit         int64
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
@@ -97,7 +97,7 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		sourceConnectionRate:             cfg.SourceConnectionRate,
 		sourceConnectionBurst:            cfg.SourceConnectionBurst,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
-		routeConnectionLimit:             cfg.RouteConnectionLimit,
+		publicURLConnectionLimit:         cfg.PublicURLConnectionLimit,
 		requireProxyHeader:               cfg.RequireProxyHeader,
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
@@ -172,20 +172,20 @@ func (d *daemon) startIngressRuntime(
 	if err != nil {
 		return err
 	}
-	routeCapacity, err := runtimeCapacity("route connection", settings.routeConnectionLimit)
+	publicURLCapacity, err := runtimeCapacity("route connection", settings.publicURLConnectionLimit)
 	if err != nil {
 		return err
 	}
 	ingressConfig := ingress.Config{
-		Lookup: func(hostname string) (ingress.Route, bool) {
+		Lookup: func(hostname string) (ingress.PublicURL, bool) {
 			entry, ok := controller.Lookup(hostname, time.Now())
 			if !ok {
-				return ingress.Route{}, false
+				return ingress.PublicURL{}, false
 			}
-			route, err := forwarder.Route(entry)
+			route, err := forwarder.PublicURL(entry)
 			if err != nil {
 				log.Printf("ingress route %q: %v", hostname, err)
-				return ingress.Route{}, false
+				return ingress.PublicURL{}, false
 			}
 			return route, true
 		},
@@ -208,13 +208,13 @@ func (d *daemon) startIngressRuntime(
 		MaxControlConnections:           settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:             settings.standaloneRelayConnectionLimit,
 		SourceConnectionRate:            settings.sourceConnectionRate, SourceConnectionBurst: settings.sourceConnectionBurst,
-		MaxRouteConnections: routeCapacity, Metrics: metrics, Observer: metrics,
+		MaxPublicURLConnections: publicURLCapacity, Metrics: metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
 		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },
-		OnForwardingFailure: func(routeID string, version uint64, visitorID, reason string, attempts int) {
-			log.Printf("ingress forwarding failed route_id=%s route_version=%d visitor_connection_id=%s reason=%s available_backends=%d",
-				routeID, version, visitorID, reason, attempts)
+		OnForwardingFailure: func(publicURLID string, version uint64, visitorID, reason string, attempts int) {
+			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
+				publicURLID, version, visitorID, reason, attempts)
 		},
 	}
 	if runtimeConfig.configure != nil {

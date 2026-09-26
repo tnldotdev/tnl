@@ -1,2 +1,2 @@
-// Package publisher publishes one local service through a public route.
+// Package publisher publishes one local service through a public URL.
 package publisher

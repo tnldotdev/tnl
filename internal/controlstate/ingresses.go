@@ -97,7 +97,7 @@ func (d *Database) RegisterIngress(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensureRouteUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage configuration: %w", err)
 	}
@@ -154,7 +154,7 @@ func (d *Database) RenewIngress(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensureRouteUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage configuration: %w", err)
 	}
@@ -202,7 +202,7 @@ func (d *Database) BeginIngressDrain(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensureRouteUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage configuration: %w", err)
 	}
@@ -212,7 +212,7 @@ func (d *Database) BeginIngressDrain(
 	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
 }
 
-func ensureRouteUsageConfiguration(
+func ensurePublicURLUsageConfiguration(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	createdAt time.Time,
@@ -221,7 +221,7 @@ func ensureRouteUsageConfiguration(
 	if _, err := rand.Read(candidate[:]); err != nil {
 		return [32]byte{}, err
 	}
-	configuration, err := queries.EnsureRouteUsageConfiguration(ctx, controlstatedb.EnsureRouteUsageConfigurationParams{
+	configuration, err := queries.EnsurePublicURLUsageConfiguration(ctx, controlstatedb.EnsurePublicURLUsageConfigurationParams{
 		VisitorNetworkHashMasterKey: candidate[:], CreatedAt: timestamptz(createdAt),
 	})
 	if err != nil {
@@ -239,7 +239,7 @@ func visitorNetworkHashKeys(masterKey [32]byte, now time.Time) [2]VisitorNetwork
 	for index := range result {
 		utcDate := day.AddDate(0, 0, index)
 		mac := hmac.New(sha256.New, masterKey[:])
-		_, _ = mac.Write([]byte("tnl/route-usage/visitor-day/v1\x00" + utcDate.Format(time.DateOnly)))
+		_, _ = mac.Write([]byte("tnl/public-url-usage/visitor-day/v1\x00" + utcDate.Format(time.DateOnly)))
 		result[index] = VisitorNetworkHashKey{UTCDate: utcDate, Key: [32]byte(mac.Sum(nil))}
 	}
 	return result

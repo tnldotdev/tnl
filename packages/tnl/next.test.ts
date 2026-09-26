@@ -45,17 +45,17 @@ describe("withTnl", () => {
       const local = await withTnl(config)(developmentPhase, context);
       expect(local).toMatchObject({ reactStrictMode: true });
       expect(JSON.parse(local.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
-        memberNamespace: "member.example",
+        namespace: "member.example",
         runningUnderTnlDev: false,
         services: {
           api: {
             hostname: "api.member.example",
-            memberNamespace: "member.example",
+            namespace: "member.example",
             url: "https://api.member.example",
           },
           web: {
             hostname: "web.member.example",
-            memberNamespace: "member.example",
+            namespace: "member.example",
             url: "https://web.member.example",
           },
         },
@@ -80,7 +80,7 @@ describe("withTnl", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({
         hostname: "override.example",
-        memberNamespace: "member.example",
+        namespace: "member.example",
         project: runtimeProject,
         protocol: 1,
         publicURL: "https://override.example",

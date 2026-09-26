@@ -96,33 +96,33 @@ func (q *Queries) BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayD
 
 const getAdminRuntimeCounts = `-- name: GetAdminRuntimeCounts :one
 SELECT
-    (SELECT count(*) FROM control.routes AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_routes,
-    (SELECT count(*) FROM control.routes AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_routes,
-    (SELECT count(*) FROM control.route_sessions AS sessions
-        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS starting_route_sessions,
-    (SELECT count(*) FROM control.route_sessions AS sessions
-        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS ready_route_sessions,
+    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_public_urls,
+    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_public_urls,
+    (SELECT count(*) FROM control.publish_runs AS sessions
+        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS starting_publish_runs,
+    (SELECT count(*) FROM control.publish_runs AS sessions
+        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS ready_publish_runs,
     (SELECT count(*) FROM control.ingress_leases AS ingresses WHERE ingresses.lease_expires_at > $1) AS ingress_leases,
     (SELECT count(*) FROM control.relay_leases AS relays WHERE relays.lease_expires_at > $1) AS relay_leases
 `
 
 type GetAdminRuntimeCountsRow struct {
-	EnabledRoutes         int64
-	SuspendedRoutes       int64
-	StartingRouteSessions int64
-	ReadyRouteSessions    int64
-	IngressLeases         int64
-	RelayLeases           int64
+	EnabledPublicURLs   int64
+	SuspendedPublicURLs int64
+	StartingPublishRuns int64
+	ReadyPublishRuns    int64
+	IngressLeases       int64
+	RelayLeases         int64
 }
 
 func (q *Queries) GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error) {
 	row := q.db.QueryRow(ctx, getAdminRuntimeCounts, now)
 	var i GetAdminRuntimeCountsRow
 	err := row.Scan(
-		&i.EnabledRoutes,
-		&i.SuspendedRoutes,
-		&i.StartingRouteSessions,
-		&i.ReadyRouteSessions,
+		&i.EnabledPublicURLs,
+		&i.SuspendedPublicURLs,
+		&i.StartingPublishRuns,
+		&i.ReadyPublishRuns,
 		&i.IngressLeases,
 		&i.RelayLeases,
 	)

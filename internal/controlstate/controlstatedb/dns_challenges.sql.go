@@ -13,7 +13,7 @@ import (
 
 const getDNSChallengeContext = `-- name: GetDNSChallengeContext :one
 SELECT
-    routes.id AS route_id,
+    routes.id AS public_url_id,
     routes.team_id,
     routes.domain_id,
     routes.dns_authority_reference,
@@ -26,7 +26,7 @@ SELECT
     authorizations.state
 FROM control.acme_authorizations AS authorizations
 JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-JOIN control.routes AS routes ON routes.id = orders.route_id
+JOIN control.public_urls AS routes ON routes.id = orders.public_url_id
 LEFT JOIN control.dns_authorities AS authorities
     ON authorities.authority_reference = routes.dns_authority_reference
     AND authorities.team_id = routes.team_id
@@ -37,12 +37,12 @@ WHERE routes.id = $1
 `
 
 type GetDNSChallengeContextParams struct {
-	RouteID         string
+	PublicURLID     string
 	AuthorizationID string
 }
 
 type GetDNSChallengeContextRow struct {
-	RouteID               string
+	PublicURLID           string
 	TeamID                string
 	DomainID              string
 	DnsAuthorityReference pgtype.Text
@@ -56,10 +56,10 @@ type GetDNSChallengeContextRow struct {
 }
 
 func (q *Queries) GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error) {
-	row := q.db.QueryRow(ctx, getDNSChallengeContext, arg.RouteID, arg.AuthorizationID)
+	row := q.db.QueryRow(ctx, getDNSChallengeContext, arg.PublicURLID, arg.AuthorizationID)
 	var i GetDNSChallengeContextRow
 	err := row.Scan(
-		&i.RouteID,
+		&i.PublicURLID,
 		&i.TeamID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,

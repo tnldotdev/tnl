@@ -20,7 +20,7 @@ func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
 	if _, err := NewHandler(Config{LoginToken: "invalid"}, nil, nil, nil); err == nil {
 		t.Fatal("invalid login token accepted")
 	}
-	if _, err := NewHandler(Config{HostedSecret: "short", AuthorityEndpoint: "https://authority.example.test"}, &routeMutationStoreStub{}, nil, nil); err == nil {
+	if _, err := NewHandler(Config{HostedSecret: "short", AuthorityEndpoint: "https://authority.example.test"}, &publicURLMutationStoreStub{}, nil, nil); err == nil {
 		t.Fatal("invalid hosted secret accepted")
 	}
 }
@@ -86,7 +86,7 @@ func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T)
 	for slot := range assignments {
 		assignments[slot] = controlstate.ConnectionAssignment{
 			ConnectionAssignmentIdentity: controlstate.ConnectionAssignmentIdentity{
-				PublisherConnectionID: "connection", RouteSessionID: "session", RouteID: "route", RouteVersion: 1,
+				PublisherConnectionID: "connection", PublishRunID: "session", PublicURLID: "route", PublishRunNumber: 1,
 				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-service",
 			},
 			RelayAddress: "relay.example:443", TLSServerName: "relay.example",

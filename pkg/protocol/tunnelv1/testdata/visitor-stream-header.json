@@ -2,9 +2,9 @@
   "protocol_version": 1,
   "kind": "visitor",
   "visitor_connection_id": "visitor_connection_1",
-  "route_id": "route_1",
-  "route_session_id": "route_session_1",
-  "route_version": 2,
+  "public_url_id": "public_url_1",
+  "publish_run_id": "publish_run_1",
+  "publish_run_number": 2,
   "publisher_connection_id": "publisher_connection_1",
   "connection_assignment_revision": 3
 }

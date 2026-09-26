@@ -2,9 +2,9 @@
   "protocol_version": 1,
   "kind": "internal_forward",
   "visitor_connection_id": "visitor_connection_1",
-  "route_id": "route_1",
-  "route_session_id": "route_session_1",
-  "route_version": 2,
+  "public_url_id": "public_url_1",
+  "publish_run_id": "publish_run_1",
+  "publish_run_number": 2,
   "publisher_connection_id": "publisher_connection_1",
   "connection_slot": 1,
   "connection_assignment_revision": 3,
@@ -12,6 +12,6 @@
   "relay_id": "relay_1",
   "relay_run_id": "relay_run_1",
   "relay_lease_revision": 4,
-  "route_expires_at": "2026-09-04T13:00:00Z",
+  "public_url_expires_at": "2026-09-04T13:00:00Z",
   "lease_expires_at": "2026-09-04T12:01:00Z"
 }

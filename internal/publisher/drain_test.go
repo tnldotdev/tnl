@@ -69,12 +69,12 @@ func assertHeartbeatFailureClosesVisitor(t *testing.T, failure error) {
 	t.Helper()
 	fail := make(chan struct{})
 	h := newVisitorDrainHarness(t, "tls_yamux", func(control *certificateTestControl, _ *Config) {
-		control.heartbeat = func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+		control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 			select {
 			case <-fail:
-				return controlv1.RouteSessionHeartbeat{}, failure
+				return controlv1.PublishRunHeartbeat{}, failure
 			default:
-				return controlv1.RouteSessionHeartbeat{RouteSession: control.setup.RouteSession}, nil
+				return controlv1.PublishRunHeartbeat{PublishRun: control.setup.PublishRun}, nil
 			}
 		}
 	})
@@ -153,11 +153,11 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 		}
 	}))
 	t.Cleanup(func() { h.unblock(); upstream.Close() })
-	control := newCertificateTestControl(t, "route.example", routeCertificateTestPlan())
+	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
 	h.control = control
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
 	connector, relays, publishers := drainTestConnections(t, ctx, control, transport)
-	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", RouteScope: controlv1.Member,
+	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member,
 		Hostname: "route.example", Target: upstream.URL, State: control.store, QUICConnector: connector, TCPConnector: connector,
 		FallbackDelay: time.Hour, DrainTime: 5 * time.Second, ProvisioningStalledDelay: time.Hour, heartbeatInterval: 20 * time.Millisecond,
 		Observe: func(event Event) error {

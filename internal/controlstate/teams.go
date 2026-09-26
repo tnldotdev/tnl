@@ -269,7 +269,7 @@ func (d *Database) SetMembershipRole(
 	}); err != nil || updated != 1 {
 		return Membership{}, authorityRowsError("set membership role: update membership", updated, err)
 	}
-	if err := closeMembershipRouteSessions(ctx, queries, &pendingEvents, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
+	if err := closeMembershipPublishRuns(ctx, queries, &pendingEvents, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
 		return Membership{}, err
 	}
 	row, err := queries.GetTeamMembershipContext(ctx, controlstatedb.GetTeamMembershipContextParams{
@@ -353,7 +353,7 @@ func (d *Database) RemoveMembership(
 	}); err != nil || updated != 1 {
 		return authorityRowsError("remove membership: quarantine slug", updated, err)
 	}
-	if err := closeMembershipRouteSessions(ctx, queries, &pendingEvents, teamID, membershipID, true, now, "membership_removed"); err != nil {
+	if err := closeMembershipPublishRuns(ctx, queries, &pendingEvents, teamID, membershipID, true, now, "membership_removed"); err != nil {
 		return err
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
@@ -428,35 +428,35 @@ func lockTeamActor(
 	return row, nil
 }
 
-func closeMembershipRouteSessions(
+func closeMembershipPublishRuns(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	pendingEvents *pendingIngressRoutingTableEvents,
 	teamID, membershipID string,
-	suspendMemberRoutes bool,
+	suspendMemberPublicURLs bool,
 	now time.Time,
 	reason string,
 ) error {
-	routes, err := queries.LockMembershipRoutes(ctx, controlstatedb.LockMembershipRoutesParams{
+	routes, err := queries.LockMembershipPublicURLs(ctx, controlstatedb.LockMembershipPublicURLsParams{
 		TeamID: teamID, MembershipID: text(membershipID),
 	})
 	if err != nil {
-		return fmt.Errorf("controlstate: update membership routes: lock routes: %w", err)
+		return fmt.Errorf("controlstate: update membership public_urls: lock public_urls: %w", err)
 	}
 	for _, route := range routes {
-		session, err := queries.GetOpenRouteSession(ctx, route.ID)
+		session, err := queries.GetOpenPublishRun(ctx, route.ID)
 		if err == nil && (route.MembershipID.String == membershipID || session.MembershipID.String == membershipID) {
-			if err := closeRouteSession(ctx, queries, pendingEvents, route, session, RouteSessionClosed, now, reason); err != nil {
+			if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason); err != nil {
 				return err
 			}
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("controlstate: update membership routes: read route session: %w", err)
+			return fmt.Errorf("controlstate: update membership public_urls: read publish run: %w", err)
 		}
-		if suspendMemberRoutes && route.MembershipID.Valid && route.MembershipID.String == membershipID {
-			if updated, err := queries.SuspendAuthorityRoute(ctx, controlstatedb.SuspendAuthorityRouteParams{
-				SuspensionReason: text(reason), SuspendedAt: timestamptz(now), RouteID: route.ID,
+		if suspendMemberPublicURLs && route.MembershipID.Valid && route.MembershipID.String == membershipID {
+			if updated, err := queries.SuspendAuthorityPublicURL(ctx, controlstatedb.SuspendAuthorityPublicURLParams{
+				SuspensionReason: text(reason), SuspendedAt: timestamptz(now), PublicURLID: route.ID,
 			}); err != nil || updated != 1 {
-				return authorityRowsError("update membership routes: suspend route", updated, err)
+				return authorityRowsError("update membership public_urls: suspend route", updated, err)
 			}
 		}
 	}

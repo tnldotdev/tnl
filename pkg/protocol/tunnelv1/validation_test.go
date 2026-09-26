@@ -9,7 +9,7 @@ import (
 )
 
 func TestControlMessages(t *testing.T) {
-	connection := &PublisherConnectionRef{RouteSessionID: "route_session_1", RouteID: "route_1", RouteVersion: 2, PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1, ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1"}
+	connection := &PublisherConnectionRef{PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 2, PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1, ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1"}
 	for _, message := range []Message{
 		{Type: Hello, ProtocolVersion: Version, Role: Publisher, Credential: "secret", PublisherConnection: connection},
 		{Type: Hello, ProtocolVersion: Version, Role: Ingress, Credential: "cluster-secret"},
@@ -54,9 +54,9 @@ func TestReadersRejectInvalidMessages(t *testing.T) {
 		{"accepted with code", `{"type":"hello_accepted","protocol_version":1,"code":"internal"}`, readControl},
 		{"request without ID", `{"type":"ping","protocol_version":1}`, readControl},
 		{"unknown error code", `{"type":"error","protocol_version":1,"code":"future"}`, readControl},
-		{"legacy connection", `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"route_session_id":"session"}}`, readControl},
-		{"unknown publisher field", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"extra":true}`, readVisitor},
-		{"legacy hops", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"forward_hops":0}`, readVisitor},
+		{"legacy connection", `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"publish_run_id":"session"}}`, readControl},
+		{"unknown publisher field", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","public_url_id":"route","publish_run_id":"session","publish_run_number":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"extra":true}`, readVisitor},
+		{"legacy hops", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","public_url_id":"route","publish_run_id":"session","publish_run_number":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"forward_hops":0}`, readVisitor},
 		{"stream accepted with code", `{"type":"accepted","code":"internal"}`, readResponse},
 		{"rejected without code", `{"type":"rejected"}`, readResponse},
 	} {
@@ -85,7 +85,7 @@ func TestStreamFieldBounds(t *testing.T) {
 					t.Fatalf("identifier length %d: %v", length, err)
 				}
 			}
-			for _, field := range []string{`"route_version":2`, `"connection_assignment_revision":3`} {
+			for _, field := range []string{`"publish_run_number":2`, `"connection_assignment_revision":3`} {
 				invalid := strings.Replace(payload, field, field[:len(field)-1]+"0", 1)
 				if err := test.read(frame(invalid)); err == nil {
 					t.Fatalf("accepted zero %s", field)

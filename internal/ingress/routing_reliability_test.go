@@ -17,7 +17,7 @@ import (
 // the actual controller and routing-table expiry checks; wall time is used only
 // to schedule renewals and bound test failure, never to infer routing progress.
 func TestControllerStalledRoutingUpdates(t *testing.T) {
-	for _, mode := range []string{"route_expiry_event_recovery", "route_expiry_resnapshot_recovery"} {
+	for _, mode := range []string{"public_url_expiry_event_recovery", "public_url_expiry_resnapshot_recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 			var clock atomic.Int64
@@ -25,9 +25,9 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 			expires := start.Add(10 * time.Second)
 			initial := routingReliabilityEvent(start, 1)
-			resnapshot := mode == "route_expiry_resnapshot_recovery"
-			initial.Entry.RouteExpiresAt = expires
-			initial.RouteExpiresAt = &initial.Entry.RouteExpiresAt
+			resnapshot := mode == "public_url_expiry_resnapshot_recovery"
+			initial.Entry.PublicUrlExpiresAt = expires
+			initial.PublicUrlExpiresAt = &initial.Entry.PublicUrlExpiresAt
 			type eventReply struct {
 				page ingressv1.IngressRoutingTablePage
 				err  error
@@ -131,16 +131,16 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			// Reuse the server harness for real visitor TLS and byte forwarding.
 			before, after := newTLSBackend(t), newTLSBackend(t)
 			firstAttempt := newFailAfterProxyBackend(t, 0)
-			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (Route, bool) {
+			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (PublicURL, bool) {
 				entry, ok := controller.Lookup(host, now())
 				if !ok {
-					return Route{}, false
+					return PublicURL{}, false
 				}
 				backends := []routebackend.Backend{before}
 				if entry.PolicyRevision > 1 {
 					backends = []routebackend.Backend{firstAttempt, after}
 				}
-				return Route{ID: entry.RouteId, RouteVersion: uint64(entry.RouteVersion), Backends: backends}, true
+				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends}, true
 			}})
 			advance(expires.Add(-time.Nanosecond))
 			if _, ok := controller.Lookup("route.example", now()); !ok {
@@ -283,9 +283,9 @@ func routingReliabilityEvent(now time.Time, revision int64) ingressv1.IngressRou
 	entry.PolicyRevision = revision
 	entry.IpPolicy = ingressv1.AllowAll
 	return ingressv1.IngressRoutingTableEvent{
-		RoutingTableRevision: revision, Kind: ingressv1.RouteUpsert, RouteId: entry.RouteId,
-		RouteVersion: entry.RouteVersion, CanonicalHostname: entry.CanonicalHostname,
-		EntryRevision: revision, Entry: entry, RouteExpiresAt: &entry.RouteExpiresAt, CreatedAt: now,
+		RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert, PublicUrlId: entry.PublicUrlId,
+		PublishRunNumber: entry.PublishRunNumber, CanonicalHostname: entry.CanonicalHostname,
+		EntryRevision: revision, Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
 	}
 }
 

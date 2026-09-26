@@ -36,20 +36,19 @@ CREATE TABLE control_sessions (
     updated_at INTEGER NOT NULL
 ) STRICT;
 
-CREATE TABLE route_certificates (
+CREATE TABLE certificate_material (
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE CASCADE,
-    route_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    plan TEXT NOT NULL,
     phase TEXT NOT NULL CHECK (phase IN ('pending', 'current')),
-    hostname TEXT NOT NULL,
     key_der BLOB NOT NULL,
     csr_der BLOB NOT NULL,
     certificate_pem BLOB,
     renew_at INTEGER,
     issuance_id TEXT NOT NULL,
-    route_version INTEGER NOT NULL CHECK (route_version >= 0),
-    installed INTEGER NOT NULL CHECK (installed IN (0, 1)),
     updated_at INTEGER NOT NULL,
-    PRIMARY KEY (server_origin, route_id, phase)
+    PRIMARY KEY (server_origin, team_id, cache_key, plan, phase)
 ) STRICT;
 
 CREATE TABLE local_tunnels (
@@ -62,8 +61,8 @@ CREATE TABLE local_tunnels (
     hostname TEXT NOT NULL,
     target TEXT NOT NULL,
     framework TEXT NOT NULL,
-    route_id TEXT NOT NULL,
-    route_version INTEGER NOT NULL CHECK (route_version >= 0),
+    public_url_id TEXT NOT NULL,
+    publish_run_number INTEGER NOT NULL CHECK (publish_run_number >= 0),
     state TEXT NOT NULL CHECK (state IN ('starting', 'provisioning', 'ready', 'draining', 'stopped', 'failed')),
     started_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

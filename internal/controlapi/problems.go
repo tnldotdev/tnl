@@ -20,22 +20,22 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
 	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
-	case errors.Is(err, controlstate.ErrRouteInvalid):
+	case errors.Is(err, controlstate.ErrPublicURLInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrRouteNotFound), errors.Is(err, controlstate.ErrTeamNotFound):
+	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-	case errors.Is(err, controlstate.ErrRouteAccess):
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "route access denied")
-	case errors.Is(err, controlstate.ErrRouteConflict):
-		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "route hostname is unavailable")
-	case errors.Is(err, controlstate.ErrRouteSessionOpen):
-		writeProblem(response, http.StatusConflict, controlv1.RouteSessionOpen, "route has an open route session")
+	case errors.Is(err, controlstate.ErrPublicURLAccess):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "public URL access denied")
+	case errors.Is(err, controlstate.ErrPublicURLConflict):
+		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "public URL hostname is unavailable")
+	case errors.Is(err, controlstate.ErrPublishRunOpen):
+		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "route has an open publish run")
 	case errors.Is(err, controlstate.ErrRouteNotEnabled):
-		writeProblem(response, http.StatusConflict, controlv1.Conflict, "route is not enabled")
-	case errors.Is(err, controlstate.ErrRouteIdempotency), errors.Is(err, controlstate.ErrRouteSessionIdempotency),
-		errors.Is(err, controlstate.ErrRouteSessionConflict), errors.Is(err, controlstate.ErrRouteMutationStale),
-		errors.Is(err, controlstate.ErrRouteAuthority), errors.Is(err, controlstate.ErrRouteSessionStale),
-		errors.Is(err, controlstate.ErrRouteSessionNotReady), errors.Is(err, controlstate.ErrRouteCertificate):
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
+	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency),
+		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale),
+		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
+		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "route state conflict")
 	case errors.Is(err, controlstate.ErrCertificateIssuanceInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid certificate issuance request")
@@ -45,9 +45,9 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate issuance state conflict")
 	case errors.Is(err, controlstate.ErrCertificateChallengeNotReady):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate challenge state conflict")
-	case errors.Is(err, controlstate.ErrRouteCredential), errors.Is(err, controlstate.ErrRouteSessionCredential):
+	case errors.Is(err, controlstate.ErrRouteCredential), errors.Is(err, controlstate.ErrPublishRunCredential):
 		writeBearerProblem(response)
-	case errors.Is(err, controlstate.ErrRouteCreationGated), errors.Is(err, controlstate.ErrRouteSessionCreationGated),
+	case errors.Is(err, controlstate.ErrPublicURLCreationGated), errors.Is(err, controlstate.ErrPublishRunCreationGated),
 		errors.Is(err, controlstate.ErrCertificateIssuanceGated):
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "operation is disabled")
 	case errors.Is(err, controlstate.ErrInsufficientRelayServices):

@@ -57,23 +57,23 @@ type CertificatePlan struct {
 }
 
 type CertificateIssuance struct {
-	ID              string
-	RouteSessionID  string
-	RouteID         string
-	RouteVersion    uint64
-	CertificatePlan CertificatePlan
-	State           string
-	Challenges      []CertificateChallenge
-	CertificatePEM  string
-	RetryAt         *time.Time
-	NotBefore       *time.Time
-	NotAfter        *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               string
+	PublishRunID     string
+	PublicURLID      string
+	PublishRunNumber uint64
+	CertificatePlan  CertificatePlan
+	State            string
+	Challenges       []CertificateChallenge
+	CertificatePEM   string
+	RetryAt          *time.Time
+	NotBefore        *time.Time
+	NotAfter         *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type CreateCertificateIssuanceRequest struct {
-	Authentication RouteSessionAuthentication
+	Authentication PublishRunAuthentication
 	DirectoryURL   string
 	IdempotencyKey string
 	RequestDigest  [32]byte
@@ -150,7 +150,7 @@ func (d *Database) CreateCertificateIssuance(
 	}
 	defer rollback(ctx, tx, "create certificate issuance", &retErr)()
 	queries := controlstatedb.New(tx)
-	_, session, err := lockAuthenticatedRouteSession(ctx, queries, request.Authentication, now)
+	_, session, err := lockAuthenticatedPublishRun(ctx, queries, request.Authentication, now)
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
@@ -171,7 +171,7 @@ func (d *Database) CreateCertificateIssuance(
 		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: read ACME account: %w", err)
 	}
 	existing, err := queries.GetACMEOrderByIdempotency(ctx, controlstatedb.GetACMEOrderByIdempotencyParams{
-		RouteSessionID: session.ID, IdempotencyKey: request.IdempotencyKey,
+		PublishRunID: session.ID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
 		if subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
@@ -201,8 +201,8 @@ func (d *Database) CreateCertificateIssuance(
 		return CertificateIssuance{}, fmt.Errorf("controlstate: generate certificate issuance ID: %w", err)
 	}
 	row, err := queries.InsertACMEOrder(ctx, controlstatedb.InsertACMEOrderParams{
-		ID: issuanceID, AccountID: account.ID, RouteSessionID: session.ID, RouteID: session.RouteID,
-		RouteVersion: session.RouteVersion, IdempotencyKey: request.IdempotencyKey,
+		ID: issuanceID, AccountID: account.ID, PublishRunID: session.ID, PublicURLID: session.PublicURLID,
+		PublishRunNumber: session.PublishRunNumber, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey,
 		CertificateScope: session.CertificateScope, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
 		ChallengeMethod: session.CertificateChallenge, CsrDer: slices.Clone(request.CSRDER),
@@ -234,7 +234,7 @@ func (d *Database) CreateCertificateIssuance(
 func (d *Database) GetCertificateIssuance(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 	now time.Time,
 ) (result CertificateIssuance, retErr error) {
 	if !validStateText(issuanceID) {
@@ -243,7 +243,7 @@ func (d *Database) GetCertificateIssuance(
 	if err := d.requireOpen(); err != nil {
 		return CertificateIssuance{}, err
 	}
-	authentication, err := d.routeSessionAuthenticationForToken(ctx, token)
+	authentication, err := d.publishRunAuthenticationForToken(ctx, token)
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
@@ -253,12 +253,12 @@ func (d *Database) GetCertificateIssuance(
 	}
 	defer rollback(ctx, tx, "get certificate issuance", &retErr)()
 	queries := controlstatedb.New(tx)
-	_, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
+	_, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
 	order, err := queries.GetACMEOrder(ctx, issuanceID)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.RouteSessionID != session.ID {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.PublishRunID != session.ID {
 		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
 	}
 	if err != nil {
@@ -277,7 +277,7 @@ func (d *Database) GetCertificateIssuance(
 func (d *Database) MarkCertificateChallengeReady(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 	now time.Time,
 ) (CertificateIssuance, error) {
 	return d.updateCertificateChallenge(ctx, issuanceID, token, now, true)
@@ -286,7 +286,7 @@ func (d *Database) MarkCertificateChallengeReady(
 func (d *Database) MarkCertificateChallengeRemoved(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 	now time.Time,
 ) (CertificateIssuance, error) {
 	return d.updateCertificateChallenge(ctx, issuanceID, token, now, false)
@@ -295,7 +295,7 @@ func (d *Database) MarkCertificateChallengeRemoved(
 func (d *Database) updateCertificateChallenge(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 	now time.Time,
 	ready bool,
 ) (result CertificateIssuance, retErr error) {
@@ -305,7 +305,7 @@ func (d *Database) updateCertificateChallenge(
 	if err := d.requireOpen(); err != nil {
 		return CertificateIssuance{}, err
 	}
-	authentication, err := d.routeSessionAuthenticationForToken(ctx, token)
+	authentication, err := d.publishRunAuthenticationForToken(ctx, token)
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
@@ -316,12 +316,12 @@ func (d *Database) updateCertificateChallenge(
 	defer rollback(ctx, tx, "update certificate challenge", &retErr)()
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
-	route, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
+	route, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
 	order, err := queries.LockACMEOrder(ctx, issuanceID)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.RouteSessionID != session.ID {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.PublishRunID != session.ID {
 		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
 	}
 	if err != nil {
@@ -436,29 +436,29 @@ func validCertificateChallengeAcknowledgement(
 	return true
 }
 
-func (d *Database) routeSessionAuthenticationForToken(
+func (d *Database) publishRunAuthenticationForToken(
 	ctx context.Context,
-	token credentials.RouteSessionToken,
-) (RouteSessionAuthentication, error) {
-	tokenID, tokenHash, err := credentials.ParseRouteSessionToken(token)
+	token credentials.PublishRunToken,
+) (PublishRunAuthentication, error) {
+	tokenID, tokenHash, err := credentials.ParsePublishRunToken(token)
 	if err != nil {
-		return RouteSessionAuthentication{}, ErrRouteSessionCredential
+		return PublishRunAuthentication{}, ErrPublishRunCredential
 	}
-	session, err := controlstatedb.New(d.pool).GetRouteSessionByTokenID(ctx, tokenID.String())
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && !credentials.SecretHashMatches(session.SessionTokenDigest, tokenHash) {
-		return RouteSessionAuthentication{}, ErrRouteSessionCredential
+	session, err := controlstatedb.New(d.pool).GetPublishRunByTokenID(ctx, tokenID.String())
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !credentials.SecretHashMatches(session.PublishRunTokenDigest, tokenHash) {
+		return PublishRunAuthentication{}, ErrPublishRunCredential
 	}
 	if err != nil {
-		return RouteSessionAuthentication{}, fmt.Errorf("controlstate: read route session by credential: %w", err)
+		return PublishRunAuthentication{}, fmt.Errorf("controlstate: read publish run by credential: %w", err)
 	}
-	return RouteSessionAuthentication{
-		RouteSessionID: session.ID, RouteID: session.RouteID,
-		RouteVersion: uint64(session.RouteVersion), RouteSessionToken: token,
+	return PublishRunAuthentication{
+		PublishRunID: session.ID, PublicURLID: session.PublicURLID,
+		PublishRunNumber: uint64(session.PublishRunNumber), PublishRunToken: token,
 	}, nil
 }
 
 func validateCertificateIssuanceRequest(request CreateCertificateIssuanceRequest) ([32]byte, error) {
-	if err := validateRouteSessionAuthentication(request.Authentication); err != nil {
+	if err := validatePublishRunAuthentication(request.Authentication); err != nil {
 		return [32]byte{}, err
 	}
 	if !validStateText(request.DirectoryURL) || !validStateText(request.IdempotencyKey) ||
@@ -527,8 +527,8 @@ func loadCertificateIssuance(
 		return CertificateIssuance{}, fmt.Errorf("controlstate: list certificate challenges: %w", err)
 	}
 	result := CertificateIssuance{
-		ID: order.ID, RouteSessionID: order.RouteSessionID, RouteID: order.RouteID,
-		RouteVersion: uint64(order.RouteVersion), CertificatePlan: CertificatePlan{
+		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
+		PublishRunNumber: uint64(order.PublishRunNumber), CertificatePlan: CertificatePlan{
 			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
 			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: order.ChallengeMethod,
 		},

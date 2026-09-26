@@ -18,21 +18,21 @@ import (
 )
 
 type cli struct {
-	ConfigPath  string         `name:"config" help:"Use an explicit project configuration file." type:"path"`
-	NoConfig    bool           `name:"no-config" help:"Do not search for project configuration."`
-	NoTelemetry bool           `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
-	Init        initCommand    `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Dev         devCommand     `cmd:"" help:"Run and publish one development service. Pass its command after --." group:"start"`
-	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service." group:"start"`
-	Status      statusCommand  `cmd:"" help:"Show local tunnels for this project." group:"start"`
-	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server." group:"start"`
-	Config      configCommand  `cmd:"" help:"Inspect project configuration." group:"manage"`
-	Team        teamCommand    `cmd:"" help:"Manage teams and memberships." group:"manage"`
-	Domain      domainCommand  `cmd:"" help:"Manage team domains." group:"manage"`
-	Route       routeCommand   `cmd:"" help:"Manage routes." group:"manage"`
-	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
-	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
-	Version     struct{}       `cmd:"" help:"Print release version information." group:"operate"`
+	ConfigPath  string           `name:"config" help:"Use an explicit project configuration file." type:"path"`
+	NoConfig    bool             `name:"no-config" help:"Do not search for project configuration."`
+	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
+	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Dev         devCommand       `cmd:"" help:"Run and publish one development service. Pass its command after --." group:"start"`
+	Publish     publishCommand   `cmd:"" help:"Publish one local HTTP service." group:"start"`
+	Status      statusCommand    `cmd:"" help:"Show local tunnels for this project." group:"start"`
+	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
+	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
+	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
+	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
+	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
+	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
+	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
+	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
 }
 
 type openOptions struct {
@@ -41,8 +41,8 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	Team         string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host         string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
-	Subdomain    string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
+	Host         string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current namespace."`
+	Subdomain    string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current namespace."`
 	AllowIP      []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
 	AllowAllIPs  bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
 	Ephemeral    bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
@@ -340,10 +340,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDomainList(ctx, flags.Domain.List, stdout, stderr)
 	case "domain release <domain>":
 		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
-	case "route list":
-		return runRouteList(ctx, flags.Route.List, stdout, stderr)
-	case "route delete <route-id>":
-		return runRouteDelete(ctx, flags.Route.Delete, stdout, stderr)
+	case "url list":
+		return runURLList(ctx, flags.URL.List, stdout, stderr)
+	case "url delete <public-url-id>":
+		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":

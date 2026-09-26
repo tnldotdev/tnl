@@ -1,12 +1,12 @@
 import { tnl } from "@tnldotdev/tnl";
 
 // @ts-expect-error Metadata may be absent until narrowed.
-void tnl.memberNamespace;
+void tnl.namespace;
 // @ts-expect-error Service metadata also requires narrowing the root value.
 void tnl.services.anyService;
 
 if (tnl) {
-  tnl.memberNamespace satisfies string;
+  tnl.namespace satisfies string;
   tnl.services.anyService satisfies
     | import("./dist/internal/runtime.js").ProjectServiceMetadata
     | undefined;
@@ -25,7 +25,7 @@ if (tnl) {
   }
 
   // @ts-expect-error Project metadata is readonly.
-  tnl.memberNamespace = "other.example";
+  tnl.namespace = "other.example";
   // @ts-expect-error The services collection is readonly.
   tnl.services = {};
   // @ts-expect-error Service entries are readonly.

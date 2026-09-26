@@ -24,7 +24,7 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
-	assertSplitRoutePlacement(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/through-split?source=integration", nil)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 		response.Header.Get("X-Tnl-Integration") != "split" {
 		t.Fatalf("split visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
-	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
 	assertRuntimeOperations(t, []*integrationProcess{fixture.relayA.process, fixture.relayB.process}, map[string]uint64{
 		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
 	})
@@ -49,12 +49,12 @@ func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
-	beforeConnection := readSplitConnectionState(t, fixture.inspect, ready.RouteID, ready.RouteVersion, "relay-a")
+	beforeConnection := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "relay-a")
 	beforeLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
 
 	stopIntegrationProcess(t, fixture.relayA.process)
 	stoppedLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.RouteID, ready.RouteVersion, 1)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 1)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/during-relay-loss", nil)
 	if err != nil {
@@ -63,14 +63,14 @@ func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "relay recovery" {
 		t.Fatalf("visitor during relay loss = %s, %q", response.Status, body)
 	}
-	assertRouteVersion(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 
 	waitUntilIntegrationTime(t, stoppedLease.expiresAt.Add(25*time.Millisecond))
 	fixture.relayA.process = fixture.startRelay(t, fixture.relayA.config)
 	waitForProcessReady(t, fixture.relayA.process)
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.RouteID, ready.RouteVersion, 2)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	afterConnection := readSplitConnectionState(t, fixture.inspect, ready.RouteID, ready.RouteVersion, "relay-a")
+	afterConnection := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "relay-a")
 	afterLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
 	if afterLease.runID == beforeLease.runID || afterLease.revision != beforeLease.revision+1 {
 		t.Fatalf(
@@ -83,7 +83,7 @@ func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 		afterConnection.connectedRelayRunID != afterLease.runID {
 		t.Fatalf("replacement publisher connection = before %#v, after %#v, lease %#v", beforeConnection, afterConnection, afterLease)
 	}
-	assertRouteVersion(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 	response, body, err = fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-relay-recovery", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -137,21 +137,21 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 		t.Fatalf("ACME authorization did not reach the gate%s", handle.diagnostics())
 	}
 
-	var orderID, orderURL, routeSessionID, routeID, accountURL, workerID string
-	var routeVersion uint64
+	var orderID, orderURL, publishRunID, publicURLID, accountURL, workerID string
+	var publishRunNumber uint64
 	var pending bool
 	if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
-		SELECT orders.id, orders.order_url, orders.route_session_id, orders.route_id,
-			orders.route_version, accounts.account_url, orders.work_owner,
+		SELECT orders.id, orders.order_url, orders.publish_run_id, orders.public_url_id,
+			orders.publish_run_number, accounts.account_url, orders.work_owner,
 			orders.state = 'authorizing' AND orders.challenge_method = 'tls-alpn-01'
 			AND orders.certificate_pem IS NULL AND orders.installed_at IS NULL
 			AND sessions.certificate_installed_at IS NULL AND sessions.ready_at IS NULL
 		FROM control.acme_orders AS orders
-		JOIN control.route_sessions AS sessions ON sessions.id = orders.route_session_id
+		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id
 		JOIN control.acme_accounts AS accounts ON accounts.id = orders.account_id
 		WHERE orders.certificate_identifiers = ARRAY[$1]::text[]
 	`, fixture.identity.hostname).Scan(
-		&orderID, &orderURL, &routeSessionID, &routeID, &routeVersion, &accountURL, &workerID, &pending,
+		&orderID, &orderURL, &publishRunID, &publicURLID, &publishRunNumber, &accountURL, &workerID, &pending,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -185,9 +185,9 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	waitForProcessReady(t, fixture.control)
 	release()
 	ready := fixture.waitReady(t, handle)
-	if ready.RouteID != routeID || ready.RouteVersion != routeVersion {
+	if ready.PublicURLID != publicURLID || ready.PublishRunNumber != publishRunNumber {
 		t.Fatalf("publisher changed route across issuance restart: %s version %d, want %s version %d",
-			ready.RouteID, ready.RouteVersion, routeID, routeVersion)
+			ready.PublicURLID, ready.PublishRunNumber, publicURLID, publishRunNumber)
 	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		afterLeases := []splitProcessLease{
@@ -211,7 +211,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	})
 	var installed bool
 	if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
-		SELECT orders.order_url = $2 AND orders.route_session_id = $3
+		SELECT orders.order_url = $2 AND orders.publish_run_id = $3
 			AND orders.state = 'installed' AND orders.certificate_pem IS NOT NULL
 			AND orders.not_before IS NOT NULL AND orders.not_after IS NOT NULL
 			AND sessions.certificate_issuance_id = orders.id AND sessions.certificate_installed_at IS NOT NULL
@@ -220,13 +220,13 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 				WHERE order_id = orders.id AND challenge_type = 'tls-alpn-01' AND state = 'complete'
 				AND presented_at IS NOT NULL AND validated_at IS NOT NULL AND cleanup_completed_at IS NOT NULL) = 1
 		FROM control.acme_orders AS orders
-		JOIN control.route_sessions AS sessions ON sessions.id = orders.route_session_id
+		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id
 		JOIN control.acme_accounts AS accounts ON accounts.id = orders.account_id
 		WHERE orders.id = $1
-	`, orderID, orderURL, routeSessionID, accountURL).Scan(&installed); err != nil {
+	`, orderID, orderURL, publishRunID, accountURL).Scan(&installed); err != nil {
 		t.Fatal(err)
 	}
-	if !installed || integrationRouteOrderCount(t, fixture.inspect, routeID) != 1 || newOrders.Load() != 1 {
+	if !installed || integrationRouteOrderCount(t, fixture.inspect, publicURLID) != 1 || newOrders.Load() != 1 {
 		t.Fatalf("original certificate order was not installed and acknowledged without duplication: installed %v, new orders %d",
 			installed, newOrders.Load())
 	}
@@ -237,7 +237,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "resumed certificate order" {
 		t.Fatalf("visitor after issuance restart = %s, %q", response.Status, body)
 	}
-	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
 	if len(response.TLS.VerifiedChains) == 0 || len(response.TLS.PeerCertificates) < 2 {
 		t.Fatal("resumed certificate has no verified visitor TLS chain")
 	}
@@ -300,8 +300,8 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 			relayB.expiresAt.After(latestExpiry), nil
 	})
 	waitUntilIntegrationTime(t, latestExpiry.Add(25*time.Millisecond))
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.RouteID, ready.RouteVersion, 2)
-	assertRouteVersion(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 	response, body, err = fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-control-restart", nil)
 	if err != nil {
 		t.Fatal(err)

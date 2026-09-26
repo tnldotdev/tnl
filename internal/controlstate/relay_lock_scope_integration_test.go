@@ -232,7 +232,7 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 	}
 }
 
-func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]routeSessionFixture, registration RelayRegistration) func(context.Context) error {
+func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publishRunFixture, registration RelayRegistration) func(context.Context) error {
 	t.Helper()
 	database, now := fixtures[0].database, fixtures[0].now
 	switch writer {
@@ -247,9 +247,9 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]routeSe
 	case "replenishment":
 		setup := fixtures[len(fixtures)-1].setup
 		return func(ctx context.Context) error {
-			replenished, err := database.HeartbeatRouteSession(ctx, RouteSessionAuthentication{
-				RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID,
-				RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
+			replenished, err := database.HeartbeatPublishRun(ctx, PublishRunAuthentication{
+				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
+				PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 			}, now.Add(2*time.Minute), time.Hour, time.Minute)
 			if err != nil {
 				return err
@@ -336,7 +336,7 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]routeSe
 
 // Four independent routes retry on one relay process while the fifth route
 // needs placement. Every service has exactly enough capacity for all five.
-func relayServiceProgressSessions(t *testing.T) ([5]routeSessionFixture, RelayRegistration) {
+func relayServiceProgressSessions(t *testing.T) ([5]publishRunFixture, RelayRegistration) {
 	t.Helper()
 	database, now := newRelayLifecycleDatabase(t)
 	leases := make(map[string]RelayLease)
@@ -353,22 +353,22 @@ func relayServiceProgressSessions(t *testing.T) ([5]routeSessionFixture, RelayRe
 			registration = candidate
 		}
 	}
-	var fixtures [5]routeSessionFixture
+	var fixtures [5]publishRunFixture
 	for index := range fixtures {
 		suffix := fmt.Sprintf("relayprogress%d", index)
-		seedControlRoute(t, database, now, suffix)
-		request := RouteSessionRequest{
-			RouteID: "route_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
+		seedControlPublicURL(t, database, now, suffix)
+		request := PublishRunRequest{
+			PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
 			MembershipID: "membership_" + suffix, RequireLocalAuthority: true,
 			RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",
 			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
 		}
-		setup, err := database.CreateRouteSession(t.Context(), request, now, time.Hour, time.Minute)
+		setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
-		fixtures[index] = routeSessionFixture{database: database, now: now, request: request, setup: setup, leases: leases}
+		fixtures[index] = publishRunFixture{database: database, now: now, request: request, setup: setup, leases: leases}
 	}
 	return fixtures, registration
 }
@@ -421,7 +421,7 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 	if _, err := database.ClaimPublisherConnection(ctx, claims[winner], now); err != nil {
 		t.Fatalf("idempotent claim at capacity: %v", err)
 	}
-	if err := database.CloseRouteSession(ctx, fixtures[winner].setup.RouteSessionID, fixtures[winner].setup.RouteSessionToken, now); err != nil {
+	if err := database.ClosePublishRun(ctx, fixtures[winner].setup.PublishRunID, fixtures[winner].setup.PublishRunToken, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ClaimPublisherConnection(ctx, claims[1-winner], now); err != nil {
@@ -431,7 +431,7 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 
 // Two routes, two services, two capacity-one processes per service. Each route
 // claims a different process, unless a test explicitly selects the same process.
-func relayServiceSessions(t *testing.T) ([2]routeSessionFixture, RelayRegistration) {
+func relayServiceSessions(t *testing.T) ([2]publishRunFixture, RelayRegistration) {
 	t.Helper()
 	f := newTransactionAuthorityFixture(t)
 	leases := [2]map[string]RelayLease{{}, {}}
@@ -452,18 +452,18 @@ func relayServiceSessions(t *testing.T) ([2]routeSessionFixture, RelayRegistrati
 			}
 		}
 	}
-	var result [2]routeSessionFixture
-	for index, request := range []RouteSessionRequest{f.sessionRequest, siblingSessionRequest(t, f)} {
-		setup, err := f.database.CreateRouteSession(t.Context(), request, f.now, time.Hour, time.Hour)
+	var result [2]publishRunFixture
+	for index, request := range []PublishRunRequest{f.sessionRequest, siblingSessionRequest(t, f)} {
+		setup, err := f.database.CreatePublishRun(t.Context(), request, f.now, time.Hour, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result[index] = routeSessionFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases[index]}
+		result[index] = publishRunFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases[index]}
 	}
 	return result, registration
 }
 
-func sessionClaim(t *testing.T, f routeSessionFixture) PublisherConnectionClaimRequest {
+func sessionClaim(t *testing.T, f publishRunFixture) PublisherConnectionClaimRequest {
 	t.Helper()
 	assignment := f.setup.PublisherConnections[0]
 	digest, err := credentials.ParsePublisherConnectionCredential(assignment.PublisherConnectionCredential)

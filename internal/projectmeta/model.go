@@ -15,15 +15,15 @@ import (
 const Version = 1
 
 type Service struct {
-	MemberNamespace string `json:"memberNamespace"`
-	Hostname        string `json:"hostname"`
-	URL             string `json:"url"`
+	Namespace string `json:"namespace"`
+	Hostname  string `json:"hostname"`
+	URL       string `json:"url"`
 }
 
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
-	MemberNamespace    string             `json:"memberNamespace"`
+	Namespace          string             `json:"namespace"`
 	RunningUnderTnlDev bool               `json:"runningUnderTnlDev"`
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
 	Services           map[string]Service `json:"services"`
@@ -32,7 +32,7 @@ type Metadata struct {
 
 // PublicMetadata is the value exposed by @tnldotdev/tnl.
 type PublicMetadata struct {
-	MemberNamespace    string             `json:"memberNamespace"`
+	Namespace          string             `json:"namespace"`
 	Services           map[string]Service `json:"services"`
 	RunningUnderTnlDev bool               `json:"runningUnderTnlDev"`
 }
@@ -43,7 +43,7 @@ func (m Metadata) Public(runningUnderTnlDev bool) PublicMetadata {
 		services[name] = service
 	}
 	return PublicMetadata{
-		MemberNamespace: m.MemberNamespace, Services: services,
+		Namespace: m.Namespace, Services: services,
 		RunningUnderTnlDev: runningUnderTnlDev,
 	}
 }
@@ -55,7 +55,7 @@ func (m Metadata) Validate() error {
 	if m.RunningUnderTnlDev {
 		return errors.New("generated project metadata cannot be marked as running under tnl dev")
 	}
-	if err := canonicalHostname("member namespace", m.MemberNamespace); err != nil {
+	if err := canonicalHostname("namespace", m.Namespace); err != nil {
 		return err
 	}
 	if len(m.Services) > 32 {
@@ -75,7 +75,7 @@ func (m Metadata) Validate() error {
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("invalid project metadata service %q", name)
 		}
-		if err := canonicalHostname("service "+name+" member namespace", service.MemberNamespace); err != nil {
+		if err := canonicalHostname("service "+name+" namespace", service.Namespace); err != nil {
 			return err
 		}
 		if err := canonicalHostname("service "+name+" hostname", service.Hostname); err != nil {

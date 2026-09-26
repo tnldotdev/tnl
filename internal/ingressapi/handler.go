@@ -23,7 +23,7 @@ type Store interface {
 	ReadIngressRoutingTableSnapshot(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressRoutingTableSnapshot, error)
 	ReadIngressRoutingTableEvents(context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time) (controlstate.IngressRoutingTablePage, error)
 	ReportIngressUsage(context.Context, controlstate.IngressLeaseIdentity, controlstate.IngressUsageBatch, time.Time) error
-	ObserveRouteRecovery(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.RouteRecoveryObservation, error)
+	ObservePublicURLRecovery(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.PublicURLRecoveryObservation, error)
 }
 
 type Config struct {
@@ -160,11 +160,11 @@ func (h *handler) observeRecovery(
 	ingressID ingressv1.IngressID,
 	recoveryEpisodeID int64,
 ) {
-	var body ingressv1.RouteRecoveryObservationRequest
+	var body ingressv1.PublicURLRecoveryObservationRequest
 	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	observation, err := h.service.ObserveRouteRecovery(request.Context(), ingressID, recoveryEpisodeID, body)
+	observation, err := h.service.ObservePublicURLRecovery(request.Context(), ingressID, recoveryEpisodeID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
@@ -196,18 +196,18 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
 		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
-	case errors.Is(err, controlstate.ErrRouteRecoveryEpisodeStale):
+	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
 		return http.StatusConflict, "recovery_episode_stale", "The route recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
 		return http.StatusBadRequest, "invalid_usage_report", "The ingress usage report is invalid"
-	case errors.Is(err, controlstate.ErrIngressUsageRouteNotFound):
-		return http.StatusNotFound, "usage_route_not_found", "The reported route version was not found"
+	case errors.Is(err, controlstate.ErrIngressUsagePublicURLNotFound):
+		return http.StatusNotFound, "usage_route_not_found", "The reported publish run number was not found"
 	case errors.Is(err, controlstate.ErrIngressUsageReportStale):
 		return http.StatusConflict, "stale_usage_report", "The ingress usage report revision is stale"
 	case errors.Is(err, controlstate.ErrIngressUsageReportConflict):
 		return http.StatusConflict, "usage_report_conflict", "The ingress usage report conflicts with stored state"
-	case errors.Is(err, controlstate.ErrRouteUsageBucketFinalized):
-		return http.StatusConflict, "usage_bucket_finalized", "The route usage bucket is already finalized"
+	case errors.Is(err, controlstate.ErrPublicURLUsageBucketFinalized):
+		return http.StatusConflict, "usage_bucket_finalized", "The public URL usage bucket is already finalized"
 	default:
 		report(err)
 		return http.StatusInternalServerError, "internal", "The ingress service request failed"
@@ -235,7 +235,7 @@ func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.In
 	}
 	reports := make([]controlstate.IngressUsageReport, len(value.Reports))
 	for index, report := range value.Reports {
-		routeVersion, routeOK := serviceapi.Positive(report.RouteVersion)
+		publishRunNumber, routeOK := serviceapi.Positive(report.PublishRunNumber)
 		reportRevision, revisionOK := serviceapi.Positive(report.ReportRevision)
 		connectionAttempts, attemptsOK := serviceapi.Nonnegative(report.ConnectionAttempts)
 		policyDenials, policyOK := serviceapi.Nonnegative(report.PolicyDenials)
@@ -245,7 +245,7 @@ func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.In
 		connectionNanoseconds, nanosecondsOK := serviceapi.Nonnegative(report.ConnectionNanoseconds)
 		ingressBytes, ingressOK := serviceapi.Nonnegative(report.IngressBytes)
 		egressBytes, egressOK := serviceapi.Nonnegative(report.EgressBytes)
-		if !serviceapi.ValidIdentifiers(report.RouteId) || !routeOK || !revisionOK ||
+		if !serviceapi.ValidIdentifiers(report.PublicUrlId) || !routeOK || !revisionOK ||
 			!attemptsOK || !policyOK || !capacityOK || !failuresOK || !streamsOK ||
 			!nanosecondsOK || !ingressOK || !egressOK || report.BucketStart.IsZero() ||
 			!report.BucketEnd.After(report.BucketStart) || report.ObservedThrough.Before(report.BucketStart) ||
@@ -253,7 +253,7 @@ func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.In
 			return controlstate.IngressUsageBatch{}, false
 		}
 		reports[index] = controlstate.IngressUsageReport{
-			RouteID: report.RouteId, RouteVersion: routeVersion, BucketStart: report.BucketStart,
+			PublicURLID: report.PublicUrlId, PublishRunNumber: publishRunNumber, BucketStart: report.BucketStart,
 			BucketEnd: report.BucketEnd, ObservedThrough: report.ObservedThrough, ReportRevision: reportRevision,
 			ConnectionAttempts: connectionAttempts, PolicyDenials: policyDenials,
 			CapacityDenials: capacityDenials, VisitorStreamOpenFailures: visitorStreamOpenFailures,
@@ -286,8 +286,8 @@ func ingressLease(lease controlstate.IngressLease) ingressv1.IngressLease {
 }
 
 func routingTableSnapshot(snapshot controlstate.IngressRoutingTableSnapshot) ingressv1.IngressRoutingTableSnapshot {
-	entries := make([]ingressv1.IngressRoutingTableEvent, len(snapshot.Routes))
-	for index, event := range snapshot.Routes {
+	entries := make([]ingressv1.IngressRoutingTableEvent, len(snapshot.Entries))
+	for index, event := range snapshot.Entries {
 		entries[index] = routingTableEvent(event)
 	}
 	return ingressv1.IngressRoutingTableSnapshot{
@@ -310,9 +310,9 @@ func routingTablePage(page controlstate.IngressRoutingTablePage) ingressv1.Ingre
 func routingTableEvent(event controlstate.IngressRoutingTableEvent) ingressv1.IngressRoutingTableEvent {
 	return ingressv1.IngressRoutingTableEvent{
 		RoutingTableRevision: int64(event.RoutingTableRevision), Kind: ingressv1.IngressRoutingTableEventKind(event.Kind),
-		RouteId: event.RouteID, RouteVersion: int64(event.RouteVersion), CanonicalHostname: event.CanonicalHostname,
+		PublicUrlId: event.PublicURLID, PublishRunNumber: int64(event.PublishRunNumber), CanonicalHostname: event.CanonicalHostname,
 		EntryRevision: int64(event.EntryRevision), Entry: routingTableEntry(event.Projection),
-		RouteExpiresAt: event.RouteExpiresAt, CreatedAt: event.CreatedAt,
+		PublicUrlExpiresAt: event.PublicUrlExpiresAt, CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -338,11 +338,11 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		recoveryEpisodeID = &value
 	}
 	return ingressv1.IngressRoutingTableEntry{
-		RouteSessionId: projection.RouteSessionID, RouteId: projection.RouteID,
-		RouteVersion: int64(projection.RouteVersion), CanonicalHostname: projection.CanonicalHostname,
+		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
+		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
 		PolicyRevision:    int64(projection.PolicyRevision),
 		IpPolicy:          ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),
-		AllowedIpPrefixes: prefixes, RouteExpiresAt: projection.RouteExpiresAt,
+		AllowedIpPrefixes: prefixes, PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
 		RecoveryEpisodeId: recoveryEpisodeID, PublisherConnections: connections,
 	}
 }

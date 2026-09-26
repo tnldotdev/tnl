@@ -95,20 +95,20 @@ func New(role string) *Metrics {
 			Name: "tnl_control_requests_in_flight", Help: "Control API requests currently executing by operation.",
 		}, []string{"operation"}),
 		readinessAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_route_session_readiness_total", Help: "Route session readiness attempts by fixed outcome.",
+			Name: "tnl_publish_run_readiness_total", Help: "Publish run readiness attempts by fixed outcome.",
 		}, []string{"outcome"}),
 		readinessDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_route_session_readiness_duration_seconds", Help: "Time spent checking and publishing route session readiness.", Buckets: DurationBucketsSeconds(),
+			Name: "tnl_publish_run_readiness_duration_seconds", Help: "Time spent checking and publishing publish run readiness.", Buckets: DurationBucketsSeconds(),
 		}, []string{"outcome"}),
 		readinessAge: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_route_session_readiness_age_seconds", Help: "Age of the route session at a readiness decision; excludes other errors.",
+			Name: "tnl_publish_run_readiness_age_seconds", Help: "Age of the publish run at a readiness decision; excludes other errors.",
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		}, []string{"outcome"}),
 		certificateWork: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_route_certificate_work_total", Help: "Route certificate worker iterations by fixed stage and outcome.",
+			Name: "tnl_public_url_certificate_work_total", Help: "Public URL certificate worker iterations by fixed stage and outcome.",
 		}, []string{"stage", "outcome"}),
 		certificateDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_route_certificate_work_duration_seconds", Help: "Route certificate worker iteration duration by fixed stage and outcome.", Buckets: DurationBucketsSeconds(),
+			Name: "tnl_public_url_certificate_work_duration_seconds", Help: "Public URL certificate worker iteration duration by fixed stage and outcome.", Buckets: DurationBucketsSeconds(),
 		}, []string{"stage", "outcome"}),
 		operationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_operation_duration_seconds", Help: "Completed application operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
@@ -199,7 +199,7 @@ func (m *Metrics) IncInspectionFailure(stage string) {
 func (m *Metrics) IncChallengeRejection(reason string) {
 	switch reason {
 	case "unconfigured", "unavailable", "invalid_hostname", "uninitialized", "missing", "tombstone",
-		"route_expired", "backend_expired", "ingress_unavailable", "invalid_projection":
+		"public_url_expired", "backend_expired", "ingress_unavailable", "invalid_projection":
 		m.challengeRejections.WithLabelValues(reason).Inc()
 	}
 }
@@ -232,7 +232,7 @@ func (m *Metrics) ObserveControlRequest(operation, outcome string, duration time
 }
 
 // Outcomes and stages are closed sets, independent of route and order identity.
-func (m *Metrics) ObserveRouteSessionReadiness(outcome string, duration, age time.Duration) {
+func (m *Metrics) ObservePublishRunReadiness(outcome string, duration, age time.Duration) {
 	switch outcome {
 	case "ready", "certificate_missing", "connections_missing", "certificate_and_connections_missing", "error":
 	default:

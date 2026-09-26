@@ -87,7 +87,7 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 					}
 				}
 				callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-				setup, err := control.CreateRouteSession(callCtx, candidate, now, time.Hour, time.Hour)
+				setup, err := control.CreatePublishRun(callCtx, candidate, now, time.Hour, time.Hour)
 				stop()
 				if err == nil {
 					for _, assignment := range setup.PublisherConnections {
@@ -125,8 +125,8 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 	assertAssignmentTotals(t, database.pool, int64(routes)*2)
 }
 
-func placementLoadLookup(ctx context.Context, handler http.Handler, token credentials.AccessToken, candidate RouteSessionRequest) error {
-	request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/routes?team_id="+candidate.TeamID+"&canonical_hostname="+candidate.CertificateIdentifiers[0], nil)
+func placementLoadLookup(ctx context.Context, handler http.Handler, token credentials.AccessToken, candidate PublishRunRequest) error {
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/public-urls?team_id="+candidate.TeamID+"&canonical_hostname="+candidate.CertificateIdentifiers[0], nil)
 	request.Header.Set("Authorization", "Bearer "+string(token))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -136,11 +136,11 @@ func placementLoadLookup(ctx context.Context, handler http.Handler, token creden
 	if response.Code != http.StatusOK {
 		return fmt.Errorf("hostname lookup: HTTP %d", response.Code)
 	}
-	var page controlv1.RoutePage
+	var page controlv1.PublicURLPage
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
 		return err
 	}
-	if len(page.Routes) != 1 || page.Routes[0].Id != candidate.RouteID || page.NextCursor != nil {
+	if len(page.PublicUrls) != 1 || page.PublicUrls[0].Id != candidate.PublicURLID || page.NextCursor != nil {
 		return fmt.Errorf("hostname lookup returned an unexpected route page")
 	}
 	return nil

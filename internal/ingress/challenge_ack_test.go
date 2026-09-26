@@ -79,7 +79,7 @@ func TestControllerCoalescesChallengeAcknowledgments(t *testing.T) {
 			pages <- ingressv1.IngressRoutingTablePage{ThroughRevision: revision, NextRevision: revision, Events: []ingressv1.IngressRoutingTableEvent{event}}
 			synctest.Wait()
 		}
-		send(1, ingressv1.RouteUpsert)
+		send(1, ingressv1.PublicUrlUpsert)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 		if len(renewals) != 0 {
@@ -132,7 +132,7 @@ func TestControllerAcknowledgesChallengeSnapshots(t *testing.T) {
 				event.Kind = ingressv1.ChallengeUpsert
 				invalid := mode == "invalid-page" || mode == "invalid-snapshot"
 				if invalid {
-					event.Entry.RouteId = "mismatched"
+					event.Entry.PublicUrlId = "mismatched"
 				}
 				var snapshots, requests int
 				renewals := make(chan ingressv1.IngressRenewal, 8)

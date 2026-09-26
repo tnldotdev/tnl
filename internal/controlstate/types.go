@@ -1,43 +1,43 @@
 package controlstate
 
-// RouteScope identifies whether a route belongs to one membership or a team.
-type RouteScope string
+// PublicURLScope identifies whether a route belongs to one membership or a team.
+type PublicURLScope string
 
 const (
-	RouteScopeMember RouteScope = "member"
-	RouteScopeShared RouteScope = "shared"
+	PublicURLScopeMember PublicURLScope = "member"
+	PublicURLScopeShared PublicURLScope = "shared"
 )
 
-// RouteLifecycleState is the stored state of a route.
-type RouteLifecycleState string
+// PublicURLLifecycleState is the stored state of a route.
+type PublicURLLifecycleState string
 
 const (
-	RouteLifecycleEnabled   RouteLifecycleState = "enabled"
-	RouteLifecycleSuspended RouteLifecycleState = "suspended"
-	RouteLifecycleDeleted   RouteLifecycleState = "deleted"
+	PublicURLLifecycleEnabled   PublicURLLifecycleState = "enabled"
+	PublicURLLifecycleSuspended PublicURLLifecycleState = "suspended"
+	PublicURLLifecycleDeleted   PublicURLLifecycleState = "deleted"
 )
 
-// RouteDNSState is the stored state of public route DNS.
-type RouteDNSState string
+// PublicURLDNSState is the stored state of public URL DNS.
+type PublicURLDNSState string
 
 const (
-	RouteDNSUnmanaged RouteDNSState = "unmanaged"
-	RouteDNSPending   RouteDNSState = "pending"
-	RouteDNSPublished RouteDNSState = "published"
-	RouteDNSRemoving  RouteDNSState = "removing"
-	RouteDNSRemoved   RouteDNSState = "removed"
-	RouteDNSFailed    RouteDNSState = "failed"
+	PublicURLDNSUnmanaged PublicURLDNSState = "unmanaged"
+	PublicURLDNSPending   PublicURLDNSState = "pending"
+	PublicURLDNSPublished PublicURLDNSState = "published"
+	PublicURLDNSRemoving  PublicURLDNSState = "removing"
+	PublicURLDNSRemoved   PublicURLDNSState = "removed"
+	PublicURLDNSFailed    PublicURLDNSState = "failed"
 )
 
-// RouteSessionState is the stored state of one route session.
-type RouteSessionState string
+// PublishRunState is the stored state of one publish run.
+type PublishRunState string
 
 const (
-	RouteSessionStarting RouteSessionState = "starting"
-	RouteSessionReady    RouteSessionState = "ready"
-	RouteSessionClosed   RouteSessionState = "closed"
-	RouteSessionExpired  RouteSessionState = "expired"
-	RouteSessionCanceled RouteSessionState = "canceled"
+	PublishRunStarting PublishRunState = "starting"
+	PublishRunReady    PublishRunState = "ready"
+	PublishRunClosed   PublishRunState = "closed"
+	PublishRunExpired  PublishRunState = "expired"
+	PublishRunCanceled PublishRunState = "canceled"
 )
 
 // PublisherConnectionState is the stored state of one connection slot.
@@ -56,8 +56,8 @@ const (
 type IngressRoutingTableEventKind string
 
 const (
-	IngressRouteUpsert        IngressRoutingTableEventKind = "route_upsert"
-	IngressRouteTombstone     IngressRoutingTableEventKind = "route_tombstone"
+	IngressPublicURLUpsert    IngressRoutingTableEventKind = "public_url_upsert"
+	IngressPublicURLTombstone IngressRoutingTableEventKind = "public_url_tombstone"
 	IngressChallengeUpsert    IngressRoutingTableEventKind = "challenge_upsert"
 	IngressChallengeTombstone IngressRoutingTableEventKind = "challenge_tombstone"
 )

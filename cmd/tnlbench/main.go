@@ -17,7 +17,7 @@ type benchmarkCLI struct {
 	Run         runCommand         `cmd:"" help:"Provision, execute, collect, and clean up an approved Fly benchmark."`
 	Cleanup     cleanupCommand     `cmd:"" help:"Remove resources recorded by an interrupted benchmark run."`
 	Coordinator coordinatorCommand `cmd:"" help:"Serve workload phase coordination."`
-	Publisher   publisherCommand   `cmd:"" help:"Create and hold one shard of benchmark routes."`
+	Publisher   publisherCommand   `cmd:"" help:"Create and hold one shard of benchmark public URLs."`
 	Load        loadCommand        `cmd:"" help:"Generate fresh and held visitor requests."`
 	Report      reportCommand      `cmd:"" help:"Merge worker results and write report artifacts."`
 	Resolver    resolverCommand    `cmd:"" help:"Resolve benchmark hostnames through authoritative DNS."`

@@ -43,8 +43,8 @@ func NewPublisherConnection(
 		return nil, errors.New("relay: tunnel session is required")
 	}
 	if claimed.PublisherConnectionId != ref.PublisherConnectionID ||
-		claimed.RouteSessionId != ref.RouteSessionID || claimed.RouteId != ref.RouteID ||
-		claimed.RouteVersion != int64(ref.RouteVersion) || claimed.ConnectionSlot != int(ref.ConnectionSlot) ||
+		claimed.PublishRunId != ref.PublishRunID || claimed.PublicUrlId != ref.PublicURLID ||
+		claimed.PublishRunNumber != int64(ref.PublishRunNumber) || claimed.ConnectionSlot != int(ref.ConnectionSlot) ||
 		claimed.ConnectionAssignmentRevision != int64(ref.ConnectionAssignmentRevision) ||
 		claimed.RelayServiceId != ref.RelayServiceID {
 		return nil, errors.New("relay: claimed publisher connection does not match its reference")
@@ -63,8 +63,8 @@ func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnection
 	}
 	stream, err := c.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
-		VisitorConnectionID: visitorConnectionID, RouteID: c.ref.RouteID,
-		RouteSessionID: c.ref.RouteSessionID, RouteVersion: c.ref.RouteVersion,
+		VisitorConnectionID: visitorConnectionID, PublicURLID: c.ref.PublicURLID,
+		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
 	})
@@ -214,8 +214,8 @@ func (c *trackedConn) CloseWrite() error {
 }
 
 type slotKey struct {
-	routeSessionID string
-	slot           uint8
+	publishRunID string
+	slot         uint8
 }
 
 // Registry is a concurrency-safe registry of publisher connections held by one relay process.
@@ -257,7 +257,7 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 		r.mu.Unlock()
 		return &tunnel.ProtocolError{Code: tunnelv1.DuplicatePublisherConnection}
 	}
-	key := slotKey{routeSessionID: ref.RouteSessionID, slot: ref.ConnectionSlot}
+	key := slotKey{publishRunID: ref.PublishRunID, slot: ref.ConnectionSlot}
 	previous := r.slots[key]
 	if previous != nil && previous.ref.ConnectionAssignmentRevision >= ref.ConnectionAssignmentRevision {
 		r.mu.Unlock()
@@ -286,15 +286,15 @@ func (r *Registry) Candidate(
 	// Ingress copied the lease deadline when control published the route. Use
 	// this process's current lease instead: ordinary renewals do not republish
 	// every route, but an expired or replaced lease must still reject work.
-	if r.closed || r.draining || connection == nil || !header.RouteExpiresAt.After(now) ||
+	if r.closed || r.draining || connection == nil || !header.PublicUrlExpiresAt.After(now) ||
 		lease.RelayLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(now) || lease.Draining ||
 		lease.RelayServiceId != header.RelayServiceID || lease.RelayId != header.RelayID ||
 		lease.RelayRunId != header.RelayRunID || uint64(lease.RelayLeaseRevision) != header.RelayLeaseRevision {
 		return nil, false
 	}
 	ref, claimed := connection.ref, connection.claimed
-	if header.RouteID != ref.RouteID || header.RouteSessionID != ref.RouteSessionID ||
-		header.RouteVersion != ref.RouteVersion || header.ConnectionSlot != ref.ConnectionSlot ||
+	if header.PublicURLID != ref.PublicURLID || header.PublishRunID != ref.PublishRunID ||
+		header.PublishRunNumber != ref.PublishRunNumber || header.ConnectionSlot != ref.ConnectionSlot ||
 		header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision ||
 		header.RelayServiceID != ref.RelayServiceID || header.RelayID != claimed.RelayId ||
 		header.RelayRunID != claimed.RelayRunId || header.RelayLeaseRevision != uint64(claimed.RelayLeaseRevision) {
@@ -314,7 +314,7 @@ func (r *Registry) Remove(connection *PublisherConnection) bool {
 		return false
 	}
 	delete(r.connections, connection.ref.PublisherConnectionID)
-	key := slotKey{routeSessionID: connection.ref.RouteSessionID, slot: connection.ref.ConnectionSlot}
+	key := slotKey{publishRunID: connection.ref.PublishRunID, slot: connection.ref.ConnectionSlot}
 	if r.slots[key] == connection {
 		delete(r.slots, key)
 	}

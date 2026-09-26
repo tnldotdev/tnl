@@ -243,7 +243,12 @@ func (b fieldBlock) render(width int) []row {
 func (b flowBlock) render(width int) []row {
 	var result []row
 	for index, node := range b {
-		for _, line := range wrap(node.Label, width) {
+		lines := wrap(node.Label, width)
+		for _, line := range lines {
+			// Short labels sit beneath the fixed connector at content column three.
+			if len(lines) == 1 && len(line) > 0 && len(line) < 7 {
+				line = strings.Repeat(" ", (7-len(line))/2) + line
+			}
 			result = append(result, row{text: line})
 		}
 		if index == len(b)-1 {

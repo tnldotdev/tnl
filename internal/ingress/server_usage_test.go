@@ -24,7 +24,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 		at               time.Time
 	}
 	recovered := make(chan recovery, 1)
-	config := routeConfig(backend)
+	config := publicURLConfig(backend)
 	config.OpenUsage, config.Metrics = usage.Open, metrics
 	config.ObserveRecovery = func(id string, version, episode uint64, at time.Time) {
 		recovered <- recovery{id, version, episode, at}
@@ -40,7 +40,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	ingressAwait(t, u.closed)
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.routeID != "route_test" || u.routeVersion != 1 || !u.source.IsLoopback() || u.openedAt.IsZero() || u.closedAt.IsZero() || u.publisherOpeningAt.IsZero() || u.publisherOpenedAt.IsZero() || u.streams != 1 || u.ingressBytes <= 0 || u.egressBytes <= 0 {
+	if u.publicURLID != "public_url_test" || u.publishRunNumber != 1 || !u.source.IsLoopback() || u.openedAt.IsZero() || u.closedAt.IsZero() || u.publisherOpeningAt.IsZero() || u.publisherOpenedAt.IsZero() || u.streams != 1 || u.ingressBytes <= 0 || u.egressBytes <= 0 {
 		t.Fatalf("usage = %+v", u)
 	}
 	metrics.forwardedMu.Lock()
@@ -49,7 +49,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 		t.Fatalf("metrics=%v usage=%d/%d", metrics.forwardedBytes, u.ingressBytes, u.egressBytes)
 	}
 	r := ingressAwait(t, recovered)
-	if r.id != "route_test" || r.version != 1 || r.episode != 7 || r.at.IsZero() {
+	if r.id != "public_url_test" || r.version != 1 || r.episode != 7 || r.at.IsZero() {
 		t.Fatalf("recovery=%+v", r)
 	}
 }
@@ -58,8 +58,8 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	backend := newTLSBackend(t, "acme-tls/1")
 	var opened atomic.Bool
 	config := Config{
-		Lookup: func(string) (Route, bool) {
-			return Route{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
+		Lookup: func(string) (PublicURL, bool) {
+			return PublicURL{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
 		},
 		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
 			if host != "route.example" {
@@ -97,7 +97,7 @@ func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
 	metrics := new(testMetrics)
 	_, address := startIngress(t, Config{
 		Metrics: metrics,
-		Lookup:  func(string) (Route, bool) { return Route{}, false },
+		Lookup:  func(string) (PublicURL, bool) { return PublicURL{}, false },
 		LookupChallenge: func(string) ([]routebackend.Backend, string) {
 			return nil, "missing"
 		},
@@ -122,8 +122,8 @@ func TestIngressConfiguredSourceRefill(t *testing.T) {
 	t.Cleanup(func() { _ = listener.Close() })
 	synctest.Test(t, func(t *testing.T) {
 		server, err := New(listener, Config{
-			Lookup:         func(string) (Route, bool) { return Route{}, false },
-			MaxConnections: 8, MaxRouteConnections: 2,
+			Lookup:         func(string) (PublicURL, bool) { return PublicURL{}, false },
+			MaxConnections: 8, MaxPublicURLConnections: 2,
 			SourceConnectionRate: 2.5, SourceConnectionBurst: 2,
 		})
 		if err != nil {
@@ -158,9 +158,9 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (Route, bool) {
+	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, bool) {
 		lookups.Add(1)
-		return Route{ID: "route_test", RouteVersion: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
 	}}
 	config.SourceConnectionRate, config.SourceConnectionBurst = 0.000001, 1
 	server, address := startIngress(t, config)
@@ -192,8 +192,8 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if len(server.byRoute) != 0 {
-		t.Fatalf("route capacity retained: %v", server.byRoute)
+	if len(server.byPublicURL) != 0 {
+		t.Fatalf("route capacity retained: %v", server.byPublicURL)
 	}
 }
 
@@ -220,9 +220,9 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	t.Cleanup(unblock)
 	backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("publisher unavailable")}
 	usage := newUsageRecorder()
-	config := routeConfig(backend)
+	config := publicURLConfig(backend)
 	config.OpenUsage = usage.Open
-	config.MaxRouteConnections = 1
+	config.MaxPublicURLConnections = 1
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
@@ -260,7 +260,7 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			t.Cleanup(unblock)
 			backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, connection: a}
 			usage := newUsageRecorder()
-			config := routeConfig(backend)
+			config := publicURLConfig(backend)
 			config.OpenUsage = usage.Open
 			server, address := startIngress(t, config)
 			client := ingressClient(t, address, "route.example", "")

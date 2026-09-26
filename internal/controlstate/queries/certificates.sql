@@ -84,15 +84,15 @@ DELETE FROM control.control_tls_cache
 WHERE directory_url = sqlc.arg(directory_url)
   AND cache_key = sqlc.arg(cache_key);
 
--- name: GetRouteSessionByTokenID :one
+-- name: GetPublishRunByTokenID :one
 SELECT *
-FROM control.route_sessions
-WHERE session_token_id = sqlc.arg(session_token_id);
+FROM control.publish_runs
+WHERE publish_run_token_id = sqlc.arg(publish_run_token_id);
 
 -- name: GetACMEOrderByIdempotency :one
 SELECT *
 FROM control.acme_orders
-WHERE route_session_id = sqlc.arg(route_session_id)
+WHERE publish_run_id = sqlc.arg(publish_run_id)
   AND idempotency_key = sqlc.arg(idempotency_key);
 
 -- name: LockCertificateIssuanceControl :one
@@ -105,9 +105,9 @@ FOR SHARE;
 INSERT INTO control.acme_orders (
     id,
     account_id,
-    route_session_id,
-    route_id,
-    route_version,
+    publish_run_id,
+    public_url_id,
+    publish_run_number,
     idempotency_key,
     request_digest,
     certificate_cache_key,
@@ -123,9 +123,9 @@ INSERT INTO control.acme_orders (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(account_id),
-    sqlc.arg(route_session_id),
-    sqlc.arg(route_id),
-    sqlc.arg(route_version),
+    sqlc.arg(publish_run_id),
+    sqlc.arg(public_url_id),
+    sqlc.arg(publish_run_number),
     sqlc.arg(idempotency_key),
     sqlc.arg(request_digest),
     sqlc.arg(certificate_cache_key),
@@ -190,11 +190,11 @@ WHERE order_id = sqlc.arg(issuance_id)
   AND challenge_type = 'tls-alpn-01'
   AND state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning', 'failed');
 
--- name: GetActiveRouteSessionChallengeExpiry :one
+-- name: GetActivePublishRunChallengeExpiry :one
 SELECT MIN(authorizations.expires_at)::timestamptz AS expires_at
 FROM control.acme_authorizations AS authorizations
 JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-WHERE orders.route_session_id = sqlc.arg(route_session_id)
+WHERE orders.publish_run_id = sqlc.arg(publish_run_id)
   AND authorizations.challenge_type = 'tls-alpn-01'
   AND authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
   AND authorizations.expires_at > sqlc.arg(now);
@@ -202,10 +202,10 @@ WHERE orders.route_session_id = sqlc.arg(route_session_id)
 -- name: LockACMEOrderForInstall :one
 SELECT orders.*
 FROM control.acme_orders AS orders
-JOIN control.route_sessions AS issued_session
-  ON issued_session.id = orders.route_session_id
- AND issued_session.route_id = orders.route_id
- AND issued_session.route_version = orders.route_version
+JOIN control.publish_runs AS issued_session
+  ON issued_session.id = orders.publish_run_id
+ AND issued_session.public_url_id = orders.public_url_id
+ AND issued_session.publish_run_number = orders.publish_run_number
 WHERE orders.id = sqlc.arg(issuance_id)
   AND issued_session.team_id = sqlc.arg(team_id)
   AND orders.certificate_cache_key = sqlc.arg(certificate_cache_key)
@@ -278,16 +278,16 @@ WITH candidate AS (
           OR EXISTS (
               SELECT 1
               FROM (
-                  SELECT events.routing_table_revision, events.event_kind, events.projection, events.route_expires_at
+                  SELECT events.routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
                   FROM control.ingress_routing_table_events AS events
-                  WHERE events.route_id = orders.route_id
-                    AND events.route_version = orders.route_version
+                  WHERE events.public_url_id = orders.public_url_id
+                    AND events.publish_run_number = orders.publish_run_number
                     AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
                   ORDER BY events.routing_table_revision DESC
                   LIMIT 1
               ) AS challenge
               WHERE challenge.event_kind = 'challenge_upsert'
-                AND challenge.route_expires_at > sqlc.arg(claimed_at)
+                AND challenge.public_url_expires_at > sqlc.arg(claimed_at)
                 AND EXISTS (
                     SELECT 1
                     FROM jsonb_to_recordset(
@@ -329,7 +329,7 @@ RETURNING orders.*;
 -- asking the CA to validate, while the authorization is still presented.
 SELECT coalesce(
     events.event_kind = 'challenge_upsert'
-    AND events.route_expires_at > sqlc.arg(checked_at)
+    AND events.public_url_expires_at > sqlc.arg(checked_at)
     AND EXISTS (
         SELECT 1 FROM control.acme_authorizations AS authorizations
         WHERE authorizations.order_id = orders.id
@@ -356,7 +356,7 @@ SELECT coalesce(
 )::boolean AS ready
 FROM control.acme_orders AS orders
 JOIN control.ingress_routing_table_events AS events
-  ON events.route_id = orders.route_id AND events.route_version = orders.route_version
+  ON events.public_url_id = orders.public_url_id AND events.publish_run_number = orders.publish_run_number
 WHERE orders.id = sqlc.arg(issuance_id)
   AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
 ORDER BY events.routing_table_revision DESC
@@ -449,7 +449,7 @@ WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
   AND control.acme_authorizations.authorization_revision = sqlc.arg(expected_authorization_revision)
 RETURNING *;
 
--- name: CancelRouteSessionACMEOrders :exec
+-- name: CancelPublishRunACMEOrders :exec
 UPDATE control.acme_orders
 SET state = 'canceled',
     order_revision = order_revision + 1,
@@ -457,11 +457,11 @@ SET state = 'canceled',
     work_expires_at = NULL,
     available_at = sqlc.arg(canceled_at),
     updated_at = GREATEST(updated_at, sqlc.arg(canceled_at))
-WHERE route_session_id = sqlc.arg(route_session_id)
+WHERE publish_run_id = sqlc.arg(publish_run_id)
   AND certificate_pem IS NULL
   AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'failed');
 
--- name: CancelRouteSessionACMEAuthorizations :exec
+-- name: CancelPublishRunACMEAuthorizations :exec
 UPDATE control.acme_authorizations AS authorizations
 SET state = CASE
         WHEN challenge_type = 'dns-01' THEN 'cleaning'
@@ -476,5 +476,5 @@ SET state = CASE
     updated_at = GREATEST(authorizations.updated_at, sqlc.arg(canceled_at))
 FROM control.acme_orders AS orders
 WHERE orders.id = authorizations.order_id
-  AND orders.route_session_id = sqlc.arg(route_session_id)
+  AND orders.publish_run_id = sqlc.arg(publish_run_id)
   AND authorizations.state NOT IN ('complete', 'canceled');

@@ -23,17 +23,17 @@ import (
 )
 
 type publisherServices struct {
-	authenticated   *clientauth.Client
-	state           *clientstate.Store
-	hostname        string
-	memberNamespace string
-	teamID          string
-	membershipID    string
-	domainID        string
-	routeScope      controlv1.RouteScope
-	policyRevision  uint64
-	ephemeral       bool
-	routes          *controlclient.Client
+	authenticated  *clientauth.Client
+	state          *clientstate.Store
+	hostname       string
+	namespace      string
+	teamID         string
+	membershipID   string
+	domainID       string
+	publicURLScope controlv1.PublicURLScope
+	policyRevision uint64
+	ephemeral      bool
+	routes         *controlclient.Client
 }
 
 type clientIPLookup interface {
@@ -124,29 +124,29 @@ func preparePublisherServices(
 	if current.team.PolicyRevision < 0 {
 		return publisherServices{}, errors.New("authority returned an invalid team policy revision")
 	}
-	hostname, domain, routeScope, err := resolvePublishHostname(hostname, subdomain, current)
+	hostname, domain, publicURLScope, err := resolvePublishHostname(hostname, subdomain, current)
 	if err != nil {
 		return publisherServices{}, err
 	}
 	return publisherServices{
-		authenticated:   authenticated,
-		state:           publisherState,
-		hostname:        hostname,
-		memberNamespace: memberNamespace(current.membership, domain),
-		teamID:          current.team.Id,
-		membershipID:    current.membership.Id,
-		domainID:        domain.Id,
-		routeScope:      routeScope,
-		policyRevision:  uint64(current.team.PolicyRevision),
-		ephemeral:       ephemeral,
-		routes:          authenticated.Control,
+		authenticated:  authenticated,
+		state:          publisherState,
+		hostname:       hostname,
+		namespace:      namespaceForMembership(current.membership, domain),
+		teamID:         current.team.Id,
+		membershipID:   current.membership.Id,
+		domainID:       domain.Id,
+		publicURLScope: publicURLScope,
+		policyRevision: uint64(current.team.PolicyRevision),
+		ephemeral:      ephemeral,
+		routes:         authenticated.Control,
 	}, nil
 }
 
 func resolvePublishHostname(
 	hostname, subdomain string,
 	current teamContext,
-) (string, authorityv1.Domain, controlv1.RouteScope, error) {
+) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
 	if hostname != "" && subdomain != "" {
 		return "", authorityv1.Domain{}, "", errors.New("--host and --subdomain are mutually exclusive")
 	}
@@ -154,7 +154,7 @@ func resolvePublishHostname(
 	if err != nil {
 		return "", authorityv1.Domain{}, "", err
 	}
-	namespace := memberNamespace(current.membership, domain)
+	namespace := namespaceForMembership(current.membership, domain)
 	if subdomain != "" {
 		canonical, err := naming.CanonicalizeHostname(subdomain)
 		if err != nil || canonical != subdomain || strings.Contains(subdomain, ".") {
@@ -178,15 +178,15 @@ func resolvePublishHostname(
 		if err != nil {
 			return "", authorityv1.Domain{}, "", err
 		}
-		namespace = memberNamespace(current.membership, domain)
+		namespace = namespaceForMembership(current.membership, domain)
 	}
-	routeScope := controlv1.Shared
+	publicURLScope := controlv1.Shared
 	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
-		routeScope = controlv1.Member
+		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
 		return "", authorityv1.Domain{}, "", errors.New("shared routes require a team administrator or owner")
 	}
-	return hostname, domain, routeScope, nil
+	return hostname, domain, publicURLScope, nil
 }
 
 func defaultReadyDomain(current teamContext) (authorityv1.Domain, error) {
@@ -217,7 +217,7 @@ func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (auth
 	return selected, nil
 }
 
-func memberNamespace(membership authorityv1.Membership, domain authorityv1.Domain) string {
+func namespaceForMembership(membership authorityv1.Membership, domain authorityv1.Domain) string {
 	label := membership.MemberSlug
 	if domain.Kind == authorityv1.Managed {
 		label = membership.ManagedLabel
@@ -240,7 +240,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, req
 		MembershipID:      p.membershipID,
 		DomainID:          p.domainID,
 		Hostname:          p.hostname,
-		RouteScope:        p.routeScope,
+		PublicURLScope:    p.publicURLScope,
 		PolicyRevision:    p.policyRevision,
 		Target:            target,
 		RequestLimit:      requestLimit,

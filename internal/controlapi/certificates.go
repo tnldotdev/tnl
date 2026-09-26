@@ -12,7 +12,7 @@ import (
 func (h *handler) CreateCertificateIssuance(
 	response http.ResponseWriter,
 	request *http.Request,
-	routeSessionID controlv1.RouteSessionID,
+	publishRunID controlv1.PublishRunID,
 	_ controlv1.CreateCertificateIssuanceParams,
 ) {
 	if !h.config.CertificateIssuance {
@@ -20,15 +20,15 @@ func (h *handler) CreateCertificateIssuance(
 		return
 	}
 	var body controlv1.CreateCertificateIssuanceRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.RouteVersion <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	authentication, ok := h.authenticateRouteSessionRequest(response, request, string(routeSessionID), uint64(body.RouteVersion))
+	authentication, ok := h.authenticatePublishRunRequest(response, request, string(publishRunID), uint64(body.PublishRunNumber))
 	if !ok {
 		return
 	}
-	digest := certificateIssuanceRequestDigest(uint64(body.RouteVersion), body.Csr)
+	digest := certificateIssuanceRequestDigest(uint64(body.PublishRunNumber), body.Csr)
 	issuance, err := h.store.CreateCertificateIssuance(request.Context(), controlstate.CreateCertificateIssuanceRequest{
 		Authentication: authentication, DirectoryURL: h.config.ACMEDirectoryURL,
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), RequestDigest: digest, CSRDER: body.Csr,
@@ -47,7 +47,7 @@ func (h *handler) GetCertificateIssuance(response http.ResponseWriter, request *
 		return
 	}
 	issuance, err := h.store.GetCertificateIssuance(
-		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "get certificate issuance", err)
@@ -63,7 +63,7 @@ func (h *handler) MarkCertificateChallengeReady(response http.ResponseWriter, re
 		return
 	}
 	issuance, err := h.store.MarkCertificateChallengeReady(
-		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "mark certificate challenge ready", err)
@@ -79,7 +79,7 @@ func (h *handler) MarkCertificateChallengeRemoved(response http.ResponseWriter, 
 		return
 	}
 	issuance, err := h.store.MarkCertificateChallengeRemoved(
-		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "mark certificate challenge removed", err)

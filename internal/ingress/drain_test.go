@@ -32,7 +32,7 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 		_, err = io.Copy(io.Discard, replay)
 		return err
 	})
-	server, address := startIngress(t, routeConfig(singleBackend{a}))
+	server, address := startIngress(t, publicURLConfig(singleBackend{a}))
 	client := ingressClient(t, address, "route.example", "")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
 	ingressAwait(t, opened)

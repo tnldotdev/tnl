@@ -11,18 +11,18 @@ import (
 )
 
 func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ingress := registerTestIngress(t, database, now)
 	// A second, fully ready route publishes genuine heartbeat projections.
-	seedControlRoute(t, database, now, "unrelated")
+	seedControlPublicURL(t, database, now, "unrelated")
 	healthy := f
-	healthy.request.RouteID, healthy.request.TeamID = "route_unrelated", "team_unrelated"
+	healthy.request.PublicURLID, healthy.request.TeamID = "public_url_unrelated", "team_unrelated"
 	healthy.request.ActingIdentityID, healthy.request.MembershipID = "identity_unrelated", "membership_unrelated"
 	healthy.request.CertificateCacheKey = "certificate_unrelated"
 	healthy.request.CertificateIdentifiers = []string{"route-unrelated.example.test"}
 	var err error
-	healthy.setup, err = database.CreateRouteSession(t.Context(), healthy.request, now, time.Minute, time.Minute)
+	healthy.setup, err = database.CreatePublishRun(t.Context(), healthy.request, now, time.Minute, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 		work.Authorizations[0].AuthorizationURL = "https://acme.example.test/authz/pending"
 		work.Authorizations[0].ChallengeURL = "https://acme.example.test/challenge/pending"
 	})
-	if _, err := database.MarkCertificateChallengeReady(t.Context(), prepared.ID, f.setup.RouteSessionToken, now); err != nil {
+	if _, err := database.MarkCertificateChallengeReady(t.Context(), prepared.ID, f.setup.PublishRunToken, now); err != nil {
 		t.Fatal(err)
 	}
 	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, 0, 100, now)
@@ -42,7 +42,7 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 	renewACMEBarrierIngress(t, database, ingress, page.ThroughRevision, now, time.Hour)
 	for step := 1; step <= 3; step++ {
 		at := now.Add(time.Duration(step) * time.Second)
-		if _, err := database.HeartbeatRouteSession(t.Context(), healthy.authentication(), at, time.Minute, time.Minute); err != nil {
+		if _, err := database.HeartbeatPublishRun(t.Context(), healthy.authentication(), at, time.Minute, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 		work, found, err := database.ClaimACMEOrderWork(t.Context(), "challenge-worker", at, time.Minute)
@@ -56,7 +56,7 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 	}
 	// Changes to the challenge's own forwarding projection still need acknowledgement.
 	at := now.Add(4 * time.Second)
-	if _, err := database.HeartbeatRouteSession(t.Context(), f.authentication(), at, time.Minute, time.Minute); err != nil {
+	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), at, time.Minute, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "before-new-projection", at, time.Minute); err != nil || found {
@@ -76,7 +76,7 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 	for _, nextWorker := range []string{"original", "replacement"} {
 		t.Run(nextWorker, func(t *testing.T) {
-			f := newRouteSessionFixture(t)
+			f := newPublishRunFixture(t)
 			database, now := f.database, f.now
 			firstIngress := registerTestIngress(t, database, now)
 			secondIngress, err := database.RegisterIngress(t.Context(), IngressRegistration{
@@ -98,7 +98,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 			// The worker has a snapshot, then the publisher acknowledges the challenge
 			// while the worker is outside PostgreSQL talking to the CA.
 			at := now.Add(time.Second)
-			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.RouteSessionToken, at); err != nil {
+			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.PublishRunToken, at); err != nil {
 				t.Fatal(err)
 			}
 			original.AvailableAt = now.Add(time.Hour)
@@ -138,7 +138,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.RouteSessionToken, at.Add(time.Second)); err != nil {
+			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.PublishRunToken, at.Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			afterReplay, err := queries.GetACMEOrder(t.Context(), original.ID)
@@ -155,7 +155,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 			if err != nil || saved.Authorizations[0].State != "validating" || saved.Authorizations[0].PresentedAt == nil {
 				t.Fatalf("reclaimed work did not advance validation: %v", err)
 			}
-			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.RouteSessionToken, at.Add(2*time.Second)); err != nil {
+			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.PublishRunToken, at.Add(2*time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if _, found, err := database.ClaimACMEOrderWork(t.Context(), "competitor", at.Add(2*time.Second), time.Minute); err != nil || found {
@@ -170,7 +170,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 }
 
 func TestIntegrationACMEChallengeReadyRollbackPreservesClaim(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ingress := registerTestIngress(t, database, now)
 	claimTestConnection(t, f, 0, now)
@@ -204,7 +204,7 @@ func TestIntegrationACMEChallengeReadyRollbackPreservesClaim(t *testing.T) {
 	defer workers.stop()
 	done := make(chan error, 1)
 	workers.Go(func() {
-		_, err := database.MarkCertificateChallengeReady(operationCtx, work.ID, f.setup.RouteSessionToken, now.Add(time.Second))
+		_, err := database.MarkCertificateChallengeReady(operationCtx, work.ID, f.setup.PublishRunToken, now.Add(time.Second))
 		done <- err
 	})
 	// Publication is the final command, after both the authorization transition

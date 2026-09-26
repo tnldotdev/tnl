@@ -47,6 +47,9 @@ type ClaimedPublisherConnection struct {
 	ConnectedAt                            time.Time                       `json:"connected_at"`
 	ConnectionAssignmentRevision           int64                           `json:"connection_assignment_revision"`
 	ConnectionSlot                         int                             `json:"connection_slot"`
+	PublicUrlId                            Identifier                      `json:"public_url_id"`
+	PublishRunId                           Identifier                      `json:"publish_run_id"`
+	PublishRunNumber                       int64                           `json:"publish_run_number"`
 	PublisherConnectionCredentialExpiresAt time.Time                       `json:"publisher_connection_credential_expires_at"`
 	PublisherConnectionId                  Identifier                      `json:"publisher_connection_id"`
 	ReadyAt                                *time.Time                      `json:"ready_at,omitempty"`
@@ -55,9 +58,6 @@ type ClaimedPublisherConnection struct {
 	RelayLeaseRevision                     int64                           `json:"relay_lease_revision"`
 	RelayRunId                             Identifier                      `json:"relay_run_id"`
 	RelayServiceId                         Identifier                      `json:"relay_service_id"`
-	RouteId                                Identifier                      `json:"route_id"`
-	RouteSessionId                         Identifier                      `json:"route_session_id"`
-	RouteVersion                           int64                           `json:"route_version"`
 	State                                  ClaimedPublisherConnectionState `json:"state"`
 	TlsServerName                          Identifier                      `json:"tls_server_name"`
 }
@@ -81,15 +81,15 @@ type PublisherConnectionClaim struct {
 	ClaimId                       Identifier `json:"claim_id"`
 	ConnectionAssignmentRevision  int64      `json:"connection_assignment_revision"`
 	ConnectionSlot                int        `json:"connection_slot"`
+	PublicUrlId                   Identifier `json:"public_url_id"`
+	PublishRunId                  Identifier `json:"publish_run_id"`
+	PublishRunNumber              int64      `json:"publish_run_number"`
 	PublisherConnectionCredential string     `json:"publisher_connection_credential"`
 	PublisherConnectionId         Identifier `json:"publisher_connection_id"`
 	RelayId                       Identifier `json:"relay_id"`
 	RelayLeaseRevision            int64      `json:"relay_lease_revision"`
 	RelayRunId                    Identifier `json:"relay_run_id"`
 	RelayServiceId                Identifier `json:"relay_service_id"`
-	RouteId                       Identifier `json:"route_id"`
-	RouteSessionId                Identifier `json:"route_session_id"`
-	RouteVersion                  int64      `json:"route_version"`
 }
 
 // PublisherConnectionDisconnect defines model for PublisherConnectionDisconnect.
@@ -97,14 +97,14 @@ type PublisherConnectionDisconnect struct {
 	ClaimId                      Identifier `json:"claim_id"`
 	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
 	ConnectionSlot               int        `json:"connection_slot"`
+	PublicUrlId                  Identifier `json:"public_url_id"`
+	PublishRunId                 Identifier `json:"publish_run_id"`
+	PublishRunNumber             int64      `json:"publish_run_number"`
 	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
 	RelayId                      Identifier `json:"relay_id"`
 	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
 	RelayRunId                   Identifier `json:"relay_run_id"`
 	RelayServiceId               Identifier `json:"relay_service_id"`
-	RouteId                      Identifier `json:"route_id"`
-	RouteSessionId               Identifier `json:"route_session_id"`
-	RouteVersion                 int64      `json:"route_version"`
 	Unexpected                   bool       `json:"unexpected"`
 }
 
@@ -112,11 +112,11 @@ type PublisherConnectionDisconnect struct {
 type PublisherConnectionIdentity struct {
 	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
 	ConnectionSlot               int        `json:"connection_slot"`
+	PublicUrlId                  Identifier `json:"public_url_id"`
+	PublishRunId                 Identifier `json:"publish_run_id"`
+	PublishRunNumber             int64      `json:"publish_run_number"`
 	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
 	RelayServiceId               Identifier `json:"relay_service_id"`
-	RouteId                      Identifier `json:"route_id"`
-	RouteSessionId               Identifier `json:"route_session_id"`
-	RouteVersion                 int64      `json:"route_version"`
 }
 
 // PublisherConnectionProcessIdentity defines model for PublisherConnectionProcessIdentity.
@@ -132,14 +132,14 @@ type PublisherConnectionTransition struct {
 	ClaimId                      Identifier `json:"claim_id"`
 	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
 	ConnectionSlot               int        `json:"connection_slot"`
+	PublicUrlId                  Identifier `json:"public_url_id"`
+	PublishRunId                 Identifier `json:"publish_run_id"`
+	PublishRunNumber             int64      `json:"publish_run_number"`
 	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
 	RelayId                      Identifier `json:"relay_id"`
 	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
 	RelayRunId                   Identifier `json:"relay_run_id"`
 	RelayServiceId               Identifier `json:"relay_service_id"`
-	RouteId                      Identifier `json:"route_id"`
-	RouteSessionId               Identifier `json:"route_session_id"`
-	RouteVersion                 int64      `json:"route_version"`
 }
 
 // RelayDrainRequest defines model for RelayDrainRequest.

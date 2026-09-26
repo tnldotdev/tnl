@@ -51,9 +51,9 @@ type ControlAcmeAuthorization struct {
 type ControlAcmeOrder struct {
 	ID                     string
 	AccountID              string
-	RouteSessionID         string
-	RouteID                string
-	RouteVersion           int64
+	PublishRunID           string
+	PublicURLID            string
+	PublishRunNumber       int64
 	IdempotencyKey         string
 	RequestDigest          []byte
 	CertificateCacheKey    string
@@ -213,12 +213,12 @@ type ControlIngressRoutingTableClock struct {
 type ControlIngressRoutingTableEvent struct {
 	RoutingTableRevision int64
 	EventKind            string
-	RouteID              string
-	RouteVersion         int64
+	PublicURLID          string
+	PublishRunNumber     int64
 	CanonicalHostname    string
 	EntryRevision        int64
 	Projection           []byte
-	RouteExpiresAt       pgtype.Timestamptz
+	PublicUrlExpiresAt   pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 }
 
@@ -226,8 +226,8 @@ type ControlIngressUsageReport struct {
 	ReportID                  int64
 	IngressID                 string
 	IngressRunID              string
-	RouteID                   string
-	RouteVersion              int64
+	PublicURLID               string
+	PublishRunNumber          int64
 	BucketStart               pgtype.Timestamptz
 	BucketEnd                 pgtype.Timestamptz
 	ObservedThrough           pgtype.Timestamptz
@@ -289,6 +289,174 @@ type ControlOidcAssertionExchange struct {
 	AssertionDigest []byte
 	ConsumedAt      pgtype.Timestamptz
 	ExpiresAt       pgtype.Timestamptz
+}
+
+type ControlPublicUrl struct {
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	PublicURLScope        string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextPublishRunNumber  int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+}
+
+type ControlPublicUrlRecoveryEpisode struct {
+	RecoveryEpisodeID int64
+	PublicURLID       string
+	PublishRunNumber  int64
+	State             string
+	OpenedAt          pgtype.Timestamptz
+	ObservedAt        pgtype.Timestamptz
+	CanceledAt        pgtype.Timestamptz
+	ObservedSeconds   pgtype.Float8
+}
+
+type ControlPublicUrlRecoveryHistogram struct {
+	Singleton             bool
+	ObservationCount      int64
+	ObservationSumSeconds float64
+	BucketLe025           int64
+	BucketLe05            int64
+	BucketLe1             int64
+	BucketLe2             int64
+	BucketLe5             int64
+	BucketLe10            int64
+	BucketLe20            int64
+	BucketLe30            int64
+	BucketLe45            int64
+	BucketLe60            int64
+	BucketLe120           int64
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type ControlPublicUrlUsageBucket struct {
+	BucketID                  int64
+	PublicURLID               string
+	PublishRunNumber          int64
+	TeamID                    string
+	ActingIdentityID          string
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	BucketRevision            int64
+	ObservedThrough           pgtype.Timestamptz
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	HistogramData             []byte
+	Finalized                 bool
+	Complete                  bool
+	FinalizedAt               pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+}
+
+type ControlPublicUrlUsageConfiguration struct {
+	Singleton                   bool
+	VisitorNetworkHashMasterKey []byte
+	CreatedAt                   pgtype.Timestamptz
+}
+
+type ControlPublicUrlUsageDelivery struct {
+	DeliveryID      int64
+	BucketID        int64
+	SourceRevision  int64
+	DeliveryKey     string
+	State           string
+	WorkOwner       pgtype.Text
+	WorkEpoch       int64
+	WorkExpiresAt   pgtype.Timestamptz
+	Attempts        int64
+	AvailableAt     pgtype.Timestamptz
+	LastAttemptedAt pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	LastError       pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+}
+
+type ControlPublishRun struct {
+	ID                     string
+	PublicURLID            string
+	TeamID                 string
+	MembershipID           pgtype.Text
+	ActingIdentityID       string
+	PublishRunNumber       int64
+	IdempotencyKey         string
+	RequestDigest          []byte
+	PublishRunTokenID      string
+	PublishRunTokenDigest  []byte
+	PolicyRevision         int64
+	PolicyDenials          int64
+	CertificateCacheKey    string
+	CertificateScope       string
+	CertificateIdentifiers []string
+	CertificateChallenge   string
+	State                  string
+	CreatedAt              pgtype.Timestamptz
+	LastHeartbeatAt        pgtype.Timestamptz
+	PublisherExpiresAt     pgtype.Timestamptz
+	CertificateInstalledAt pgtype.Timestamptz
+	CertificateIssuanceID  pgtype.Text
+	CertificateNotAfter    pgtype.Timestamptz
+	ReadyAt                pgtype.Timestamptz
+	ClosedAt               pgtype.Timestamptz
+	CloseReason            pgtype.Text
+	AssignmentsOpen        pgtype.Bool
+}
+
+type ControlPublishRunConnection struct {
+	PublishRunID                           string
+	PublicURLID                            string
+	PublishRunNumber                       int64
+	ConnectionSlot                         int16
+	PublisherConnectionID                  string
+	ConnectionAssignmentRevision           int64
+	RelayServiceID                         string
+	RelayAddress                           string
+	TlsServerName                          string
+	PublisherConnectionCredentialDigest    []byte
+	PublisherConnectionCredentialExpiresAt pgtype.Timestamptz
+	ConnectedRelayID                       pgtype.Text
+	ConnectedRelayRunID                    pgtype.Text
+	ConnectedRelayLeaseRevision            pgtype.Int8
+	ClaimID                                pgtype.Text
+	State                                  string
+	AssignedAt                             pgtype.Timestamptz
+	ConnectedAt                            pgtype.Timestamptz
+	ReadyAt                                pgtype.Timestamptz
+	DisconnectedAt                         pgtype.Timestamptz
+	ClosedAt                               pgtype.Timestamptz
+	SessionOpen                            bool
 }
 
 type ControlRelayCertificateOrder struct {
@@ -361,174 +529,6 @@ type ControlRelayService struct {
 type ControlRelayServiceAssignmentTotal struct {
 	RelayServiceID  string
 	AssignmentCount int64
-}
-
-type ControlRoute struct {
-	ID                    string
-	TeamID                string
-	DomainID              string
-	MembershipID          pgtype.Text
-	CreatedByIdentityID   string
-	IdempotencyKey        string
-	RequestDigest         []byte
-	CanonicalHostname     string
-	Target                string
-	RouteScope            string
-	PolicyRevision        int64
-	IpPolicy              string
-	AllowedIpPrefixes     []netip.Prefix
-	LifecycleState        string
-	DnsAuthorityReference pgtype.Text
-	DnsState              string
-	DnsRevision           int64
-	DnsWorkOwner          pgtype.Text
-	DnsWorkEpoch          int64
-	DnsWorkExpiresAt      pgtype.Timestamptz
-	DnsAttempts           int64
-	DnsAvailableAt        pgtype.Timestamptz
-	DnsLastError          pgtype.Text
-	NextRouteVersion      int64
-	MutationRevision      int64
-	Ephemeral             bool
-	ExpiresAt             pgtype.Timestamptz
-	SuspensionRevision    int64
-	SuspensionReason      pgtype.Text
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	SuspendedAt           pgtype.Timestamptz
-	DeletedAt             pgtype.Timestamptz
-}
-
-type ControlRouteRecoveryEpisode struct {
-	RecoveryEpisodeID int64
-	RouteID           string
-	RouteVersion      int64
-	State             string
-	OpenedAt          pgtype.Timestamptz
-	ObservedAt        pgtype.Timestamptz
-	CanceledAt        pgtype.Timestamptz
-	ObservedSeconds   pgtype.Float8
-}
-
-type ControlRouteRecoveryHistogram struct {
-	Singleton             bool
-	ObservationCount      int64
-	ObservationSumSeconds float64
-	BucketLe025           int64
-	BucketLe05            int64
-	BucketLe1             int64
-	BucketLe2             int64
-	BucketLe5             int64
-	BucketLe10            int64
-	BucketLe20            int64
-	BucketLe30            int64
-	BucketLe45            int64
-	BucketLe60            int64
-	BucketLe120           int64
-	UpdatedAt             pgtype.Timestamptz
-}
-
-type ControlRouteSession struct {
-	ID                     string
-	RouteID                string
-	TeamID                 string
-	MembershipID           pgtype.Text
-	ActingIdentityID       string
-	RouteVersion           int64
-	IdempotencyKey         string
-	RequestDigest          []byte
-	SessionTokenID         string
-	SessionTokenDigest     []byte
-	PolicyRevision         int64
-	PolicyDenials          int64
-	CertificateCacheKey    string
-	CertificateScope       string
-	CertificateIdentifiers []string
-	CertificateChallenge   string
-	State                  string
-	CreatedAt              pgtype.Timestamptz
-	LastHeartbeatAt        pgtype.Timestamptz
-	PublisherExpiresAt     pgtype.Timestamptz
-	CertificateInstalledAt pgtype.Timestamptz
-	CertificateIssuanceID  pgtype.Text
-	CertificateNotAfter    pgtype.Timestamptz
-	ReadyAt                pgtype.Timestamptz
-	ClosedAt               pgtype.Timestamptz
-	CloseReason            pgtype.Text
-	AssignmentsOpen        pgtype.Bool
-}
-
-type ControlRouteSessionConnection struct {
-	RouteSessionID                         string
-	RouteID                                string
-	RouteVersion                           int64
-	ConnectionSlot                         int16
-	PublisherConnectionID                  string
-	ConnectionAssignmentRevision           int64
-	RelayServiceID                         string
-	RelayAddress                           string
-	TlsServerName                          string
-	PublisherConnectionCredentialDigest    []byte
-	PublisherConnectionCredentialExpiresAt pgtype.Timestamptz
-	ConnectedRelayID                       pgtype.Text
-	ConnectedRelayRunID                    pgtype.Text
-	ConnectedRelayLeaseRevision            pgtype.Int8
-	ClaimID                                pgtype.Text
-	State                                  string
-	AssignedAt                             pgtype.Timestamptz
-	ConnectedAt                            pgtype.Timestamptz
-	ReadyAt                                pgtype.Timestamptz
-	DisconnectedAt                         pgtype.Timestamptz
-	ClosedAt                               pgtype.Timestamptz
-	SessionOpen                            bool
-}
-
-type ControlRouteUsageBucket struct {
-	BucketID                  int64
-	RouteID                   string
-	RouteVersion              int64
-	TeamID                    string
-	ActingIdentityID          string
-	BucketStart               pgtype.Timestamptz
-	BucketEnd                 pgtype.Timestamptz
-	BucketRevision            int64
-	ObservedThrough           pgtype.Timestamptz
-	ConnectionAttempts        int64
-	PolicyDenials             int64
-	CapacityDenials           int64
-	VisitorStreamOpenFailures int64
-	SuccessfulStreams         int64
-	ConnectionNanoseconds     int64
-	IngressBytes              int64
-	EgressBytes               int64
-	HistogramData             []byte
-	Finalized                 bool
-	Complete                  bool
-	FinalizedAt               pgtype.Timestamptz
-	UpdatedAt                 pgtype.Timestamptz
-}
-
-type ControlRouteUsageConfiguration struct {
-	Singleton                   bool
-	VisitorNetworkHashMasterKey []byte
-	CreatedAt                   pgtype.Timestamptz
-}
-
-type ControlRouteUsageDelivery struct {
-	DeliveryID      int64
-	BucketID        int64
-	SourceRevision  int64
-	DeliveryKey     string
-	State           string
-	WorkOwner       pgtype.Text
-	WorkEpoch       int64
-	WorkExpiresAt   pgtype.Timestamptz
-	Attempts        int64
-	AvailableAt     pgtype.Timestamptz
-	LastAttemptedAt pgtype.Timestamptz
-	DeliveredAt     pgtype.Timestamptz
-	LastError       pgtype.Text
-	CreatedAt       pgtype.Timestamptz
 }
 
 type ControlRuntimeSecret struct {

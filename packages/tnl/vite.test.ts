@@ -71,7 +71,7 @@ describe("tnl", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({
         hostname: "override.example",
-        memberNamespace: "member.example",
+        namespace: "member.example",
         project: {
           ...project,
           services: {
@@ -281,16 +281,16 @@ test("registers and serves an IPv6 localhost target", async () => {
 
 function runtimeDefine(runningUnderTnlDev: boolean, apiHostname = "api.member.example") {
   const payload = JSON.stringify({
-    memberNamespace: "member.example",
+    namespace: "member.example",
     runningUnderTnlDev,
     services: {
       api: {
-        memberNamespace: "member.example",
+        namespace: "member.example",
         hostname: apiHostname,
         url: `https://${apiHostname}`,
       },
       web: {
-        memberNamespace: "member.example",
+        namespace: "member.example",
         hostname: "web.member.example",
         url: "https://web.member.example",
       },

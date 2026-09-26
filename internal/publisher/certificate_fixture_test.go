@@ -23,18 +23,18 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-const certificateTestRouteID = "route_0123456789abcdef0123456789abcdef"
+const certificateTestPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
 
-func (c *certificateTestControl) CreateRouteSession(_ context.Context, routeID, key string) (controlv1.RouteSessionSetup, error) {
-	if routeID != c.setup.Route.Id || key == "" {
-		return controlv1.RouteSessionSetup{}, errors.New("unexpected route session request")
+func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string) (controlv1.PublishRunSetup, error) {
+	if publicURLID != c.setup.PublicUrl.Id || key == "" {
+		return controlv1.PublishRunSetup{}, errors.New("unexpected publish run request")
 	}
 	return c.setup, nil
 }
 
-func (c *certificateTestControl) CloseRouteSession(_ context.Context, session string, token credentials.RouteSessionToken) error {
-	if session != c.setup.RouteSession.Id || token.String() != c.setup.RouteSessionToken {
-		return errors.New("unexpected route session close")
+func (c *certificateTestControl) ClosePublishRun(_ context.Context, session string, token credentials.PublishRunToken) error {
+	if session != c.setup.PublishRun.Id || token.String() != c.setup.PublishRunToken {
+		return errors.New("unexpected publish run close")
 	}
 	c.mu.Lock()
 	c.closedSessions = append(c.closedSessions, session)
@@ -42,18 +42,18 @@ func (c *certificateTestControl) CloseRouteSession(_ context.Context, session st
 	return nil
 }
 
-func (c *certificateTestControl) HeartbeatRouteSession(ctx context.Context, session string, version uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
-	if session != c.setup.RouteSession.Id || version != uint64(c.setup.RouteSession.RouteVersion) || token.String() != c.setup.RouteSessionToken {
-		return controlv1.RouteSessionHeartbeat{}, errors.New("unexpected heartbeat identity")
+func (c *certificateTestControl) HeartbeatPublishRun(ctx context.Context, session string, version uint64, token credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+	if session != c.setup.PublishRun.Id || version != uint64(c.setup.PublishRun.PublishRunNumber) || token.String() != c.setup.PublishRunToken {
+		return controlv1.PublishRunHeartbeat{}, errors.New("unexpected heartbeat identity")
 	}
 	if c.heartbeat != nil {
 		return c.heartbeat(ctx, session, version, token)
 	}
-	return controlv1.RouteSessionHeartbeat{RouteSession: c.setup.RouteSession, PublisherConnections: c.setup.PublisherConnections}, nil
+	return controlv1.PublishRunHeartbeat{PublishRun: c.setup.PublishRun, PublisherConnections: c.setup.PublisherConnections}, nil
 }
 
-func (c *certificateTestControl) MarkRouteSessionReady(_ context.Context, session string, version uint64, token credentials.RouteSessionToken) error {
-	if session != c.setup.RouteSession.Id || version != uint64(c.setup.RouteSession.RouteVersion) || token.String() != c.setup.RouteSessionToken {
+func (c *certificateTestControl) MarkPublishRunReady(_ context.Context, session string, version uint64, token credentials.PublishRunToken) error {
+	if session != c.setup.PublishRun.Id || version != uint64(c.setup.PublishRun.PublishRunNumber) || token.String() != c.setup.PublishRunToken {
 		return errors.New("unexpected readiness identity")
 	}
 	if c.ready != nil {
@@ -64,7 +64,7 @@ func (c *certificateTestControl) MarkRouteSessionReady(_ context.Context, sessio
 
 type certificateTestControl struct {
 	publisherControlStub
-	setup          controlv1.RouteSessionSetup
+	setup          controlv1.PublishRunSetup
 	store          *clientstate.Store
 	signer         tls.Certificate
 	create         func([]byte, string) (controlv1.CertificateIssuance, error)
@@ -81,11 +81,11 @@ type certificateTestControl struct {
 
 func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.CertificatePlan) *certificateTestControl {
 	t.Helper()
-	token, _, _, err := credentials.NewRouteSessionToken()
+	token, _, _, err := credentials.NewPublishRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := routeTestCertificate(t, "issuer.example")
+	signer := publicURLTestCertificate(t, "issuer.example")
 	signer.Leaf.IsCA, signer.Leaf.BasicConstraintsValid = true, true
 	signer.Leaf.KeyUsage, signer.Leaf.ExtKeyUsage = x509.KeyUsageCertSign, nil
 	signer.Leaf.NotAfter = time.Now().Add(90 * 24 * time.Hour)
@@ -100,10 +100,10 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 	}
 	return &certificateTestControl{
 		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
-		setup: controlv1.RouteSessionSetup{
-			Route:             controlv1.Route{Id: certificateTestRouteID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), RouteScope: controlv1.Member, LifecycleState: controlv1.Enabled},
-			RouteSession:      controlv1.RouteSession{Id: "route_session_0123456789abcdef0123456789abcdef", RouteId: certificateTestRouteID, TeamId: "team_1", RouteVersion: 1, ExpiresAt: time.Now().Add(time.Hour)},
-			RouteSessionToken: token.String(), CertificatePlan: plan,
+		setup: controlv1.PublishRunSetup{
+			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, LifecycleState: controlv1.Enabled},
+			PublishRun:      controlv1.PublishRun{Id: "publish_run_0123456789abcdef0123456789abcdef", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
+			PublishRunToken: token.String(), CertificatePlan: plan,
 		},
 	}
 }
@@ -112,19 +112,19 @@ func namespaceCertificateTestPlan() controlv1.CertificatePlan {
 	return controlv1.CertificatePlan{CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"}, ChallengeMethod: controlv1.Dns01}
 }
 
-func routeCertificateTestPlan() controlv1.CertificatePlan {
+func publicURLCertificateTestPlan() controlv1.CertificatePlan {
 	return controlv1.CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: controlv1.TlsAlpn01}
 }
 
-func newCertificateTransactionTest(t *testing.T) (*certificateTestControl, *RouteServer, *clientstate.CertificateCache) {
+func newCertificateTransactionTest(t *testing.T) (*certificateTestControl, *PublicURLServer, *clientstate.CertificateCache) {
 	t.Helper()
-	control := newCertificateTestControl(t, "route.example", routeCertificateTestPlan())
+	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	state, err := control.store.Certificates(control.setup.Route.TeamId, control.setup.CertificatePlan)
+	state, err := control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return control, certificateTestRoute(t, "route.example", control.setup.CertificatePlan), state
+	return control, certificateTestPublicURL(t, "route.example", control.setup.CertificatePlan), state
 }
 
 func certificateTestStore(t *testing.T, root string) *clientstate.Store {
@@ -141,9 +141,9 @@ func certificateTestStore(t *testing.T, root string) *clientstate.Store {
 	return store
 }
 
-func certificateTestRoute(t *testing.T, hostname string, plan controlv1.CertificatePlan) *RouteServer {
+func certificateTestPublicURL(t *testing.T, hostname string, plan controlv1.CertificatePlan) *PublicURLServer {
 	t.Helper()
-	route, err := NewRouteServer(RouteServerConfig{Hostname: hostname, Target: "http://127.0.0.1:3000", CertificatePlan: plan})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: hostname, Target: "http://127.0.0.1:3000", CertificatePlan: plan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func (c *certificateTestControl) issue(csrDER []byte) (controlv1.CertificateIssu
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	digest := sha256.Sum256(csrDER)
-	i := controlv1.CertificateIssuance{Id: fmt.Sprintf("issuance_%x", digest[:16]), RouteId: c.setup.Route.Id, RouteSessionId: c.setup.RouteSession.Id, RouteVersion: c.setup.RouteSession.RouteVersion, CertificatePlan: c.setup.CertificatePlan, State: controlv1.CertificateIssuanceStateWaitingForInstall, NotBefore: pointer(leaf.NotBefore), NotAfter: pointer(leaf.NotAfter)}
+	i := controlv1.CertificateIssuance{Id: fmt.Sprintf("issuance_%x", digest[:16]), PublicUrlId: c.setup.PublicUrl.Id, PublishRunId: c.setup.PublishRun.Id, PublishRunNumber: c.setup.PublishRun.PublishRunNumber, CertificatePlan: c.setup.CertificatePlan, State: controlv1.CertificateIssuanceStateWaitingForInstall, NotBefore: pointer(leaf.NotBefore), NotAfter: pointer(leaf.NotAfter)}
 	if c.change != nil {
 		c.change(&i, leaf)
 	}
@@ -198,8 +198,8 @@ func (c *certificateTestControl) issue(csrDER []byte) (controlv1.CertificateIssu
 	return i, nil
 }
 
-func (c *certificateTestControl) CreateCertificateIssuance(_ context.Context, session string, version uint64, token credentials.RouteSessionToken, csr []byte, key string) (controlv1.CertificateIssuance, error) {
-	if session != c.setup.RouteSession.Id || version != uint64(c.setup.RouteSession.RouteVersion) || token.String() != c.setup.RouteSessionToken || key == "" {
+func (c *certificateTestControl) CreateCertificateIssuance(_ context.Context, session string, version uint64, token credentials.PublishRunToken, csr []byte, key string) (controlv1.CertificateIssuance, error) {
+	if session != c.setup.PublishRun.Id || version != uint64(c.setup.PublishRun.PublishRunNumber) || token.String() != c.setup.PublishRunToken || key == "" {
 		return controlv1.CertificateIssuance{}, errors.New("unexpected certificate request identity")
 	}
 	if c.create != nil {
@@ -208,28 +208,28 @@ func (c *certificateTestControl) CreateCertificateIssuance(_ context.Context, se
 	return c.issue(csr)
 }
 
-func (c *certificateTestControl) MarkCertificateChallengeReady(_ context.Context, issuance string, token credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
+func (c *certificateTestControl) MarkCertificateChallengeReady(_ context.Context, issuance string, token credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
 	c.mu.Lock()
 	known := c.issued[issuance]
 	c.mu.Unlock()
-	if c.challengeReady == nil || !known || token.String() != c.setup.RouteSessionToken {
+	if c.challengeReady == nil || !known || token.String() != c.setup.PublishRunToken {
 		return controlv1.CertificateIssuance{}, errors.New("unexpected challenge-ready request")
 	}
 	return c.challengeReady()
 }
 
-func (c *certificateTestControl) MarkCertificateChallengeRemoved(_ context.Context, issuance string, token credentials.RouteSessionToken) error {
+func (c *certificateTestControl) MarkCertificateChallengeRemoved(_ context.Context, issuance string, token credentials.PublishRunToken) error {
 	c.mu.Lock()
 	known := c.issued[issuance]
 	c.mu.Unlock()
-	if c.removed == nil || !known || token.String() != c.setup.RouteSessionToken {
+	if c.removed == nil || !known || token.String() != c.setup.PublishRunToken {
 		return errors.New("unexpected challenge-removed request")
 	}
 	return c.removed()
 }
 
-func (c *certificateTestControl) MarkRouteSessionCertificateInstalled(_ context.Context, session string, version uint64, issuance string, notAfter time.Time, token credentials.RouteSessionToken) error {
-	if token.String() != c.setup.RouteSessionToken || session != c.setup.RouteSession.Id || version != uint64(c.setup.RouteSession.RouteVersion) || issuance == "" || notAfter.IsZero() {
+func (c *certificateTestControl) MarkPublishRunCertificateInstalled(_ context.Context, session string, version uint64, issuance string, notAfter time.Time, token credentials.PublishRunToken) error {
+	if token.String() != c.setup.PublishRunToken || session != c.setup.PublishRun.Id || version != uint64(c.setup.PublishRun.PublishRunNumber) || issuance == "" || notAfter.IsZero() {
 		return errors.New("unexpected certificate installation identity")
 	}
 	if c.installed != nil {

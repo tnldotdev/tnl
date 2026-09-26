@@ -20,21 +20,21 @@ type relayProcessLeaseIdentity struct {
 	relayLeaseRevision int64
 }
 
-func replenishRouteSessionConnections(
+func replenishPublishRunConnections(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
-	session controlstatedb.ControlRouteSession,
-	routeSessionToken credentials.RouteSessionToken,
+	session controlstatedb.ControlPublishRun,
+	publishRunToken credentials.PublishRunToken,
 	validConnections []controlstatedb.ListValidReadyPublisherConnectionsRow,
 	now time.Time,
 	credentialDuration time.Duration,
 ) (bool, error) {
-	rows, err := queries.ListRouteSessionConnections(ctx, session.ID)
+	rows, err := queries.ListPublishRunConnections(ctx, session.ID)
 	if err != nil {
-		return false, fmt.Errorf("controlstate: replenish route-session connections: list slots: %w", err)
+		return false, fmt.Errorf("controlstate: replenish publish-run connections: list slots: %w", err)
 	}
-	if len(rows) != routeSessionConnectionCount {
-		return false, errors.New("controlstate: replenish route-session connections: invalid slot count")
+	if len(rows) != publishRunConnectionCount {
+		return false, errors.New("controlstate: replenish publish-run connections: invalid slot count")
 	}
 	removedReady := false
 	needsPlacement := false
@@ -54,7 +54,7 @@ func replenishRouteSessionConnections(
 		// allocation. The SQL checks current service capacity and failed lease
 		// identity, and changes ready -> assigned without an expired intermediate
 		// state. The trigger therefore neither writes totals nor takes their guard.
-		updated, err := replaceRouteSessionConnection(ctx, queries, row, routeSessionToken, relayServicePlacement{
+		updated, err := replacePublishRunConnection(ctx, queries, row, publishRunToken, relayServicePlacement{
 			relayServiceID: row.RelayServiceID, relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
 		}, now, credentialDuration)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -74,7 +74,7 @@ func replenishRouteSessionConnections(
 	// can still acquire reservation -> service -> lease guards in normal order.
 	availableServices, leases, err := availableRelayServicePlacements(ctx, queries, now)
 	if err != nil {
-		return false, fmt.Errorf("controlstate: replenish route-session connections: %w", err)
+		return false, fmt.Errorf("controlstate: replenish publish-run connections: %w", err)
 	}
 	leaseIdentities := make(map[relayProcessLeaseIdentity]struct{}, len(leases))
 	serviceConfigurations := make(map[string]relayServicePlacement, len(availableServices))
@@ -88,7 +88,7 @@ func replenishRouteSessionConnections(
 		}] = struct{}{}
 	}
 
-	reservedServices := make(map[string]bool, routeSessionConnectionCount)
+	reservedServices := make(map[string]bool, publishRunConnectionCount)
 	for _, row := range rows {
 		reservedServices[row.RelayServiceID] = true
 	}
@@ -127,11 +127,11 @@ func replenishRouteSessionConnections(
 		if row.State != "closed" && row.State != "expired" {
 			if _, err := queries.ExpirePublisherConnection(ctx, controlstatedb.ExpirePublisherConnectionParams{
 				ExpiredAt: timestamptz(now), PublisherConnectionID: row.PublisherConnectionID,
-				RouteSessionID: row.RouteSessionID, ConnectionAssignmentRevision: row.ConnectionAssignmentRevision,
+				PublishRunID: row.PublishRunID, ConnectionAssignmentRevision: row.ConnectionAssignmentRevision,
 			}); errors.Is(err, pgx.ErrNoRows) {
 				return false, ErrConnectionAssignmentStale
 			} else if err != nil {
-				return false, fmt.Errorf("controlstate: replenish route-session connections: expire slot %d: %w", row.ConnectionSlot, err)
+				return false, fmt.Errorf("controlstate: replenish publish-run connections: expire slot %d: %w", row.ConnectionSlot, err)
 			}
 			if service, found := serviceConfigurations[row.RelayServiceID]; found {
 				service.assignments--
@@ -166,7 +166,7 @@ func replenishRouteSessionConnections(
 		if placement.relayServiceID == "" {
 			continue
 		}
-		_, err := replaceRouteSessionConnection(ctx, queries, row, routeSessionToken, placement, now, credentialDuration)
+		_, err := replacePublishRunConnection(ctx, queries, row, publishRunToken, placement, now, credentialDuration)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, ErrConnectionAssignmentStale
 		}
@@ -177,40 +177,40 @@ func replenishRouteSessionConnections(
 	return removedReady, nil
 }
 
-func replaceRouteSessionConnection(
+func replacePublishRunConnection(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
-	row controlstatedb.ControlRouteSessionConnection,
-	token credentials.RouteSessionToken,
+	row controlstatedb.ControlPublishRunConnection,
+	token credentials.PublishRunToken,
 	placement relayServicePlacement,
 	now time.Time,
 	credentialDuration time.Duration,
-) (controlstatedb.ControlRouteSessionConnection, error) {
+) (controlstatedb.ControlPublishRunConnection, error) {
 	if row.ConnectionAssignmentRevision <= 0 || row.ConnectionAssignmentRevision == math.MaxInt64 {
-		return controlstatedb.ControlRouteSessionConnection{}, errors.New("controlstate: replenish route-session connections: assignment revision is exhausted")
+		return controlstatedb.ControlPublishRunConnection{}, errors.New("controlstate: replenish publish-run connections: assignment revision is exhausted")
 	}
 	publisherConnectionID, err := opaqueid.New("connection_")
 	if err != nil {
-		return controlstatedb.ControlRouteSessionConnection{}, fmt.Errorf("controlstate: replenish route-session connections: generate publisher connection ID: %w", err)
+		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: generate publisher connection ID: %w", err)
 	}
 	revision := row.ConnectionAssignmentRevision + 1
 	credential, hash, err := credentials.DerivePublisherConnectionCredential(token, publisherConnectionCredentialContext(publisherConnectionID, revision))
 	if err != nil {
-		return controlstatedb.ControlRouteSessionConnection{}, fmt.Errorf("controlstate: replenish route-session connections: derive credential: %w", err)
+		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: derive credential: %w", err)
 	}
-	updated, err := queries.ReplaceRouteSessionConnection(ctx, controlstatedb.ReplaceRouteSessionConnectionParams{
+	updated, err := queries.ReplacePublishRunConnection(ctx, controlstatedb.ReplacePublishRunConnectionParams{
 		NewPublisherConnectionID: publisherConnectionID, NewConnectionAssignmentRevision: revision,
 		RelayServiceID: placement.relayServiceID, RelayAddress: placement.relayAddress,
 		TlsServerName: placement.tlsServerName, PublisherConnectionCredentialDigest: hash[:],
 		PublisherConnectionCredentialExpiresAt: timestamptz(now.Add(credentialDuration)), AssignedAt: timestamptz(now),
-		RouteSessionID: row.RouteSessionID, ConnectionSlot: row.ConnectionSlot,
+		PublishRunID: row.PublishRunID, ConnectionSlot: row.ConnectionSlot,
 		PreviousPublisherConnectionID: row.PublisherConnectionID, PreviousConnectionAssignmentRevision: row.ConnectionAssignmentRevision,
 	})
 	if err != nil {
-		return controlstatedb.ControlRouteSessionConnection{}, fmt.Errorf("controlstate: replenish route-session connections: replace slot %d: %w", row.ConnectionSlot, err)
+		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: replace slot %d: %w", row.ConnectionSlot, err)
 	}
 	if _, err := connectionAssignment(updated, credential); err != nil {
-		return controlstatedb.ControlRouteSessionConnection{}, err
+		return controlstatedb.ControlPublishRunConnection{}, err
 	}
 	return updated, nil
 }

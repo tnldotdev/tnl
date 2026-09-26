@@ -14,15 +14,15 @@ import (
 
 func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 	metadata := Metadata{
-		Version: Version, MemberNamespace: "busy-toast.tnl.dev",
+		Version: Version, Namespace: "ecstatic-penguin.tnl.dev",
 		Services: map[string]Service{
 			"web": {
-				MemberNamespace: "busy-toast.tnl.dev", Hostname: "web-tnl-bb4eff.busy-toast.tnl.dev",
-				URL: "https://web-tnl-bb4eff.busy-toast.tnl.dev",
+				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "web-tnl-bb4eff.ecstatic-penguin.tnl.dev",
+				URL: "https://web-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 			},
 			"api": {
-				MemberNamespace: "busy-toast.tnl.dev", Hostname: "api-tnl-bb4eff.busy-toast.tnl.dev",
-				URL: "https://api-tnl-bb4eff.busy-toast.tnl.dev",
+				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "api-tnl-bb4eff.ecstatic-penguin.tnl.dev",
+				URL: "https://api-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 			},
 		},
 		ServiceDirectories: map[string]string{"web": "apps/web", "api": "apps/api"},
@@ -35,9 +35,9 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 	api, web := strings.Index(text, "readonly api:"), strings.Index(text, "readonly web:")
 	if api < 0 || web < 0 || api >= web ||
 		!strings.Contains(text, "interface TnlProjectMetadata") ||
-		!strings.Contains(text, `readonly memberNamespace: "busy-toast.tnl.dev"`) ||
-		!strings.Contains(text, `readonly hostname: "api-tnl-bb4eff.busy-toast.tnl.dev"`) ||
-		!strings.Contains(text, `readonly url: "https://api-tnl-bb4eff.busy-toast.tnl.dev"`) ||
+		!strings.Contains(text, `readonly namespace: "ecstatic-penguin.tnl.dev"`) ||
+		!strings.Contains(text, `readonly hostname: "api-tnl-bb4eff.ecstatic-penguin.tnl.dev"`) ||
+		!strings.Contains(text, `readonly url: "https://api-tnl-bb4eff.ecstatic-penguin.tnl.dev"`) ||
 		strings.Contains(text, "TnlProjectRegistry") || strings.Contains(text, "serviceDirectories") ||
 		strings.Contains(text, "readonly project:") {
 		t.Fatalf("declarations =\n%s", declarations)
@@ -49,11 +49,11 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 	if !bytes.Equal(declarations, golden) {
 		t.Fatalf("declarations do not match golden:\n%s", declarations)
 	}
-	if bytes.Count(jsonData, []byte(`"memberNamespace": "busy-toast.tnl.dev"`)) != 3 {
-		t.Fatalf("JSON does not expose the project and service member namespaces:\n%s", jsonData)
+	if bytes.Count(jsonData, []byte(`"namespace": "ecstatic-penguin.tnl.dev"`)) != 3 {
+		t.Fatalf("JSON does not expose the project and service namespaces:\n%s", jsonData)
 	}
 	public := metadata.Public(true)
-	if !public.RunningUnderTnlDev || public.Services["api"].MemberNamespace != "busy-toast.tnl.dev" {
+	if !public.RunningUnderTnlDev || public.Services["api"].Namespace != "ecstatic-penguin.tnl.dev" {
 		t.Fatalf("public metadata = %#v", public)
 	}
 	for _, forbidden := range []string{"target", "accessToken", "tunnelID", "teamID", "projectRoot"} {
@@ -75,11 +75,11 @@ func TestTypeScriptPropertyNameQuotesHyphenatedServices(t *testing.T) {
 func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	metadata := Metadata{
-		Version: Version, MemberNamespace: "busy-toast.tnl.dev",
+		Version: Version, Namespace: "ecstatic-penguin.tnl.dev",
 		Services: map[string]Service{
 			"api": {
-				MemberNamespace: "busy-toast.tnl.dev", Hostname: "api.busy-toast.tnl.dev",
-				URL: "https://api.busy-toast.tnl.dev",
+				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "api.ecstatic-penguin.tnl.dev",
+				URL: "https://api.ecstatic-penguin.tnl.dev",
 			},
 		},
 		ServiceDirectories: map[string]string{"api": "."},
@@ -98,7 +98,7 @@ func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalid := metadata
-	invalid.MemberNamespace = "INVALID"
+	invalid.Namespace = "INVALID"
 	if err := Write(t.Context(), root, invalid); err == nil {
 		t.Fatal("invalid metadata was written")
 	}
@@ -152,11 +152,11 @@ func TestStagedWriteRollbackReportsRestoreFailure(t *testing.T) {
 
 func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
 	root := t.TempDir()
-	metadata := Metadata{Version: Version, MemberNamespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{}}
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{}}
 	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
-	metadata.Services["api"] = Service{MemberNamespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
+	metadata.Services["api"] = Service{Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
 	metadata.ServiceDirectories["api"] = "."
 	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
@@ -187,7 +187,7 @@ func TestWriteLockWaitHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	metadata := Metadata{
-		Version: Version, MemberNamespace: "member.example",
+		Version: Version, Namespace: "member.example",
 		Services: map[string]Service{}, ServiceDirectories: map[string]string{},
 	}
 	if err := Write(ctx, root, metadata); !errors.Is(err, context.Canceled) {
@@ -197,10 +197,10 @@ func TestWriteLockWaitHonorsCancellation(t *testing.T) {
 
 func TestRenderRejectsOversizedMetadata(t *testing.T) {
 	metadata := Metadata{
-		Version: Version, MemberNamespace: "member.example",
+		Version: Version, Namespace: "member.example",
 		Services: map[string]Service{
 			"api": {
-				MemberNamespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example",
+				Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example",
 			},
 		},
 		ServiceDirectories: map[string]string{"api": strings.Repeat("a", MaxFileBytes)},
@@ -210,12 +210,12 @@ func TestRenderRejectsOversizedMetadata(t *testing.T) {
 	}
 }
 
-func TestRenderBroadensMemberNamespaceWhenServicesDiffer(t *testing.T) {
+func TestRenderBroadensNamespaceWhenServicesDiffer(t *testing.T) {
 	metadata := Metadata{
-		Version: Version, MemberNamespace: "member.example",
+		Version: Version, Namespace: "member.example",
 		Services: map[string]Service{
 			"api": {
-				MemberNamespace: "member.other.example", Hostname: "api.member.other.example",
+				Namespace: "member.other.example", Hostname: "api.member.other.example",
 				URL: "https://api.member.other.example",
 			},
 		},
@@ -227,8 +227,8 @@ func TestRenderBroadensMemberNamespaceWhenServicesDiffer(t *testing.T) {
 	}
 	text := string(declarations)
 	if !strings.Contains(text, "interface TnlProjectMetadata") ||
-		!strings.Contains(text, "  interface TnlProjectMetadata {\n    readonly memberNamespace: string;") ||
-		!strings.Contains(text, `readonly memberNamespace: "member.other.example"`) ||
+		!strings.Contains(text, "  interface TnlProjectMetadata {\n    readonly namespace: string;") ||
+		!strings.Contains(text, `readonly namespace: "member.other.example"`) ||
 		strings.Contains(text, "readonly project:") {
 		t.Fatalf("declarations =\n%s", declarations)
 	}

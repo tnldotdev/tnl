@@ -33,7 +33,7 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 		return
 	}
 	switch operation {
-	case "CreateRouteSession", "HeartbeatRouteSession", "CloseRouteSession", "ReadIngressRoutingTableSnapshot",
+	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot",
 		"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
 		"ReadIngressRoutingTableEvents", "ReportIngressUsage", "RenewIngress",
 		"ClaimPublisherConnection", "MarkPublisherConnectionReady",

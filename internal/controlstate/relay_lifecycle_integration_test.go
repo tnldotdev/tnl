@@ -27,13 +27,13 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			database, now := newRelayLifecycleDatabase(t)
 			setup, registrations := newRelayLifecycleSession(t, database, now)
-			authentication := RouteSessionAuthentication{
-				RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID,
-				RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
+			authentication := PublishRunAuthentication{
+				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
+				PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 			}
-			heartbeat := func(at time.Time) RouteSessionSetup {
+			heartbeat := func(at time.Time) PublishRunSetup {
 				t.Helper()
-				result, err := database.HeartbeatRouteSession(t.Context(), authentication, at, time.Hour, time.Minute)
+				result, err := database.HeartbeatPublishRun(t.Context(), authentication, at, time.Hour, time.Minute)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -141,9 +141,9 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 						ClaimID: "claim-lock-order", CredentialDigest: [32]byte(digest),
 					}, now)
 				} else {
-					_, err = database.HeartbeatRouteSession(ctx, RouteSessionAuthentication{
-						RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID,
-						RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
+					_, err = database.HeartbeatPublishRun(ctx, PublishRunAuthentication{
+						PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
+						PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 					}, heartbeatAt, time.Hour, time.Minute)
 				}
 				completed <- err
@@ -252,7 +252,7 @@ func relayLifecycleRegistration(name string) RelayRegistration {
 	}
 }
 
-func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (RouteSessionSetup, [2]RelayRegistration) {
+func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (PublishRunSetup, [2]RelayRegistration) {
 	t.Helper()
 	registrations := [2]RelayRegistration{relayLifecycleRegistration("relay-a"), relayLifecycleRegistration("relay-b")}
 	for _, registration := range registrations {
@@ -260,9 +260,9 @@ func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (
 			t.Fatal(err)
 		}
 	}
-	seedControlRoute(t, database, now, "relaylifecycle")
-	setup, err := database.CreateRouteSession(t.Context(), RouteSessionRequest{
-		RouteID: "route_relaylifecycle", TeamID: "team_relaylifecycle", ActingIdentityID: "identity_relaylifecycle",
+	seedControlPublicURL(t, database, now, "relaylifecycle")
+	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
+		PublicURLID: "public_url_relaylifecycle", TeamID: "team_relaylifecycle", ActingIdentityID: "identity_relaylifecycle",
 		MembershipID: "membership_relaylifecycle", RequireLocalAuthority: true,
 		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 		PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: "relay_lifecycle", CertificateScope: "route",

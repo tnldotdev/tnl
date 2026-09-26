@@ -237,7 +237,7 @@ FOR KEY SHARE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.route_session_connections
+FROM control.publish_run_connections
 WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_run_id = sqlc.arg(relay_run_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
@@ -286,11 +286,11 @@ WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
 -- Diagnostic/test oracle only; placement reads the trigger-maintained totals.
--- name: CountOpenRouteSessionAssignmentsByRelayService :many
+-- name: CountOpenPublishRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
-FROM control.route_session_connections AS connections
-JOIN control.route_sessions AS sessions ON sessions.id = connections.route_session_id
+FROM control.publish_run_connections AS connections
+JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
 WHERE sessions.closed_at IS NULL
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;

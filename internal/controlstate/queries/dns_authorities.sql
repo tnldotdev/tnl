@@ -122,21 +122,21 @@ FOR UPDATE;
 SELECT
     NOT EXISTS (
         SELECT 1
-        FROM control.routes AS routes
+        FROM control.public_urls AS routes
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND routes.lifecycle_state <> 'deleted'
     )
     AND NOT EXISTS (
         SELECT 1
-        FROM control.route_sessions AS sessions
-        JOIN control.routes AS routes ON routes.id = sessions.route_id
+        FROM control.publish_runs AS sessions
+        JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND sessions.closed_at IS NULL
     )
     AND NOT EXISTS (
         SELECT 1
         FROM control.acme_orders AS orders
-        JOIN control.routes AS routes ON routes.id = orders.route_id
+        JOIN control.public_urls AS routes ON routes.id = orders.public_url_id
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND (
               orders.state NOT IN ('waiting_for_install', 'installed', 'failed', 'canceled')
@@ -155,14 +155,14 @@ SELECT
     )
     AND NOT EXISTS (
         SELECT 1
-        FROM control.route_sessions AS sessions
-        JOIN control.routes AS routes ON routes.id = sessions.route_id
+        FROM control.publish_runs AS sessions
+        JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND sessions.certificate_not_after > sqlc.arg(observed_at)
     )
     AND NOT EXISTS (
         SELECT 1
-        FROM control.routes AS routes
+        FROM control.public_urls AS routes
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND routes.dns_state NOT IN ('unmanaged', 'removed')
     ) AS ready;

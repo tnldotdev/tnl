@@ -56,8 +56,8 @@ func IsolatedPublishingTest(t *testing.T) bool {
 }
 
 type PublishingHooks struct {
-	Ready func(context.Context, controlv1.RouteSessionSetup) error
-	Close func(controlv1.RouteSessionSetup) error
+	Ready func(context.Context, controlv1.PublishRunSetup) error
+	Close func(controlv1.PublishRunSetup) error
 }
 
 // PublishingFixture supplies local control/authority responses and real
@@ -125,8 +125,8 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	team := authorityv1.Team{Id: teamID, DefaultDomainId: domainID, PolicyRevision: 1, Kind: authorityv1.Personal}
 	domain := authorityv1.Domain{Id: domainID, CanonicalDomain: "routes.example", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}
 	var mu sync.Mutex
-	routes := make(map[string]controlv1.Route)
-	sessions := make(map[string]controlv1.RouteSessionSetup)
+	routes := make(map[string]controlv1.PublicURL)
+	sessions := make(map[string]controlv1.PublishRunSetup)
 	writeJSON := func(w http.ResponseWriter, value any) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(value); err != nil {
@@ -150,25 +150,25 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	mux.HandleFunc("GET /v1/teams/{team}/domains", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, authorityv1.DomainPage{Domains: []authorityv1.Domain{domain}})
 	})
-	mux.HandleFunc("GET /v1/routes", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, controlv1.RoutePage{Routes: []controlv1.Route{}})
+	mux.HandleFunc("GET /v1/public-urls", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}})
 	})
-	mux.HandleFunc("POST /v1/routes", func(w http.ResponseWriter, r *http.Request) {
-		var request controlv1.CreateRouteRequest
+	mux.HandleFunc("POST /v1/public-urls", func(w http.ResponseWriter, r *http.Request) {
+		var request controlv1.CreatePublicURLRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			problem(w, err)
 			return
 		}
 		mu.Lock()
-		id := fmt.Sprintf("route_%032x", len(routes)+1)
+		id := fmt.Sprintf("public_url_%032x", len(routes)+1)
 		membership := membershipID
-		route := controlv1.Route{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, RouteScope: request.RouteScope, LifecycleState: controlv1.Enabled, NextRouteVersion: 1, PolicyRevision: 1}
+		route := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
 		routes[id] = route
 		mu.Unlock()
 		writeJSON(w, route)
 	})
-	mux.HandleFunc("POST /v1/routes/{route}/sessions", func(w http.ResponseWriter, r *http.Request) {
-		token, _, _, err := credentials.NewRouteSessionToken()
+	mux.HandleFunc("POST /v1/public-urls/{route}/publish-runs", func(w http.ResponseWriter, r *http.Request) {
+		token, _, _, err := credentials.NewPublishRunToken()
 		if err != nil {
 			problem(w, err)
 			return
@@ -176,10 +176,10 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		mu.Lock()
 		defer mu.Unlock()
 		route := routes[r.PathValue("route")]
-		id := fmt.Sprintf("route_session_%032x", len(sessions)+1)
-		setup := controlv1.RouteSessionSetup{
-			Route: route, RouteSessionToken: token.String(),
-			RouteSession:    controlv1.RouteSession{Id: id, RouteId: route.Id, TeamId: teamID, RouteVersion: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.RouteSessionStateStarting},
+		id := fmt.Sprintf("publish_run_%032x", len(sessions)+1)
+		setup := controlv1.PublishRunSetup{
+			PublicUrl: route, PublishRunToken: token.String(),
+			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: route.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
 			CertificatePlan: controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.TlsAlpn01},
 		}
 		for slot := range 2 {
@@ -192,16 +192,16 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		sessions[id] = setup
 		writeJSON(w, setup)
 	})
-	lookup := func(r *http.Request) controlv1.RouteSessionSetup {
+	lookup := func(r *http.Request) controlv1.PublishRunSetup {
 		mu.Lock()
 		defer mu.Unlock()
 		return sessions[r.PathValue("session")]
 	}
-	mux.HandleFunc("POST /v1/route-sessions/{session}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publish-runs/{session}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)
-		writeJSON(w, controlv1.RouteSessionHeartbeat{RouteSession: setup.RouteSession, PublisherConnections: setup.PublisherConnections})
+		writeJSON(w, controlv1.PublishRunHeartbeat{PublishRun: setup.PublishRun, PublisherConnections: setup.PublisherConnections})
 	})
-	mux.HandleFunc("POST /v1/route-sessions/{session}/certificate-issuances", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-issuances", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)
 		var request controlv1.CreateCertificateIssuanceRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -224,10 +224,10 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 			return
 		}
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) + string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
-		writeJSON(w, controlv1.CertificateIssuance{Id: "issuance_00000000000000000000000000000001", RouteId: setup.Route.Id, RouteSessionId: setup.RouteSession.Id, RouteVersion: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
+		writeJSON(w, controlv1.CertificateIssuance{Id: "issuance_00000000000000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
 	})
-	mux.HandleFunc("POST /v1/route-sessions/{session}/certificate-installed", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, lookup(r).RouteSession) })
-	mux.HandleFunc("POST /v1/route-sessions/{session}/ready", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-installed", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, lookup(r).PublishRun) })
+	mux.HandleFunc("POST /v1/publish-runs/{session}/ready", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)
 		if hooks.Ready != nil {
 			if err := hooks.Ready(r.Context(), setup); err != nil {
@@ -235,9 +235,9 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 				return
 			}
 		}
-		writeJSON(w, setup.RouteSession)
+		writeJSON(w, setup.PublishRun)
 	})
-	mux.HandleFunc("DELETE /v1/route-sessions/{session}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /v1/publish-runs/{session}", func(w http.ResponseWriter, r *http.Request) {
 		if hooks.Close != nil {
 			if err := hooks.Close(lookup(r)); err != nil {
 				problem(w, err)

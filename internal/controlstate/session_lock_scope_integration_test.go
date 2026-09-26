@@ -23,21 +23,21 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockRouteForSession(ctx, f.route.ID); err != nil {
+	if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.route.ID); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	first := make(chan error, 1)
 	workers.Go(func() {
-		_, err := f.database.CreateRouteSession(ctx, f.sessionRequest, f.now, time.Hour, time.Hour)
+		_, err := f.database.CreatePublishRun(ctx, f.sessionRequest, f.now, time.Hour, time.Hour)
 		first <- err
 	})
 	// The first start holds its team guard while blocked on its own route.
 	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), first)
 	independent, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if _, err := f.database.CreateRouteSession(independent, sibling, f.now, time.Hour, time.Hour); err != nil {
+	if _, err := f.database.CreatePublishRun(independent, sibling, f.now, time.Hour, time.Hour); err != nil {
 		t.Fatalf("independent route could not start while the first route was blocked: %v", err)
 	}
 	if err := gate.Commit(ctx); err != nil {
@@ -49,7 +49,7 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 }
 
 func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	usage, err := f.database.pool.Begin(ctx)
@@ -57,12 +57,12 @@ func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, usage)
-	if _, err := controlstatedb.New(usage).LockRouteForUsage(ctx, f.setup.RouteID); err != nil {
+	if _, err := controlstatedb.New(usage).LockPublicURLForUsage(ctx, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
 	// Usage retains this reference until its page commits. A heartbeat may
 	// serialize on the session, but must not wait for a route identity reference.
-	if _, err := f.database.HeartbeatRouteSession(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
+	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
 		t.Fatalf("heartbeat blocked behind usage's route reference: %v", err)
 	}
 }
@@ -72,7 +72,7 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 		t.Run(mutation, func(t *testing.T) {
 			f := newTransactionAuthorityFixture(t)
 			registerCertificatePlanRelays(t, f.database, f.now)
-			requests := []RouteSessionRequest{f.sessionRequest, siblingSessionRequest(t, f)}
+			requests := []PublishRunRequest{f.sessionRequest, siblingSessionRequest(t, f)}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			// Hold both route rows so both starts can acquire their team guards.
@@ -86,10 +86,10 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, secondGate)
-			if _, err := controlstatedb.New(firstGate).LockRouteForSession(ctx, requests[0].RouteID); err != nil {
+			if _, err := controlstatedb.New(firstGate).LockPublicURLForRun(ctx, requests[0].PublicURLID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := controlstatedb.New(secondGate).LockRouteForSession(ctx, requests[1].RouteID); err != nil {
+			if _, err := controlstatedb.New(secondGate).LockPublicURLForRun(ctx, requests[1].PublicURLID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
@@ -97,7 +97,7 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 			started := []chan error{make(chan error, 1), make(chan error, 1)}
 			for index, request := range requests {
 				workers.Go(func() {
-					_, err := f.database.CreateRouteSession(ctx, request, f.now, time.Hour, time.Hour)
+					_, err := f.database.CreatePublishRun(ctx, request, f.now, time.Hour, time.Hour)
 					started[index] <- err
 				})
 			}
@@ -136,11 +136,11 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 				t.Fatal(err)
 			}
 			var closed int
-			if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.route_sessions WHERE team_id = $1 AND state = 'closed' AND closed_at IS NOT NULL`, f.member.TeamID).Scan(&closed); err != nil || closed != 2 {
+			if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.publish_runs WHERE team_id = $1 AND state = 'closed' AND closed_at IS NOT NULL`, f.member.TeamID).Scan(&closed); err != nil || closed != 2 {
 				t.Fatalf("mutation closed %d sessions, want both concurrent starts: %v", closed, err)
 			}
 			for _, request := range requests {
-				if _, err := f.database.CreateRouteSession(ctx, request, f.now, time.Hour, time.Hour); !errors.Is(err, ErrRouteAuthority) {
+				if _, err := f.database.CreatePublishRun(ctx, request, f.now, time.Hour, time.Hour); !errors.Is(err, ErrPublicURLAuthority) {
 					t.Fatalf("stale session replay after %s: %v", mutation, err)
 				}
 			}
@@ -153,11 +153,11 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 		t.Run(operation, func(t *testing.T) {
 			f := newTransactionAuthorityFixture(t)
 			registerCertificatePlanRelays(t, f.database, f.now)
-			var deletion RouteSessionRequest
+			var deletion PublishRunRequest
 			if operation == "delete" {
 				deletion = siblingSessionRequest(t, f)
 			}
-			if _, err := f.database.CreateRouteSession(t.Context(), f.sessionRequest, f.now, time.Hour, time.Hour); err != nil {
+			if _, err := f.database.CreatePublishRun(t.Context(), f.sessionRequest, f.now, time.Hour, time.Hour); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -167,7 +167,7 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err := controlstatedb.New(gate).LockRouteForSession(ctx, f.route.ID); err != nil {
+			if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.route.ID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
@@ -177,8 +177,8 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 			for range 4 {
 				workers.Go(func() {
 					for ctx.Err() == nil {
-						_, err := f.database.CreateRouteSession(ctx, f.sessionRequest, f.now, time.Hour, time.Hour)
-						if errors.Is(err, ErrRouteAuthority) || ctx.Err() != nil {
+						_, err := f.database.CreatePublishRun(ctx, f.sessionRequest, f.now, time.Hour, time.Hour)
+						if errors.Is(err, ErrPublicURLAuthority) || ctx.Err() != nil {
 							return
 						}
 						if err != nil {
@@ -196,7 +196,7 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 			workers.Go(func() {
 				var err error
 				if operation == "delete" {
-					err = f.database.DeleteRoute(mutationCtx, f.member.IdentityID, deletion.RouteID, f.now)
+					err = f.database.DeletePublicURL(mutationCtx, f.member.IdentityID, deletion.PublicURLID, f.now)
 				} else {
 					_, err = f.database.SetMembershipRole(mutationCtx, f.owner, f.member.TeamID, f.member.ID, "member", f.now)
 				}
@@ -210,10 +210,10 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 			}
 			workers.stop()
 			if operation == "delete" {
-				if _, err := f.database.GetRoute(t.Context(), f.member.IdentityID, deletion.RouteID); !errors.Is(err, ErrRouteNotFound) {
+				if _, err := f.database.GetPublicURL(t.Context(), f.member.IdentityID, deletion.PublicURLID); !errors.Is(err, ErrPublicURLNotFound) {
 					t.Fatalf("deleted route is still visible: %v", err)
 				}
-				if setup, err := f.database.CreateRouteSession(t.Context(), f.sessionRequest, f.now, time.Hour, time.Hour); err != nil || setup.ClosedAt != nil {
+				if setup, err := f.database.CreatePublishRun(t.Context(), f.sessionRequest, f.now, time.Hour, time.Hour); err != nil || setup.ClosedAt != nil {
 					t.Fatalf("deletion changed the sibling's live session: %v", err)
 				}
 			}
@@ -226,17 +226,17 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 	}
 }
 
-func TestIntegrationConcurrentStartsOnOneRoute(t *testing.T) {
+func TestIntegrationConcurrentStartsOnOnePublicURL(t *testing.T) {
 	for _, sameRequest := range []bool{true, false} {
 		t.Run(fmt.Sprintf("same_request_%t", sameRequest), func(t *testing.T) {
-			database, now, request, _ := newRouteSessionPrerequisites(t)
+			database, now, request, _ := newPublishRunPrerequisites(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
 			const callers = 8
 			type result struct {
-				setup RouteSessionSetup
+				setup PublishRunSetup
 				err   error
 			}
 			results := make(chan result, callers)
@@ -249,22 +249,22 @@ func TestIntegrationConcurrentStartsOnOneRoute(t *testing.T) {
 						candidate.RequestDigest = sha256.Sum256([]byte(candidate.IdempotencyKey))
 					}
 					<-start
-					setup, err := database.CreateRouteSession(ctx, candidate, now, time.Hour, time.Hour)
+					setup, err := database.CreatePublishRun(ctx, candidate, now, time.Hour, time.Hour)
 					results <- result{setup, err}
 				})
 			}
 			close(start)
-			var first RouteSessionSetup
+			var first PublishRunSetup
 			succeeded := 0
 			for range callers {
 				result := awaitIntegrationResult(t, ctx, results)
 				if result.err != nil {
-					if sameRequest || !errors.Is(result.err, ErrRouteMutationStale) {
+					if sameRequest || !errors.Is(result.err, ErrPublicURLMutationStale) {
 						t.Fatal(result.err)
 					}
 					continue
 				}
-				if succeeded > 0 && (result.setup.RouteSessionID != first.RouteSessionID || result.setup.RouteSessionToken != first.RouteSessionToken || result.setup.PublisherConnections != first.PublisherConnections) {
+				if succeeded > 0 && (result.setup.PublishRunID != first.PublishRunID || result.setup.PublishRunToken != first.PublishRunToken || result.setup.PublisherConnections != first.PublisherConnections) {
 					t.Fatal("concurrent retries returned different session credentials or assignments")
 				}
 				first = result.setup
@@ -274,29 +274,29 @@ func TestIntegrationConcurrentStartsOnOneRoute(t *testing.T) {
 			if sameRequest {
 				want = callers
 			}
-			if succeeded != want || first.RouteVersion != 1 {
-				t.Fatalf("successful starts=%d route version=%d; want %d/1", succeeded, first.RouteVersion, want)
+			if succeeded != want || first.PublishRunNumber != 1 {
+				t.Fatalf("successful starts=%d publish run number=%d; want %d/1", succeeded, first.PublishRunNumber, want)
 			}
 			var sessions, connections int
-			if err := database.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.route_sessions), (SELECT count(*) FROM control.route_session_connections)`).Scan(&sessions, &connections); err != nil || sessions != 1 || connections != 2 {
+			if err := database.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.publish_runs), (SELECT count(*) FROM control.publish_run_connections)`).Scan(&sessions, &connections); err != nil || sessions != 1 || connections != 2 {
 				t.Fatalf("stored sessions/connections=%d/%d; want 1/2: %v", sessions, connections, err)
 			}
 		})
 	}
 }
 
-func siblingSessionRequest(t *testing.T, f transactionAuthorityFixture) RouteSessionRequest {
+func siblingSessionRequest(t *testing.T, f transactionAuthorityFixture) PublishRunRequest {
 	t.Helper()
 	request := f.createRequest
 	request.IdempotencyKey = "sibling"
 	request.RequestDigest = sha256.Sum256([]byte("sibling"))
 	request.CanonicalHostname = "sibling.member." + f.domain.CanonicalDomain
-	route, err := f.database.CreateRoute(t.Context(), request, f.now)
+	route, err := f.database.CreatePublicURL(t.Context(), request, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session := f.sessionRequest
-	session.RouteID, session.ExpectedMutationRevision = route.ID, route.MutationRevision
+	session.PublicURLID, session.ExpectedMutationRevision = route.ID, route.MutationRevision
 	session.CertificateCacheKey, session.CertificateScope = route.CanonicalHostname, route.CanonicalHostname
 	session.CertificateIdentifiers = []string{route.CanonicalHostname}
 	return session

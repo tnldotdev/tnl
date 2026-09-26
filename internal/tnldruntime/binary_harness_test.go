@@ -156,12 +156,12 @@ func waitForIntegrationBinaryReady(t *testing.T, process *integrationBinaryProce
 }
 
 type integrationBinaryPublishEvent struct {
-	SchemaVersion int    `json:"schema_version"`
-	Type          string `json:"type"`
-	TunnelID      string `json:"tunnel_id"`
-	URL           string `json:"url"`
-	RouteVersion  uint64 `json:"route_version"`
-	Reason        string `json:"reason"`
+	SchemaVersion    int    `json:"schema_version"`
+	Type             string `json:"type"`
+	TunnelID         string `json:"tunnel_id"`
+	URL              string `json:"url"`
+	PublishRunNumber uint64 `json:"publish_run_number"`
+	Reason           string `json:"reason"`
 }
 
 type integrationBinaryPublish struct {

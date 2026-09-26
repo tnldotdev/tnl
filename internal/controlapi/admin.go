@@ -27,8 +27,8 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		return
 	}
 	values := []int64{
-		counts.EnabledRoutes, counts.SuspendedRoutes, counts.StartingRouteSessions,
-		counts.ReadyRouteSessions, counts.IngressLeases, counts.RelayLeases,
+		counts.EnabledPublicURLs, counts.SuspendedPublicURLs, counts.StartingPublishRuns,
+		counts.ReadyPublishRuns, counts.IngressLeases, counts.RelayLeases,
 	}
 	converted := make([]int, len(values))
 	for index, value := range values {
@@ -40,8 +40,8 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 	}
 	writeJSON(response, http.StatusOK, controlv1.AdminServerStatus{
 		Role: controlv1.AdminServerStatusRole(h.config.Role), StartedAt: h.config.StartedAt,
-		CurrentTime: now, EnabledRoutes: converted[0], SuspendedRoutes: converted[1],
-		StartingRouteSessions: converted[2], ReadyRouteSessions: converted[3],
+		CurrentTime: now, EnabledPublicUrls: converted[0], SuspendedPublicUrls: converted[1],
+		StartingPublishRuns: converted[2], ReadyPublishRuns: converted[3],
 		IngressLeases: converted[4], RelayLeases: converted[5],
 	})
 }
@@ -160,14 +160,14 @@ func (h *handler) SetMaintenanceControl(
 func (h *handler) authorizeAdministrator(
 	response http.ResponseWriter,
 	request *http.Request,
-) (routeReadPrincipal, bool) {
+) (publicURLReadPrincipal, bool) {
 	principal, ok := h.authorizeRouteReads(response, request)
 	if !ok {
-		return routeReadPrincipal{}, false
+		return publicURLReadPrincipal{}, false
 	}
 	if !principal.administrator {
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
-		return routeReadPrincipal{}, false
+		return publicURLReadPrincipal{}, false
 	}
 	return principal, true
 }

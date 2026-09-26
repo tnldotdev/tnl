@@ -32,15 +32,15 @@ type managedPublisherConnection struct {
 }
 
 // publisherConnectionManager owns the two independently assigned publisher
-// connections for one route session. A claimed connection is not silently
+// connections for one publish run. A claimed connection is not silently
 // reconnected after it closes; its replacement arrives in a heartbeat.
 type publisherConnectionManager struct {
-	ctx            context.Context
-	config         publisherConnectionManagerConfig
-	route          *RouteServer
-	routeSessionID string
-	routeID        string
-	routeVersion   uint64
+	ctx              context.Context
+	config           publisherConnectionManagerConfig
+	route            *PublicURLServer
+	publishRunID     string
+	publicURLID      string
+	publishRunNumber uint64
 
 	mu           sync.Mutex
 	connections  [publisherConnectionCount]*managedPublisherConnection
@@ -55,12 +55,12 @@ type publisherConnectionManager struct {
 func newPublisherConnectionManager(
 	ctx context.Context,
 	config publisherConnectionManagerConfig,
-	route *RouteServer,
-	routeSessionID, routeID string,
-	routeVersion uint64,
+	route *PublicURLServer,
+	publishRunID, publicURLID string,
+	publishRunNumber uint64,
 ) (*publisherConnectionManager, error) {
 	if config.QUICConnector == nil || config.TCPConnector == nil || route == nil ||
-		routeSessionID == "" || routeID == "" || routeVersion == 0 {
+		publishRunID == "" || publicURLID == "" || publishRunNumber == 0 {
 		return nil, errors.New("publisher: publisher connection manager configuration is incomplete")
 	}
 	if config.FallbackDelay < 0 || config.ReconnectDelay <= 0 {
@@ -70,8 +70,8 @@ func newPublisherConnectionManager(
 		config.Report = func(error) {}
 	}
 	return &publisherConnectionManager{
-		ctx: ctx, config: config, route: route, routeSessionID: routeSessionID,
-		routeID: routeID, routeVersion: routeVersion, changed: make(chan struct{}), fallback: make(chan struct{}),
+		ctx: ctx, config: config, route: route, publishRunID: publishRunID,
+		publicURLID: publicURLID, publishRunNumber: publishRunNumber, changed: make(chan struct{}), fallback: make(chan struct{}),
 	}, nil
 }
 
@@ -210,9 +210,9 @@ func (m *publisherConnectionManager) run(
 	defer m.wg.Done()
 	assignment := managed.assignment
 	ref := tunnelv1.PublisherConnectionRef{
-		RouteSessionID:               m.routeSessionID,
-		RouteID:                      m.routeID,
-		RouteVersion:                 m.routeVersion,
+		PublishRunID:                 m.publishRunID,
+		PublicURLID:                  m.publicURLID,
+		PublishRunNumber:             m.publishRunNumber,
 		PublisherConnectionID:        assignment.PublisherConnectionId,
 		ConnectionSlot:               uint8(assignment.ConnectionSlot),
 		ConnectionAssignmentRevision: uint64(assignment.ConnectionAssignmentRevision),

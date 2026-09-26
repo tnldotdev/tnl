@@ -208,7 +208,7 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 		CreatedAt: time.Now().UTC(), FlyOrg: c.FlyOrg, Region: plan.Region, Topology: plan.Topology,
 		CertificateAuthority: plan.CertificateAuthority,
 		ParentDomain:         c.ParentDomain, ParentZoneID: c.ParentZoneID,
-		ServerDomain: runID + "." + c.ParentDomain, ManagedDomain: "routes." + runID + "." + c.ParentDomain,
+		ServerDomain: runID + "." + c.ParentDomain, ManagedDomain: "public-urls." + runID + "." + c.ParentDomain,
 		Addresses: make(map[string]flyAddresses), ManagedPostgres: &manifestManagedPostgres{
 			Name: benchmarkDatabaseName(runID), Region: plan.Region,
 			Plan: plan.ManagedPostgres.Plan, PostgresMajorVersion: plan.ManagedPostgres.PostgresMajorVersion,
@@ -835,7 +835,7 @@ func executeCell(
 		Command: "/tnlbench coordinator", Size: plan.Machines.Coordinator, Restart: "no",
 		Env: map[string]string{
 			"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_PUBLISHER_WORKERS": fmt.Sprint(cell.PublisherWorkers),
-			"TNL_BENCH_LOAD_WORKERS": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
+			"TNL_BENCH_LOAD_WORKERS": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_PUBLIC_URLS": fmt.Sprint(cell.PublicURLs),
 			"TNL_BENCH_COORDINATOR_LISTEN": ":8080",
 			"TNL_BENCH_REPETITIONS":        fmt.Sprint(cell.Repetitions),
 			"TNL_BENCH_WARMUP":             (time.Duration(cell.WarmupSeconds) * time.Second).String(),
@@ -855,13 +855,13 @@ func executeCell(
 	progress.printf("cell %s: coordinator ready", cell.ID)
 	workerMachines := make(map[string][]flyMachine)
 	for index := range cell.PublisherWorkers {
-		assigned := len(benchworkload.RouteIndexes(cell.Routes, cell.PublisherWorkers, index))
+		assigned := len(benchworkload.PublicURLIndexes(cell.PublicURLs, cell.PublisherWorkers, index))
 		environment := map[string]string{
 			"TNL_BENCH_CELL_ID":         cell.ID,
 			"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
 			"TNL_BENCH_WORKER_COUNT":    fmt.Sprint(cell.PublisherWorkers),
 			"TNL_BENCH_SERVER":          "https://control." + benchmark.serverDomain,
-			"TNL_BENCH_HOSTNAME_SUFFIX": benchmark.managedDomain, "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
+			"TNL_BENCH_HOSTNAME_SUFFIX": benchmark.managedDomain, "TNL_BENCH_PUBLIC_URLS": fmt.Sprint(cell.PublicURLs),
 			"TNL_BENCH_STATE_ROOT":    "/state",
 			"TNL_BENCH_PAYLOAD_BYTES": fmt.Sprint(cell.PayloadBytes),
 			"TNL_BENCH_TIMEOUT":       (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
@@ -888,7 +888,7 @@ func executeCell(
 		environment := map[string]string{
 			"TNL_BENCH_CELL_ID":         cell.ID,
 			"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
-			"TNL_BENCH_WORKER_COUNT": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
+			"TNL_BENCH_WORKER_COUNT": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_PUBLIC_URLS": fmt.Sprint(cell.PublicURLs),
 			"TNL_BENCH_CONCURRENCY":                  fmt.Sprint(benchworkload.Assignment(cell.Concurrency, cell.LoadWorkers, index)),
 			"TNL_BENCH_QUEUE_SLOTS":                  fmt.Sprint(benchworkload.Assignment(cell.QueueSlots, cell.LoadWorkers, index)),
 			"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND": fmt.Sprint(fresh), "TNL_BENCH_HELD_STREAMS": fmt.Sprint(held),
@@ -1259,7 +1259,7 @@ func validateManifestResources(manifest runManifest) error {
 		strings.ContainsAny(manifest.ParentZoneID, " /\t\r\n") {
 		return errors.New("benchmark manifest has an invalid schema or identity")
 	}
-	if manifest.ServerDomain != manifest.RunID+"."+manifest.ParentDomain || manifest.ManagedDomain != "routes."+manifest.ServerDomain {
+	if manifest.ServerDomain != manifest.RunID+"."+manifest.ParentDomain || manifest.ManagedDomain != "public-urls."+manifest.ServerDomain {
 		return errors.New("benchmark manifest has invalid generated domains")
 	}
 	if manifest.Topology.ControlProcesses <= 0 || manifest.Topology.ControlProcesses > 10 ||

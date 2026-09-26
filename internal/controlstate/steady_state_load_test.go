@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 // This is a bounded database workload, not a lease-cadence or soak test. The
@@ -32,20 +32,20 @@ func TestLoadSteadyState(t *testing.T) {
 		ingresses[index] = lease
 	}
 	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Routes) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
-		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Routes), f.routes, err)
+	if err != nil || len(initial.Entries) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
+		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Entries), f.routes, err)
 	}
-	byID := make(map[string]RouteSessionSetup, f.routes)
+	byID := make(map[string]PublishRunSetup, f.routes)
 	for _, session := range sessions {
-		byID[session.setup.RouteID] = session.setup
+		byID[session.setup.PublicURLID] = session.setup
 	}
-	for _, event := range initial.Routes {
-		setup, ok := byID[event.RouteID]
-		if !ok || event.Kind != IngressRouteUpsert || event.RouteVersion != setup.RouteVersion || event.EntryRevision != uint64(f.history) ||
-			event.Projection.RouteSessionID != setup.RouteSessionID || len(event.Projection.PublisherConnections) != 2 {
-			t.Fatalf("initial snapshot: unexpected route %s", event.RouteID)
+	for _, event := range initial.Entries {
+		setup, ok := byID[event.PublicURLID]
+		if !ok || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != setup.PublishRunNumber || event.EntryRevision != uint64(f.history) ||
+			event.Projection.PublishRunID != setup.PublishRunID || len(event.Projection.PublisherConnections) != 2 {
+			t.Fatalf("initial snapshot: unexpected route %s", event.PublicURLID)
 		}
-		delete(byID, event.RouteID)
+		delete(byID, event.PublicURLID)
 	}
 	t.Logf("setup_ready=%d relays=4 ingresses=2 setup_elapsed=%s (no injected SQL delay)", len(sessions), time.Since(setupStarted))
 
@@ -79,20 +79,20 @@ func TestLoadSteadyState(t *testing.T) {
 				for index := worker; index < len(sessions) && ctx.Err() == nil; index += 64 {
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					setup, err := control.HeartbeatRouteSession(callCtx, session.authentication(), f.now.Add(time.Duration(sweep+1)*time.Second), time.Hour, time.Hour)
+					setup, err := control.HeartbeatPublishRun(callCtx, session.authentication(), f.now.Add(time.Duration(sweep+1)*time.Second), time.Hour, time.Hour)
 					stop()
 					if err != nil {
-						fail(fmt.Errorf("heartbeat route=%s sweep=%d: %w", session.setup.RouteID, sweep+1, err))
+						fail(fmt.Errorf("heartbeat route=%s sweep=%d: %w", session.setup.PublicURLID, sweep+1, err))
 						return
 					}
-					if setup.RouteID != session.setup.RouteID || setup.RouteVersion != session.setup.RouteVersion ||
-						setup.RouteSessionID != session.setup.RouteSessionID || setup.State != RouteSessionReady || setup.ReadyAt == nil {
-						fail(fmt.Errorf("heartbeat changed ready session %s", session.setup.RouteID))
+					if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunNumber != session.setup.PublishRunNumber ||
+						setup.PublishRunID != session.setup.PublishRunID || setup.State != PublishRunReady || setup.ReadyAt == nil {
+						fail(fmt.Errorf("heartbeat changed ready session %s", session.setup.PublicURLID))
 						return
 					}
 					for slot, connection := range setup.PublisherConnections {
 						if connection.ConnectionAssignmentIdentity != session.setup.PublisherConnections[slot].ConnectionAssignmentIdentity || connection.State != PublisherConnectionReady {
-							fail(fmt.Errorf("heartbeat changed ready assignment route=%s slot=%d", setup.RouteID, slot))
+							fail(fmt.Errorf("heartbeat changed ready assignment route=%s slot=%d", setup.PublicURLID, slot))
 							return
 						}
 					}
@@ -115,12 +115,12 @@ func TestLoadSteadyState(t *testing.T) {
 					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
 						n := revision * uint64(index+1)
 						reports = append(reports, IngressUsageReport{
-							RouteID: session.setup.RouteID, RouteVersion: session.setup.RouteVersion,
+							PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
 							BucketStart: bucketStart, BucketEnd: bucketStart.Add(time.Minute), ObservedThrough: f.now,
 							ReportRevision: revision, ConnectionAttempts: 4 * n, SuccessfulStreams: n,
 							PolicyDenials: n, CapacityDenials: n, VisitorStreamOpenFailures: n,
 							ConnectionNanoseconds: 100 * n, IngressBytes: 100 * n, EgressBytes: 200 * n,
-							HistogramData: (routeusage.Checkpoint{}).MarshalBinary(),
+							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
 						})
 					}
 					for replay := range 2 {
@@ -169,36 +169,36 @@ func TestLoadSteadyState(t *testing.T) {
 		t.Logf("verified_usage_buckets=%d/%d verification_elapsed=%s", verified, len(sessions), time.Since(verificationStarted))
 	}()
 	for _, session := range sessions {
-		byID[session.setup.RouteID] = session.setup
+		byID[session.setup.PublicURLID] = session.setup
 	}
 	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	rows, err := f.database.pool.Query(callCtx, `
-		SELECT b.route_id, b.route_version, COALESCE(s.id, ''),
+		SELECT b.public_url_id, b.publish_run_number, COALESCE(s.id, ''),
 			(b.bucket_start = $1 AND b.bucket_end = $2 AND b.observed_through = $3
 			 AND b.connection_attempts = 24 AND b.successful_streams = 6
 			 AND b.policy_denials = 6 AND b.capacity_denials = 6 AND b.visitor_stream_open_failures = 6
 			 AND b.connection_nanoseconds = 600 AND b.ingress_bytes = 600 AND b.egress_bytes = 1200
 			 AND s.policy_denials = 6) IS TRUE
-		FROM control.route_usage_buckets b
-		LEFT JOIN control.route_sessions s ON s.route_id = b.route_id AND s.route_version = b.route_version`,
+		FROM control.public_url_usage_buckets b
+		LEFT JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number`,
 		bucketStart, bucketStart.Add(time.Minute), f.now)
 	if err != nil {
 		t.Fatalf("verify usage: %v", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var routeID, sessionID string
+		var publicURLID, sessionID string
 		var version uint64
 		var valuesMatch bool
-		if err := rows.Scan(&routeID, &version, &sessionID, &valuesMatch); err != nil {
+		if err := rows.Scan(&publicURLID, &version, &sessionID, &valuesMatch); err != nil {
 			t.Fatalf("verify usage row: %v", err)
 		}
-		expected, ok := byID[routeID]
-		if !ok || version != expected.RouteVersion || sessionID != expected.RouteSessionID || !valuesMatch {
-			t.Fatalf("unexpected usage bucket/session route=%s version=%d session=%s expected_route=%t values_match=%t", routeID, version, sessionID, ok, valuesMatch)
+		expected, ok := byID[publicURLID]
+		if !ok || version != expected.PublishRunNumber || sessionID != expected.PublishRunID || !valuesMatch {
+			t.Fatalf("unexpected usage bucket/session route=%s version=%d session=%s expected_route=%t values_match=%t", publicURLID, version, sessionID, ok, valuesMatch)
 		}
-		delete(byID, routeID)
+		delete(byID, publicURLID)
 		verified++
 	}
 	if err := rows.Err(); err != nil {
@@ -210,21 +210,21 @@ func TestLoadSteadyState(t *testing.T) {
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
 
-func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []routeSessionFixture {
+func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []publishRunFixture {
 	t.Helper()
 	return readyLoadSessions(t, f, time.Hour, time.Hour)
 }
 
-func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, credentialLifetime time.Duration) []routeSessionFixture {
+func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, credentialLifetime time.Duration) []publishRunFixture {
 	t.Helper()
-	var sessions []routeSessionFixture
+	var sessions []publishRunFixture
 	started := time.Now()
 	defer func() { t.Logf("ready_setup_completed=%d/%d elapsed=%s", len(sessions), f.routes, time.Since(started)) }()
 	// Use the untraced setup pool and stay serial: the certificate helper claims
 	// the oldest pending ACME order and expects it to be the one just created.
 	for index := range f.routes {
 		request := f.request(index)
-		setup, err := f.database.CreateRouteSession(t.Context(), request, f.now, publisherLease, credentialLifetime)
+		setup, err := f.database.CreatePublishRun(t.Context(), request, f.now, publisherLease, credentialLifetime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,22 +232,22 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 		for service, choices := range f.leases {
 			leases[service] = choices[index%2]
 		}
-		session := routeSessionFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases}
+		session := publishRunFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases}
 		work := createPlanIssuanceWork(t, f.database, f.now, session.authentication(), session.certificatePlan(), true, func(work *ACMEOrderWork) {
 			for index := range work.Authorizations {
-				work.Authorizations[index].AuthorizationURL += "/" + setup.RouteSessionID
-				work.Authorizations[index].ChallengeURL += "/" + setup.RouteSessionID
+				work.Authorizations[index].AuthorizationURL += "/" + setup.PublishRunID
+				work.Authorizations[index].ChallengeURL += "/" + setup.PublishRunID
 			}
 		})
-		if _, err := f.database.MarkRouteCertificateInstalled(t.Context(), session.authentication(), work.ID, *work.NotAfter, f.now); err != nil {
+		if _, err := f.database.MarkPublicURLCertificateInstalled(t.Context(), session.authentication(), work.ID, *work.NotAfter, f.now); err != nil {
 			t.Fatal(err)
 		}
 		for slot := range setup.PublisherConnections {
 			claimTestConnection(t, session, slot, f.now)
 		}
-		ready, err := f.database.MarkRouteSessionReady(t.Context(), session.authentication(), f.now)
+		ready, err := f.database.MarkPublishRunReady(t.Context(), session.authentication(), f.now)
 		if err != nil || !ready.Routable {
-			t.Fatalf("ready route=%s routable=%t: %v", setup.RouteID, ready.Routable, err)
+			t.Fatalf("ready route=%s routable=%t: %v", setup.PublicURLID, ready.Routable, err)
 		}
 		sessions = append(sessions, session)
 	}
@@ -258,10 +258,10 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 // live snapshot initially and once a second. A final observation after writes
 // finish verifies the fully drained history against the final snapshot.
 func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, now time.Time, workDone <-chan struct{}) error {
-	expected := make(map[string]IngressRoutingTableEvent, len(initial.Routes))
-	entries := make(map[string]uint64, len(initial.Routes))
-	for _, event := range initial.Routes {
-		expected[event.RouteID], entries[event.RouteID] = event, event.EntryRevision
+	expected := make(map[string]IngressRoutingTableEvent, len(initial.Entries))
+	entries := make(map[string]uint64, len(initial.Entries))
+	for _, event := range initial.Entries {
+		expected[event.PublicURLID], entries[event.PublicURLID] = event, event.EntryRevision
 	}
 	cursor := initial.RoutingTableRevision
 	highWater := initial.RoutingTableRevision
@@ -291,13 +291,13 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 		}
 		highWater = page.ThroughRevision
 		for _, event := range page.Events {
-			if event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.RouteID]+1 {
-				return fmt.Errorf("missing or unordered event after=%d got=%d route=%s entry=%d", cursor, event.RoutingTableRevision, event.RouteID, event.EntryRevision)
+			if event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.PublicURLID]+1 {
+				return fmt.Errorf("missing or unordered event after=%d got=%d route=%s entry=%d", cursor, event.RoutingTableRevision, event.PublicURLID, event.EntryRevision)
 			}
-			if err := checkSteadyLoadProjection(event, expected[event.RouteID], now); err != nil {
+			if err := checkSteadyLoadProjection(event, expected[event.PublicURLID], now); err != nil {
 				return err
 			}
-			cursor, entries[event.RouteID] = event.RoutingTableRevision, event.EntryRevision
+			cursor, entries[event.PublicURLID] = event.RoutingTableRevision, event.EntryRevision
 			events++
 		}
 		if page.NextRevision != cursor || cursor > page.ThroughRevision || page.More != (cursor < page.ThroughRevision) || (page.More && len(page.Events) == 0) {
@@ -321,18 +321,18 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 				return fmt.Errorf("snapshot: %w", err)
 			}
 			snapshots++
-			if len(snapshot.Routes) != len(expected) || snapshot.RoutingTableRevision < highWater {
-				return fmt.Errorf("snapshot routes=%d want=%d revision=%d high_water=%d", len(snapshot.Routes), len(expected), snapshot.RoutingTableRevision, highWater)
+			if len(snapshot.Entries) != len(expected) || snapshot.RoutingTableRevision < highWater {
+				return fmt.Errorf("snapshot routes=%d want=%d revision=%d high_water=%d", len(snapshot.Entries), len(expected), snapshot.RoutingTableRevision, highWater)
 			}
 			highWater = snapshot.RoutingTableRevision
 			nextObservation = time.Now().Add(time.Second)
 			seen := make(map[string]bool, len(expected))
-			for _, event := range snapshot.Routes {
-				if seen[event.RouteID] || event.EntryRevision < entries[event.RouteID] {
-					return fmt.Errorf("duplicate or stale snapshot route=%s entry=%d", event.RouteID, event.EntryRevision)
+			for _, event := range snapshot.Entries {
+				if seen[event.PublicURLID] || event.EntryRevision < entries[event.PublicURLID] {
+					return fmt.Errorf("duplicate or stale snapshot route=%s entry=%d", event.PublicURLID, event.EntryRevision)
 				}
-				seen[event.RouteID] = true
-				if err := checkSteadyLoadProjection(event, expected[event.RouteID], now); err != nil {
+				seen[event.PublicURLID] = true
+				if err := checkSteadyLoadProjection(event, expected[event.PublicURLID], now); err != nil {
 					return err
 				}
 			}
@@ -340,9 +340,9 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 				if cursor != snapshot.RoutingTableRevision || cursor != initial.RoutingTableRevision+uint64(3*len(expected)) {
 					return fmt.Errorf("final routing cursor=%d snapshot=%d want=%d", cursor, snapshot.RoutingTableRevision, initial.RoutingTableRevision+uint64(3*len(expected)))
 				}
-				for _, event := range snapshot.Routes {
-					if event.EntryRevision != expected[event.RouteID].EntryRevision+3 || event.EntryRevision != entries[event.RouteID] {
-						return fmt.Errorf("final snapshot/event history mismatch route=%s entry=%d", event.RouteID, event.EntryRevision)
+				for _, event := range snapshot.Entries {
+					if event.EntryRevision != expected[event.PublicURLID].EntryRevision+3 || event.EntryRevision != entries[event.PublicURLID] {
+						return fmt.Errorf("final snapshot/event history mismatch route=%s entry=%d", event.PublicURLID, event.EntryRevision)
 					}
 				}
 				return nil
@@ -359,10 +359,10 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 }
 
 func checkSteadyLoadProjection(event, expected IngressRoutingTableEvent, now time.Time) error {
-	if event.Kind != IngressRouteUpsert || event.RouteID != expected.RouteID || event.RouteVersion != expected.RouteVersion ||
-		event.CanonicalHostname != expected.CanonicalHostname || event.Projection.RouteSessionID != expected.Projection.RouteSessionID ||
-		!event.Projection.RouteExpiresAt.After(now) || !slices.Equal(event.Projection.PublisherConnections, expected.Projection.PublisherConnections) {
-		return fmt.Errorf("routing projection lost ready session or assignment identity route=%s revision=%d", event.RouteID, event.RoutingTableRevision)
+	if event.Kind != IngressPublicURLUpsert || event.PublicURLID != expected.PublicURLID || event.PublishRunNumber != expected.PublishRunNumber ||
+		event.CanonicalHostname != expected.CanonicalHostname || event.Projection.PublishRunID != expected.Projection.PublishRunID ||
+		!event.Projection.PublicUrlExpiresAt.After(now) || !slices.Equal(event.Projection.PublisherConnections, expected.Projection.PublisherConnections) {
+		return fmt.Errorf("routing projection lost ready session or assignment identity route=%s revision=%d", event.PublicURLID, event.RoutingTableRevision)
 	}
 	return nil
 }

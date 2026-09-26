@@ -53,7 +53,7 @@ func SamePlan(left, right controlv1.CertificatePlan) bool {
 		left.ChallengeMethod == right.ChallengeMethod && slices.Equal(left.Identifiers, right.Identifiers)
 }
 
-// Covers checks a route hostname against x509 exact-name and one-label wildcard rules.
+// Covers checks a public URL hostname against x509 exact-name and one-label wildcard rules.
 func Covers(identifiers []string, hostname string) bool {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	return err == nil && canonical == hostname && (&x509.Certificate{DNSNames: identifiers}).VerifyHostname(hostname) == nil

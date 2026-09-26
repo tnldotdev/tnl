@@ -245,7 +245,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"},
 		membership: authorityv1.Membership{
 			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
-			ManagedLabel: "busy-toast", MemberSlug: "chase",
+			ManagedLabel: "ecstatic-penguin", MemberSlug: "chase",
 		},
 		domains: []authorityv1.Domain{{
 			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
@@ -257,8 +257,8 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.MemberNamespace != "busy-toast.tnl.dev" || service.Hostname != "api-tnl-bb4eff12.busy-toast.tnl.dev" ||
-		service.URL != "https://api-tnl-bb4eff12.busy-toast.tnl.dev" {
+	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != "api-tnl-bb4eff12.ecstatic-penguin.tnl.dev" ||
+		service.URL != "https://api-tnl-bb4eff12.ecstatic-penguin.tnl.dev" {
 		t.Fatalf("service metadata = %#v", service)
 	}
 }
@@ -315,11 +315,11 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	server, team := "https://project.example", "Project Team"
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server, Team: &team}}}
 	flags := cli{}
-	if err := applyProjectCommandContext("route list", project, &flags); err != nil {
+	if err := applyProjectCommandContext("url list", project, &flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Route.List.ServerURL != server || flags.Route.List.ProjectTeam != team {
-		t.Fatalf("route flags = %#v", flags.Route.List)
+	if flags.URL.List.ServerURL != server || flags.URL.List.ProjectTeam != team {
+		t.Fatalf("url flags = %#v", flags.URL.List)
 	}
 	flags.Domain.List.ServerURL = "https://explicit.example"
 	if err := applyProjectCommandContext("domain list", project, &flags); err != nil {
@@ -328,12 +328,12 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	if flags.Domain.List.ServerURL != "https://explicit.example" || flags.Domain.List.ProjectTeam != team {
 		t.Fatalf("domain flags = %#v", flags.Domain.List)
 	}
-	flags.Route.Delete.AccessToken = "explicit-token"
-	if err := applyProjectCommandContext("route delete <route-id>", project, &flags); err == nil {
+	flags.URL.Delete.AccessToken = "explicit-token"
+	if err := applyProjectCommandContext("url delete <public-url-id>", project, &flags); err == nil {
 		t.Fatal("project server accepted an explicit access token without an invocation-level server")
 	}
-	flags.Route.Delete.ServerURL = "https://explicit.example"
-	if err := applyProjectCommandContext("route delete <route-id>", project, &flags); err != nil {
+	flags.URL.Delete.ServerURL = "https://explicit.example"
+	if err := applyProjectCommandContext("url delete <public-url-id>", project, &flags); err != nil {
 		t.Fatal(err)
 	}
 }

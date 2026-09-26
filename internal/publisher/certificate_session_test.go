@@ -47,7 +47,7 @@ func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
 			if !slices.Equal(want, got) {
 				t.Fatalf("submitted CSR SANs = %q, want authoritative session SANs %q; Run = %v", submitted.DNSNames, control.setup.CertificatePlan.Identifiers, err)
 			}
-			if !errors.Is(err, reachedReady) || len(control.installations) != 1 || !slices.Equal(control.closedSessions, []string{control.setup.RouteSession.Id}) {
+			if !errors.Is(err, reachedReady) || len(control.installations) != 1 || !slices.Equal(control.closedSessions, []string{control.setup.PublishRun.Id}) {
 				t.Fatalf("authorized namespace issuance did not reach ready: %v", err)
 			}
 		})
@@ -66,13 +66,13 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 		return controlv1.CertificateIssuance{}, errors.New("unexpected issuance")
 	}
 	for version := int64(2); version <= 3; version++ {
-		control.setup.RouteSession.Id = fmt.Sprintf("route_session_%032x", version)
-		control.setup.RouteSession.RouteVersion = version
+		control.setup.PublishRun.Id = fmt.Sprintf("publish_run_%032x", version)
+		control.setup.PublishRun.PublishRunNumber = version
 		acks := 0
 		control.installed = func(session string, gotVersion uint64, issuance string, notAfter time.Time) error {
 			acks++
-			if session != control.setup.RouteSession.Id || gotVersion != uint64(version) || issuance != material.IssuanceID || !notAfter.Equal(material.Certificate.Leaf.NotAfter) {
-				t.Error("cached certificate acknowledgement did not identify the current route session and certificate")
+			if session != control.setup.PublishRun.Id || gotVersion != uint64(version) || issuance != material.IssuanceID || !notAfter.Equal(material.Certificate.Leaf.NotAfter) {
+				t.Error("cached certificate acknowledgement did not identify the current publish run and certificate")
 			}
 			return nil
 		}
@@ -145,7 +145,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			control, route, _ := newCertificateTransactionTest(t)
 			control.setup.CertificatePlan.ChallengeMethod = controlv1.Dns01
-			state, err := control.store.Certificates(control.setup.Route.TeamId, control.setup.CertificatePlan)
+			state, err := control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,8 +155,8 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 			}
 			config := startCertificateTLSYamuxHarness(t, control)
 			test.change(&control.setup.CertificatePlan)
-			control.setup.RouteSession.RouteVersion++
-			control.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
+			control.setup.PublishRun.PublishRunNumber++
+			control.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
 			submitted := false
 			control.create = func(csr []byte, _ string) (controlv1.CertificateIssuance, error) {
 				submitted = true
@@ -201,16 +201,16 @@ func TestRunSharesNamespaceMaterialWithoutHoldingTransactionLock(t *testing.T) {
 	}
 	second := newCertificateTestControl(t, "second.member.example", namespaceCertificateTestPlan())
 	second.store = first.store
-	second.setup.Route.Id = "route_22222222222222222222222222222222"
-	second.setup.RouteSession.RouteId = second.setup.Route.Id
-	second.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
+	second.setup.PublicUrl.Id = "public_url_22222222222222222222222222222222"
+	second.setup.PublishRun.PublicUrlId = second.setup.PublicUrl.Id
+	second.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
 	secondConfig := startCertificateTLSYamuxHarness(t, second)
 	second.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("second route requested another namespace certificate")
 	}
 	acks := 0
 	second.installed = func(session string, version uint64, _ string, _ time.Time) error {
-		if session != second.setup.RouteSession.Id || version != 1 {
+		if session != second.setup.PublishRun.Id || version != 1 {
 			t.Error("wrong second-session acknowledgement")
 		}
 		acks++
@@ -247,12 +247,12 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 				var original clientstate.Material
 				for slot := range controls {
 					control := newCertificateTestControl(t, fmt.Sprintf("app%d.member.example", slot), namespaceCertificateTestPlan())
-					control.setup.Route.Id = fmt.Sprintf("route_%032x", slot+1)
-					control.setup.RouteSession.Id = fmt.Sprintf("route_session_%032x", slot+1)
-					control.setup.RouteSession.RouteId = control.setup.Route.Id
+					control.setup.PublicUrl.Id = fmt.Sprintf("public_url_%032x", slot+1)
+					control.setup.PublishRun.Id = fmt.Sprintf("publish_run_%032x", slot+1)
+					control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 					control.store = store
 					controls[slot] = control
-					cache, err := store.Certificates(control.setup.Route.TeamId, control.setup.CertificatePlan)
+					cache, err := store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -261,7 +261,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 							leaf.NotAfter = time.Now().Add(90 * time.Second).UTC().Truncate(time.Second)
 							issuance.NotAfter = pointer(leaf.NotAfter)
 						}
-						route := certificateTestRoute(t, control.setup.Route.CanonicalHostname, control.setup.CertificatePlan)
+						route := certificateTestPublicURL(t, control.setup.PublicUrl.CanonicalHostname, control.setup.CertificatePlan)
 						original, err = attemptCertificateTransaction(t.Context(), control, route, cache, control.setup, false)
 						if err != nil {
 							t.Fatal(err)
@@ -271,7 +271,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					control.create = func(csr []byte, key string) (controlv1.CertificateIssuance, error) {
 						mu.Lock()
 						defer mu.Unlock()
-						id := control.setup.RouteSession.Id + ":" + key
+						id := control.setup.PublishRun.Id + ":" + key
 						issuance, found := orders[id]
 						if !found {
 							var err error
@@ -294,12 +294,12 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					control.installed = func(session string, version uint64, issuance string, notAfter time.Time) error {
 						mu.Lock()
 						defer mu.Unlock()
-						if session != control.setup.RouteSession.Id || version != 1 {
+						if session != control.setup.PublishRun.Id || version != 1 {
 							t.Error("wrong per-session installation acknowledgement")
 						}
-						current, found, err := cache.Staged(t.Context(), control.setup.Route.CanonicalHostname)
+						current, found, err := cache.Staged(t.Context(), control.setup.PublicUrl.CanonicalHostname)
 						if err == nil && !found {
-							current, found, err = cache.Current(t.Context(), control.setup.Route.CanonicalHostname)
+							current, found, err = cache.Current(t.Context(), control.setup.PublicUrl.CanonicalHostname)
 						}
 						if err != nil || !found || current.IssuanceID != issuance || !current.Certificate.Leaf.NotAfter.Equal(notAfter) {
 							return fmt.Errorf("acknowledged different certificate material: found=%t error=%v", found, err)
@@ -314,19 +314,19 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 						ready[slot]++
 						return nil
 					}
-					control.heartbeat = func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+					control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 						mu.Lock()
 						defer mu.Unlock()
 						heartbeats[slot]++
-						session := control.setup.RouteSession
+						session := control.setup.PublishRun
 						session.ExpiresAt = time.Now().Add(time.Hour)
-						return controlv1.RouteSessionHeartbeat{RouteSession: session}, nil
+						return controlv1.PublishRunHeartbeat{PublishRun: session}, nil
 					}
 					connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 						return &certificateTestTransport{done: make(chan struct{})}, nil
 					})
-					configs[slot] = Config{Control: control, State: store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", RouteScope: controlv1.Member,
-						Hostname: control.setup.Route.CanonicalHostname, Target: "http://127.0.0.1:3000", QUICConnector: connector, TCPConnector: connector,
+					configs[slot] = Config{Control: control, State: store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member,
+						Hostname: control.setup.PublicUrl.CanonicalHostname, Target: "http://127.0.0.1:3000", QUICConnector: connector, TCPConnector: connector,
 						FallbackDelay: time.Millisecond, DrainTime: time.Millisecond, ProvisioningStalledDelay: time.Minute}
 					for connection := range 2 {
 						control.setup.PublisherConnections = append(control.setup.PublisherConnections, controlv1.ConnectionAssignment{
@@ -423,9 +423,9 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A recreated route has a new identity but the same server-authorized certificate cache key and plan.
-	control.setup.Route.Id = "route_22222222222222222222222222222222"
-	control.setup.RouteSession.RouteId = control.setup.Route.Id
-	control.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
+	control.setup.PublicUrl.Id = "public_url_22222222222222222222222222222222"
+	control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
+	control.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
 	config := startCertificateTLSYamuxHarness(t, control)
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("recreated route requested issuance instead of reusing compatible cached material")
@@ -433,7 +433,7 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	acks := 0
 	control.installed = func(session string, version uint64, issuance string, notAfter time.Time) error {
 		acks++
-		if session != control.setup.RouteSession.Id || version != 1 || issuance != material.IssuanceID || !notAfter.Equal(material.Certificate.Leaf.NotAfter) {
+		if session != control.setup.PublishRun.Id || version != 1 || issuance != material.IssuanceID || !notAfter.Equal(material.Certificate.Leaf.NotAfter) {
 			t.Error("recreated route did not acknowledge cached material for its own session")
 		}
 		return nil

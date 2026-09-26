@@ -18,43 +18,43 @@ import (
 )
 
 type publishEvent struct {
-	SchemaVersion int        `json:"schema_version"`
-	Type          string     `json:"type"`
-	Cursor        uint64     `json:"cursor"`
-	TunnelID      string     `json:"tunnel_id"`
-	Target        string     `json:"target,omitempty"`
-	URL           string     `json:"url,omitempty"`
-	RouteVersion  uint64     `json:"route_version,omitempty"`
-	IP            string     `json:"ip,omitempty"`
-	Message       string     `json:"message,omitempty"`
-	Code          string     `json:"code,omitempty"`
-	HelpURL       string     `json:"help_url,omitempty"`
-	Retryable     *bool      `json:"retryable,omitempty"`
-	RetryAt       *time.Time `json:"retry_at,omitempty"`
-	Reason        string     `json:"reason,omitempty"`
-	Transport     string     `json:"transport,omitempty"`
+	SchemaVersion    int        `json:"schema_version"`
+	Type             string     `json:"type"`
+	Cursor           uint64     `json:"cursor"`
+	TunnelID         string     `json:"tunnel_id"`
+	Target           string     `json:"target,omitempty"`
+	URL              string     `json:"url,omitempty"`
+	PublishRunNumber uint64     `json:"publish_run_number,omitempty"`
+	IP               string     `json:"ip,omitempty"`
+	Message          string     `json:"message,omitempty"`
+	Code             string     `json:"code,omitempty"`
+	HelpURL          string     `json:"help_url,omitempty"`
+	Retryable        *bool      `json:"retryable,omitempty"`
+	RetryAt          *time.Time `json:"retry_at,omitempty"`
+	Reason           string     `json:"reason,omitempty"`
+	Transport        string     `json:"transport,omitempty"`
 }
 
 type publishOutput struct {
-	mode              string
-	stdout            io.Writer
-	stderr            io.Writer
-	mu                sync.Mutex
-	cursor            uint64
-	tunnelID          string
-	printed           bool
-	opened            bool
-	provision         uint64
-	stalled           uint64
-	readyRouteVersion uint64
-	fallbackRoute     uint64
-	blockRoute        uint64
-	blocked           uint64
-	command           string
-	target            string
-	current           string
-	framework         string
-	openURL           func(string) error
+	mode                  string
+	stdout                io.Writer
+	stderr                io.Writer
+	mu                    sync.Mutex
+	cursor                uint64
+	tunnelID              string
+	printed               bool
+	opened                bool
+	provision             uint64
+	stalled               uint64
+	readyPublishRunNumber uint64
+	fallbackPublicURL     uint64
+	blockPublicURL        uint64
+	blocked               uint64
+	command               string
+	target                string
+	current               string
+	framework             string
+	openURL               func(string) error
 }
 
 type reportedError struct{ err error }
@@ -62,30 +62,29 @@ type reportedError struct{ err error }
 func (e *reportedError) Error() string { return e.err.Error() }
 func (e *reportedError) Unwrap() error { return e.err }
 
-func (o *publishOutput) provisioning(hostname string, routeVersion uint64) error {
+func (o *publishOutput) provisioning(hostname string, publishRunNumber uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if routeVersion <= o.provision {
+	if publishRunNumber <= o.provision {
 		return nil
 	}
-	o.provision = routeVersion
+	o.provision = publishRunNumber
 	if o.mode != "human" {
 		return nil
 	}
 	return writeHumanTransition(
 		o.stderr, o.command, "provisioning", hostname,
 		"certificate and publisher connections", o.target, "waiting for route readiness",
-		clioutput.Field{Label: "route version", Value: fmt.Sprint(routeVersion)},
 	)
 }
 
-func (o *publishOutput) provisioningStalled(routeVersion uint64) error {
+func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if routeVersion != o.provision || routeVersion <= o.stalled || routeVersion <= o.readyRouteVersion {
+	if publishRunNumber != o.provision || publishRunNumber <= o.stalled || publishRunNumber <= o.readyPublishRunNumber {
 		return nil
 	}
-	o.stalled = routeVersion
+	o.stalled = publishRunNumber
 	if o.mode == "human" {
 		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.ProvisioningStalled)
 	}
@@ -93,21 +92,20 @@ func (o *publishOutput) provisioningStalled(routeVersion uint64) error {
 	return o.emitLocked(publishEvent{
 		Type: "warning", Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
 		Code: string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
-		Retryable: &retryable, RouteVersion: routeVersion,
+		Retryable: &retryable, PublishRunNumber: publishRunNumber,
 	})
 }
 
-func (o *publishOutput) transportFallback(routeVersion uint64, transport string) error {
+func (o *publishOutput) transportFallback(publishRunNumber uint64, transport string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if routeVersion <= o.fallbackRoute {
+	if publishRunNumber <= o.fallbackPublicURL {
 		return nil
 	}
-	o.fallbackRoute = routeVersion
+	o.fallbackPublicURL = publishRunNumber
 	if o.mode == "human" {
 		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over TLS/TCP",
 			clioutput.Fields(
-				clioutput.Field{Label: "route version", Value: fmt.Sprint(routeVersion)},
 				clioutput.Field{Label: "transport", Value: "TLS/TCP"},
 			),
 		)
@@ -115,16 +113,16 @@ func (o *publishOutput) transportFallback(routeVersion uint64, transport string)
 	retryable := false
 	return o.emitLocked(publishEvent{
 		Type: "warning", Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP.",
-		Retryable: &retryable, RouteVersion: routeVersion, Transport: transport,
+		Retryable: &retryable, PublishRunNumber: publishRunNumber, Transport: transport,
 	})
 }
 
 // blockedVisitors presents aggregate policy denials without exposing visitor IPs.
-func (o *publishOutput) blockedVisitors(routeVersion, total uint64) error {
+func (o *publishOutput) blockedVisitors(publishRunNumber, total uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if routeVersion != o.blockRoute {
-		o.blockRoute, o.blocked = routeVersion, 0
+	if publishRunNumber != o.blockPublicURL {
+		o.blockPublicURL, o.blocked = publishRunNumber, 0
 	}
 	if total <= o.blocked {
 		return nil
@@ -160,10 +158,10 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	return o.emitLocked(publishEvent{Type: "starting", Target: target})
 }
 
-func (o *publishOutput) ready(url string, routeVersion uint64) error {
+func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.readyRouteVersion = max(o.readyRouteVersion, routeVersion)
+	o.readyPublishRunNumber = max(o.readyPublishRunNumber, publishRunNumber)
 	if o.mode == "human" {
 		if !o.printed {
 			o.printed = true
@@ -176,24 +174,25 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 					footer = "opened in browser; ctrl+c to stop"
 				}
 			}
-			fields := []clioutput.Field{{Label: "route version", Value: fmt.Sprint(routeVersion)}}
+			var fields []clioutput.Field
 			if o.framework != "" {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
 			}
-			if o.fallbackRoute == routeVersion {
+			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
 			}
-			if err := writeHumanFrame(o.stderr, o.command, "ready", footer,
-				clioutput.Flow(
-					clioutput.FlowNode{Label: url},
-					clioutput.FlowNode{Label: "tnl"},
-					clioutput.FlowNode{Label: o.target},
-				),
-				clioutput.Fields(fields...),
-			); err != nil {
+			blocks := []clioutput.Block{clioutput.Flow(
+				clioutput.FlowNode{Label: url},
+				clioutput.FlowNode{Label: "tnl"},
+				clioutput.FlowNode{Label: o.target},
+			)}
+			if len(fields) != 0 {
+				blocks = append(blocks, clioutput.Fields(fields...))
+			}
+			if err := writeHumanFrame(o.stderr, o.command, "ready", footer, blocks...); err != nil {
 				return err
 			}
 			if openErr != nil {
@@ -205,7 +204,7 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 				)
 			}
 		}
-	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, RouteVersion: routeVersion}); err != nil {
+	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, PublishRunNumber: publishRunNumber}); err != nil {
 		return err
 	}
 	if o.mode != "human" && o.openURL != nil && !o.opened {
@@ -328,25 +327,25 @@ func boundedOutputError(err error) string {
 func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
 	switch event.Type {
 	case publisher.EventRouteAssigned:
-		return tunnel.SetRoute(ctx, event.RouteID, event.Hostname)
+		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
 	case publisher.EventProvisioning:
-		if err := tunnel.SetProvisioning(ctx, event.RouteVersion); err != nil {
+		if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
 			return err
 		}
-		return output.provisioning(event.Hostname, event.RouteVersion)
+		return output.provisioning(event.Hostname, event.PublishRunNumber)
 	case publisher.EventProvisioningStalled:
-		return output.provisioningStalled(event.RouteVersion)
+		return output.provisioningStalled(event.PublishRunNumber)
 	case publisher.EventReady:
-		if err := tunnel.SetReady(ctx, event.PublicURL, event.RouteVersion); err != nil {
+		if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 			return err
 		}
-		return output.ready(event.PublicURL, event.RouteVersion)
+		return output.ready(event.PublicURL, event.PublishRunNumber)
 	case publisher.EventDraining:
 		return tunnel.SetDraining(context.WithoutCancel(ctx))
 	case publisher.EventTransportFallback:
-		return output.transportFallback(event.RouteVersion, string(event.Transport))
+		return output.transportFallback(event.PublishRunNumber, string(event.Transport))
 	case publisher.EventIPPolicyDenials:
-		return output.blockedVisitors(event.RouteVersion, event.PolicyDenials)
+		return output.blockedVisitors(event.PublishRunNumber, event.PolicyDenials)
 	}
 	return nil
 }

@@ -135,21 +135,21 @@ func (c *HTTPControlClient) ReportIngressUsage(
 	return nil
 }
 
-func (c *HTTPControlClient) ObserveRouteRecovery(
+func (c *HTTPControlClient) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,
 	recoveryEpisodeID int64,
-	body ingressv1.RouteRecoveryObservationRequest,
-) (ingressv1.RouteRecoveryObservation, error) {
-	response, err := c.client.ObserveRouteRecoveryWithResponse(ctx, ingressID, recoveryEpisodeID, body)
+	body ingressv1.PublicURLRecoveryObservationRequest,
+) (ingressv1.PublicURLRecoveryObservation, error) {
+	response, err := c.client.ObservePublicURLRecoveryWithResponse(ctx, ingressID, recoveryEpisodeID, body)
 	if err != nil {
-		return ingressv1.RouteRecoveryObservation{}, err
+		return ingressv1.PublicURLRecoveryObservation{}, err
 	}
 	if response == nil {
-		return ingressv1.RouteRecoveryObservation{}, ingressHTTPProblem(0, nil)
+		return ingressv1.PublicURLRecoveryObservation{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.RouteRecoveryObservation{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.PublicURLRecoveryObservation{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }

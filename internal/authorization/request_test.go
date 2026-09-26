@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestValidateRouteTarget(t *testing.T) {
+func TestValidateTarget(t *testing.T) {
 	for _, target := range []string{"http://127.0.0.1:3000", "http://[::1]:3000"} {
-		if err := ValidateRouteTarget(target); err != nil {
+		if err := ValidateTarget(target); err != nil {
 			t.Fatalf("target %q: %v", target, err)
 		}
 	}
@@ -18,7 +18,7 @@ func TestValidateRouteTarget(t *testing.T) {
 		"http://127.0.0.1", "http://127.0.0.1:3000/", "http://user@127.0.0.1:3000",
 		"http://127.0.0.1:03000", "http://127.0.0.1:99999", "http://[0:0:0:0:0:0:0:1]:3000",
 	} {
-		if err := ValidateRouteTarget(target); err == nil {
+		if err := ValidateTarget(target); err == nil {
 			t.Fatalf("target %q was accepted", target)
 		}
 	}
@@ -32,19 +32,19 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	if !slices.Equal(prefixes, []string{"192.0.2.0/24", "2001:db8::/64"}) {
 		t.Fatalf("prefixes = %#v", prefixes)
 	}
-	request := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","domain_id":"domain_1","membership_id":"membership_1","route_scope":"member","target":"http://127.0.0.1:3000","team_id":"team_1"}`)
+	request := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","domain_id":"domain_1","membership_id":"membership_1","public_url_scope":"member","target":"http://127.0.0.1:3000","team_id":"team_1"}`)
 	wantRequestDigest := Digest(sha256.Sum256(request))
 	requestDigest, err := CanonicalRequestHash(OperationRequest{
-		Operation: OperationRouteCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "route.example", RouteScope: "member", Target: "http://127.0.0.1:3000",
+		Operation: OperationPublicURLCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "route.example", PublicURLScope: "member", Target: "http://127.0.0.1:3000",
 		AllowedIPPrefixes: prefixes,
 	})
 	if err != nil || requestDigest != wantRequestDigest {
 		t.Fatalf("request digest = %s, want %s, error = %v", requestDigest, wantRequestDigest, err)
 	}
 	ephemeralDigest, err := CanonicalRequestHash(OperationRequest{
-		Operation: OperationRouteCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "route.example", RouteScope: "member", Target: "http://127.0.0.1:3000",
+		Operation: OperationPublicURLCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "route.example", PublicURLScope: "member", Target: "http://127.0.0.1:3000",
 		AllowedIPPrefixes: prefixes, Ephemeral: true,
 	})
 	if err != nil || ephemeralDigest == requestDigest {
@@ -76,10 +76,10 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 		t.Fatal("oversized prefix policy was accepted")
 	}
 	plan := CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"}
-	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"tls-alpn-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"route_id":"route_1","route_scope":"member","route_version":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)
+	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"tls-alpn-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"public_url_id":"public_url_1","public_url_scope":"member","publish_run_number":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)
 	sessionRequest := OperationRequest{
-		Operation: OperationRouteSessionCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "route.example", RouteScope: "member", RouteID: "route_1", RouteVersion: 4,
+		Operation: OperationPublishRunCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "route.example", PublicURLScope: "member", PublicURLID: "public_url_1", PublishRunNumber: 4,
 		PolicyRevision: 3, Target: "http://127.0.0.1:3000", AllowedIPPrefixes: prefixes, Ephemeral: true,
 		CertificatePlan: &plan,
 	}
@@ -89,12 +89,12 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	}
 	sessionRequest.AllowedIPPrefixes = nil
 	if _, err := CanonicalRequestHash(sessionRequest); err == nil {
-		t.Fatal("route-session request without an IP policy was accepted")
+		t.Fatal("publish-run request without an IP policy was accepted")
 	}
-	updateJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"route_id":"route_1","route_mutation_revision":4,"route_scope":"member","target":"http://127.0.0.1:4000","team_id":"team_1"}`)
+	updateJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"public_url_id":"public_url_1","public_url_mutation_revision":4,"public_url_scope":"member","target":"http://127.0.0.1:4000","team_id":"team_1"}`)
 	updateDigest, err := CanonicalRequestHash(OperationRequest{
-		Operation: OperationRouteUpdate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "route.example", RouteScope: "member", RouteID: "route_1", RouteMutationRevision: 4, PolicyRevision: 3,
+		Operation: OperationPublicURLUpdate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "route.example", PublicURLScope: "member", PublicURLID: "public_url_1", PublicURLMutationRevision: 4, PolicyRevision: 3,
 		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: prefixes, Ephemeral: true,
 	})
 	if err != nil || updateDigest != Digest(sha256.Sum256(updateJSON)) {

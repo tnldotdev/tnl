@@ -24,7 +24,7 @@ func (s generatedServer) RenewIngress(response http.ResponseWriter, request *htt
 	s.handler.renewIngress(response, request, ingressID)
 }
 
-func (s generatedServer) ObserveRouteRecovery(
+func (s generatedServer) ObservePublicURLRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
 	ingressID ingressv1.IngressID,

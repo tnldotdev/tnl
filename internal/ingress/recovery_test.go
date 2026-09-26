@@ -39,9 +39,9 @@ func testRecoveryReporterRetriesAndDeduplicates(t *testing.T) {
 		}
 	})
 	observedAt := time.Now().UTC()
-	reporter.Observe("route_test", 3, 7, observedAt)
+	reporter.Observe("public_url_test", 3, 7, observedAt)
 	synctest.Wait()
-	reporter.Observe("route_test", 3, 7, observedAt.Add(time.Second))
+	reporter.Observe("public_url_test", 3, 7, observedAt.Add(time.Second))
 
 	for range 2 {
 		select {
@@ -57,7 +57,7 @@ func testRecoveryReporterRetriesAndDeduplicates(t *testing.T) {
 	}
 	control.mu.Lock()
 	defer control.mu.Unlock()
-	if control.attempts != 2 || control.routeID != "route_test" || control.routeVersion != 3 ||
+	if control.attempts != 2 || control.publicURLID != "public_url_test" || control.publishRunNumber != 3 ||
 		control.recoveryEpisodeID != 7 || !control.observedAt.Equal(observedAt) {
 		t.Fatalf("recovery attempts = %#v", control)
 	}
@@ -67,28 +67,28 @@ type testRecoveryControl struct {
 	mu                sync.Mutex
 	attempted         chan struct{}
 	attempts          int
-	routeID           string
-	routeVersion      uint64
+	publicURLID       string
+	publishRunNumber  uint64
 	recoveryEpisodeID uint64
 	observedAt        time.Time
 }
 
 func (c *testRecoveryControl) ObserveRecovery(
 	_ context.Context,
-	routeID string,
-	routeVersion, recoveryEpisodeID uint64,
+	publicURLID string,
+	publishRunNumber, recoveryEpisodeID uint64,
 	observedAt time.Time,
-) (ingressv1.RouteRecoveryObservation, error) {
+) (ingressv1.PublicURLRecoveryObservation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.attempts++
-	c.routeID = routeID
-	c.routeVersion = routeVersion
+	c.publicURLID = publicURLID
+	c.publishRunNumber = publishRunNumber
 	c.recoveryEpisodeID = recoveryEpisodeID
 	c.observedAt = observedAt
 	c.attempted <- struct{}{}
 	if c.attempts == 1 {
-		return ingressv1.RouteRecoveryObservation{}, errors.New("temporary failure")
+		return ingressv1.PublicURLRecoveryObservation{}, errors.New("temporary failure")
 	}
-	return ingressv1.RouteRecoveryObservation{}, nil
+	return ingressv1.PublicURLRecoveryObservation{}, nil
 }

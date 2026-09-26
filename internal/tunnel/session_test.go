@@ -103,11 +103,11 @@ func TestVisitorStreamRejection(t *testing.T) {
 			return err
 		}
 		defer incoming.Stream.Close()
-		return incoming.Reject(tunnelv1.StaleRouteVersion)
+		return incoming.Reject(tunnelv1.StalePublishRunNumber)
 	})
 	_, err := client.OpenVisitorStream(ctx, visitorStreamHeader())
 	var p *ProtocolError
-	if !errors.As(err, &p) || p.Code != tunnelv1.StaleRouteVersion {
+	if !errors.As(err, &p) || p.Code != tunnelv1.StalePublishRunNumber {
 		t.Fatalf("open=%v", err)
 	}
 	if err := await(t, done); err != nil {

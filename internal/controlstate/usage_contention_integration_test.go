@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 // The gate is controlled latency on the last route, not a sleep: PostgreSQL's
@@ -28,39 +28,39 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 				}
 				leases[lease.RelayServiceID] = lease
 			}
-			var fixtures []routeSessionFixture
+			var fixtures []publishRunFixture
 			var reports []IngressUsageReport
 			for index := range 17 {
 				suffix := fmt.Sprintf("usage%02d", index)
-				seedControlRoute(t, observer, now, suffix)
-				request := RouteSessionRequest{
-					RouteID: "route_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix, MembershipID: "membership_" + suffix,
+				seedControlPublicURL(t, observer, now, suffix)
+				request := PublishRunRequest{
+					PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix, MembershipID: "membership_" + suffix,
 					RequireLocalAuthority: true, RetrySecret: make([]byte, 32), IdempotencyKey: suffix, PolicyRevision: 1, ExpectedMutationRevision: 1,
 					CertificateCacheKey: suffix, CertificateScope: "route", CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
 				}
-				setup, err := observer.CreateRouteSession(t.Context(), request, now, time.Hour, time.Minute)
+				setup, err := observer.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
 				if err != nil {
 					t.Fatal(err)
 				}
-				fixture := routeSessionFixture{database: observer, now: now, request: request, setup: setup, leases: leases}
+				fixture := publishRunFixture{database: observer, now: now, request: request, setup: setup, leases: leases}
 				work := createPlanIssuanceWork(t, observer, now, fixture.authentication(), fixture.certificatePlan(), true, func(work *ACMEOrderWork) {
 					for index := range work.Authorizations {
 						work.Authorizations[index].AuthorizationURL += "/" + suffix
 						work.Authorizations[index].ChallengeURL += "/" + suffix
 					}
 				})
-				if _, err := observer.MarkRouteCertificateInstalled(t.Context(), fixture.authentication(), work.ID, *work.NotAfter, now); err != nil {
+				if _, err := observer.MarkPublicURLCertificateInstalled(t.Context(), fixture.authentication(), work.ID, *work.NotAfter, now); err != nil {
 					t.Fatal(err)
 				}
 				for slot := range setup.PublisherConnections {
 					claimTestConnection(t, fixture, slot, now)
 				}
-				if _, err := observer.MarkRouteSessionReady(t.Context(), fixture.authentication(), now); err != nil {
+				if _, err := observer.MarkPublishRunReady(t.Context(), fixture.authentication(), now); err != nil {
 					t.Fatal(err)
 				}
 				fixtures = append(fixtures, fixture)
 				start := now.Truncate(time.Minute)
-				reports = append(reports, IngressUsageReport{RouteID: setup.RouteID, RouteVersion: setup.RouteVersion, BucketStart: start, BucketEnd: start.Add(time.Minute), ObservedThrough: now, ReportRevision: 1, ConnectionAttempts: 1, HistogramData: (routeusage.Checkpoint{}).MarshalBinary()})
+				reports = append(reports, IngressUsageReport{PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, BucketStart: start, BucketEnd: start.Add(time.Minute), ObservedThrough: now, ReportRevision: 1, ConnectionAttempts: 1, HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})
 			}
 			ingress := registerTestIngress(t, observer, now)
 			parsed, err := url.Parse(databaseURL)
@@ -88,12 +88,12 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 			}
 			defer rollbackTestTransaction(t, gate)
 			defer workers.stop()
-			if _, err := controlstatedb.New(gate).LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{RouteID: reports[16].RouteID, RouteVersion: int64(reports[16].RouteVersion)}); err != nil {
+			if _, err := controlstatedb.New(gate).LockPublishRunForUsage(ctx, controlstatedb.LockPublishRunForUsageParams{PublicURLID: reports[16].PublicURLID, PublishRunNumber: int64(reports[16].PublishRunNumber)}); err != nil {
 				t.Fatal(err)
 			}
 			// Baseline: healthy ready heartbeats complete before usage starts.
 			heartbeat := func(db *Database, index int) error {
-				setup, err := db.HeartbeatRouteSession(ctx, fixtures[index].authentication(), now.Add(time.Second), time.Hour, time.Minute)
+				setup, err := db.HeartbeatPublishRun(ctx, fixtures[index].authentication(), now.Add(time.Second), time.Hour, time.Minute)
 				if err == nil && (setup.PublisherConnections[0].State != PublisherConnectionReady || setup.PublisherConnections[1].State != PublisherConnectionReady) {
 					return errors.New("heartbeat lost ready connections")
 				}
@@ -197,7 +197,7 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 						t.Fatalf("request pool was not exhausted: %v", err)
 					}
 				}
-				t.Log("single batch: usage holds six route-session locks plus ingress lease; seven direct waiters exhaust both four-connection pools without a SQL deadlock")
+				t.Log("single batch: usage holds six publish-run locks plus ingress lease; seven direct waiters exhaust both four-connection pools without a SQL deadlock")
 			}
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)

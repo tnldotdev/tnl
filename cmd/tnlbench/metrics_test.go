@@ -52,7 +52,7 @@ func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *te
 	defer coordinator.Close()
 	command := publisherCommand{
 		workerCommand: workerCommand{CellID: "early", WorkerIndex: 1, WorkerCount: 2, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret", Timeout: time.Second},
-		ControlCAFile: filepath.Join(t.TempDir(), "missing-ca"), Routes: 2, PayloadBytes: 16,
+		ControlCAFile: filepath.Join(t.TempDir(), "missing-ca"), PublicURLs: 2, PayloadBytes: 16,
 		MetricsURLs: []string{metrics.URL + "/metrics#control"}, DiagnosticURLs: []string{metrics.URL + "/debug/database"},
 	}
 	if err := command.run(t.Context()); err == nil {
@@ -166,16 +166,16 @@ func TestProductionMetricsRoundTripSummarizesWorkloadOnly(t *testing.T) {
 	server := httptest.NewServer(metrics.Handler())
 	defer server.Close()
 	endpoints := []string{server.URL + "/metrics#control"}
-	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Second) // Setup.
+	metrics.ObserveOperation("HeartbeatPublishRun", nil, time.Second) // Setup.
 	resources := sampleBoundaryResources(t.Context(), endpoints, "steady-1-before")
 	for range 3 {
-		metrics.ObserveOperation("HeartbeatRouteSession", nil, 10*time.Millisecond)
+		metrics.ObserveOperation("HeartbeatPublishRun", nil, 10*time.Millisecond)
 	}
-	metrics.ObserveOperation("HeartbeatRouteSession", errors.New("failed"), 3*time.Minute)
+	metrics.ObserveOperation("HeartbeatPublishRun", errors.New("failed"), 3*time.Minute)
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	resources = append(resources, sampleBoundaryResources(canceled, endpoints, "steady-1-after")...)
-	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Hour) // Cleanup.
+	metrics.ObserveOperation("HeartbeatPublishRun", nil, time.Hour) // Cleanup.
 	encoded, err := json.Marshal(resources)
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestProductionMetricsRoundTripSummarizesWorkloadOnly(t *testing.T) {
 		}
 	}
 	text := formatReportMarkdown(benchmarkReport{ServerDurations: reports})
-	for _, want := range []string{"approximate histogram", "HeartbeatRouteSession", "complete: true", "n/a"} {
+	for _, want := range []string{"approximate histogram", "HeartbeatPublishRun", "complete: true", "n/a"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("markdown missing %q: %s", want, text)
 		}
@@ -226,7 +226,7 @@ func TestMetricsScrapeRejectsMalformedAndOversizedPayloads(t *testing.T) {
 
 func TestPeriodicEvictionPreservesProductionMeasurementBoundaries(t *testing.T) {
 	metrics := observability.New("control")
-	metrics.ObserveOperation("CreateRouteSession", nil, time.Millisecond)
+	metrics.ObserveOperation("CreatePublishRun", nil, time.Millisecond)
 	var large atomic.Bool
 	requests := make(chan struct{}, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +255,7 @@ func TestPeriodicEvictionPreservesProductionMeasurementBoundaries(t *testing.T) 
 	}
 	samples = append(samples, sampler.Stop()...)
 	large.Store(false)
-	metrics.ObserveOperation("CreateRouteSession", nil, 2*time.Millisecond)
+	metrics.ObserveOperation("CreatePublishRun", nil, 2*time.Millisecond)
 	samples = append(samples, sampleBoundaryResources(t.Context(), endpoints, "activation-after")...)
 	if sampler.dropped == 0 {
 		t.Fatal("test did not evict periodic samples")

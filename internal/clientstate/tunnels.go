@@ -83,23 +83,23 @@ type TunnelSummary struct {
 }
 
 type TunnelInfo struct {
-	ID             string        `json:"tunnel_id"`
-	Command        TunnelCommand `json:"command"`
-	State          TunnelState   `json:"state"`
-	ProcessID      int           `json:"process_id"`
-	Server         string        `json:"server"`
-	Project        string        `json:"project"`
-	Service        string        `json:"service,omitempty"`
-	RouteID        string        `json:"route_id,omitempty"`
-	RouteVersion   uint64        `json:"route_version,omitempty"`
-	Hostname       string        `json:"hostname,omitempty"`
-	PublicURL      string        `json:"public_url,omitempty"`
-	Target         string        `json:"target,omitempty"`
-	Framework      string        `json:"framework,omitempty"`
-	StartedAt      time.Time     `json:"started_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	HeartbeatAt    time.Time     `json:"heartbeat_at"`
-	LeaseExpiresAt time.Time     `json:"lease_expires_at"`
+	ID               string        `json:"tunnel_id"`
+	Command          TunnelCommand `json:"command"`
+	State            TunnelState   `json:"state"`
+	ProcessID        int           `json:"process_id"`
+	Server           string        `json:"server"`
+	Project          string        `json:"project"`
+	Service          string        `json:"service,omitempty"`
+	PublicURLID      string        `json:"public_url_id,omitempty"`
+	PublishRunNumber uint64        `json:"publish_run_number,omitempty"`
+	Hostname         string        `json:"hostname,omitempty"`
+	PublicURL        string        `json:"public_url,omitempty"`
+	Target           string        `json:"target,omitempty"`
+	Framework        string        `json:"framework,omitempty"`
+	StartedAt        time.Time     `json:"started_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	HeartbeatAt      time.Time     `json:"heartbeat_at"`
+	LeaseExpiresAt   time.Time     `json:"lease_expires_at"`
 }
 
 // BeginTunnel registers a local tunnel and maintains its liveness lease until Finish.
@@ -143,7 +143,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if _, err := d.db.ExecContext(ctx, `
 INSERT INTO local_tunnels (
     id, command, process_id, server_origin, project_root, service, hostname,
-    target, framework, route_id, route_version, state, started_at, updated_at,
+    target, framework, public_url_id, publish_run_number, state, started_at, updated_at,
     heartbeat_at, lease_expires_at, last_error
 ) VALUES (?, ?, ?, ?, ?, ?, '', ?, '', '', 0, 'starting', ?, ?, ?, ?, '')
 `, id, string(options.Command), int64(os.Getpid()), server, options.Project, options.Service,
@@ -175,29 +175,29 @@ func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) err
 	return tunnelUpdateResult(rows, err)
 }
 
-func (t *Tunnel) SetRoute(ctx context.Context, routeID, hostname string) error {
+func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string) error {
 	hostname, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || !validRouteID(routeID) {
+	if err != nil || !validPublicURLID(publicURLID) {
 		return errors.New("clientstate: invalid tunnel route")
 	}
-	rows, err := t.database.queries.SetTunnelRoute(ctx, clientstatedb.SetTunnelRouteParams{
-		RouteID: routeID, Hostname: hostname, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+	rows, err := t.database.queries.SetTunnelPublicURL(ctx, clientstatedb.SetTunnelPublicURLParams{
+		PublicURLID: publicURLID, Hostname: hostname, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
 
-func (t *Tunnel) SetProvisioning(ctx context.Context, routeVersion uint64) error {
-	versionValue, err := databaseVersion(routeVersion)
-	if err != nil || routeVersion == 0 {
-		return errors.New("clientstate: invalid tunnel route version")
+func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) error {
+	versionValue, err := databaseVersion(publishRunNumber)
+	if err != nil || publishRunNumber == 0 {
+		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelProvisioning(ctx, clientstatedb.SetTunnelProvisioningParams{
-		RouteVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		PublishRunNumber: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
 
-func (t *Tunnel) SetReady(ctx context.Context, publicURL string, routeVersion uint64) error {
+func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumber uint64) error {
 	parsed, err := url.Parse(publicURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
 		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
@@ -207,12 +207,12 @@ func (t *Tunnel) SetReady(ctx context.Context, publicURL string, routeVersion ui
 	if err != nil || hostname != parsed.Hostname() {
 		return errors.New("clientstate: invalid tunnel public URL")
 	}
-	versionValue, err := databaseVersion(routeVersion)
-	if err != nil || routeVersion == 0 {
-		return errors.New("clientstate: invalid tunnel route version")
+	versionValue, err := databaseVersion(publishRunNumber)
+	if err != nil || publishRunNumber == 0 {
+		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname: hostname, RouteVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		Hostname: hostname, PublishRunNumber: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -267,7 +267,7 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 	defer tx.Rollback()
 	query := `
 SELECT id, command, process_id, server_origin, project_root, service, hostname,
-       target, framework, route_id, route_version, state, started_at, updated_at,
+       target, framework, public_url_id, publish_run_number, state, started_at, updated_at,
        heartbeat_at, lease_expires_at
 FROM local_tunnels
 WHERE stopped_at IS NULL`
@@ -287,7 +287,7 @@ WHERE stopped_at IS NULL`
 		var row tunnelRecord
 		if err := rows.Scan(
 			&row.id, &row.command, &row.processID, &row.server, &row.project, &row.service,
-			&row.hostname, &row.target, &row.framework, &row.routeID, &row.routeVersion,
+			&row.hostname, &row.target, &row.framework, &row.publicURLID, &row.publishRunNumber,
 			&row.state, &row.startedAt, &row.updatedAt, &row.heartbeatAt, &row.leaseExpiresAt,
 		); err != nil {
 			return TunnelSnapshot{}, fmt.Errorf("clientstate: scan tunnel: %w", err)
@@ -316,7 +316,7 @@ WHERE stopped_at IS NULL`
 		info := TunnelInfo{
 			ID: row.id, Command: TunnelCommand(row.command), State: state, ProcessID: int(row.processID),
 			Server: row.server, Project: row.project, Service: row.service,
-			RouteID: row.routeID, RouteVersion: uint64(row.routeVersion),
+			PublicURLID: row.publicURLID, PublishRunNumber: uint64(row.publishRunNumber),
 			Hostname: row.hostname, Target: row.target, Framework: row.framework,
 			StartedAt: unixNanoTime(row.startedAt), UpdatedAt: unixNanoTime(row.updatedAt),
 			HeartbeatAt: unixNanoTime(row.heartbeatAt), LeaseExpiresAt: unixNanoTime(row.leaseExpiresAt),
@@ -343,8 +343,8 @@ WHERE stopped_at IS NULL`
 }
 
 type tunnelRecord struct {
-	id, command, server, project, service, hostname, target, framework, routeID, state string
-	processID, routeVersion, startedAt, updatedAt, heartbeatAt, leaseExpiresAt         int64
+	id, command, server, project, service, hostname, target, framework, publicURLID, state string
+	processID, publishRunNumber, startedAt, updatedAt, heartbeatAt, leaseExpiresAt         int64
 }
 
 func (t *Tunnel) heartbeat(ctx context.Context) {

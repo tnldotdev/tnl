@@ -39,8 +39,8 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 	defer cancel()
 	if err := f.database.QueryRowContext(ctx, `
 		SELECT csr_der FROM control.acme_orders
-		WHERE route_id = $1 AND route_version = $2 ORDER BY created_at DESC LIMIT 1
-	`, tunnel.RouteID, tunnel.RouteVersion).Scan(&csrDER); err != nil {
+		WHERE public_url_id = $1 AND publish_run_number = $2 ORDER BY created_at DESC LIMIT 1
+	`, tunnel.PublicURLID, tunnel.PublishRunNumber).Scan(&csrDER); err != nil {
 		t.Fatal(err)
 	}
 	csr, err := x509.ParseCertificateRequest(csrDER)
@@ -51,7 +51,7 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 	if err := csr.CheckSignature(); err != nil || !slices.Equal(csr.DNSNames, names) {
 		t.Fatalf("dev CSR does not match certificate plan: names %v, signature %v", csr.DNSNames, err)
 	}
-	waitForReadyPublisherConnections(t, f.database, tunnel.RouteID, tunnel.RouteVersion, 2)
+	waitForReadyPublisherConnections(t, f.database, tunnel.PublicURLID, tunnel.PublishRunNumber, 2)
 	visitor := newIntegrationVisitor(t, server.pebble.roots, "")
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, f.publicURL+"/", nil)
@@ -61,7 +61,7 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 		if response.StatusCode != http.StatusOK || response.Header.Get("X-Tnl-Fixture") != "vite" || !bytes.Contains(body, []byte("Vite fixture")) {
 			return false, fmt.Errorf("Vite visitor response = %s, %q", response.Status, body)
 		}
-		assertIntegrationRouteCertificate(t, response, f.hostname)
+		assertIntegrationPublicURLCertificate(t, response, f.hostname)
 		actual := slices.Clone(response.TLS.PeerCertificates[0].DNSNames)
 		slices.Sort(actual)
 		if !slices.Equal(actual, names) {
@@ -132,7 +132,7 @@ func testIntegrationViteCancelProvisioning(t *testing.T, server *integrationBina
 
 func testIntegrationViteRejected(t *testing.T, server *integrationBinaryStandalone) {
 	f := newIntegrationViteFixture(t, server, "provisioning_failure")
-	f.disableMaintenance(t, "route_creation")
+	f.disableMaintenance(t, "public_url_creation")
 	f.start(t, 1)
 	f.waitRegistration(t, false)
 	if err := waitForDoneWithin(f.dev.done, 15*time.Second); err != nil {
@@ -177,10 +177,10 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 		}
 		return false, nil
 	})
-	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.Framework != "next" || tunnel.RouteID == "" || tunnel.RouteVersion != 1 || !strings.HasPrefix(tunnel.Hostname, project.subdomain+".") {
+	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.Framework != "next" || tunnel.PublicURLID == "" || tunnel.PublishRunNumber != 1 || !strings.HasPrefix(tunnel.Hostname, project.subdomain+".") {
 		t.Fatalf("configured Next.js tunnel = %#v", tunnel)
 	}
-	waitForReadyPublisherConnections(t, inspectStandaloneTestDatabase(t, fixture.databaseURL), tunnel.RouteID, tunnel.RouteVersion, 2)
+	waitForReadyPublisherConnections(t, inspectStandaloneTestDatabase(t, fixture.databaseURL), tunnel.PublicURLID, tunnel.PublishRunNumber, 2)
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, tunnel.PublicURL, nil)
@@ -190,7 +190,7 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 		if response.StatusCode != http.StatusOK || response.Header.Get("X-Tnl-Fixture") != "next" || !bytes.Contains(body, []byte("Next.js fixture")) {
 			return false, fmt.Errorf("Next.js visitor response = %s, %q", response.Status, body)
 		}
-		assertIntegrationRouteCertificate(t, response, tunnel.Hostname)
+		assertIntegrationPublicURLCertificate(t, response, tunnel.Hostname)
 		return true, nil
 	})
 	assertIntegrationNextHMR(t, fixture.pebble.roots, tunnel.Hostname,

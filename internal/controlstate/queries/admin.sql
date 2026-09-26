@@ -1,11 +1,11 @@
 -- name: GetAdminRuntimeCounts :one
 SELECT
-    (SELECT count(*) FROM control.routes AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_routes,
-    (SELECT count(*) FROM control.routes AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_routes,
-    (SELECT count(*) FROM control.route_sessions AS sessions
-        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS starting_route_sessions,
-    (SELECT count(*) FROM control.route_sessions AS sessions
-        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS ready_route_sessions,
+    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_public_urls,
+    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_public_urls,
+    (SELECT count(*) FROM control.publish_runs AS sessions
+        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS starting_publish_runs,
+    (SELECT count(*) FROM control.publish_runs AS sessions
+        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > sqlc.arg(now)) AS ready_publish_runs,
     (SELECT count(*) FROM control.ingress_leases AS ingresses WHERE ingresses.lease_expires_at > sqlc.arg(now)) AS ingress_leases,
     (SELECT count(*) FROM control.relay_leases AS relays WHERE relays.lease_expires_at > sqlc.arg(now)) AS relay_leases;
 

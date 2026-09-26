@@ -86,20 +86,20 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 	database, now, owner, team := newAuthorityTeam(t)
 	admin := addAuthorityMember(t, database, now, owner, team.ID, "admin", "admin")
 	member := addAuthorityMember(t, database, now, admin.IdentityID, team.ID, "second", "member")
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.routes (
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key,
-		request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy,
+		request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy,
 		lifecycle_state, dns_state, created_at, updated_at
-	) VALUES ('route_member', $1, $2, $3, $4, 'member-route', decode(repeat('31', 32), 'hex'),
+	) VALUES ('public_url_member', $1, $2, $3, $4, 'member-route', decode(repeat('31', 32), 'hex'),
 		'second.example.test', 'http://127.0.0.1:3000', 'member', $5, 'allow_all', 'enabled', 'unmanaged', $6, $6)`,
 		team.ID, team.DefaultDomainID, member.ID, member.IdentityID, member.PolicyRevision, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.route_sessions (
-		id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key,
-		request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key,
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
+		id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key,
+		request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key,
 		certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
-	) VALUES ('session_member', 'route_member', $1, $2, $3, 1, 'member-session', decode(repeat('32', 32), 'hex'),
+	) VALUES ('session_member', 'public_url_member', $1, $2, $3, 1, 'member-session', decode(repeat('32', 32), 'hex'),
 		'member-token', decode(repeat('33', 32), 'hex'), $4, 'member-cert', 'route', ARRAY['second.example.test'],
 		'tls-alpn-01', 'starting', $5, $5, $6)`, team.ID, member.ID, member.IdentityID, member.PolicyRevision, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
@@ -110,16 +110,16 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 	if _, err := database.getMembership(t.Context(), team.ID, member.ID); !errors.Is(err, ErrMembershipNotFound) {
 		t.Fatalf("removed membership: %v", err)
 	}
-	var routeState, sessionState, reason, slugState string
+	var publicURLState, sessionState, reason, slugState string
 	if err := database.pool.QueryRow(t.Context(), `SELECT routes.lifecycle_state, sessions.state, sessions.close_reason, slugs.state
-		FROM control.routes AS routes JOIN control.route_sessions AS sessions ON sessions.route_id = routes.id
+		FROM control.public_urls AS routes JOIN control.publish_runs AS sessions ON sessions.public_url_id = routes.id
 		JOIN control.team_memberships AS memberships ON memberships.id = routes.membership_id
 		JOIN control.member_slug_reservations AS slugs ON slugs.id = memberships.slug_reservation_id
-		WHERE routes.id = 'route_member'`).Scan(&routeState, &sessionState, &reason, &slugState); err != nil {
+		WHERE routes.id = 'public_url_member'`).Scan(&publicURLState, &sessionState, &reason, &slugState); err != nil {
 		t.Fatal(err)
 	}
-	if routeState != "suspended" || sessionState != "closed" || reason != "membership_removed" || slugState != "quarantined" {
-		t.Fatalf("removed member runtime = %s/%s/%s/%s", routeState, sessionState, reason, slugState)
+	if publicURLState != "suspended" || sessionState != "closed" || reason != "membership_removed" || slugState != "quarantined" {
+		t.Fatalf("removed member runtime = %s/%s/%s/%s", publicURLState, sessionState, reason, slugState)
 	}
 	request := authorityInvitationRequest(owner, team.ID, "second", now)
 	request.IdempotencyKey = "reuse-accepted-slug"

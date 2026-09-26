@@ -4,22 +4,22 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 ## System And Roles
 
-| Term                   | Definition                                                                                                                                    |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **tnl server**         | The complete deployed system, including control, ingress, relays, and PostgreSQL.                                                             |
-| **`tnld` process**     | One running daemon process configured with a server role.                                                                                     |
-| **control**            | A stateful `tnld` role that stores runtime state in PostgreSQL and manages placement, certificates, administration, and coordination.         |
-| **control service**    | All interchangeable control processes sharing PostgreSQL.                                                                                     |
-| **ingress**            | A stateless `tnld` role that accepts visitor connections, applies route policy, selects a connected relay, and forwards each connection once. |
-| **ingress service**    | The replicated ingress processes behind one health-aware public address.                                                                      |
-| **relay**              | A stateless `tnld` role that maintains publisher connections and carries visitor streams from ingress to publishers.                          |
-| **relay service**      | Interchangeable relay processes behind one stable relay address and sharing one intended failure boundary.                                    |
-| **relay process**      | One running `tnld` process configured with the relay role and belonging to a relay service.                                                   |
-| **standalone**         | A `tnld` role that composes control, ingress, and two logical relay services in one process against PostgreSQL.                               |
-| **control API**        | The server HTTP API used by clients and administrators.                                                                                       |
-| **authority API**      | The HTTP API that manages identities, teams, memberships, invitations, domains, authentication, and current authorization decisions.          |
-| **built-in authority** | The authority API served by control or standalone for login, sessions, teams, memberships, invitations, and domains.                          |
-| **external authority** | A separately deployed authority API that makes authentication and authorization decisions for a tnl server.                                   |
+| Term                   | Definition                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **tnl server**         | The complete deployed system, including control, ingress, relays, and PostgreSQL.                                                                  |
+| **`tnld` process**     | One running daemon process configured with a server role.                                                                                          |
+| **control**            | A stateful `tnld` role that stores runtime state in PostgreSQL and manages placement, certificates, administration, and coordination.              |
+| **control service**    | All interchangeable control processes sharing PostgreSQL.                                                                                          |
+| **ingress**            | A stateless `tnld` role that accepts visitor connections, applies public URL policy, selects a connected relay, and forwards each connection once. |
+| **ingress service**    | The replicated ingress processes behind one health-aware public address.                                                                           |
+| **relay**              | A stateless `tnld` role that maintains publisher connections and carries visitor streams from ingress to publishers.                               |
+| **relay service**      | Interchangeable relay processes behind one stable relay address and sharing one intended failure boundary.                                         |
+| **relay process**      | One running `tnld` process configured with the relay role and belonging to a relay service.                                                        |
+| **standalone**         | A `tnld` role that composes control, ingress, and two logical relay services in one process against PostgreSQL.                                    |
+| **control API**        | The server HTTP API used by clients and administrators.                                                                                            |
+| **authority API**      | The HTTP API that manages identities, teams, memberships, invitations, domains, authentication, and current authorization decisions.               |
+| **built-in authority** | The authority API served by control or standalone for login, sessions, teams, memberships, invitations, and domains.                               |
+| **external authority** | A separately deployed authority API that makes authentication and authorization decisions for a tnl server.                                        |
 
 ## People And Local Processes
 
@@ -27,7 +27,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | ----------------- | --------------------------------------------------------------------------------- |
 | **identity**      | A person or administrator known to one tnl server.                                |
 | **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
-| **visitor**       | A browser or other client connecting to a public route.                           |
+| **visitor**       | A browser or other client connecting to a public URL.                             |
 | **local service** | The developer's HTTP application.                                                 |
 | **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
 | **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
@@ -41,7 +41,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                 |
 | **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development. |
 | **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                            |
-| **worktree label**        | A DNS-safe label derived from the project worktree and client state for use in default route hostnames.             |
+| **worktree label**        | A DNS-safe label derived from the project worktree and client state for use in default public URL hostnames.        |
 
 ## Addresses And DNS
 
@@ -52,28 +52,28 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **server domain**          | The infrastructure DNS suffix from which control, ingress, and relay hostnames are derived.                         |
 | **control hostname**       | The public hostname clients use to reach the control API over HTTPS.                                                |
 | **ingress address**        | The public, health-aware address that sends visitor connections to ingress processes.                               |
-| **public route DNS**       | DNS records that send public route hostnames to the ingress address.                                                |
+| **public URL DNS**         | DNS records that send public URL hostnames to the ingress address.                                                  |
 | **relay address**          | The stable public hostname and port a publisher uses to establish a publisher connection through one relay service. |
 | **internal relay address** | The internal hostname and port ingress uses to forward visitor connections to a relay.                              |
 
-## Routes
+## Public URLs And Publish Runs
 
-| Term                        | Definition                                                                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **route**                   | The stored mapping from a public hostname to a target, policy, and state.                                         |
-| **route session**           | The server-side record of one publisher using a route, including its route version and publisher connections.     |
-| **route version**           | An ever-increasing number for one continuous publishing run. Each new route session receives a new route version. |
-| **ephemeral route**         | A route that expires after its tunnel stops instead of remaining available for a later route session.             |
-| **enabled**                 | A stored route that has not been suspended or deleted.                                                            |
-| **routable**                | A route version that currently has its certificate and enough ready publisher connections to receive visitors.    |
-| **route TLS**               | The visitor's TLS connection. It passes through ingress and relay and ends at the publisher.                      |
-| **route certificate**       | The publicly trusted certificate the publisher uses to terminate route TLS for a route hostname.                  |
-| **certificate plan**        | The hostnames, cache scope, and challenge method approved by the authority for obtaining a route certificate.     |
-| **certificate issuance**    | One attempt to obtain and install a route certificate for a route session's certificate plan.                     |
-| **IP policy**               | The rule controlling which visitor source addresses may use a route.                                              |
-| **ingress routing table**   | The short-lived routing information control sends to ingress, including route policy and connected relays.        |
-| **policy revision**         | The authority policy version recorded when a route operation is authorized.                                       |
-| **route mutation revision** | An ever-increasing counter changed whenever editable route state changes.                                         |
+| Term                             | Definition                                                                                                  |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **public URL**                   | The saved mapping from a public hostname to a target, policy, and state.                                    |
+| **publish run**                  | One active publication of a public URL, including its number and publisher connections.                     |
+| **publish run number**           | An ever-increasing number for one public URL; each new publish run receives the next number.                |
+| **ephemeral public URL**         | A public URL removed after its tunnel stops instead of remaining available for a later publish run.         |
+| **enabled**                      | A saved public URL that has not been suspended or deleted.                                                  |
+| **routable**                     | A publish run with its certificate and enough ready publisher connections to receive visitors.              |
+| **visitor TLS**                  | The visitor's TLS connection. It passes through ingress and relay and ends at the publisher.                |
+| **public URL certificate**       | The publicly trusted certificate the publisher uses to terminate visitor TLS for a public URL hostname.     |
+| **certificate plan**             | The hostnames, cache scope, and challenge method approved for a public URL certificate.                     |
+| **certificate issuance**         | One attempt to obtain and install a public URL certificate for a publish run's certificate plan.            |
+| **IP policy**                    | The rule controlling which visitor source addresses may use a public URL.                                   |
+| **ingress routing table**        | Short-lived routing information control sends to ingress, including public URL policy and connected relays. |
+| **policy revision**              | The authority policy version recorded when a public URL operation is authorized.                            |
+| **public URL mutation revision** | An ever-increasing counter changed whenever editable public URL state changes.                              |
 
 ## Publisher Connections
 
@@ -81,21 +81,21 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
 | **publisher connection**            | A long-lived multiplexed connection from a publisher to a relay.                                   |
 | **publisher connection ID**         | The unique identifier for one publisher connection from creation through close.                    |
-| **connection slot**                 | One of the two publisher connections maintained by a route session.                                |
+| **connection slot**                 | One of the two publisher connections maintained by a publish run.                                  |
 | **connection assignment**           | Control's instruction assigning a connection slot to a particular relay service and relay address. |
 | **connection assignment revision**  | An ever-increasing number changed whenever control replaces the assignment for a connection slot.  |
 | **assigned relay**                  | The relay service selected by control for a connection assignment.                                 |
-| **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a route session.      |
+| **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a publish run.        |
 | **ready publisher connection**      | An authenticated, current publisher connection that can carry visitor streams.                     |
 | **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                      |
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
-| **route session token**             | A credential authorizing the publisher to update one route session.                                |
+| **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
 
 ## Visitor Connections
 
 | Term                      | Definition                                                                                                      |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **visitor connection**    | One public TCP connection from a visitor to a route hostname.                                                   |
+| **visitor connection**    | One public TCP connection from a visitor to a public URL hostname.                                              |
 | **visitor connection ID** | The unique identifier used to correlate one visitor connection across ingress, relay, and publisher.            |
 | **visitor stream**        | One multiplexed stream that carries a visitor connection through a relay to the publisher and back.             |
 | **internal forwarding**   | Sending a visitor connection from ingress to a connected relay over an authenticated internal connection.       |
@@ -104,21 +104,21 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 ## Process Coordination
 
-| Term                           | Definition                                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| **ingress lease**              | Control's time-limited permission for an ingress process to serve visitor traffic and use the ingress routing table. |
-| **relay lease**                | Control's time-limited permission for a relay process to accept connection assignments and publisher connections.    |
-| **lease renewal**              | A periodic request that extends a process's lease.                                                                   |
-| **lease expiration**           | The deadline after which control considers a process unavailable if its lease was not renewed.                       |
-| **lease revision**             | An ever-increasing number that distinguishes the current lease from an older lease for the same process identity.    |
-| **process run ID**             | A unique identifier generated each time an ingress or relay process starts.                                          |
-| **stale-state checks**         | Checks that reject an old route session, replaced connection assignment, expired lease, or restarted process.        |
-| **placement**                  | Control's choice of different relay services for a route session's connection slots.                                 |
-| **draining**                   | A process state that rejects new work while allowing existing connections to finish until a deadline.                |
-| **connection capacity**        | The number of publisher connections a relay is configured to support.                                                |
-| **stream capacity**            | The number of concurrent visitor streams a relay is configured to support.                                           |
-| **recovery episode**           | The time from an unexpected publisher connection loss until a visitor again receives a publisher byte.               |
-| **route recovery observation** | Control's recorded measurement that closes one recovery episode.                                                     |
+| Term                                | Definition                                                                                                           |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **ingress lease**                   | Control's time-limited permission for an ingress process to serve visitor traffic and use the ingress routing table. |
+| **relay lease**                     | Control's time-limited permission for a relay process to accept connection assignments and publisher connections.    |
+| **lease renewal**                   | A periodic request that extends a process's lease.                                                                   |
+| **lease expiration**                | The deadline after which control considers a process unavailable if its lease was not renewed.                       |
+| **lease revision**                  | An ever-increasing number that distinguishes the current lease from an older lease for the same process identity.    |
+| **process run ID**                  | A unique identifier generated each time an ingress or relay process starts.                                          |
+| **stale-state checks**              | Checks that reject an old publish run, replaced connection assignment, expired lease, or restarted process.          |
+| **placement**                       | Control's choice of different relay services for a publish run's connection slots.                                   |
+| **draining**                        | A process state that rejects new work while allowing existing connections to finish until a deadline.                |
+| **connection capacity**             | The number of publisher connections a relay is configured to support.                                                |
+| **stream capacity**                 | The number of concurrent visitor streams a relay is configured to support.                                           |
+| **recovery episode**                | The time from an unexpected publisher connection loss until a visitor again receives a publisher byte.               |
+| **public URL recovery observation** | Control's recorded measurement that closes one recovery episode.                                                     |
 
 ## Internal Security
 
@@ -139,41 +139,43 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 ## Teams And Domains
 
+| Term                               | Definition                                                                                               |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **team**                           | The stored ownership and authorization boundary for domains and public URLs.                             |
+| **personal team**                  | The permanent, single-owner team created for each identity.                                              |
+| **organization team**              | A team created for collaboration among multiple identities.                                              |
+| **membership**                     | The relationship between an identity and a team, including team role and immutable member slug.          |
+| **invitation**                     | A time-limited offer to create a membership with a reserved member slug and initial team role.           |
+| **member slug**                    | A team-unique, immutable DNS label chosen for a membership and used with claimed domains.                |
+| **managed label**                  | A server-generated, immutable DNS label used with the managed deployment domain.                         |
+| **namespace**                      | A complete hostname built from a membership and domain.                                                  |
+| **managed deployment domain**      | A server-controlled domain beneath which namespaces are generated.                                       |
+| **claimed domain**                 | A domain assigned exclusively to one team after DNS authority verification.                              |
+| **team domain**                    | A managed deployment domain or claimed domain available to one team.                                     |
+| **default domain**                 | The ready team domain used when a command does not select another domain.                                |
+| **DNS authority**                  | State control uses to manage public URL DNS beneath one claimed domain.                                  |
+| **shared public URL**              | A team-owned public URL outside individual namespaces.                                                   |
+| **public URL scope**               | Whether a public URL belongs to one membership or to the team collectively.                              |
+| **maintenance control**            | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance. |
+| **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                 |
+
+## Public URL Usage
+
 | Term                          | Definition                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **team**                      | The stored ownership and authorization boundary for domains and routes.                               |
-| **personal team**             | The permanent, single-owner team created for each identity.                                           |
-| **organization team**         | A team created for collaboration among multiple identities.                                           |
-| **membership**                | The relationship between an identity and a team, including team role and immutable member slug.       |
-| **invitation**                | A time-limited offer to create a membership with a reserved member slug and initial team role.        |
-| **member slug**               | A team-unique, immutable DNS label chosen for a membership and used with claimed domains.             |
-| **managed label**             | A server-generated, immutable DNS label used with the managed deployment domain.                      |
-| **member namespace**          | A complete hostname built from a membership and domain.                                               |
-| **managed deployment domain** | A server-controlled domain beneath which member namespaces are generated.                             |
-| **claimed domain**            | A domain assigned exclusively to one team after DNS authority verification.                           |
-| **team domain**               | A managed deployment domain or claimed domain available to one team.                                  |
-| **default domain**            | The ready team domain used when a command does not select another domain.                             |
-| **DNS authority**             | State control uses to manage public route DNS beneath one claimed domain.                             |
-| **shared route**              | A team-owned route outside individual member namespaces.                                              |
-| **route scope**               | Whether a route belongs to one membership or to the team collectively.                                |
-| **maintenance control**       | An administrator-controlled gate for route creation, route-session creation, or certificate issuance. |
-| **route usage bucket report** | A usage report for one route, route version, time bucket, and report revision.                        |
-
-## Route Usage
-
-| Term                         | Definition                                                                                            |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **route usage receiver**     | An external HTTPS service that accepts route usage bucket reports from control.                       |
-| **visitor network estimate** | An approximate count of distinct visitor IPv4 /32 or IPv6 /64 networks for one route and time bucket. |
+| **public URL usage receiver** | An external HTTPS service that accepts public URL usage bucket reports from control.                  |
+| **visitor network estimate**  | An approximate count of distinct visitor IPv4 /32 or IPv6 /64 networks for one public URL and bucket. |
 
 ## Machine Field Names
 
 | Concept                         | Field                             |
 | ------------------------------- | --------------------------------- |
-| Route version                   | `route_version`                   |
-| Route session token             | `route_session_token`             |
+| Public URL ID                   | `public_url_id`                   |
+| Publish run ID                  | `publish_run_id`                  |
+| Publish run number              | `publish_run_number`              |
+| Publish run token               | `publish_run_token`               |
 | Policy revision                 | `policy_revision`                 |
-| Route mutation revision         | `route_mutation_revision`         |
+| Public URL mutation revision    | `public_url_mutation_revision`    |
 | Publisher connection ID         | `publisher_connection_id`         |
 | Connection slot                 | `connection_slot`                 |
 | Connection assignment revision  | `connection_assignment_revision`  |
@@ -199,6 +201,16 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 | Retired term                  | Replacement                                                  |
 | ----------------------------- | ------------------------------------------------------------ |
+| route (saved object)          | public URL                                                   |
+| route ID                      | public URL ID                                                |
+| route session                 | publish run                                                  |
+| route session ID              | publish run ID                                               |
+| route version                 | publish run number                                           |
+| route session token           | publish run token                                            |
+| route mutation revision       | public URL mutation revision                                 |
+| route certificate             | public URL certificate                                       |
+| route TLS                     | visitor TLS                                                  |
+| route usage                   | public URL usage                                             |
 | gateway                       | relay                                                        |
 | ingress gateway               | ingress                                                      |
 | gateway fleet                 | No dedicated term; say "available relay processes"           |
@@ -217,15 +229,15 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | link owner                    | connected relay                                              |
 | usable link                   | ready publisher connection                                   |
 | route attachment              | publisher connection                                         |
-| publisher attachment          | route session                                                |
-| publisher lease               | route session or its expiration, depending on context        |
+| publisher attachment          | publish run                                                  |
+| publisher lease               | publish run or its expiration, depending on context          |
 | carrier                       | transport                                                    |
 | carrier hostname              | relay address                                                |
 | private endpoint              | internal relay address                                       |
 | private forwarding            | internal forwarding                                          |
 | gateway-to-gateway forwarding | Removed                                                      |
 | route directory               | ingress routing table                                        |
-| route DNS                     | public route DNS                                             |
+| route DNS                     | public URL DNS                                               |
 | public front door             | ingress address                                              |
 | control address               | control hostname                                             |
 | fencing                       | stale-state checks                                           |
@@ -251,12 +263,13 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 - Never introduce `Core` as a tnl architectural term. Use tnl server, `tnld` process, control API, control, ingress, relay, or external authority as appropriate.
 - In prose, always write the product and binaries as lowercase `tnl` and `tnld`. Use uppercase only where required by case-sensitive identifiers such as `TNLD_*` environment variables.
-- Reserve `generation` for internal mutation counters; public route counters are route versions.
+- Reserve `generation` for internal mutation counters; public URL counters are publish run numbers.
 
 # Brand Identity
 
 Brand identity: lowercase, spare, concrete, practical, and understated.
 Developer-to-developer language with little hype or ornament.
+In branded headings and page titles, write `url` in lowercase.
 
 # CLI Human Output
 
@@ -324,7 +337,7 @@ Frames follow this general form:
 
 # Contracts and State
 
-- The five HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, and `api/route-usage/v1/openapi.yaml`. They generate committed models, clients, and strict server interfaces under `pkg/api/*`. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
+- The five HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, and `api/public-url-usage/v1/openapi.yaml`. They generate committed models, clients, and strict server interfaces under `pkg/api/*`. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
 - `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving controls and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact supported schema version.

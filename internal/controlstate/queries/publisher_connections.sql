@@ -1,11 +1,11 @@
 -- name: GetPublisherConnectionForClaim :one
 SELECT *
-FROM control.route_session_connections
+FROM control.publish_run_connections
 WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
 FOR UPDATE;
 
 -- name: ClaimPublisherConnection :one
-UPDATE control.route_session_connections
+UPDATE control.publish_run_connections
 SET connected_relay_id = sqlc.arg(relay_id),
     connected_relay_run_id = sqlc.arg(relay_run_id),
     connected_relay_lease_revision = sqlc.arg(relay_lease_revision),
@@ -15,9 +15,9 @@ SET connected_relay_id = sqlc.arg(relay_id),
     disconnected_at = NULL,
     closed_at = NULL
 WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
-  AND route_session_id = sqlc.arg(route_session_id)
-  AND route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
+  AND publish_run_id = sqlc.arg(publish_run_id)
+  AND public_url_id = sqlc.arg(public_url_id)
+  AND publish_run_number = sqlc.arg(publish_run_number)
   AND connection_slot = sqlc.arg(connection_slot)
   AND connection_assignment_revision = sqlc.arg(connection_assignment_revision)
   AND relay_service_id = sqlc.arg(relay_service_id)
@@ -34,15 +34,15 @@ WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
 RETURNING *;
 
 -- name: MarkPublisherConnectionReady :one
-UPDATE control.route_session_connections
+UPDATE control.publish_run_connections
 SET state = 'ready',
     ready_at = COALESCE(ready_at, sqlc.arg(ready_at)),
     disconnected_at = NULL,
     closed_at = NULL
 WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
-  AND route_session_id = sqlc.arg(route_session_id)
-  AND route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
+  AND publish_run_id = sqlc.arg(publish_run_id)
+  AND public_url_id = sqlc.arg(public_url_id)
+  AND publish_run_number = sqlc.arg(publish_run_number)
   AND connection_slot = sqlc.arg(connection_slot)
   AND connection_assignment_revision = sqlc.arg(connection_assignment_revision)
   AND relay_service_id = sqlc.arg(relay_service_id)
@@ -54,14 +54,14 @@ WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
 RETURNING *;
 
 -- name: DisconnectPublisherConnection :one
-UPDATE control.route_session_connections
+UPDATE control.publish_run_connections
 SET state = 'closed',
     disconnected_at = sqlc.arg(disconnected_at),
     closed_at = sqlc.arg(disconnected_at)
 WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
-  AND route_session_id = sqlc.arg(route_session_id)
-  AND route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
+  AND publish_run_id = sqlc.arg(publish_run_id)
+  AND public_url_id = sqlc.arg(public_url_id)
+  AND publish_run_number = sqlc.arg(publish_run_number)
   AND connection_slot = sqlc.arg(connection_slot)
   AND connection_assignment_revision = sqlc.arg(connection_assignment_revision)
   AND relay_service_id = sqlc.arg(relay_service_id)

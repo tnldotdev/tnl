@@ -60,14 +60,14 @@ func newForwarder(connector relayConnector) *Forwarder {
 }
 
 // Backends preserves control's publisher-connection order. Every returned
-// backend is bound to the route version, assignment, and concrete relay lease
+// backend is bound to the publish run number, assignment, and concrete relay lease
 // represented by entry.
 func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routebackend.Backend, error) {
 	if f == nil || f.connector == nil {
 		return nil, errors.New("ingress: forwarding connector is required")
 	}
-	if entry.RouteVersion <= 0 {
-		return nil, errors.New("ingress: forwarding route version is invalid")
+	if entry.PublishRunNumber <= 0 {
+		return nil, errors.New("ingress: forwarding publish run number is invalid")
 	}
 	backends := make([]routebackend.Backend, 0, len(entry.PublisherConnections))
 	for _, connection := range entry.PublisherConnections {
@@ -83,13 +83,13 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routeb
 		}
 		header := tunnelv1.InternalForwardingHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-			VisitorConnectionID: "visitor", RouteID: entry.RouteId, RouteSessionID: entry.RouteSessionId,
-			RouteVersion: uint64(entry.RouteVersion), PublisherConnectionID: connection.PublisherConnectionId,
+			VisitorConnectionID: "visitor", PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId,
+			PublishRunNumber: uint64(entry.PublishRunNumber), PublisherConnectionID: connection.PublisherConnectionId,
 			ConnectionSlot:               uint8(connection.ConnectionSlot),
 			ConnectionAssignmentRevision: uint64(connection.ConnectionAssignmentRevision),
 			RelayServiceID:               connection.RelayServiceId, RelayID: connection.RelayId,
 			RelayRunID: connection.RelayRunId, RelayLeaseRevision: uint64(connection.RelayLeaseRevision),
-			RouteExpiresAt: entry.RouteExpiresAt, LeaseExpiresAt: connection.LeaseExpiresAt,
+			PublicUrlExpiresAt: entry.PublicUrlExpiresAt, LeaseExpiresAt: connection.LeaseExpiresAt,
 		}
 		if err := header.Validate(); err != nil {
 			return nil, fmt.Errorf("ingress: forwarding publisher connection is invalid: %w", err)
@@ -100,27 +100,27 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routeb
 	return backends, nil
 }
 
-// Route converts one validated routing-table projection into the immutable
+// PublicURL converts one validated routing-table projection into the immutable
 // per-visitor route consumed by Server.
-func (f *Forwarder) Route(entry ingressv1.IngressRoutingTableEntry) (Route, error) {
+func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicURL, error) {
 	backends, err := f.Backends(entry)
 	if err != nil {
-		return Route{}, err
+		return PublicURL{}, err
 	}
 	prefixes := make([]netip.Prefix, 0, len(entry.AllowedIpPrefixes))
 	for _, value := range entry.AllowedIpPrefixes {
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil || prefix != prefix.Masked() {
-			return Route{}, errors.New("ingress: routing-table IP prefix is invalid")
+			return PublicURL{}, errors.New("ingress: routing-table IP prefix is invalid")
 		}
 		prefixes = append(prefixes, prefix)
 	}
 	if entry.IpPolicy == ingressv1.AllowAll && len(prefixes) != 0 ||
 		entry.IpPolicy == ingressv1.Allowlist && len(prefixes) == 0 {
-		return Route{}, errors.New("ingress: routing-table IP policy is inconsistent")
+		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
 	}
-	route := Route{
-		ID: entry.RouteId, RouteVersion: uint64(entry.RouteVersion),
+	route := PublicURL{
+		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		AllowedIPPrefixes: prefixes, Backends: backends,
 	}
 	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {

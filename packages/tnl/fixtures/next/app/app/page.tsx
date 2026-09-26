@@ -8,7 +8,7 @@ export default function Page() {
       <h1>Next.js fixture</h1>
       <p>{`url:${tnl?.services.api?.url}`}</p>
       <p>{`hostname:${tnl?.services.api?.hostname}`}</p>
-      <p>{`namespace:${tnl?.memberNamespace}`}</p>
+      <p>{`namespace:${tnl?.namespace}`}</p>
       <p>{`under-dev:${tnl?.runningUnderTnlDev}`}</p>
     </main>
   );

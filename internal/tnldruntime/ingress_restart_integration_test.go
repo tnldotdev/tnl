@@ -51,5 +51,5 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "ingress recovered" {
 		t.Fatalf("recovered visitor = %s, %q", response.Status, body)
 	}
-	assertRouteVersion(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 }

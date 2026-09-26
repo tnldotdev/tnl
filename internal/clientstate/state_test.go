@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
-const testRouteID = "route_0123456789abcdef0123456789abcdef"
+const testPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
 
 func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	parent := t.TempDir()

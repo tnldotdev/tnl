@@ -25,10 +25,10 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	var ordinaryLookups atomic.Int32
 	config := Config{
 		SourceConnectionRate: 0.000001, SourceConnectionBurst: 1,
-		MaxConnections: 1, MaxRouteConnections: 1,
-		Lookup: func(string) (Route, bool) {
+		MaxConnections: 1, MaxPublicURLConnections: 1,
+		Lookup: func(string) (PublicURL, bool) {
 			ordinaryLookups.Add(1)
-			return Route{}, false
+			return PublicURL{}, false
 		},
 		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
 			if host != "route.example" || !active.Load() {
@@ -75,7 +75,7 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 }
 
 func TestChallengeCapacityIsBoundedAndIndependent(t *testing.T) {
-	server, _ := startIngress(t, Config{MaxConnections: 1, MaxRouteConnections: 1,
+	server, _ := startIngress(t, Config{MaxConnections: 1, MaxPublicURLConnections: 1,
 		MaxChallengeConnections: 2, MaxHostnameChallengeConnections: 1,
 		MaxControlConnections: 1, MaxRelayConnections: 1})
 	first, rejected := server.admitClass(challengeConnection, "one.example")
@@ -230,8 +230,8 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 		defer clientSocket.Close()
 		defer upstream.Close()
 		defer origin.Close()
-		server, err := New(listener, Config{MaxConnections: 1, MaxRouteConnections: 1,
-			Lookup: func(string) (Route, bool) { return Route{}, false },
+		server, err := New(listener, Config{MaxConnections: 1, MaxPublicURLConnections: 1,
+			Lookup: func(string) (PublicURL, bool) { return PublicURL{}, false },
 			LookupChallenge: func(string) ([]routebackend.Backend, string) {
 				return []routebackend.Backend{singleBackend{upstream}}, ""
 			}})

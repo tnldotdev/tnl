@@ -19,11 +19,11 @@ var (
 )
 
 type routingTableEntry struct {
-	routeID       string
-	routeVersion  int64
-	entryRevision int64
-	tombstone     bool
-	entry         ingressv1.IngressRoutingTableEntry
+	publicURLID      string
+	publishRunNumber int64
+	entryRevision    int64
+	tombstone        bool
+	entry            ingressv1.IngressRoutingTableEntry
 }
 
 // RoutingTable replaces its data as one operation and rejects lookups until it
@@ -44,7 +44,7 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 	routes := make(map[string]routingTableEntry, len(snapshot.Entries))
 	challenges := make(map[string]routingTableEntry, len(snapshot.Entries))
 	for _, event := range snapshot.Entries {
-		if event.Kind != ingressv1.RouteUpsert && event.Kind != ingressv1.ChallengeUpsert ||
+		if event.Kind != ingressv1.PublicUrlUpsert && event.Kind != ingressv1.ChallengeUpsert ||
 			event.RoutingTableRevision > snapshot.ThroughRevision {
 			return fmt.Errorf("%w: snapshot contains a non-current event", ErrRoutingTableEvent)
 		}
@@ -107,9 +107,9 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		if isChallengeEvent(event.Kind) {
 			target = challenges
 		}
-		if current, exists := target[event.CanonicalHostname]; exists && current.routeID == event.RouteId &&
-			(event.RouteVersion < current.routeVersion ||
-				event.RouteVersion == current.routeVersion && event.EntryRevision <= current.entryRevision) {
+		if current, exists := target[event.CanonicalHostname]; exists && current.publicURLID == event.PublicUrlId &&
+			(event.PublishRunNumber < current.publishRunNumber ||
+				event.PublishRunNumber == current.publishRunNumber && event.EntryRevision <= current.entryRevision) {
 			return fmt.Errorf("%w: stale entry revision for hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
 		}
 		target[event.CanonicalHostname] = routingEntryForEvent(event)
@@ -167,8 +167,8 @@ func (t *RoutingTable) lookup(
 	if stored.tombstone {
 		return ingressv1.IngressRoutingTableEntry{}, "tombstone"
 	}
-	if !stored.entry.RouteExpiresAt.After(now) {
-		return ingressv1.IngressRoutingTableEntry{}, "route_expired"
+	if !stored.entry.PublicUrlExpiresAt.After(now) {
+		return ingressv1.IngressRoutingTableEntry{}, "public_url_expired"
 	}
 	entry := cloneRoutingTableEntry(stored.entry)
 	// A relay can renew its lease without changing this route projection. Its
@@ -179,24 +179,24 @@ func (t *RoutingTable) lookup(
 
 func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 	canonical, err := naming.CanonicalizeHostname(event.CanonicalHostname)
-	if event.RoutingTableRevision <= 0 || !event.Kind.Valid() || event.RouteId == "" ||
-		event.RouteVersion <= 0 || err != nil || canonical != event.CanonicalHostname ||
+	if event.RoutingTableRevision <= 0 || !event.Kind.Valid() || event.PublicUrlId == "" ||
+		event.PublishRunNumber <= 0 || err != nil || canonical != event.CanonicalHostname ||
 		event.EntryRevision <= 0 || event.CreatedAt.IsZero() {
 		return ErrRoutingTableEvent
 	}
 	entry := event.Entry
-	if entry.RouteSessionId == "" || entry.RouteId != event.RouteId || entry.RouteVersion != event.RouteVersion ||
+	if entry.PublishRunId == "" || entry.PublicUrlId != event.PublicUrlId || entry.PublishRunNumber != event.PublishRunNumber ||
 		entry.CanonicalHostname != event.CanonicalHostname || entry.PolicyRevision <= 0 ||
-		entry.RouteExpiresAt.IsZero() || !entry.IpPolicy.Valid() || len(entry.AllowedIpPrefixes) > 64 ||
+		entry.PublicUrlExpiresAt.IsZero() || !entry.IpPolicy.Valid() || len(entry.AllowedIpPrefixes) > 64 ||
 		len(entry.PublisherConnections) > 2 {
 		return ErrRoutingTableEvent
 	}
-	if event.Kind == ingressv1.RouteUpsert || event.Kind == ingressv1.ChallengeUpsert {
-		if event.RouteExpiresAt == nil || !event.RouteExpiresAt.Equal(entry.RouteExpiresAt) ||
+	if event.Kind == ingressv1.PublicUrlUpsert || event.Kind == ingressv1.ChallengeUpsert {
+		if event.PublicUrlExpiresAt == nil || !event.PublicUrlExpiresAt.Equal(entry.PublicUrlExpiresAt) ||
 			len(entry.PublisherConnections) == 0 {
 			return ErrRoutingTableEvent
 		}
-	} else if event.RouteExpiresAt != nil || len(entry.PublisherConnections) != 0 {
+	} else if event.PublicUrlExpiresAt != nil || len(entry.PublisherConnections) != 0 {
 		return ErrRoutingTableEvent
 	}
 	seenPrefixes := make(map[netip.Prefix]struct{}, len(entry.AllowedIpPrefixes))
@@ -239,8 +239,8 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 
 func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTableEntry {
 	return routingTableEntry{
-		routeID: event.RouteId, routeVersion: event.RouteVersion, entryRevision: event.EntryRevision,
-		tombstone: event.Kind == ingressv1.RouteTombstone || event.Kind == ingressv1.ChallengeTombstone,
+		publicURLID: event.PublicUrlId, publishRunNumber: event.PublishRunNumber, entryRevision: event.EntryRevision,
+		tombstone: event.Kind == ingressv1.PublicUrlTombstone || event.Kind == ingressv1.ChallengeTombstone,
 		entry:     cloneRoutingTableEntry(event.Entry),
 	}
 }

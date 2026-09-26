@@ -60,7 +60,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
             options.responseBody ??
               JSON.stringify({
                 hostname: "api.member.example",
-                memberNamespace: "member.example",
+                namespace: "member.example",
                 protocol: 1,
                 project: testPublicProject(true),
                 publicURL: "https://api.member.example",

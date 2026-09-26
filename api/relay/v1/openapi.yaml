@@ -400,19 +400,19 @@ components:
       type: object
       additionalProperties: false
       required:
-        - route_session_id
-        - route_id
-        - route_version
+        - publish_run_id
+        - public_url_id
+        - publish_run_number
         - publisher_connection_id
         - connection_slot
         - connection_assignment_revision
         - relay_service_id
       properties:
-        route_session_id:
+        publish_run_id:
           $ref: "#/components/schemas/Identifier"
-        route_id:
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
@@ -474,9 +474,9 @@ components:
       type: object
       additionalProperties: false
       required:
-        - route_session_id
-        - route_id
-        - route_version
+        - publish_run_id
+        - public_url_id
+        - publish_run_number
         - publisher_connection_id
         - connection_slot
         - connection_assignment_revision
@@ -491,11 +491,11 @@ components:
         - publisher_connection_credential_expires_at
         - connected_at
       properties:
-        route_session_id:
+        publish_run_id:
           $ref: "#/components/schemas/Identifier"
-        route_id:
+        public_url_id:
           $ref: "#/components/schemas/Identifier"
-        route_version:
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1

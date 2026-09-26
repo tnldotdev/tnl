@@ -26,7 +26,7 @@
   },
   "worker_limits": {
     "publisher_machines": 4,
-    "routes_per_publisher": 250,
+    "public_urls_per_publisher": 250,
     "fresh_connections_per_load_second": 30,
     "held_streams_per_load": 500
   }

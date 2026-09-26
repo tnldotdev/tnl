@@ -31,8 +31,8 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 		received <- observedRequest{request.Method, request.URL.Path, request.Header.Get("Authorization"), body, err}
 		writeJSON(response, http.StatusOK, authorityv1.ServiceAuthorizationDecision{
 			IdentityId: "identity_1", TeamId: "team_1", ActingMembershipId: "membership_1",
-			ActingRole: authorityv1.TeamRoleOwner, RouteMembershipId: pointer("membership_1"), PolicyRevision: 4,
-			DomainId: "domain_1", CanonicalHostname: "api.example.test", RouteScope: authorityv1.RouteScopeMember,
+			ActingRole: authorityv1.TeamRoleOwner, PublicUrlMembershipId: pointer("membership_1"), PolicyRevision: 4,
+			DomainId: "domain_1", CanonicalHostname: "api.example.test", PublicUrlScope: authorityv1.PublicURLScopeMember,
 			DnsAuthorityReference: "dns_authority_1", CertificatePlan: &authorityv1.CertificatePlan{
 				CacheKey: "example.test", Scope: "example.test", Identifiers: []string{"example.test", "*.example.test"},
 				ChallengeMethod: authorityv1.Dns01,
@@ -47,11 +47,11 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 	retrySecret := [32]byte{1, 2, 3}
 	authorizer := hostedAuthorizer{client: client, secret: serviceSecret, store: externalPrincipalStoreStub{secret: retrySecret}}
 	decision, err := authorizer.Authorize(t.Context(), authorization.Request{
-		AccessToken: "opaque-user-token", Operation: authorization.OperationRouteSessionCreate,
-		TeamID: "team_1", RouteMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "api.example.test", RouteScope: "member", Target: "http://127.0.0.1:3000",
-		AllowedIPPrefixes: []string{"192.0.2.0/24"}, RouteID: "route_1", RouteVersion: 2,
-		RouteMutationRevision: 3,
+		AccessToken: "opaque-user-token", Operation: authorization.OperationPublishRunCreate,
+		TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "api.example.test", PublicURLScope: "member", Target: "http://127.0.0.1:3000",
+		AllowedIPPrefixes: []string{"192.0.2.0/24"}, PublicURLID: "public_url_1", PublishRunNumber: 2,
+		PublicURLMutationRevision: 3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,9 +62,9 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 			t.Fatalf("request = %#v", got)
 		}
 		body := got.body
-		if body.AccessToken != "opaque-user-token" || body.Operation != authorityv1.RouteSessionCreate ||
-			body.RouteId == nil || *body.RouteId != "route_1" || body.RouteMutationRevision == nil ||
-			*body.RouteMutationRevision != 3 || body.RouteVersion == nil || *body.RouteVersion != 2 ||
+		if body.AccessToken != "opaque-user-token" || body.Operation != authorityv1.PublishRunCreate ||
+			body.PublicUrlId == nil || *body.PublicUrlId != "public_url_1" || body.PublicUrlMutationRevision == nil ||
+			*body.PublicUrlMutationRevision != 3 || body.PublishRunNumber == nil || *body.PublishRunNumber != 2 ||
 			body.TeamId != "team_1" || body.DomainId != "domain_1" || body.CanonicalHostname != "api.example.test" ||
 			body.Target != "http://127.0.0.1:3000" || !slices.Equal(body.AllowedIpPrefixes, []string{"192.0.2.0/24"}) {
 			t.Fatalf("authorization request = %#v", body)
@@ -126,9 +126,9 @@ func TestLocalAuthorizerUsesCurrentMembershipAndDomain(t *testing.T) {
 		}},
 	}
 	decision, err := (localAuthorizer{store: store, sourceRevision: 9}).Authorize(t.Context(), authorization.Request{
-		AccessToken: "access", Operation: authorization.OperationRouteCreate, TeamID: "team_1",
-		RouteMembershipID: "membership_1", DomainID: "domain_1", CanonicalHostname: "api.example.test",
-		RouteScope: "member", Target: "http://127.0.0.1:3000",
+		AccessToken: "access", Operation: authorization.OperationPublicURLCreate, TeamID: "team_1",
+		PublicURLMembershipID: "membership_1", DomainID: "domain_1", CanonicalHostname: "api.example.test",
+		PublicURLScope: "member", Target: "http://127.0.0.1:3000",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestLocalAuthorizerUsesCurrentMembershipAndDomain(t *testing.T) {
 	}
 }
 
-func TestLocalAuthorizerAllowsAdministratorsToDeleteMemberRoutes(t *testing.T) {
+func TestLocalAuthorizerAllowsAdministratorsToDeleteMemberPublicURLs(t *testing.T) {
 	store := localAuthorizationStoreStub{
 		principal: controlstate.ControlPrincipal{IdentityID: "identity_admin"},
 		identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
@@ -157,19 +157,19 @@ func TestLocalAuthorizerAllowsAdministratorsToDeleteMemberRoutes(t *testing.T) {
 		domains: []controlstate.Domain{{ID: "domain_1", State: "ready"}},
 	}
 	request := authorization.Request{
-		AccessToken: "access", TeamID: "team_1", RouteMembershipID: "membership_owner",
-		DomainID: "domain_1", CanonicalHostname: "api.example.test", RouteScope: "member",
+		AccessToken: "access", TeamID: "team_1", PublicURLMembershipID: "membership_owner",
+		DomainID: "domain_1", CanonicalHostname: "api.example.test", PublicURLScope: "member",
 		Target: "http://127.0.0.1:3000",
 	}
-	request.Operation = authorization.OperationRouteDelete
+	request.Operation = authorization.OperationPublicURLDelete
 	decision, err := (localAuthorizer{store: store}).Authorize(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.ActingMembershipID != "membership_admin" || decision.RouteMembershipID != "membership_owner" {
+	if decision.ActingMembershipID != "membership_admin" || decision.PublicURLMembershipID != "membership_owner" {
 		t.Fatalf("decision = %#v", decision)
 	}
-	request.Operation = authorization.OperationRouteUpdate
+	request.Operation = authorization.OperationPublicURLUpdate
 	if _, err := (localAuthorizer{store: store}).Authorize(t.Context(), request); !errors.Is(err, authorization.ErrForbidden) {
 		t.Fatalf("route update error = %v", err)
 	}
@@ -186,18 +186,18 @@ func TestLocalAuthorizerAllowsRouteDeletionWhileDomainReleases(t *testing.T) {
 		}},
 	}
 	request := authorization.Request{
-		AccessToken: "access", TeamID: "team_1", RouteMembershipID: "membership_owner",
-		DomainID: "domain_1", CanonicalHostname: "api.example.test", RouteScope: "member",
+		AccessToken: "access", TeamID: "team_1", PublicURLMembershipID: "membership_owner",
+		DomainID: "domain_1", CanonicalHostname: "api.example.test", PublicURLScope: "member",
 		Target: "http://127.0.0.1:3000",
 	}
-	request.Operation = authorization.OperationRouteDelete
+	request.Operation = authorization.OperationPublicURLDelete
 	if _, err := (localAuthorizer{store: store}).Authorize(t.Context(), request); err != nil {
 		t.Fatalf("route delete error = %v", err)
 	}
 	for _, operation := range []authorization.Operation{
-		authorization.OperationRouteCreate,
-		authorization.OperationRouteUpdate,
-		authorization.OperationRouteSessionCreate,
+		authorization.OperationPublicURLCreate,
+		authorization.OperationPublicURLUpdate,
+		authorization.OperationPublishRunCreate,
 	} {
 		request.Operation = operation
 		if _, err := (localAuthorizer{store: store}).Authorize(t.Context(), request); !errors.Is(err, authorization.ErrForbidden) {

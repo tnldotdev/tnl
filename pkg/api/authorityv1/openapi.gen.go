@@ -22,22 +22,22 @@ import (
 
 // Defines values for AuthorizationOperation.
 const (
-	RouteCreate        AuthorizationOperation = "route.create"
-	RouteDelete        AuthorizationOperation = "route.delete"
-	RouteSessionCreate AuthorizationOperation = "route_session.create"
-	RouteUpdate        AuthorizationOperation = "route.update"
+	PublicUrlCreate  AuthorizationOperation = "public_url.create"
+	PublicUrlDelete  AuthorizationOperation = "public_url.delete"
+	PublicUrlUpdate  AuthorizationOperation = "public_url.update"
+	PublishRunCreate AuthorizationOperation = "publish_run.create"
 )
 
 // Valid indicates whether the value is a known member of the AuthorizationOperation enum.
 func (e AuthorizationOperation) Valid() bool {
 	switch e {
-	case RouteCreate:
+	case PublicUrlCreate:
 		return true
-	case RouteDelete:
+	case PublicUrlDelete:
 		return true
-	case RouteSessionCreate:
+	case PublicUrlUpdate:
 		return true
-	case RouteUpdate:
+	case PublishRunCreate:
 		return true
 	default:
 		return false
@@ -200,18 +200,18 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for RouteScope.
+// Defines values for PublicURLScope.
 const (
-	RouteScopeMember RouteScope = "member"
-	RouteScopeShared RouteScope = "shared"
+	PublicURLScopeMember PublicURLScope = "member"
+	PublicURLScopeShared PublicURLScope = "shared"
 )
 
-// Valid indicates whether the value is a known member of the RouteScope enum.
-func (e RouteScope) Valid() bool {
+// Valid indicates whether the value is a known member of the PublicURLScope enum.
+func (e PublicURLScope) Valid() bool {
 	switch e {
-	case RouteScopeMember:
+	case PublicURLScopeMember:
 		return true
-	case RouteScopeShared:
+	case PublicURLScopeShared:
 		return true
 	default:
 		return false
@@ -450,6 +450,12 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
+// PublicURLID defines model for PublicURLID.
+type PublicURLID = ResourceID
+
+// PublicURLScope defines model for PublicURLScope.
+type PublicURLScope string
+
 // RefreshControlSessionRequest defines model for RefreshControlSessionRequest.
 type RefreshControlSessionRequest struct {
 	RefreshToken string `json:"refresh_token"`
@@ -457,12 +463,6 @@ type RefreshControlSessionRequest struct {
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
-
-// RouteID defines model for RouteID.
-type RouteID = ResourceID
-
-// RouteScope defines model for RouteScope.
-type RouteScope string
 
 // ServiceAuthorizationDecision defines model for ServiceAuthorizationDecision.
 type ServiceAuthorizationDecision struct {
@@ -474,27 +474,27 @@ type ServiceAuthorizationDecision struct {
 	DomainId              DomainID          `json:"domain_id"`
 	IdentityId            IdentityID        `json:"identity_id"`
 	PolicyRevision        int64             `json:"policy_revision"`
-	RouteMembershipId     *MembershipID     `json:"route_membership_id,omitempty"`
-	RouteScope            RouteScope        `json:"route_scope"`
+	PublicUrlMembershipId *MembershipID     `json:"public_url_membership_id,omitempty"`
+	PublicUrlScope        PublicURLScope    `json:"public_url_scope"`
 	TeamId                TeamID            `json:"team_id"`
 }
 
 // ServiceAuthorizationRequest defines model for ServiceAuthorizationRequest.
 type ServiceAuthorizationRequest struct {
-	AccessToken           string                 `json:"access_token"`
-	ActingMembershipId    *MembershipID          `json:"acting_membership_id,omitempty"`
-	AllowedIpPrefixes     []string               `json:"allowed_ip_prefixes"`
-	CanonicalHostname     CanonicalHostname      `json:"canonical_hostname"`
-	DomainId              DomainID               `json:"domain_id"`
-	Ephemeral             bool                   `json:"ephemeral"`
-	Operation             AuthorizationOperation `json:"operation"`
-	RouteId               *RouteID               `json:"route_id,omitempty"`
-	RouteMembershipId     *MembershipID          `json:"route_membership_id,omitempty"`
-	RouteMutationRevision *int64                 `json:"route_mutation_revision,omitempty"`
-	RouteScope            RouteScope             `json:"route_scope"`
-	RouteVersion          *int64                 `json:"route_version,omitempty"`
-	Target                string                 `json:"target"`
-	TeamId                TeamID                 `json:"team_id"`
+	AccessToken               string                 `json:"access_token"`
+	ActingMembershipId        *MembershipID          `json:"acting_membership_id,omitempty"`
+	AllowedIpPrefixes         []string               `json:"allowed_ip_prefixes"`
+	CanonicalHostname         CanonicalHostname      `json:"canonical_hostname"`
+	DomainId                  DomainID               `json:"domain_id"`
+	Ephemeral                 bool                   `json:"ephemeral"`
+	Operation                 AuthorizationOperation `json:"operation"`
+	PublicUrlId               *PublicURLID           `json:"public_url_id,omitempty"`
+	PublicUrlMembershipId     *MembershipID          `json:"public_url_membership_id,omitempty"`
+	PublicUrlMutationRevision *int64                 `json:"public_url_mutation_revision,omitempty"`
+	PublicUrlScope            PublicURLScope         `json:"public_url_scope"`
+	PublishRunNumber          *int64                 `json:"publish_run_number,omitempty"`
+	Target                    string                 `json:"target"`
+	TeamId                    TeamID                 `json:"team_id"`
 }
 
 // SetMembershipRoleRequest defines model for SetMembershipRoleRequest.

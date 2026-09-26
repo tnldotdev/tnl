@@ -84,13 +84,13 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 			}
 			decision := authorityv1.ServiceAuthorizationDecision{
 				IdentityId: "external_identity", TeamId: request.TeamId, DomainId: request.DomainId,
-				ActingMembershipId: membershipID, RouteMembershipId: &membershipID, ActingRole: authorityv1.TeamRoleMember,
-				PolicyRevision: 1, CanonicalHostname: hostname, RouteScope: authorityv1.RouteScopeMember,
+				ActingMembershipId: membershipID, PublicUrlMembershipId: &membershipID, ActingRole: authorityv1.TeamRoleMember,
+				PolicyRevision: 1, CanonicalHostname: hostname, PublicUrlScope: authorityv1.PublicURLScopeMember,
 				DnsAuthorityReference: "managed:routes.example.test",
 			}
-			if request.Operation == authorityv1.RouteSessionCreate {
+			if request.Operation == authorityv1.PublishRunCreate {
 				decision.CertificatePlan = &plan
-			} else if request.Operation != authorityv1.RouteCreate {
+			} else if request.Operation != authorityv1.PublicUrlCreate {
 				t.Errorf("unexpected operation %q", request.Operation)
 			}
 			_ = json.NewEncoder(w).Encode(decision)
@@ -127,24 +127,24 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 		}
 	}
 
-	var route controlv1.Route
-	post(t, "/v1/routes", accessToken, "route", controlv1.CreateRouteRequest{
+	var route controlv1.PublicURL
+	post(t, "/v1/public-urls", accessToken, "route", controlv1.CreatePublicURLRequest{
 		TeamId: "external_team", DomainId: "external_domain", CanonicalHostname: hostname,
-		RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &[]string{},
+		PublicUrlScope: controlv1.Member, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &[]string{},
 	}, http.StatusCreated, &route)
-	var setup controlv1.RouteSessionSetup
-	post(t, "/v1/routes/"+route.Id+"/sessions", accessToken, "session", struct{}{}, http.StatusCreated, &setup)
+	var setup controlv1.PublishRunSetup
+	post(t, "/v1/public-urls/"+route.Id+"/publish-runs", accessToken, "session", struct{}{}, http.StatusCreated, &setup)
 	if setup.CertificatePlan.CacheKey != plan.CacheKey || setup.CertificatePlan.Scope != plan.Scope ||
 		!slices.Equal(setup.CertificatePlan.Identifiers, plan.Identifiers) ||
 		string(setup.CertificatePlan.ChallengeMethod) != string(plan.ChallengeMethod) {
-		t.Fatalf("route session did not preserve the authority plan: %#v", setup.CertificatePlan)
+		t.Fatalf("publish run did not preserve the authority plan: %#v", setup.CertificatePlan)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := "/v1/route-sessions/" + setup.RouteSession.Id + "/certificate-issuances"
+	path := "/v1/publish-runs/" + setup.PublishRun.Id + "/certificate-issuances"
 	for _, test := range []struct {
 		name        string
 		identifiers []string
@@ -158,17 +158,17 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := controlv1.CreateCertificateIssuanceRequest{RouteVersion: setup.RouteSession.RouteVersion, Csr: csr}
+			body := controlv1.CreateCertificateIssuanceRequest{PublishRunNumber: setup.PublishRun.PublishRunNumber, Csr: csr}
 			if test.wantStatus == http.StatusBadRequest {
 				var problem controlv1.Problem
-				post(t, path, setup.RouteSessionToken, test.name, body, test.wantStatus, &problem)
+				post(t, path, setup.PublishRunToken, test.name, body, test.wantStatus, &problem)
 				if problem.Code != controlv1.InvalidRequest {
 					t.Fatalf("exact-host CSR rejection = %#v", problem)
 				}
 				return
 			}
 			var issuance controlv1.CertificateIssuance
-			post(t, path, setup.RouteSessionToken, test.name, body, test.wantStatus, &issuance)
+			post(t, path, setup.PublishRunToken, test.name, body, test.wantStatus, &issuance)
 			if issuance.Id == "" || issuance.CertificatePlan.CacheKey != plan.CacheKey ||
 				issuance.CertificatePlan.Scope != plan.Scope ||
 				!slices.Equal(issuance.CertificatePlan.Identifiers, plan.Identifiers) ||

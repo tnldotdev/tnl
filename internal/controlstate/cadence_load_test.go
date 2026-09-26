@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -69,7 +69,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	seedLoadRoutingHistory(t, f, 1, f.history)
 	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
 	var leaseMu sync.RWMutex
-	current := make([]RouteSessionSetup, f.routes)
+	current := make([]PublishRunSetup, f.routes)
 	for index, session := range sessions {
 		current[index] = session.setup
 		for slot := range current[index].PublisherConnections {
@@ -277,9 +277,9 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 				}
 				callCtx, stop := context.WithDeadline(ctx, deadline)
 				session := sessions[item.index]
-				setup, err := f.controls[worker%2].HeartbeatRouteSession(callCtx, session.authentication(), now(), cadencePublisherLease, cadenceCredentialLife)
+				setup, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), now(), cadencePublisherLease, cadenceCredentialLife)
 				stop()
-				if err == nil && (setup.RouteSessionID != session.setup.RouteSessionID || setup.RouteVersion != session.setup.RouteVersion || setup.State != RouteSessionReady || !setup.ExpiresAt.After(now())) {
+				if err == nil && (setup.PublishRunID != session.setup.PublishRunID || setup.PublishRunNumber != session.setup.PublishRunNumber || setup.State != PublishRunReady || !setup.ExpiresAt.After(now())) {
 					err = errors.New("heartbeat lost a live session")
 				}
 				changed := false
@@ -456,10 +456,10 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 						continue
 					}
 					session := sessions[index]
-					reports = append(reports, IngressUsageReport{RouteID: session.setup.RouteID, RouteVersion: session.setup.RouteVersion,
+					reports = append(reports, IngressUsageReport{PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
 						BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: at, ReportRevision: 1,
 						ConnectionAttempts: 1, SuccessfulStreams: 1, IngressBytes: 100, EgressBytes: 200,
-						HistogramData: (routeusage.Checkpoint{}).MarshalBinary()})
+						HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})
 				}
 				identity := controller.Lease()
 				lease := IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}
@@ -529,8 +529,8 @@ waiting:
 	// final production snapshot while their normal lease renewals continue.
 	identity := controllers[0].Lease()
 	final, err := f.database.ReadIngressRoutingTableSnapshot(verifyCtx, IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}, now())
-	if err != nil || len(final.Routes) != f.routes {
-		t.Fatalf("final snapshot routes=%d want=%d: %v", len(final.Routes), f.routes, err)
+	if err != nil || len(final.Entries) != f.routes {
+		t.Fatalf("final snapshot routes=%d want=%d: %v", len(final.Entries), f.routes, err)
 	}
 	wantRevision := uint64(f.routes)*uint64(f.history) + uint64(completed.Load()) + uint64(repaired.Load())
 	if final.RoutingTableRevision != wantRevision {
@@ -551,7 +551,7 @@ waiting:
 		}
 		for index, session := range sessions {
 			entry, ok := controller.Lookup(session.request.CertificateIdentifiers[0], now())
-			if !ok || entry.RouteSessionId != session.setup.RouteSessionID || entry.RouteVersion != int64(session.setup.RouteVersion) || len(entry.PublisherConnections) != 2 {
+			if !ok || entry.PublishRunId != session.setup.PublishRunID || entry.PublishRunNumber != int64(session.setup.PublishRunNumber) || len(entry.PublisherConnections) != 2 {
 				t.Fatalf("final routing lost live route=%d", index)
 			}
 			for _, connection := range entry.PublisherConnections {
@@ -569,36 +569,36 @@ waiting:
 		}
 		t.Logf("ingress=%d final_applied=%d known_backlog=%d last_check_age=%s resnapshots=%d failures=%d", ingressIndex, status.AppliedRevision, status.LatestRevision-status.AppliedRevision, now().Sub(status.LastSuccessfulCheck), status.Resnapshots, status.UpdateFailures)
 	}
-	expectedUsage := make(map[string]RouteSessionSetup, f.routes)
+	expectedUsage := make(map[string]PublishRunSetup, f.routes)
 	for _, session := range sessions {
-		expectedUsage[session.setup.RouteID] = session.setup
+		expectedUsage[session.setup.PublicURLID] = session.setup
 	}
 	rows, err := f.database.pool.Query(verifyCtx, `
-		SELECT b.route_id, b.route_version, s.id,
+		SELECT b.public_url_id, b.publish_run_number, s.id,
 		 (count(*) = $1 AND sum(b.connection_attempts) = $1 AND sum(b.successful_streams) = $1
 		  AND sum(b.policy_denials) = 0 AND sum(b.capacity_denials) = 0
 		  AND sum(b.visitor_stream_open_failures) = 0 AND sum(b.connection_nanoseconds) = 0
 		  AND sum(b.ingress_bytes) = $1 * 100 AND sum(b.egress_bytes) = $1 * 200
 		  AND bool_and(s.policy_denials = 0 AND s.closed_at IS NULL AND s.publisher_expires_at > $2)) IS TRUE
-		FROM control.route_usage_buckets AS b
-		LEFT JOIN control.route_sessions AS s USING (route_id, route_version)
-		GROUP BY b.route_id, b.route_version, s.id`, int64(duration/time.Minute), now())
+		FROM control.public_url_usage_buckets AS b
+		LEFT JOIN control.publish_runs AS s USING (public_url_id, publish_run_number)
+		GROUP BY b.public_url_id, b.publish_run_number, s.id`, int64(duration/time.Minute), now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var routeID, sessionID string
+		var publicURLID, sessionID string
 		var version uint64
 		var matches bool
-		if err := rows.Scan(&routeID, &version, &sessionID, &matches); err != nil {
+		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
 			t.Fatal(err)
 		}
-		expected, ok := expectedUsage[routeID]
-		if !ok || !matches || version != expected.RouteVersion || sessionID != expected.RouteSessionID {
-			t.Fatalf("unexpected usage route=%s version=%d values_match=%t", routeID, version, matches)
+		expected, ok := expectedUsage[publicURLID]
+		if !ok || !matches || version != expected.PublishRunNumber || sessionID != expected.PublishRunID {
+			t.Fatalf("unexpected usage route=%s version=%d values_match=%t", publicURLID, version, matches)
 		}
-		delete(expectedUsage, routeID)
+		delete(expectedUsage, publicURLID)
 	}
 	if err := rows.Err(); err != nil || len(expectedUsage) != 0 {
 		t.Fatalf("missing usage routes=%d: %v", len(expectedUsage), err)

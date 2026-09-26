@@ -24,36 +24,36 @@ type localAuthorizer struct {
 	dnsAutomation  bool
 }
 
-type routeReadPrincipal struct {
+type publicURLReadPrincipal struct {
 	identityID    string
 	teamIDs       map[string]struct{}
 	administrator bool
 }
 
-type routeAuthorizer interface {
+type publicURLAuthorizer interface {
 	authorization.Authorizer
-	AuthorizeRouteReads(context.Context, string) (routeReadPrincipal, error)
+	AuthorizeRouteReads(context.Context, string) (publicURLReadPrincipal, error)
 }
 
-func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (routeReadPrincipal, error) {
+func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
 	principal, err := a.store.AuthenticateAccessToken(
 		ctx, credentials.AccessToken(accessToken), a.sourceRevision, time.Now(),
 	)
 	if errors.Is(err, controlstate.ErrControlAuthentication) {
-		return routeReadPrincipal{}, authorization.ErrUnauthenticated
+		return publicURLReadPrincipal{}, authorization.ErrUnauthenticated
 	}
 	if err != nil {
-		return routeReadPrincipal{}, errors.Join(authorization.ErrUnavailable, err)
+		return publicURLReadPrincipal{}, errors.Join(authorization.ErrUnavailable, err)
 	}
 	identity, err := a.store.IdentityContext(ctx, principal.IdentityID)
 	if err != nil {
-		return routeReadPrincipal{}, authorization.ErrUnavailable
+		return publicURLReadPrincipal{}, authorization.ErrUnavailable
 	}
 	teamIDs := make(map[string]struct{}, len(identity.Memberships))
 	for _, membership := range identity.Memberships {
 		teamIDs[membership.TeamID] = struct{}{}
 	}
-	return routeReadPrincipal{
+	return publicURLReadPrincipal{
 		identityID: principal.IdentityID, teamIDs: teamIDs, administrator: principal.Administrator,
 	}, nil
 }
@@ -94,34 +94,34 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			break
 		}
 	}
-	if domain.ID == "" || domain.State != "ready" && request.Operation != authorization.OperationRouteDelete {
+	if domain.ID == "" || domain.State != "ready" && request.Operation != authorization.OperationPublicURLDelete {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
-	routeMembershipID := request.RouteMembershipID
-	if request.RouteScope == string(controlv1.Member) {
-		if routeMembershipID == "" {
-			if request.Operation == authorization.OperationRouteCreate {
-				routeMembershipID = acting.ID
+	publicURLMembershipID := request.PublicURLMembershipID
+	if request.PublicURLScope == string(controlv1.Member) {
+		if publicURLMembershipID == "" {
+			if request.Operation == authorization.OperationPublicURLCreate {
+				publicURLMembershipID = acting.ID
 			} else {
 				return authorization.Decision{}, authorization.ErrForbidden
 			}
 		}
-		if routeMembershipID != acting.ID && (request.Operation != authorization.OperationRouteDelete ||
+		if publicURLMembershipID != acting.ID && (request.Operation != authorization.OperationPublicURLDelete ||
 			acting.Role != "admin" && acting.Role != "owner") {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
-	} else if request.RouteScope != string(controlv1.Shared) || routeMembershipID != "" ||
+	} else if request.PublicURLScope != string(controlv1.Shared) || publicURLMembershipID != "" ||
 		acting.Role != "admin" && acting.Role != "owner" {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
 	decision := authorization.Decision{
 		IdentityID: principal.IdentityID, TeamID: request.TeamID, ActingMembershipID: acting.ID,
-		ActingRole: acting.Role, RouteMembershipID: routeMembershipID,
+		ActingRole: acting.Role, PublicURLMembershipID: publicURLMembershipID,
 		PolicyRevision: uint64(acting.PolicyRevision), DomainID: request.DomainID,
-		CanonicalHostname: request.CanonicalHostname, RouteScope: request.RouteScope,
+		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
-	if request.Operation == authorization.OperationRouteSessionCreate {
+	if request.Operation == authorization.OperationPublishRunCreate {
 		decision.CertificatePlan = &authorization.CertificatePlan{
 			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
 			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: string(controlv1.TlsAlpn01),
@@ -129,7 +129,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		if a.dnsAutomation {
 			plan := decision.CertificatePlan
 			plan.ChallengeMethod = string(controlv1.Dns01)
-			if request.RouteScope == string(controlv1.Member) {
+			if request.PublicURLScope == string(controlv1.Member) {
 				label := acting.MemberSlug
 				if domain.Kind == "managed" {
 					label = acting.ManagedLabel
@@ -153,27 +153,27 @@ type externalPrincipalStore interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
-func (a hostedAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (routeReadPrincipal, error) {
+func (a hostedAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
 	identity, err := a.client.IdentityContextWithAccessToken(ctx, credentials.AccessToken(accessToken))
 	if err != nil {
-		return routeReadPrincipal{}, hostedAuthorizationError(err)
+		return publicURLReadPrincipal{}, hostedAuthorizationError(err)
 	}
 	if identity.Identity.Id == "" {
-		return routeReadPrincipal{}, authorization.ErrUnavailable
+		return publicURLReadPrincipal{}, authorization.ErrUnavailable
 	}
 	teamIDs := make(map[string]struct{}, len(identity.Memberships))
 	for _, membership := range identity.Memberships {
 		if membership.TeamId == "" {
-			return routeReadPrincipal{}, authorization.ErrUnavailable
+			return publicURLReadPrincipal{}, authorization.ErrUnavailable
 		}
 		teamIDs[membership.TeamId] = struct{}{}
 	}
 	if a.store != nil {
 		if _, err := a.store.EnsureExternalAuthorityPrincipal(ctx, identity.Identity.Id, time.Now()); err != nil {
-			return routeReadPrincipal{}, authorization.ErrUnavailable
+			return publicURLReadPrincipal{}, authorization.ErrUnavailable
 		}
 	}
-	return routeReadPrincipal{
+	return publicURLReadPrincipal{
 		identityID: identity.Identity.Id, teamIDs: teamIDs,
 		administrator: identity.Identity.Administrator,
 	}, nil
@@ -183,7 +183,7 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 	body := authorityv1.ServiceAuthorizationRequest{
 		AccessToken: request.AccessToken, Operation: authorityv1.AuthorizationOperation(request.Operation),
 		TeamId: request.TeamID, DomainId: request.DomainID, CanonicalHostname: request.CanonicalHostname,
-		RouteScope: authorityv1.RouteScope(request.RouteScope), Target: request.Target,
+		PublicUrlScope: authorityv1.PublicURLScope(request.PublicURLScope), Target: request.Target,
 		AllowedIpPrefixes: slices.Clone(request.AllowedIPPrefixes), Ephemeral: request.Ephemeral,
 	}
 	if body.AllowedIpPrefixes == nil {
@@ -192,25 +192,25 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 	if request.ActingMembershipID != "" {
 		body.ActingMembershipId = &request.ActingMembershipID
 	}
-	if request.RouteMembershipID != "" {
-		body.RouteMembershipId = &request.RouteMembershipID
+	if request.PublicURLMembershipID != "" {
+		body.PublicUrlMembershipId = &request.PublicURLMembershipID
 	}
-	if request.RouteID != "" {
-		body.RouteId = &request.RouteID
+	if request.PublicURLID != "" {
+		body.PublicUrlId = &request.PublicURLID
 	}
-	if request.RouteVersion != 0 {
-		if request.RouteVersion > math.MaxInt64 {
+	if request.PublishRunNumber != 0 {
+		if request.PublishRunNumber > math.MaxInt64 {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
-		value := int64(request.RouteVersion)
-		body.RouteVersion = &value
+		value := int64(request.PublishRunNumber)
+		body.PublishRunNumber = &value
 	}
-	if request.RouteMutationRevision != 0 {
-		if request.RouteMutationRevision > math.MaxInt64 {
+	if request.PublicURLMutationRevision != 0 {
+		if request.PublicURLMutationRevision > math.MaxInt64 {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
-		value := int64(request.RouteMutationRevision)
-		body.RouteMutationRevision = &value
+		value := int64(request.PublicURLMutationRevision)
+		body.PublicUrlMutationRevision = &value
 	}
 	wire, err := a.client.AuthorizeServiceOperation(ctx, a.secret, body)
 	if err != nil {
@@ -219,11 +219,11 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 	decision := authorization.Decision{
 		IdentityID: wire.IdentityId, TeamID: wire.TeamId, ActingMembershipID: wire.ActingMembershipId,
 		ActingRole: string(wire.ActingRole), PolicyRevision: uint64(wire.PolicyRevision),
-		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, RouteScope: string(wire.RouteScope),
+		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, PublicURLScope: string(wire.PublicUrlScope),
 		DNSAuthorityReference: wire.DnsAuthorityReference,
 	}
-	if wire.RouteMembershipId != nil {
-		decision.RouteMembershipID = *wire.RouteMembershipId
+	if wire.PublicUrlMembershipId != nil {
+		decision.PublicURLMembershipID = *wire.PublicUrlMembershipId
 	}
 	if wire.CertificatePlan != nil {
 		decision.CertificatePlan = &authorization.CertificatePlan{
@@ -246,17 +246,17 @@ func validAuthorizationDecision(request authorization.Request, decision authoriz
 	if decision.IdentityID == "" || decision.TeamID != request.TeamID || decision.ActingMembershipID == "" ||
 		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
 		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
-		decision.CanonicalHostname != request.CanonicalHostname || decision.RouteScope != request.RouteScope ||
+		decision.CanonicalHostname != request.CanonicalHostname || decision.PublicURLScope != request.PublicURLScope ||
 		strings.TrimSpace(decision.DNSAuthorityReference) == "" {
 		return false
 	}
 	if request.ActingMembershipID != "" && decision.ActingMembershipID != request.ActingMembershipID ||
-		request.RouteMembershipID != "" && decision.RouteMembershipID != request.RouteMembershipID ||
-		request.RouteScope == string(controlv1.Member) && decision.RouteMembershipID == "" ||
-		request.RouteScope == string(controlv1.Shared) && decision.RouteMembershipID != "" {
+		request.PublicURLMembershipID != "" && decision.PublicURLMembershipID != request.PublicURLMembershipID ||
+		request.PublicURLScope == string(controlv1.Member) && decision.PublicURLMembershipID == "" ||
+		request.PublicURLScope == string(controlv1.Shared) && decision.PublicURLMembershipID != "" {
 		return false
 	}
-	if request.Operation == authorization.OperationRouteSessionCreate {
+	if request.Operation == authorization.OperationPublishRunCreate {
 		return decision.CertificatePlan != nil && decision.CertificatePlan.CacheKey != "" &&
 			decision.CertificatePlan.Scope != "" && len(decision.CertificatePlan.Identifiers) != 0 &&
 			(decision.CertificatePlan.ChallengeMethod == string(controlv1.Dns01) ||
@@ -302,7 +302,7 @@ func (h *handler) authorizeMutation(
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		log.Printf("authorize route mutation request_id=%s: %v", requestID, err)
+		log.Printf("authorize public URL mutation request_id=%s: %v", requestID, err)
 	default:
 		return decision, true
 	}
@@ -312,7 +312,7 @@ func (h *handler) authorizeMutation(
 func (h *handler) authorizeExistingRouteMutation(
 	response http.ResponseWriter,
 	request *http.Request,
-	principal routeReadPrincipal,
+	principal publicURLReadPrincipal,
 	operation authorization.Request,
 ) (authorization.Decision, bool) {
 	if _, authorized := principal.teamIDs[operation.TeamID]; !authorized {
@@ -325,15 +325,15 @@ func (h *handler) authorizeExistingRouteMutation(
 func (h *handler) authorizeRouteReads(
 	response http.ResponseWriter,
 	request *http.Request,
-) (routeReadPrincipal, bool) {
+) (publicURLReadPrincipal, bool) {
 	token, ok := requestBearerToken(request)
 	if !ok {
 		writeBearerProblem(response)
-		return routeReadPrincipal{}, false
+		return publicURLReadPrincipal{}, false
 	}
 	if h.authorizer == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		return routeReadPrincipal{}, false
+		return publicURLReadPrincipal{}, false
 	}
 	principal, err := h.authorizer.AuthorizeRouteReads(request.Context(), token)
 	switch {
@@ -347,5 +347,5 @@ func (h *handler) authorizeRouteReads(
 	default:
 		return principal, true
 	}
-	return routeReadPrincipal{}, false
+	return publicURLReadPrincipal{}, false
 }

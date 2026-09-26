@@ -59,9 +59,9 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDeploymentDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
-		RouteCertificateWorkers: 4,
-		LoginToken:              testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		VisitorConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
+		PublicURLCertificateWorkers: 4,
+		LoginToken:                  testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		VisitorConnectionLimit: 100, PublicURLConnectionLimit: 100, PublisherConnectionLimit: 10,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
@@ -89,7 +89,7 @@ func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPu
 	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
-	waitForReadyPublisherConnections(t, f.inspect, ready.RouteID, ready.RouteVersion, 2)
+	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }

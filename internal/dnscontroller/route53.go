@@ -36,23 +36,23 @@ type route53API interface {
 	ChangeResourceRecordSets(context.Context, *route53.ChangeResourceRecordSetsInput, ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error)
 }
 
-func (p *Route53Provider) PublishRoute(ctx context.Context, record RouteRecord) (Zone, error) {
-	zone, err := p.routeZone(ctx, record)
+func (p *Route53Provider) PublishPublicURL(ctx context.Context, record PublicURLRecord) (Zone, error) {
+	zone, err := p.publicURLZone(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
-	addressRecords, owner, err := p.routeRecords(ctx, record)
+	addressRecords, owner, err := p.publicURLRecords(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
-	marker := routeOwnerValue(record.RouteID)
+	marker := publicURLOwnerValue(record.PublicURLID)
 	ownerExists := owner != nil
 	if ownerExists && !plainRecordSet(owner) || ownerExists &&
 		(len(owner.ResourceRecords) != 1 || aws.ToString(owner.ResourceRecords[0].Value) != marker) {
-		return Zone{}, terminalf("public route DNS ownership marker does not match")
+		return Zone{}, terminalf("public URL DNS ownership marker does not match")
 	}
 	if !ownerExists && len(addressRecords) != 0 {
-		return Zone{}, terminalf("route hostname already has unowned address records")
+		return Zone{}, terminalf("public URL hostname already has unowned address records")
 	}
 	action := types.ChangeActionCreate
 	if ownerExists {
@@ -61,7 +61,7 @@ func (p *Route53Provider) PublishRoute(ctx context.Context, record RouteRecord) 
 	changes := []types.Change{{
 		Action: action,
 		ResourceRecordSet: &types.ResourceRecordSet{
-			Name: aws.String(routeOwnerName(record.CanonicalHostname)), Type: types.RRTypeTxt, TTL: aws.Int64(60),
+			Name: aws.String(publicURLOwnerName(record.CanonicalHostname)), Type: types.RRTypeTxt, TTL: aws.Int64(60),
 			ResourceRecords: []types.ResourceRecord{{Value: aws.String(marker)}},
 		},
 	}}
@@ -82,19 +82,19 @@ func (p *Route53Provider) PublishRoute(ctx context.Context, record RouteRecord) 
 	}
 	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zone.ID),
-		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("publish tnl route " + record.RouteID), Changes: changes},
+		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("publish tnl public URL " + record.PublicURLID), Changes: changes},
 	}); err != nil {
 		return Zone{}, fmt.Errorf("dnscontroller: publish Route 53 route records: %w", err)
 	}
 	return zone, nil
 }
 
-func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (Zone, error) {
-	zone, err := p.routeZone(ctx, record)
+func (p *Route53Provider) RemovePublicURL(ctx context.Context, record PublicURLRecord) (Zone, error) {
+	zone, err := p.publicURLZone(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
-	addressRecords, owner, err := p.routeRecords(ctx, record)
+	addressRecords, owner, err := p.publicURLRecords(ctx, record)
 	if err != nil {
 		return Zone{}, err
 	}
@@ -102,11 +102,11 @@ func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (
 		if len(addressRecords) == 0 {
 			return zone, nil
 		}
-		return Zone{}, terminalf("route hostname has address records without an ownership marker")
+		return Zone{}, terminalf("public URL hostname has address records without an ownership marker")
 	}
 	if !plainRecordSet(owner) || len(owner.ResourceRecords) != 1 ||
-		aws.ToString(owner.ResourceRecords[0].Value) != routeOwnerValue(record.RouteID) {
-		return Zone{}, terminalf("public route DNS ownership marker does not match")
+		aws.ToString(owner.ResourceRecords[0].Value) != publicURLOwnerValue(record.PublicURLID) {
+		return Zone{}, terminalf("public URL DNS ownership marker does not match")
 	}
 	changes := make([]types.Change, 0, len(addressRecords)+1)
 	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
@@ -117,7 +117,7 @@ func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (
 	changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: owner})
 	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zone.ID),
-		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("remove tnl route " + record.RouteID), Changes: changes},
+		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("remove tnl public URL " + record.PublicURLID), Changes: changes},
 	}); err != nil {
 		return Zone{}, fmt.Errorf("dnscontroller: remove Route 53 route records: %w", err)
 	}
@@ -125,12 +125,12 @@ func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (
 }
 
 func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record ChallengeRecord) (Zone, error) {
-	zoneRecord := RouteRecord{
+	zoneRecord := PublicURLRecord{
 		ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, ClaimedZone: record.ClaimedZone,
 		AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
 		CanonicalHostname: record.RecordName,
 	}
-	zone, err := p.routeZone(ctx, zoneRecord)
+	zone, err := p.publicURLZone(ctx, zoneRecord)
 	if err != nil {
 		return Zone{}, err
 	}
@@ -314,10 +314,10 @@ func (p *Route53Provider) findClaimedZone(ctx context.Context, work controlstate
 	}
 }
 
-func (p *Route53Provider) routeZone(ctx context.Context, record RouteRecord) (Zone, error) {
+func (p *Route53Provider) publicURLZone(ctx context.Context, record PublicURLRecord) (Zone, error) {
 	zoneID := canonicalZoneID(record.ZoneID)
 	if zoneID == "" {
-		return Zone{}, terminalf("public route DNS zone has no ID")
+		return Zone{}, terminalf("public URL DNS zone has no ID")
 	}
 	output, err := p.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
 	if err != nil {
@@ -360,9 +360,9 @@ func (p *Route53Provider) routeZone(ctx context.Context, record RouteRecord) (Zo
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
 }
 
-func (p *Route53Provider) routeRecords(
+func (p *Route53Provider) publicURLRecords(
 	ctx context.Context,
-	record RouteRecord,
+	record PublicURLRecord,
 ) (map[types.RRType]*types.ResourceRecordSet, *types.ResourceRecordSet, error) {
 	addresses, err := p.listRecordSets(ctx, record.ZoneID, record.CanonicalHostname)
 	if err != nil {
@@ -372,19 +372,19 @@ func (p *Route53Provider) routeRecords(
 	for index := range addresses {
 		item := &addresses[index]
 		if item.Type == types.RRTypeCname {
-			return nil, nil, terminalf("route hostname has a conflicting CNAME record")
+			return nil, nil, terminalf("public URL hostname has a conflicting CNAME record")
 		}
 		if item.Type == types.RRTypeA || item.Type == types.RRTypeAaaa {
 			if !plainRecordSet(item) {
 				return nil, nil, terminalf("route address record uses an unsupported routing policy")
 			}
 			if result[item.Type] != nil {
-				return nil, nil, terminalf("route hostname has multiple address record sets")
+				return nil, nil, terminalf("public URL hostname has multiple address record sets")
 			}
 			result[item.Type] = item
 		}
 	}
-	owners, err := p.listRecordSets(ctx, record.ZoneID, routeOwnerName(record.CanonicalHostname))
+	owners, err := p.listRecordSets(ctx, record.ZoneID, publicURLOwnerName(record.CanonicalHostname))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -394,7 +394,7 @@ func (p *Route53Provider) routeRecords(
 			continue
 		}
 		if owner != nil {
-			return nil, nil, terminalf("route hostname has multiple ownership record sets")
+			return nil, nil, terminalf("public URL hostname has multiple ownership record sets")
 		}
 		owner = &owners[index]
 	}
@@ -444,9 +444,11 @@ func plainRecordSet(record *types.ResourceRecordSet) bool {
 		record.MultiValueAnswer == nil && record.TrafficPolicyInstanceId == nil
 }
 
-func routeOwnerName(hostname string) string { return "_tnl-owner." + hostname }
+func publicURLOwnerName(hostname string) string { return "_tnl-owner." + hostname }
 
-func routeOwnerValue(routeID string) string { return strconv.Quote("tnl-route:" + routeID) }
+func publicURLOwnerValue(publicURLID string) string {
+	return strconv.Quote("tnl-public-url:" + publicURLID)
+}
 
 func dnsName(value string) string { return strings.ToLower(strings.TrimSuffix(value, ".")) + "." }
 

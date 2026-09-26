@@ -189,7 +189,7 @@ func (f *splitPublishFixture) startRelay(t *testing.T, cfg tnldconfig.Config) *i
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	quicAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayUDPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayUDPListen}
 	tcpAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayTCPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayTCPListen}
-	return routeIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), routeIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func (f *splitPublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {
@@ -203,7 +203,7 @@ func (f *splitPublishFixture) waitReady(t *testing.T, handle *integrationPublish
 	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
-	waitForReadyPublisherConnections(t, f.inspect, ready.RouteID, ready.RouteVersion, 2)
+	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }

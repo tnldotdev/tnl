@@ -10,12 +10,12 @@ import (
 )
 
 func testWorkload() workloadOptions {
-	return workloadOptions{Suite: "smoke", ProfileFile: "../../benchmarks/fly.json", Routes: 4, FreshRate: 16, HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768, Repetitions: 1, Warmup: 5 * time.Second, Duration: 10 * time.Second, CertificateAuthority: "pebble"}
+	return workloadOptions{Suite: "smoke", ProfileFile: "../../benchmarks/fly.json", PublicURLs: 4, FreshRate: 16, HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768, Repetitions: 1, Warmup: 5 * time.Second, Duration: 10 * time.Second, CertificateAuthority: "pebble"}
 }
 func TestPlanOneTargetAndSourceSafeDistribution(t *testing.T) {
 	c := testWorkload()
 	c.Suite = "target"
-	c.Routes = 64
+	c.PublicURLs = 64
 	c.FreshRate = 160
 	c.Repetitions = 3
 	p, err := c.build()

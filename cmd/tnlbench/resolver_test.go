@@ -13,7 +13,7 @@ import (
 func TestAuthoritativeResolverForwardsChallengeQueries(t *testing.T) {
 	resolver, err := newAuthoritativeResolver(resolverCommand{
 		ServerDomain: "run.bench.example.com", ServerNameServers: "ns-1.example.net,ns-2.example.net",
-		ManagedDomain: "routes.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
+		ManagedDomain: "public-urls.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestAuthoritativeResolverForwardsChallengeQueries(t *testing.T) {
 		recordType       uint16
 	}{
 		{"_acme-challenge.relay-a.run.bench.example.com.", "ns-1.example.net:53", mdns.TypeTXT},
-		{"_acme-challenge.route.routes.run.bench.example.com.", "ns-4.example.net:53", mdns.TypeTXT},
+		{"_acme-challenge.route.public-urls.run.bench.example.com.", "ns-4.example.net:53", mdns.TypeTXT},
 		{"control.run.bench.example.com.", "ns-1.example.net:53", mdns.TypeA},
 	} {
 		before := len(calls)
@@ -62,7 +62,7 @@ func TestAuthoritativeResolverForwardsChallengeQueries(t *testing.T) {
 func TestAuthoritativeResolverRetriesEmptyChallengeAnswers(t *testing.T) {
 	resolver, err := newAuthoritativeResolver(resolverCommand{
 		ServerDomain: "run.bench.example.com", ServerNameServers: "ns-1.example.net,ns-2.example.net",
-		ManagedDomain: "routes.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
+		ManagedDomain: "public-urls.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestAuthoritativeResolverRetriesEmptyChallengeAnswers(t *testing.T) {
 		return response, 0, nil
 	}
 	request := new(mdns.Msg)
-	request.SetQuestion("_acme-challenge.route.routes.run.bench.example.com.", mdns.TypeTXT)
+	request.SetQuestion("_acme-challenge.route.public-urls.run.bench.example.com.", mdns.TypeTXT)
 	writer := &dnsResponseWriterStub{}
 	resolver.ServeDNS(writer, request)
 	if calls != 4 || writer.message == nil || len(writer.message.Answer) != 1 {
@@ -151,7 +151,7 @@ func TestAuthoritativeAddressChecksAnotherServerDuringPropagation(t *testing.T) 
 func TestAuthoritativeResolverRejectsQueriesOutsideBenchmarkDomains(t *testing.T) {
 	resolver, err := newAuthoritativeResolver(resolverCommand{
 		ServerDomain: "run.bench.example.com", ServerNameServers: "ns-1.example.net,ns-2.example.net",
-		ManagedDomain: "routes.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
+		ManagedDomain: "public-urls.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
 	})
 	if err != nil {
 		t.Fatal(err)

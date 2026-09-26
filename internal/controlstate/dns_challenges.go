@@ -15,7 +15,7 @@ import (
 var ErrDNSChallengeNotFound = errors.New("controlstate: DNS challenge not found")
 
 type DNSChallengeContext struct {
-	RouteID               string
+	PublicURLID           string
 	TeamID                string
 	DomainID              string
 	DNSAuthorityReference string
@@ -35,9 +35,9 @@ type DNSChallengePresentation struct {
 
 func (d *Database) GetDNSChallengeContext(
 	ctx context.Context,
-	routeID, authorizationID string,
+	publicURLID, authorizationID string,
 ) (DNSChallengeContext, error) {
-	if !validStateText(routeID) || !validStateText(authorizationID) {
+	if !validStateText(publicURLID) || !validStateText(authorizationID) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
 	}
 	if err := d.requireOpen(); err != nil {
@@ -45,7 +45,7 @@ func (d *Database) GetDNSChallengeContext(
 	}
 	queries := controlstatedb.New(d.pool)
 	row, err := queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{
-		RouteID: routeID, AuthorizationID: authorizationID,
+		PublicURLID: publicURLID, AuthorizationID: authorizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
@@ -66,7 +66,7 @@ func (d *Database) GetDNSChallengeContext(
 		return DNSChallengeContext{}, fmt.Errorf("controlstate: list DNS challenge presentations: %w", err)
 	}
 	result := DNSChallengeContext{
-		RouteID: row.RouteID, TeamID: row.TeamID, DomainID: row.DomainID,
+		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,
 		AuthorizationID: row.AuthorizationID, Identifier: row.Identifier,
 		PresentationReference: row.PresentationReference.String, State: row.State,

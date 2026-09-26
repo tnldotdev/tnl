@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestBuiltinRouteSessionCertificatePlan(t *testing.T) {
+func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, scope string
 		dns               bool
@@ -38,13 +38,13 @@ func TestBuiltinRouteSessionCertificatePlan(t *testing.T) {
 				hostname, membershipID = "shared.routes.example.test", ""
 			}
 			store := &certificatePlanStoreStub{
-				routeMutationStoreStub: routeMutationStoreStub{
-					route: controlstate.Route{
-						ID: "route_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: membershipID,
+				publicURLMutationStoreStub: publicURLMutationStoreStub{
+					route: controlstate.PublicURL{
+						ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: membershipID,
 						CanonicalHostname: hostname, Target: "http://127.0.0.1:3000",
-						RouteScope: controlstate.RouteScope(test.scope), MutationRevision: 1, AuthorizationRouteVersion: 1,
+						PublicURLScope: controlstate.PublicURLScope(test.scope), MutationRevision: 1, AuthorizationPublishRunNumber: 1,
 					},
-					sessionSetup: controlstate.RouteSessionSetup{RouteSessionID: "session_1", RouteID: "route_1", RouteVersion: 1},
+					sessionSetup: controlstate.PublishRunSetup{PublishRunID: "session_1", PublicURLID: "public_url_1", PublishRunNumber: 1},
 				},
 				auth: localAuthorizationStoreStub{
 					principal: controlstate.ControlPrincipal{IdentityID: "identity_1", RetrySecret: [32]byte{1}},
@@ -57,7 +57,7 @@ func TestBuiltinRouteSessionCertificatePlan(t *testing.T) {
 				},
 			}
 			h := testHandler(t, Config{DNSAutomation: test.dns}, store, store, nil)
-			request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1/sessions", nil)
+			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			request.Header.Set("Idempotency-Key", "session-plan")
 			response := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestBuiltinRouteSessionCertificatePlan(t *testing.T) {
 			if response.Code != http.StatusCreated {
 				t.Fatalf("session status = %d: %s", response.Code, response.Body.String())
 			}
-			var setup controlv1.RouteSessionSetup
+			var setup controlv1.PublishRunSetup
 			if err := json.Unmarshal(response.Body.Bytes(), &setup); err != nil {
 				t.Fatal(err)
 			}
@@ -126,9 +126,9 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 }
 
 type certificatePlanStoreStub struct {
-	routeMutationStoreStub
+	publicURLMutationStoreStub
 	auth           localAuthorizationStoreStub
-	sessionRequest controlstate.RouteSessionRequest
+	sessionRequest controlstate.PublishRunRequest
 }
 
 func (s *certificatePlanStoreStub) AuthenticateAccessToken(ctx context.Context, token credentials.AccessToken, revision int64, now time.Time) (controlstate.ControlPrincipal, error) {
@@ -143,7 +143,7 @@ func (s *certificatePlanStoreStub) ListTeamDomains(ctx context.Context, identity
 	return s.auth.ListTeamDomains(ctx, identityID, teamID)
 }
 
-func (s *certificatePlanStoreStub) CreateRouteSession(_ context.Context, request controlstate.RouteSessionRequest, _ time.Time, _, _ time.Duration) (controlstate.RouteSessionSetup, error) {
+func (s *certificatePlanStoreStub) CreatePublishRun(_ context.Context, request controlstate.PublishRunRequest, _ time.Time, _, _ time.Duration) (controlstate.PublishRunSetup, error) {
 	s.sessionRequest = request
 	return s.sessionSetup, nil
 }

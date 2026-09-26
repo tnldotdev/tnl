@@ -9,3 +9,5 @@ sql:
         package: clientstatedb
         out: clientstatedb
         sql_package: database/sql
+        rename:
+          public_url_id: PublicURLID

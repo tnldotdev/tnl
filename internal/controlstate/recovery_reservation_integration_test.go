@@ -11,7 +11,7 @@ import (
 )
 
 func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	oldClaims := readyTestSession(t, f)
 	database, now := f.database, f.now
 	previous := f.setup.PublisherConnections[0]
@@ -40,7 +40,7 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	}
 	callCtx, stop := context.WithTimeout(ctx, time.Second)
 	defer stop()
-	recovered, err := database.HeartbeatRouteSession(callCtx, f.authentication(), now.Add(3*time.Second), time.Hour, time.Minute)
+	recovered, err := database.HeartbeatPublishRun(callCtx, f.authentication(), now.Add(3*time.Second), time.Hour, time.Minute)
 	if err != nil {
 		t.Fatalf("same-service recovery waited for placement: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
 	claims := readyTestSession(t, f)
 	// Model an already-routable session with a claimed replacement awaiting
 	// readiness. Its publisher connection already consumes process capacity.
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.route_session_connections SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -124,7 +124,7 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			// A stale ready assignment still contributes to its service total.
-			if _, err := f.database.pool.Exec(ctx, `UPDATE control.route_session_connections SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+			if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 				t.Fatal(err)
 			}
 			var err error
@@ -142,7 +142,7 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			recovered, err := f.database.HeartbeatRouteSession(ctx, f.authentication(), at, time.Hour, time.Minute)
+			recovered, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), at, time.Hour, time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,10 +165,10 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 }
 
 func TestIntegrationRecoveryReservationRollback(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	readyTestSession(t, f)
 	ctx := t.Context()
-	if _, err := f.database.pool.Exec(ctx, `UPDATE control.route_session_connections SET connected_relay_run_id = 'stale-run' WHERE connection_slot = 0`); err != nil {
+	if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET connected_relay_run_id = 'stale-run' WHERE connection_slot = 0`); err != nil {
 		t.Fatal(err)
 	}
 	queries := controlstatedb.New(f.database.pool)
@@ -179,10 +179,10 @@ func TestIntegrationRecoveryReservationRollback(t *testing.T) {
 	if _, err := f.database.pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE control.ingress_routing_table_events ADD CONSTRAINT reject_recovery_event CHECK (routing_table_revision <= %d)`, before.CurrentRevision)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.HeartbeatRouteSession(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err == nil {
+	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err == nil {
 		t.Fatal("heartbeat unexpectedly committed without its routing event")
 	}
-	rows, err := queries.ListRouteSessionConnections(ctx, f.setup.RouteSessionID)
+	rows, err := queries.ListPublishRunConnections(ctx, f.setup.PublishRunID)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("read rolled-back assignments: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestIntegrationRecoveryReservationRollback(t *testing.T) {
 	if _, err := f.database.pool.Exec(ctx, `ALTER TABLE control.ingress_routing_table_events DROP CONSTRAINT reject_recovery_event`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.HeartbeatRouteSession(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err != nil {
+	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 2)

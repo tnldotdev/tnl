@@ -8,4 +8,9 @@ sql:
         package: "controlstatedb"
         out: "controlstatedb"
         sql_package: "pgx/v5"
+        rename:
+          public_url_id: PublicURLID
+          public_url_scope: PublicURLScope
+          enabled_public_urls: EnabledPublicURLs
+          suspended_public_urls: SuspendedPublicURLs
         emit_interface: true

@@ -92,14 +92,14 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 	now := time.Now().UTC()
 	event := controlstate.IngressRoutingTableEvent{
-		RoutingTableRevision: 12, Kind: "route_upsert", RouteID: "route-1", RouteVersion: 3,
-		CanonicalHostname: "example.test", EntryRevision: 4, RouteExpiresAt: timePointer(now.Add(time.Minute)),
+		RoutingTableRevision: 12, Kind: "public_url_upsert", PublicURLID: "route-1", PublishRunNumber: 3,
+		CanonicalHostname: "example.test", EntryRevision: 4, PublicUrlExpiresAt: timePointer(now.Add(time.Minute)),
 		CreatedAt: now,
 		Projection: controlstate.IngressRoutingTableProjection{
-			RouteSessionID: "session-1", RouteID: "route-1", RouteVersion: 3,
+			PublishRunID: "session-1", PublicURLID: "route-1", PublishRunNumber: 3,
 			CanonicalHostname: "example.test", PolicyRevision: 4, IPPolicy: "allowlist",
-			AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
-			RouteExpiresAt:    now.Add(time.Minute),
+			AllowedIPPrefixes:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+			PublicUrlExpiresAt: now.Add(time.Minute),
 			PublisherConnections: []controlstate.IngressRoutingTablePublisherConnection{{
 				ConnectionSlot: 0, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 2,
 				RelayServiceID: "relay-service-1", RelayID: "relay-1", RelayRunID: "run-relay-1",
@@ -148,7 +148,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 	var page ingressv1.IngressRoutingTablePage
 	decodeIngressResponse(t, response, &page)
 	if calls != 2 || page.NextRevision != 12 || len(page.Events) != 1 ||
-		page.Events[0].Entry.RouteSessionId != "session-1" ||
+		page.Events[0].Entry.PublishRunId != "session-1" ||
 		len(page.Events[0].Entry.PublisherConnections) != 1 {
 		t.Fatalf("routing page after %d calls = %#v", calls, page)
 	}
@@ -201,7 +201,7 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
 		ObservedThrough: &now, Complete: true,
 		Reports: []ingressv1.IngressUsageReport{{
-			RouteId: "route-1", RouteVersion: 3, BucketStart: now.Add(-time.Minute), BucketEnd: now,
+			PublicUrlId: "route-1", PublishRunNumber: 3, BucketStart: now.Add(-time.Minute), BucketEnd: now,
 			ObservedThrough: now, ReportRevision: 2, ConnectionAttempts: 10, PolicyDenials: 1, CapacityDenials: 2,
 			VisitorStreamOpenFailures: 3, SuccessfulStreams: 4, ConnectionNanoseconds: 5,
 			IngressBytes: 6, EgressBytes: 7, HistogramData: []byte{1, 2, 3}, Final: true,
@@ -220,7 +220,7 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 		t.Fatalf("usage request = %#v, %#v", gotIdentity, gotBatch)
 	}
 	got := gotBatch.Reports[0]
-	if got.RouteID != "route-1" || got.RouteVersion != 3 || got.ReportRevision != 2 ||
+	if got.PublicURLID != "route-1" || got.PublishRunNumber != 3 || got.ReportRevision != 2 ||
 		got.ConnectionAttempts != 10 || got.PolicyDenials != 1 || got.CapacityDenials != 2 ||
 		got.VisitorStreamOpenFailures != 3 || got.SuccessfulStreams != 4 || got.ConnectionNanoseconds != 5 ||
 		got.IngressBytes != 6 || got.EgressBytes != 7 || !got.ObservedThrough.Equal(now) ||
@@ -229,32 +229,32 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 	}
 }
 
-func TestObserveRouteRecoveryUsesExactIngressLease(t *testing.T) {
+func TestObservePublicURLRecoveryUsesExactIngressLease(t *testing.T) {
 	now := time.Now().UTC()
 	var gotIdentity controlstate.IngressLeaseIdentity
 	store := &ingressStoreStub{observeRecovery: func(
 		_ context.Context,
 		identity controlstate.IngressLeaseIdentity,
-		routeID string,
-		routeVersion, recoveryEpisodeID uint64,
+		publicURLID string,
+		publishRunNumber, recoveryEpisodeID uint64,
 		observedAt time.Time,
-	) (controlstate.RouteRecoveryObservation, error) {
+	) (controlstate.PublicURLRecoveryObservation, error) {
 		gotIdentity = identity
-		if routeID != "route-1" || routeVersion != 3 || recoveryEpisodeID != 9 || !observedAt.Equal(now) {
-			t.Fatalf("recovery request = %q, %d, %d, %v", routeID, routeVersion, recoveryEpisodeID, observedAt)
+		if publicURLID != "route-1" || publishRunNumber != 3 || recoveryEpisodeID != 9 || !observedAt.Equal(now) {
+			t.Fatalf("recovery request = %q, %d, %d, %v", publicURLID, publishRunNumber, recoveryEpisodeID, observedAt)
 		}
-		return controlstate.RouteRecoveryObservation{
-			RecoveryEpisodeID: recoveryEpisodeID, RouteID: routeID, RouteVersion: routeVersion,
+		return controlstate.PublicURLRecoveryObservation{
+			RecoveryEpisodeID: recoveryEpisodeID, PublicURLID: publicURLID, PublishRunNumber: publishRunNumber,
 			OpenedAt: now.Add(-time.Second), ObservedAt: now, ObservedSeconds: 1,
 		}, nil
 	}}
-	body := ingressv1.RouteRecoveryObservationRequest{
+	body := ingressv1.PublicURLRecoveryObservationRequest{
 		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
-		RouteId: "route-1", RouteVersion: 3, ObservedAt: now,
+		PublicUrlId: "route-1", PublishRunNumber: 3, ObservedAt: now,
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/ingress-1/route-recovery/9/observed", body,
+		"/internal/v1/ingresses/ingress-1/public-url-recovery/9/observed", body,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -275,9 +275,9 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 	}{
 		{name: "lease stale", err: controlstate.ErrIngressLeaseStale, status: http.StatusConflict, problemType: "ingress_lease_stale"},
 		{name: "invalid usage", err: controlstate.ErrIngressUsageReportInvalid, status: http.StatusBadRequest, problemType: "invalid_usage_report"},
-		{name: "usage route missing", err: controlstate.ErrIngressUsageRouteNotFound, status: http.StatusNotFound, problemType: "usage_route_not_found"},
+		{name: "usage route missing", err: controlstate.ErrIngressUsagePublicURLNotFound, status: http.StatusNotFound, problemType: "usage_route_not_found"},
 		{name: "usage conflict", err: controlstate.ErrIngressUsageReportConflict, status: http.StatusConflict, problemType: "usage_report_conflict"},
-		{name: "bucket finalized", err: controlstate.ErrRouteUsageBucketFinalized, status: http.StatusConflict, problemType: "usage_bucket_finalized"},
+		{name: "bucket finalized", err: controlstate.ErrPublicURLUsageBucketFinalized, status: http.StatusConflict, problemType: "usage_bucket_finalized"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -289,7 +289,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 			body := ingressv1.IngressUsageReportBatch{
 				IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
 				Reports: []ingressv1.IngressUsageReport{{
-					RouteId: "route-1", RouteVersion: 1, BucketStart: now.Add(-time.Minute), BucketEnd: now,
+					PublicUrlId: "route-1", PublishRunNumber: 1, BucketStart: now.Add(-time.Minute), BucketEnd: now,
 					ObservedThrough: now, ReportRevision: 1, HistogramData: []byte{},
 				}},
 			}
@@ -390,7 +390,7 @@ type ingressStoreStub struct {
 	readRoutingSnapshot func(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressRoutingTableSnapshot, error)
 	readRoutingEvents   func(context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time) (controlstate.IngressRoutingTablePage, error)
 	reportUsage         func(context.Context, controlstate.IngressLeaseIdentity, controlstate.IngressUsageBatch, time.Time) error
-	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.RouteRecoveryObservation, error)
+	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.PublicURLRecoveryObservation, error)
 }
 
 func (s *ingressStoreStub) RegisterIngress(
@@ -432,12 +432,12 @@ func (s *ingressStoreStub) ReportIngressUsage(
 	return s.reportUsage(ctx, identity, batch, now)
 }
 
-func (s *ingressStoreStub) ObserveRouteRecovery(
+func (s *ingressStoreStub) ObservePublicURLRecovery(
 	ctx context.Context,
 	identity controlstate.IngressLeaseIdentity,
-	routeID string,
-	routeVersion, recoveryEpisodeID uint64,
+	publicURLID string,
+	publishRunNumber, recoveryEpisodeID uint64,
 	observedAt time.Time,
-) (controlstate.RouteRecoveryObservation, error) {
-	return s.observeRecovery(ctx, identity, routeID, routeVersion, recoveryEpisodeID, observedAt)
+) (controlstate.PublicURLRecoveryObservation, error) {
+	return s.observeRecovery(ctx, identity, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt)
 }

@@ -57,29 +57,29 @@ func NewChallengeManager(
 	return &ChallengeManager{store: store, provider: provider, verifier: verifier, config: config}, nil
 }
 
-func (m *ChallengeManager) Present(ctx context.Context, routeID, authorizationID string) error {
-	_, err := m.reconcile(ctx, routeID, authorizationID, "presenting")
+func (m *ChallengeManager) Present(ctx context.Context, publicURLID, authorizationID string) error {
+	_, err := m.reconcile(ctx, publicURLID, authorizationID, "presenting")
 	return err
 }
 
-func (m *ChallengeManager) Verify(ctx context.Context, routeID, authorizationID string) (bool, error) {
-	return m.reconcile(ctx, routeID, authorizationID, "presented")
+func (m *ChallengeManager) Verify(ctx context.Context, publicURLID, authorizationID string) (bool, error) {
+	return m.reconcile(ctx, publicURLID, authorizationID, "presented")
 }
 
-func (m *ChallengeManager) Cleanup(ctx context.Context, routeID, authorizationID string) error {
-	_, err := m.reconcile(ctx, routeID, authorizationID, "cleaning")
+func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizationID string) error {
+	_, err := m.reconcile(ctx, publicURLID, authorizationID, "cleaning")
 	return err
 }
 
-func (m *ChallengeManager) reconcile(ctx context.Context, routeID, authorizationID, state string) (bool, error) {
-	initial, err := m.store.GetDNSChallengeContext(ctx, routeID, authorizationID)
+func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authorizationID, state string) (bool, error) {
+	initial, err := m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
 	if err != nil {
 		return false, err
 	}
 	recordName := "_acme-challenge." + strings.TrimPrefix(initial.Identifier, "*.")
 	verified := false
 	err = m.store.WithDNSChallengeLock(ctx, recordName, func() error {
-		challenge, record, expected, err := m.challengeRecord(ctx, routeID, authorizationID)
+		challenge, record, expected, err := m.challengeRecord(ctx, publicURLID, authorizationID)
 		if err != nil {
 			return err
 		}
@@ -97,9 +97,9 @@ func (m *ChallengeManager) reconcile(ctx context.Context, routeID, authorization
 
 func (m *ChallengeManager) challengeRecord(
 	ctx context.Context,
-	routeID, authorizationID string,
+	publicURLID, authorizationID string,
 ) (controlstate.DNSChallengeContext, ChallengeRecord, string, error) {
-	challenge, err := m.store.GetDNSChallengeContext(ctx, routeID, authorizationID)
+	challenge, err := m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
 	if err != nil {
 		return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", err
 	}

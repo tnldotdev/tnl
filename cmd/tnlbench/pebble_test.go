@@ -22,7 +22,7 @@ func TestProvisionBenchmarkPebbleUsesRealValidationAndReturnsRoots(t *testing.T)
 		binary: "fly", region: "sjc", executor: executor,
 	}, "pebble-app", "registry/image:tag", "shared-cpu-1x",
 		manifestZone{Name: "run.bench.example.com", NameServers: []string{"ns-1.example.net", "ns-2.example.net"}},
-		manifestZone{Name: "routes.run.bench.example.com", NameServers: []string{"ns-3.example.net", "ns-4.example.net"}},
+		manifestZone{Name: "public-urls.run.bench.example.com", NameServers: []string{"ns-3.example.net", "ns-4.example.net"}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestProvisionBenchmarkPebbleUsesRealValidationAndReturnsRoots(t *testing.T)
 		benchmarkPebbleCommand, "PEBBLE_VA_ALWAYS_VALID=0", "PEBBLE_VA_NOSLEEP=1", "--restart", "no",
 		"TNL_BENCH_RESOLVER_SERVER_DOMAIN=run.bench.example.com",
 		"TNL_BENCH_RESOLVER_SERVER_NAME_SERVERS=ns-1.example.net,ns-2.example.net",
-		"TNL_BENCH_RESOLVER_MANAGED_DOMAIN=routes.run.bench.example.com",
+		"TNL_BENCH_RESOLVER_MANAGED_DOMAIN=public-urls.run.bench.example.com",
 		"TNL_BENCH_RESOLVER_MANAGED_NAME_SERVERS=ns-3.example.net,ns-4.example.net",
 	} {
 		if !slices.Contains(arguments, want) {

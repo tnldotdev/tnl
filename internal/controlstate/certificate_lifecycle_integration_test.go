@@ -34,7 +34,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 				t.Fatalf("delivered material became current before acknowledgement: %t, %v", found, err)
 			}
 			if scenario == "same_session_renewal" {
-				if _, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, first.IssuanceID, first.Certificate.Leaf.NotAfter, now); err != nil {
+				if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, first.IssuanceID, first.Certificate.Leaf.NotAfter, now); err != nil {
 					t.Fatal(err)
 				}
 				if err := cache.Promote(t.Context(), hostname, first.IssuanceID); err != nil {
@@ -46,7 +46,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 					t.Fatalf("staging renewal replaced current: %t, %v", found, err)
 				}
 				for retry := range 2 {
-					lifecycle, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, second.IssuanceID, second.Certificate.Leaf.NotAfter, now.Add(time.Duration(retry+1)*time.Second))
+					lifecycle, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, second.IssuanceID, second.Certificate.Leaf.NotAfter, now.Add(time.Duration(retry+1)*time.Second))
 					if err != nil || lifecycle.CertificateAt == nil || !lifecycle.CertificateAt.Equal(now.Add(time.Second)) || lifecycle.Routable {
 						t.Fatalf("distinct-issuance acknowledgement/retry %d in same live session: %#v, %v", retry, lifecycle, err)
 					}
@@ -55,13 +55,13 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 				var installedID string
-				if err := database.pool.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.route_sessions WHERE id = $1`, authentication.RouteSessionID).Scan(&installedID); err != nil || installedID != second.IssuanceID {
+				if err := database.pool.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.publish_runs WHERE id = $1`, authentication.PublishRunID).Scan(&installedID); err != nil || installedID != second.IssuanceID {
 					t.Fatalf("renewal did not replace persisted session certificate: %q, %v", installedID, err)
 				}
 				return
 			}
 			// Material has been delivered and staged, but neither control nor the local cache has an ACK.
-			if err := database.CloseRouteSession(t.Context(), authentication.RouteSessionID, authentication.RouteSessionToken, now); err != nil {
+			if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -69,7 +69,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 			if err := database.pool.QueryRow(t.Context(), `SELECT state, certificate_pem FROM control.acme_orders WHERE id = $1`, first.IssuanceID).Scan(&state, &certificate); err != nil || state != "waiting_for_install" || len(certificate) == 0 {
 				t.Fatalf("closing session destroyed delivered issuance: %q, %v", state, err)
 			}
-			if _, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, first.IssuanceID, first.Certificate.Leaf.NotAfter, now); !errors.Is(err, ErrRouteSessionStale) {
+			if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, first.IssuanceID, first.Certificate.Leaf.NotAfter, now); !errors.Is(err, ErrPublishRunStale) {
 				t.Fatalf("closed session acknowledged material: %v", err)
 			}
 			if err := local.Close(); err != nil {
@@ -82,7 +82,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 			if err != nil || !found || !bytes.Equal(staged.Certificate.Certificate[0], first.Certificate.Certificate[0]) {
 				t.Fatalf("restart lost staged material: %t, %v", found, err)
 			}
-			if _, err := database.MarkRouteCertificateInstalled(t.Context(), sibling, staged.IssuanceID, staged.Certificate.Leaf.NotAfter, now); err != nil {
+			if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), sibling, staged.IssuanceID, staged.Certificate.Leaf.NotAfter, now); err != nil {
 				t.Fatalf("sibling could not acknowledge delivered material after restart: %v", err)
 			}
 			if err := cache.Promote(t.Context(), hostname, staged.IssuanceID); err != nil {
@@ -120,7 +120,7 @@ func openLifecycleCache(t *testing.T, root string, plan CertificatePlan) (*clien
 	return local, cache
 }
 
-func deliverLifecycleCertificate(t *testing.T, database *Database, cache *clientstate.CertificateCache, authentication RouteSessionAuthentication, hostname string, plan CertificatePlan, now time.Time) clientstate.Material {
+func deliverLifecycleCertificate(t *testing.T, database *Database, cache *clientstate.CertificateCache, authentication PublishRunAuthentication, hostname string, plan CertificatePlan, now time.Time) clientstate.Material {
 	t.Helper()
 	pending, err := cache.Pending(t.Context(), hostname)
 	if err != nil {
@@ -161,7 +161,7 @@ func deliverLifecycleCertificate(t *testing.T, database *Database, cache *client
 	if _, err := database.SaveACMEOrderWork(t.Context(), work, now); err != nil {
 		t.Fatal(err)
 	}
-	delivered, err := database.GetCertificateIssuance(t.Context(), work.ID, authentication.RouteSessionToken, now)
+	delivered, err := database.GetCertificateIssuance(t.Context(), work.ID, authentication.PublishRunToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}

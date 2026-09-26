@@ -58,7 +58,7 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 		response.Header.Get("X-Tnl-Integration") != "publisher" {
 		t.Fatalf("visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
-	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
 	// Publishers and the reusable visitor connection are still open: admission
 	// and stream-open metrics must already be complete, not lifetime timers.
 	assertRuntimeOperations(t, []*integrationProcess{fixture.process}, map[string]uint64{
@@ -83,7 +83,7 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	fixture.visitor.transport.CloseIdleConnections()
 	stopIntegrationPublisher(t, handle)
 	stopIntegrationProcess(t, fixture.process)
-	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 }
 
 func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, minimums map[string]uint64) {
@@ -195,7 +195,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			for _, event := range handle.observedEvents() {
 				if event.Type == publisher.EventTransportFallback {
 					fallbacks++
-					if event.Transport != tunnel.TransportTLSTCP || event.RouteVersion != ready.RouteVersion {
+					if event.Transport != tunnel.TransportTLSTCP || event.PublishRunNumber != ready.PublishRunNumber {
 						t.Fatalf("transport fallback event = %#v", event)
 					}
 				}
@@ -343,18 +343,18 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	if firstResponse.StatusCode != http.StatusOK || string(body) != "publisher restart" {
 		t.Fatalf("first visitor response = %s, %q", firstResponse.Status, body)
 	}
-	assertIntegrationRouteCertificate(t, firstResponse, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, firstResponse, fixture.identity.hostname)
 	firstSerial := firstResponse.TLS.PeerCertificates[0].SerialNumber.String()
-	firstOrderCount := integrationRouteOrderCount(t, fixture.inspect, firstReady.RouteID)
+	firstOrderCount := integrationRouteOrderCount(t, fixture.inspect, firstReady.PublicURLID)
 
 	stopIntegrationPublisher(t, first)
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var closed bool
 		err := fixture.inspect.QueryRowContext(ctx, `
 			SELECT closed_at IS NOT NULL
-			FROM control.route_sessions
-			WHERE route_id = $1 AND route_version = $2
-		`, firstReady.RouteID, firstReady.RouteVersion).Scan(&closed)
+			FROM control.publish_runs
+			WHERE public_url_id = $1 AND publish_run_number = $2
+		`, firstReady.PublicURLID, firstReady.PublishRunNumber).Scan(&closed)
 		return err == nil && closed, err
 	})
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
@@ -365,8 +365,8 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 
 	second := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	secondReady := fixture.waitReady(t, second)
-	if secondReady.RouteID != firstReady.RouteID || secondReady.RouteVersion != firstReady.RouteVersion+1 {
-		t.Fatalf("restarted route = %q version %d, want %q version %d", secondReady.RouteID, secondReady.RouteVersion, firstReady.RouteID, firstReady.RouteVersion+1)
+	if secondReady.PublicURLID != firstReady.PublicURLID || secondReady.PublishRunNumber != firstReady.PublishRunNumber+1 {
+		t.Fatalf("restarted route = %q version %d, want %q version %d", secondReady.PublicURLID, secondReady.PublishRunNumber, firstReady.PublicURLID, firstReady.PublishRunNumber+1)
 	}
 	secondResponse, body, err := fixture.visitor.requestURL(http.MethodGet, secondReady.PublicURL+"/after", nil)
 	if err != nil {
@@ -375,12 +375,12 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	if secondResponse.StatusCode != http.StatusOK || string(body) != "publisher restart" {
 		t.Fatalf("second visitor response = %s, %q", secondResponse.Status, body)
 	}
-	assertIntegrationRouteCertificate(t, secondResponse, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, secondResponse, fixture.identity.hostname)
 	secondSerial := secondResponse.TLS.PeerCertificates[0].SerialNumber.String()
 	if secondSerial != firstSerial {
 		t.Fatalf("restarted certificate serial = %s, want %s", secondSerial, firstSerial)
 	}
-	if orderCount := integrationRouteOrderCount(t, fixture.inspect, secondReady.RouteID); orderCount != firstOrderCount {
+	if orderCount := integrationRouteOrderCount(t, fixture.inspect, secondReady.PublicURLID); orderCount != firstOrderCount {
 		t.Fatalf("route ACME order count = %d, want %d", orderCount, firstOrderCount)
 	}
 }

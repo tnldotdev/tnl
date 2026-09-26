@@ -17,9 +17,9 @@ const adminRelayPageSize = 100
 type MaintenanceControlName string
 
 const (
-	MaintenanceControlRouteCreation        MaintenanceControlName = "route_creation"
-	MaintenanceControlRouteSessionCreation MaintenanceControlName = "route_session_creation"
-	MaintenanceControlCertificateIssuance  MaintenanceControlName = "certificate_issuance"
+	MaintenanceControlPublicURLCreation   MaintenanceControlName = "public_url_creation"
+	MaintenanceControlPublishRunCreation  MaintenanceControlName = "publish_run_creation"
+	MaintenanceControlCertificateIssuance MaintenanceControlName = "certificate_issuance"
 )
 
 var (
@@ -29,12 +29,12 @@ var (
 
 // AdminRuntimeCounts contains current stored state counts for server status.
 type AdminRuntimeCounts struct {
-	EnabledRoutes         int64
-	SuspendedRoutes       int64
-	StartingRouteSessions int64
-	ReadyRouteSessions    int64
-	IngressLeases         int64
-	RelayLeases           int64
+	EnabledPublicURLs   int64
+	SuspendedPublicURLs int64
+	StartingPublishRuns int64
+	ReadyPublishRuns    int64
+	IngressLeases       int64
+	RelayLeases         int64
 }
 
 // AdminRelayPage is one stable relay-ID-ordered page of unexpired leases.
@@ -62,8 +62,8 @@ func (d *Database) AdminRuntimeCounts(ctx context.Context, now time.Time) (Admin
 		return AdminRuntimeCounts{}, fmt.Errorf("controlstate: read admin server status: %w", err)
 	}
 	values := []int64{
-		row.EnabledRoutes, row.SuspendedRoutes, row.StartingRouteSessions,
-		row.ReadyRouteSessions, row.IngressLeases, row.RelayLeases,
+		row.EnabledPublicURLs, row.SuspendedPublicURLs, row.StartingPublishRuns,
+		row.ReadyPublishRuns, row.IngressLeases, row.RelayLeases,
 	}
 	for _, value := range values {
 		if value < 0 {
@@ -71,8 +71,8 @@ func (d *Database) AdminRuntimeCounts(ctx context.Context, now time.Time) (Admin
 		}
 	}
 	return AdminRuntimeCounts{
-		EnabledRoutes: row.EnabledRoutes, SuspendedRoutes: row.SuspendedRoutes,
-		StartingRouteSessions: row.StartingRouteSessions, ReadyRouteSessions: row.ReadyRouteSessions,
+		EnabledPublicURLs: row.EnabledPublicURLs, SuspendedPublicURLs: row.SuspendedPublicURLs,
+		StartingPublishRuns: row.StartingPublishRuns, ReadyPublishRuns: row.ReadyPublishRuns,
 		IngressLeases: row.IngressLeases, RelayLeases: row.RelayLeases,
 	}, nil
 }
@@ -270,6 +270,6 @@ func maintenanceControl(row controlstatedb.ControlMaintenanceControl) (Maintenan
 }
 
 func validMaintenanceControlName(name MaintenanceControlName) bool {
-	return name == MaintenanceControlRouteCreation || name == MaintenanceControlRouteSessionCreation ||
+	return name == MaintenanceControlPublicURLCreation || name == MaintenanceControlPublishRunCreation ||
 		name == MaintenanceControlCertificateIssuance
 }

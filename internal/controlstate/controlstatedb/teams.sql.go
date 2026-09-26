@@ -1133,9 +1133,9 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, teamID string)
 	return items, nil
 }
 
-const lockDomainRoutes = `-- name: LockDomainRoutes :many
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
-FROM control.routes
+const lockDomainPublicURLs = `-- name: LockDomainPublicURLs :many
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+FROM control.public_urls
 WHERE team_id = $1
   AND domain_id = $2
   AND lifecycle_state <> 'deleted'
@@ -1143,20 +1143,20 @@ ORDER BY id
 FOR UPDATE
 `
 
-type LockDomainRoutesParams struct {
+type LockDomainPublicURLsParams struct {
 	TeamID   string
 	DomainID string
 }
 
-func (q *Queries) LockDomainRoutes(ctx context.Context, arg LockDomainRoutesParams) ([]ControlRoute, error) {
-	rows, err := q.db.Query(ctx, lockDomainRoutes, arg.TeamID, arg.DomainID)
+func (q *Queries) LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error) {
+	rows, err := q.db.Query(ctx, lockDomainPublicURLs, arg.TeamID, arg.DomainID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlRoute
+	var items []ControlPublicUrl
 	for rows.Next() {
-		var i ControlRoute
+		var i ControlPublicUrl
 		if err := rows.Scan(
 			&i.ID,
 			&i.TeamID,
@@ -1167,7 +1167,7 @@ func (q *Queries) LockDomainRoutes(ctx context.Context, arg LockDomainRoutesPara
 			&i.RequestDigest,
 			&i.CanonicalHostname,
 			&i.Target,
-			&i.RouteScope,
+			&i.PublicURLScope,
 			&i.PolicyRevision,
 			&i.IpPolicy,
 			&i.AllowedIpPrefixes,
@@ -1181,7 +1181,7 @@ func (q *Queries) LockDomainRoutes(ctx context.Context, arg LockDomainRoutesPara
 			&i.DnsAttempts,
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
-			&i.NextRouteVersion,
+			&i.NextPublishRunNumber,
 			&i.MutationRevision,
 			&i.Ephemeral,
 			&i.ExpiresAt,
@@ -1372,16 +1372,16 @@ func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain,
 	return i, err
 }
 
-const lockMembershipRoutes = `-- name: LockMembershipRoutes :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
-FROM control.routes AS routes
+const lockMembershipPublicURLs = `-- name: LockMembershipPublicURLs :many
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+FROM control.public_urls AS routes
 WHERE routes.team_id = $1
   AND (
       routes.membership_id = $2
       OR EXISTS (
           SELECT 1
-          FROM control.route_sessions AS sessions
-          WHERE sessions.route_id = routes.id
+          FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
             AND sessions.membership_id = $2
             AND sessions.closed_at IS NULL
       )
@@ -1391,20 +1391,20 @@ ORDER BY routes.id
 FOR UPDATE
 `
 
-type LockMembershipRoutesParams struct {
+type LockMembershipPublicURLsParams struct {
 	TeamID       string
 	MembershipID pgtype.Text
 }
 
-func (q *Queries) LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error) {
-	rows, err := q.db.Query(ctx, lockMembershipRoutes, arg.TeamID, arg.MembershipID)
+func (q *Queries) LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error) {
+	rows, err := q.db.Query(ctx, lockMembershipPublicURLs, arg.TeamID, arg.MembershipID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlRoute
+	var items []ControlPublicUrl
 	for rows.Next() {
-		var i ControlRoute
+		var i ControlPublicUrl
 		if err := rows.Scan(
 			&i.ID,
 			&i.TeamID,
@@ -1415,7 +1415,7 @@ func (q *Queries) LockMembershipRoutes(ctx context.Context, arg LockMembershipRo
 			&i.RequestDigest,
 			&i.CanonicalHostname,
 			&i.Target,
-			&i.RouteScope,
+			&i.PublicURLScope,
 			&i.PolicyRevision,
 			&i.IpPolicy,
 			&i.AllowedIpPrefixes,
@@ -1429,7 +1429,7 @@ func (q *Queries) LockMembershipRoutes(ctx context.Context, arg LockMembershipRo
 			&i.DnsAttempts,
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
-			&i.NextRouteVersion,
+			&i.NextPublishRunNumber,
 			&i.MutationRevision,
 			&i.Ephemeral,
 			&i.ExpiresAt,
@@ -1941,8 +1941,8 @@ func (q *Queries) SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDo
 	return result.RowsAffected(), nil
 }
 
-const suspendAuthorityRoute = `-- name: SuspendAuthorityRoute :execrows
-UPDATE control.routes
+const suspendAuthorityPublicURL = `-- name: SuspendAuthorityPublicURL :execrows
+UPDATE control.public_urls
 SET lifecycle_state = 'suspended',
     dns_state = CASE
         WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
@@ -1969,14 +1969,14 @@ WHERE id = $3
   AND mutation_revision < 9223372036854775807
 `
 
-type SuspendAuthorityRouteParams struct {
+type SuspendAuthorityPublicURLParams struct {
 	SuspendedAt      pgtype.Timestamptz
 	SuspensionReason pgtype.Text
-	RouteID          string
+	PublicURLID      string
 }
 
-func (q *Queries) SuspendAuthorityRoute(ctx context.Context, arg SuspendAuthorityRouteParams) (int64, error) {
-	result, err := q.db.Exec(ctx, suspendAuthorityRoute, arg.SuspendedAt, arg.SuspensionReason, arg.RouteID)
+func (q *Queries) SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error) {
+	result, err := q.db.Exec(ctx, suspendAuthorityPublicURL, arg.SuspendedAt, arg.SuspensionReason, arg.PublicURLID)
 	if err != nil {
 		return 0, err
 	}

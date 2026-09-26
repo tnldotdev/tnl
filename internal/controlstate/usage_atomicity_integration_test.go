@@ -67,7 +67,7 @@ func TestIntegrationUsageFirstBucketAfterSessionWait(t *testing.T) {
 	}
 	var attempts int64
 	var data []byte
-	if err := database.pool.QueryRow(ctx, `SELECT connection_attempts, histogram_data FROM control.route_usage_buckets WHERE route_id = $1`, first.RouteID).Scan(&attempts, &data); err != nil || attempts != 4 {
+	if err := database.pool.QueryRow(ctx, `SELECT connection_attempts, histogram_data FROM control.public_url_usage_buckets WHERE public_url_id = $1`, first.PublicURLID).Scan(&attempts, &data); err != nil || attempts != 4 {
 		t.Fatalf("concurrent first-bucket accounting: attempts=%d, %v", attempts, err)
 	}
 	var envelope ingressUsageHistogramEnvelope
@@ -107,7 +107,7 @@ func TestIntegrationUsagePageAdvancesRepeatedKeys(t *testing.T) {
 	var attempts, denials, reports int64
 	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, policy_denials,
 		(SELECT count(*) FROM control.ingress_usage_reports)
-		FROM control.route_usage_buckets WHERE route_id = $1`, report.RouteID).Scan(&attempts, &denials, &reports); err != nil || attempts != 4 || denials != 4 || reports != 4 {
+		FROM control.public_url_usage_buckets WHERE public_url_id = $1`, report.PublicURLID).Scan(&attempts, &denials, &reports); err != nil || attempts != 4 || denials != 4 || reports != 4 {
 		t.Fatalf("repeated-key page accounting: attempts=%d denials=%d reports=%d: %v", attempts, denials, reports, err)
 	}
 }
@@ -119,7 +119,7 @@ func TestIntegrationUsageBatchRollsBackCounterExhaustion(t *testing.T) {
 	}
 	before := readUsageRun(t, database, ingress)
 	const originalDenials = int64(math.MaxInt64 - 1)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET policy_denials = $1 WHERE id = 'session_usage'`, originalDenials); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET policy_denials = $1 WHERE id = 'session_usage'`, originalDenials); err != nil {
 		t.Fatal(err)
 	}
 	first.ObservedThrough, first.ConnectionAttempts, first.PolicyDenials = base.Add(20*time.Second), 1, 1
@@ -135,8 +135,8 @@ func TestIntegrationUsageBatchRollsBackCounterExhaustion(t *testing.T) {
 	var reports, buckets, denials int64
 	if err := database.pool.QueryRow(t.Context(), `SELECT
 		(SELECT count(*) FROM control.ingress_usage_reports),
-		(SELECT count(*) FROM control.route_usage_buckets),
-		(SELECT policy_denials FROM control.route_sessions WHERE id = 'session_usage')`).Scan(&reports, &buckets, &denials); err != nil {
+		(SELECT count(*) FROM control.public_url_usage_buckets),
+		(SELECT policy_denials FROM control.publish_runs WHERE id = 'session_usage')`).Scan(&reports, &buckets, &denials); err != nil {
 		t.Fatal(err)
 	}
 	after := readUsageRun(t, database, ingress)

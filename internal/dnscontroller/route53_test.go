@@ -50,12 +50,12 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 
 func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 	client, provider := route53TestProvider(t, "tunnels.example.test")
-	record := RouteRecord{
+	record := PublicURLRecord{
 		ZoneID: "Z123", ZoneDomain: "tunnels.example.test",
-		RouteID: "route_0123456789abcdef0123456789abcdef", CanonicalHostname: "api.tunnels.example.test",
+		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", CanonicalHostname: "api.tunnels.example.test",
 		IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 	}
-	if _, err := provider.PublishRoute(t.Context(), record); err != nil {
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 3 || client.changes[0].Action != types.ChangeActionCreate ||
@@ -66,11 +66,11 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 		*simpleRecordSet(record.CanonicalHostname, types.RRTypeA, record.IngressIPv4Addresses),
 		*simpleRecordSet(record.CanonicalHostname, types.RRTypeAaaa, record.IngressIPv6Addresses),
 	}
-	client.recordSets[dnsName(routeOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{{
-		Name: aws.String(dnsName(routeOwnerName(record.CanonicalHostname))), Type: types.RRTypeTxt, TTL: aws.Int64(60),
-		ResourceRecords: []types.ResourceRecord{{Value: aws.String(routeOwnerValue(record.RouteID))}},
+	client.recordSets[dnsName(publicURLOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{{
+		Name: aws.String(dnsName(publicURLOwnerName(record.CanonicalHostname))), Type: types.RRTypeTxt, TTL: aws.Int64(60),
+		ResourceRecords: []types.ResourceRecord{{Value: aws.String(publicURLOwnerValue(record.PublicURLID))}},
 	}}
-	if _, err := provider.RemoveRoute(t.Context(), record); err != nil {
+	if _, err := provider.RemovePublicURL(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 3 {
@@ -246,9 +246,9 @@ func route53TestProvider(t *testing.T, domain string) (*route53Stub, *Route53Pro
 	return client, provider
 }
 
-func route53TestRoute(client *route53Stub) RouteRecord {
-	record := RouteRecord{ZoneID: "Z123", ZoneDomain: "tunnels.example.test", RouteID: "route_1", CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}}
+func route53TestPublicURL(client *route53Stub) PublicURLRecord {
+	record := PublicURLRecord{ZoneID: "Z123", ZoneDomain: "tunnels.example.test", PublicURLID: "public_url_1", CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}}
 	client.recordSets[dnsName(record.CanonicalHostname)] = []types.ResourceRecordSet{*simpleRecordSet(record.CanonicalHostname, types.RRTypeA, append([]string(nil), record.IngressIPv4Addresses...))}
-	client.recordSets[dnsName(routeOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{*simpleRecordSet(routeOwnerName(record.CanonicalHostname), types.RRTypeTxt, []string{routeOwnerValue(record.RouteID)})}
+	client.recordSets[dnsName(publicURLOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{*simpleRecordSet(publicURLOwnerName(record.CanonicalHostname), types.RRTypeTxt, []string{publicURLOwnerValue(record.PublicURLID)})}
 	return record
 }

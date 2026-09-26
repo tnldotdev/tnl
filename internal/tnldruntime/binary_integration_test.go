@@ -21,7 +21,7 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 		"--no-config", "publish", target.URL, "--host", "binary.routes.127.0.0.1.nip.io",
 		"--allow-ip", "127.0.0.1/32", "--output", "ndjson")
 	ready := waitForIntegrationBinaryPublishEvent(t, publish, "ready", 45*time.Second)
-	if ready.SchemaVersion != 1 || ready.URL != "https://binary.routes.127.0.0.1.nip.io" || ready.RouteVersion != 1 {
+	if ready.SchemaVersion != 1 || ready.URL != "https://binary.routes.127.0.0.1.nip.io" || ready.PublishRunNumber != 1 {
 		t.Fatalf("binary ready event = %#v", ready)
 	}
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
@@ -38,7 +38,7 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "/binary?source=integration" || response.Header.Get("X-Tnl-Integration") != "binary" {
 		t.Fatalf("binary visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
-	assertIntegrationRouteCertificate(t, response, "binary.routes.127.0.0.1.nip.io")
+	assertIntegrationPublicURLCertificate(t, response, "binary.routes.127.0.0.1.nip.io")
 	stopIntegrationBinaryPublish(t, publish)
 	stopped := waitForIntegrationBinaryPublishEvent(t, publish, "stopped", 10*time.Second)
 	if stopped.Reason != "canceled" || stopped.TunnelID != ready.TunnelID {

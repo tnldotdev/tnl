@@ -24,7 +24,7 @@ func TestCanonicalCertificateIdentifiers(t *testing.T) {
 	for _, invalid := range [][]string{
 		nil,
 		{"route.example.test", "route.example.test"},
-		{"Route.example.test"},
+		{"PublicURL.example.test"},
 		{"route.*.example.test"},
 	} {
 		if _, err := canonicalCertificateIdentifiers(invalid); err == nil {

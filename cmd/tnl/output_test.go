@@ -45,8 +45,8 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.stopped(); err != nil {
 		t.Fatal(err)
 	}
-	if encoded := stdout.String(); !strings.Contains(encoded, `"route_version":1`) || strings.Contains(encoded, `"version":`) {
-		t.Fatalf("NDJSON route version fields = %q", encoded)
+	if encoded := stdout.String(); !strings.Contains(encoded, `"publish_run_number":1`) || strings.Contains(encoded, `"version":`) {
+		t.Fatalf("NDJSON publish run number fields = %q", encoded)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
@@ -65,7 +65,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		if wantType == "current_ip" && event.IP != "192.0.2.1" {
 			t.Fatalf("current IP event = %#v", event)
 		}
-		if wantType == "ready" && event.RouteVersion != uint64(index-1) {
+		if wantType == "ready" && event.PublishRunNumber != uint64(index-1) {
 			t.Fatalf("ready event = %#v", event)
 		}
 		if wantType == "error" && (event.Retryable == nil || !*event.Retryable || event.RetryAt == nil) {
@@ -106,9 +106,10 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "+--[ tnl publish ]-- ready ") ||
 		strings.Count(stderr.String(), "]-- ready ") != 1 ||
 		strings.Count(stderr.String(), "https://demo.example") != 1 ||
-		!strings.Contains(stderr.String(), "|  tnl ") ||
+		!strings.Contains(stderr.String(), "|    tnl ") ||
 		strings.Contains(stderr.String(), "|  publisher ") ||
 		!strings.Contains(stderr.String(), "automatically allowed IP") || !strings.Contains(stderr.String(), "2001:db8::1") ||
+		strings.Contains(stderr.String(), "publish run number") ||
 		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
@@ -263,7 +264,7 @@ func TestPublishOutputProvisioningStalledWarning(t *testing.T) {
 	if err := decoder.Decode(&warning); err != nil {
 		t.Fatal(err)
 	}
-	if starting.Type != "starting" || warning.Type != "warning" || warning.RouteVersion != 2 ||
+	if starting.Type != "starting" || warning.Type != "warning" || warning.PublishRunNumber != 2 ||
 		warning.Code != string(diagnostic.ProvisioningStalled) ||
 		warning.HelpURL != diagnostic.HelpURL(diagnostic.ProvisioningStalled) ||
 		warning.Message != diagnostic.Summary(diagnostic.ProvisioningStalled) ||
@@ -340,7 +341,7 @@ func TestPublishOutputTransportFallbackWarning(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if starting.Type != "starting" || warning.Type != "warning" || warning.RouteVersion != 2 ||
+	if starting.Type != "starting" || warning.Type != "warning" || warning.PublishRunNumber != 2 ||
 		warning.Transport != "tls-tcp" || warning.Retryable == nil || *warning.Retryable ||
 		!strings.Contains(warning.Message, "QUIC did not establish") || ready.Type != "ready" {
 		t.Fatalf("events = %#v, %#v, %#v", starting, warning, ready)
@@ -506,7 +507,7 @@ func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 	decoder := json.NewDecoder(&stdout)
 	for index, fields := range []map[string]any{
 		{"type": "starting", "target": "http://127.0.0.1:3000"},
-		{"type": "ready", "url": "https://demo.example", "route_version": float64(7)},
+		{"type": "ready", "url": "https://demo.example", "publish_run_number": float64(7)},
 		{"type": "error", "message": "connection refused", "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
 		{"type": "stopped", "reason": "canceled"},
 	} {

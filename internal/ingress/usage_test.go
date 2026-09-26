@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -206,7 +206,7 @@ func TestUsageReporterCapturesHistogramsAndVisitorSketch(t *testing.T) {
 	if len(control.calls) != 1 || len(control.calls[0].reports) != 1 {
 		t.Fatalf("reports = %#v", control.calls)
 	}
-	checkpoint, err := routeusage.ParseCheckpoint(control.calls[0].reports[0].HistogramData)
+	checkpoint, err := publicurlusage.ParseCheckpoint(control.calls[0].reports[0].HistogramData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,10 +296,10 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 			t.Fatal("watermark before all pages acknowledged")
 		}
 		for _, report := range batch.reports {
-			if report.ObservedThrough.Before(report.BucketStart) || report.RouteId == "new-minute" || seen[report.RouteId] || report.ConnectionAttempts != 1 {
-				t.Fatalf("checkpoint changed during drain: route=%s attempts=%d start=%s observed=%s duplicate=%t", report.RouteId, report.ConnectionAttempts, report.BucketStart, report.ObservedThrough, seen[report.RouteId])
+			if report.ObservedThrough.Before(report.BucketStart) || report.PublicUrlId == "new-minute" || seen[report.PublicUrlId] || report.ConnectionAttempts != 1 {
+				t.Fatalf("checkpoint changed during drain: route=%s attempts=%d start=%s observed=%s duplicate=%t", report.PublicUrlId, report.ConnectionAttempts, report.BucketStart, report.ObservedThrough, seen[report.PublicUrlId])
 			}
-			seen[report.RouteId] = true
+			seen[report.PublicUrlId] = true
 		}
 	}
 	if len(seen) != 257 {
@@ -318,10 +318,10 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 			if report.ObservedThrough.Before(report.BucketStart) {
 				t.Fatal("stale cutoff created invalid report")
 			}
-			if report.RouteId == "new-minute" {
+			if report.PublicUrlId == "new-minute" {
 				found = true
 			}
-			if report.RouteId == "route-000" || report.RouteId == "route-256" {
+			if report.PublicUrlId == "route-000" || report.PublicUrlId == "route-256" {
 				if report.ConnectionAttempts != 2 {
 					t.Fatal("next checkpoint lost concurrent mutation")
 				}
@@ -384,7 +384,7 @@ func TestUsageReporterLostPageResponseRetriesFrozenPayloadBeforeClose(t *testing
 			if !report.Final {
 				t.Fatal("close emitted nonfinal report")
 			}
-			if report.RouteId == "route-16" {
+			if report.PublicUrlId == "route-16" {
 				found = report.ConnectionAttempts == 2 && report.PolicyDenials == 1 && report.ReportRevision == 2
 			}
 		}

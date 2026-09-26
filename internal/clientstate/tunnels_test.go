@@ -30,7 +30,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	defer tunnel.Finish(context.Background(), nil)
 
 	assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1})
-	if err := tunnel.SetRoute(t.Context(), testRouteID, "route.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "route.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 3); err != nil {
@@ -42,7 +42,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
 	got := snapshot.Tunnels[0]
-	if got.ID != tunnel.ID() || got.RouteID != testRouteID || got.RouteVersion != 3 ||
+	if got.ID != tunnel.ID() || got.PublicURLID != testPublicURLID || got.PublishRunNumber != 3 ||
 		got.PublicURL != "https://route.example" || got.Target != "http://127.0.0.1:3000" ||
 		got.Project != project || got.Service != "web" {
 		t.Fatalf("tunnel = %#v", got)
@@ -58,8 +58,8 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"route_version":3`) || strings.Contains(string(encoded), `"session_version"`) {
-		t.Fatalf("snapshot JSON route version fields = %s", encoded)
+	if !strings.Contains(string(encoded), `"publish_run_number":3`) || strings.Contains(string(encoded), `"session_version"`) {
+		t.Fatalf("snapshot JSON publish run number fields = %s", encoded)
 	}
 
 	if err := tunnel.Finish(context.Background(), nil); err != nil {

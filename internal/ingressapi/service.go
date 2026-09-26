@@ -213,32 +213,32 @@ func (s *service) ReportIngressUsage(
 	return nil
 }
 
-func (s *service) ObserveRouteRecovery(
+func (s *service) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,
 	recoveryEpisodeID int64,
-	body ingressv1.RouteRecoveryObservationRequest,
-) (ingressv1.RouteRecoveryObservation, error) {
+	body ingressv1.PublicURLRecoveryObservationRequest,
+) (ingressv1.PublicURLRecoveryObservation, error) {
 	if ingressID != body.IngressId {
-		return ingressv1.RouteRecoveryObservation{}, pathMismatchError()
+		return ingressv1.PublicURLRecoveryObservation{}, pathMismatchError()
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	routeVersion, routeOK := serviceapi.Positive(body.RouteVersion)
+	publishRunNumber, routeOK := serviceapi.Positive(body.PublishRunNumber)
 	episode, episodeOK := serviceapi.Positive(recoveryEpisodeID)
-	if !ok || !routeOK || !episodeOK || !serviceapi.ValidIdentifiers(body.RouteId) || body.ObservedAt.IsZero() {
-		return ingressv1.RouteRecoveryObservation{}, serviceapi.NewProblemError(
+	if !ok || !routeOK || !episodeOK || !serviceapi.ValidIdentifiers(body.PublicUrlId) || body.ObservedAt.IsZero() {
+		return ingressv1.PublicURLRecoveryObservation{}, serviceapi.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Recovery observation identity is invalid",
 		)
 	}
-	observation, err := s.store.ObserveRouteRecovery(
-		ctx, identity, body.RouteId, routeVersion, episode, body.ObservedAt,
+	observation, err := s.store.ObservePublicURLRecovery(
+		ctx, identity, body.PublicUrlId, publishRunNumber, episode, body.ObservedAt,
 	)
 	if err != nil {
-		return ingressv1.RouteRecoveryObservation{}, s.storeError(ctx, err)
+		return ingressv1.PublicURLRecoveryObservation{}, s.storeError(ctx, err)
 	}
-	return ingressv1.RouteRecoveryObservation{
-		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), RouteId: observation.RouteID,
-		RouteVersion: int64(observation.RouteVersion), OpenedAt: observation.OpenedAt,
+	return ingressv1.PublicURLRecoveryObservation{
+		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), PublicUrlId: observation.PublicURLID,
+		PublishRunNumber: int64(observation.PublishRunNumber), OpenedAt: observation.OpenedAt,
 		ObservedAt: observation.ObservedAt, ObservedSeconds: observation.ObservedSeconds,
 	}, nil
 }

@@ -17,13 +17,13 @@ WITH latest AS (
     FROM control.ingress_routing_table_events AS history
     WHERE history.routing_table_revision <= sqlc.arg(through_revision)
     GROUP BY history.canonical_hostname,
-        CASE WHEN history.event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
+        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'route' ELSE 'challenge' END
 )
 SELECT events.*
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.routing_table_revision = latest.routing_table_revision
-WHERE events.event_kind IN ('route_upsert', 'challenge_upsert')
-  AND events.route_expires_at > sqlc.arg(now)
+WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
+  AND events.public_url_expires_at > sqlc.arg(now)
 ORDER BY events.canonical_hostname;
 
 -- name: ListIngressRoutingTableEvents :many
@@ -38,8 +38,8 @@ LIMIT sqlc.arg(page_limit);
 SELECT COALESCE((
     SELECT entry_revision
     FROM control.ingress_routing_table_events
-    WHERE route_id = sqlc.arg(route_id)
-      AND route_version = sqlc.arg(route_version)
+    WHERE public_url_id = sqlc.arg(public_url_id)
+      AND publish_run_number = sqlc.arg(publish_run_number)
     ORDER BY routing_table_revision DESC
     LIMIT 1
 ), 0)::bigint;
@@ -47,21 +47,21 @@ SELECT COALESCE((
 -- name: InsertIngressRoutingTableEvent :one
 INSERT INTO control.ingress_routing_table_events (
     event_kind,
-    route_id,
-    route_version,
+    public_url_id,
+    publish_run_number,
     canonical_hostname,
     entry_revision,
     projection,
-    route_expires_at,
+    public_url_expires_at,
     created_at
 ) VALUES (
     sqlc.arg(event_kind),
-    sqlc.arg(route_id),
-    sqlc.arg(route_version),
+    sqlc.arg(public_url_id),
+    sqlc.arg(publish_run_number),
     sqlc.arg(canonical_hostname),
     sqlc.arg(entry_revision),
     sqlc.arg(projection),
-    sqlc.narg(route_expires_at),
+    sqlc.narg(public_url_expires_at),
     sqlc.arg(created_at)
 )
 RETURNING routing_table_revision;
@@ -78,21 +78,21 @@ WITH clock_guard AS MATERIALIZED (
 ), inserted AS (
     INSERT INTO control.ingress_routing_table_events (
         event_kind,
-        route_id,
-        route_version,
+        public_url_id,
+        publish_run_number,
         canonical_hostname,
         entry_revision,
         projection,
-        route_expires_at,
+        public_url_expires_at,
         created_at
     ) SELECT
         sqlc.arg(event_kind),
-        sqlc.arg(route_id),
-        sqlc.arg(route_version),
+        sqlc.arg(public_url_id),
+        sqlc.arg(publish_run_number),
         sqlc.arg(canonical_hostname),
         sqlc.arg(entry_revision),
         sqlc.arg(projection),
-        sqlc.narg(route_expires_at),
+        sqlc.narg(public_url_expires_at),
         sqlc.arg(created_at)
     FROM clock_guard
     RETURNING routing_table_revision

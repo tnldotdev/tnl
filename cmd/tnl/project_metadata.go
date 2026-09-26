@@ -108,7 +108,7 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		return projectmeta.Metadata{}, err
 	}
 	metadata := projectmeta.Metadata{
-		Version: projectmeta.Version, MemberNamespace: memberNamespace(current.membership, domain),
+		Version: projectmeta.Version, Namespace: namespaceForMembership(current.membership, domain),
 		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
 	}
@@ -171,9 +171,9 @@ func configuredProjectService(
 		return projectmeta.Service{}, err
 	}
 	return projectmeta.Service{
-		MemberNamespace: memberNamespace(current.membership, domain),
-		Hostname:        hostname,
-		URL:             "https://" + hostname,
+		Namespace: namespaceForMembership(current.membership, domain),
+		Hostname:  hostname,
+		URL:       "https://" + hostname,
 	}, nil
 }
 

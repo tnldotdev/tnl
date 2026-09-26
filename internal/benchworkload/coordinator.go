@@ -237,7 +237,7 @@ func Assignment(total, count, index int) int {
 	return value
 }
 
-func RouteIndexes(total, count, index int) []int {
+func PublicURLIndexes(total, count, index int) []int {
 	var indexes []int
 	for i := index; i < total; i += count {
 		indexes = append(indexes, i)

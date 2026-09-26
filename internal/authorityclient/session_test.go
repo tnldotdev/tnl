@@ -47,7 +47,7 @@ func TestValidateIssuedControlSession(t *testing.T) {
 		{name: "truncated refresh", mutate: func(s *authorityv1.ControlSessionResponse) { s.RefreshToken = s.RefreshToken[:len(s.RefreshToken)-1] }},
 		{name: "empty identity", mutate: func(s *authorityv1.ControlSessionResponse) { s.SessionId = "" }},
 		{name: "wrong identity prefix", mutate: func(s *authorityv1.ControlSessionResponse) {
-			s.SessionId = "route_session_0123456789abcdef0123456789abcdef"
+			s.SessionId = "publish_run_0123456789abcdef0123456789abcdef"
 		}},
 		{name: "truncated identity", mutate: func(s *authorityv1.ControlSessionResponse) { s.SessionId = s.SessionId[:len(s.SessionId)-1] }},
 		{name: "nonhex identity", mutate: func(s *authorityv1.ControlSessionResponse) {

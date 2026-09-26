@@ -60,8 +60,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-		if s.byRoute[key] >= s.config.MaxRouteConnections {
-			return nil, "route_connections"
+		if s.byPublicURL[key] >= s.config.MaxPublicURLConnections {
+			return nil, "public_url_connections"
 		}
 	case challengeConnection:
 		limit, resource = s.config.MaxChallengeConnections, "challenge_connections"
@@ -78,7 +78,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	}
 	s.admitted[kind]++
 	if kind == visitorConnection {
-		s.byRoute[key]++
+		s.byPublicURL[key]++
 	} else if kind == challengeConnection {
 		s.byChallenge[key]++
 	}
@@ -88,7 +88,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		s.admitted[kind]--
 		var counts map[string]int
 		if kind == visitorConnection {
-			counts = s.byRoute
+			counts = s.byPublicURL
 		} else if kind == challengeConnection {
 			counts = s.byChallenge
 		}

@@ -25,7 +25,7 @@ func TestClaimRejectsMalformedCredentialWithoutStoreCall(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := relayv1.PublisherConnectionClaim{
-				RouteSessionId: "session-1", RouteId: "route-1", RouteVersion: 1,
+				PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 1,
 				PublisherConnectionId: "connection-1", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 				RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 1,
 				ClaimId: "claim-1", PublisherConnectionCredential: "malformed",

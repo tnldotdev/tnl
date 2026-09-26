@@ -83,11 +83,11 @@
           "properties": {
             "host": {
               "type": "string",
-              "description": "Complete route hostname to publish."
+              "description": "Complete public URL hostname to publish."
             },
             "subdomain": {
               "type": "string",
-              "description": "One DNS label beneath the current member namespace."
+              "description": "One DNS label beneath the current namespace."
             },
             "allow_ip": {
               "items": {
@@ -165,11 +165,11 @@
                 "properties": {
                   "host": {
                     "type": "string",
-                    "description": "Complete route hostname to publish."
+                    "description": "Complete public URL hostname to publish."
                   },
                   "subdomain": {
                     "type": "string",
-                    "description": "One DNS label beneath the current member namespace."
+                    "description": "One DNS label beneath the current namespace."
                   },
                   "allow_ip": {
                     "items": {
@@ -197,7 +197,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "description": "Route and tunnel overrides for this service."
+                "description": "PublicURL and tunnel overrides for this service."
               },
               "publish": {
                 "$ref": "#/$defs/Publish"
@@ -294,7 +294,7 @@
         },
         "managed_deployment_domain": {
           "type": "string",
-          "description": "Server-controlled domain used for member namespaces."
+          "description": "Server-controlled domain used for namespaces."
         },
         "control_tls_certificate_file": {
           "type": "string",
@@ -329,9 +329,9 @@
           "description": "ACME certificate profile.",
           "default": "tlsserver"
         },
-        "route_certificate_workers": {
+        "public_url_certificate_workers": {
           "type": "integer",
-          "description": "Concurrent route certificate workers per control process (1-8).",
+          "description": "Concurrent public URL certificate workers per control process (1-8).",
           "default": 4
         },
         "oidc_issuer": {
@@ -371,13 +371,13 @@
           "description": "Absolute lifetime of newly issued control sessions.",
           "default": "720h"
         },
-        "route_usage_url": {
+        "public_url_usage_url": {
           "type": "string",
-          "description": "Route usage receiver base URL."
+          "description": "Public URL usage receiver base URL."
         },
-        "route_usage_token": {
+        "public_url_usage_token": {
           "type": "string",
-          "description": "Service token for the route usage receiver."
+          "description": "Service token for the public URL usage receiver."
         },
         "route53_region": {
           "type": "string",
@@ -397,14 +397,14 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv4 address published in owned route records; repeat for each address."
+          "description": "Stable ingress IPv4 address published in owned public URL records; repeat for each address."
         },
         "ingress_ipv6_address": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv6 address published in owned route records; repeat for each address."
+          "description": "Stable ingress IPv6 address published in owned public URL records; repeat for each address."
         },
         "cluster_secret": {
           "type": "string",
@@ -467,12 +467,12 @@
         },
         "challenge_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent route certificate validation connections per ingress process.",
+          "description": "Maximum concurrent public URL certificate validation connections per ingress process.",
           "default": 1024
         },
         "challenge_hostname_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent route certificate validation connections per hostname on each ingress process.",
+          "description": "Maximum concurrent public URL certificate validation connections per hostname on each ingress process.",
           "default": 8
         },
         "standalone_control_connection_limit": {
@@ -490,9 +490,9 @@
           "description": "Maximum concurrent visitor connections.",
           "default": 20000
         },
-        "route_connection_limit": {
+        "public_url_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent visitor connections per route.",
+          "description": "Maximum concurrent visitor connections per public URL.",
           "default": 500
         },
         "publisher_connection_limit": {

@@ -30,7 +30,7 @@ type ControlClient interface {
 	GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error)
 	GetIngressRoutingTableEvents(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error)
 	ReportIngressUsage(context.Context, ingressv1.IngressID, ingressv1.IngressUsageReportBatch) error
-	ObserveRouteRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.RouteRecoveryObservationRequest) (ingressv1.RouteRecoveryObservation, error)
+	ObservePublicURLRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.PublicURLRecoveryObservationRequest) (ingressv1.PublicURLRecoveryObservation, error)
 }
 
 type IngressLoadFunc func() int64
@@ -468,32 +468,32 @@ func (c *Controller) ReportUsage(ctx context.Context, batch usageReportBatch) er
 
 func (c *Controller) ObserveRecovery(
 	ctx context.Context,
-	routeID string,
-	routeVersion, recoveryEpisodeID uint64,
+	publicURLID string,
+	publishRunNumber, recoveryEpisodeID uint64,
 	observedAt time.Time,
-) (ingressv1.RouteRecoveryObservation, error) {
-	if routeID == "" || routeVersion == 0 || routeVersion > math.MaxInt64 || recoveryEpisodeID == 0 ||
+) (ingressv1.PublicURLRecoveryObservation, error) {
+	if publicURLID == "" || publishRunNumber == 0 || publishRunNumber > math.MaxInt64 || recoveryEpisodeID == 0 ||
 		recoveryEpisodeID > math.MaxInt64 || observedAt.IsZero() {
-		return ingressv1.RouteRecoveryObservation{}, errors.New("ingress: route recovery observation is invalid")
+		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: route recovery observation is invalid")
 	}
 	lease := c.Lease()
 	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
-		return ingressv1.RouteRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
+		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
 	}
-	observation, err := c.client.ObserveRouteRecovery(
-		ctx, c.registration.IngressId, int64(recoveryEpisodeID), ingressv1.RouteRecoveryObservationRequest{
+	observation, err := c.client.ObservePublicURLRecovery(
+		ctx, c.registration.IngressId, int64(recoveryEpisodeID), ingressv1.PublicURLRecoveryObservationRequest{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
-			IngressLeaseRevision: lease.IngressLeaseRevision, RouteId: routeID,
-			RouteVersion: int64(routeVersion), ObservedAt: observedAt,
+			IngressLeaseRevision: lease.IngressLeaseRevision, PublicUrlId: publicURLID,
+			PublishRunNumber: int64(publishRunNumber), ObservedAt: observedAt,
 		},
 	)
 	if err != nil {
-		return ingressv1.RouteRecoveryObservation{}, ingressControlError("observe route recovery", err)
+		return ingressv1.PublicURLRecoveryObservation{}, ingressControlError("observe route recovery", err)
 	}
-	if observation.RecoveryEpisodeId != int64(recoveryEpisodeID) || observation.RouteId != routeID ||
-		observation.RouteVersion != int64(routeVersion) || observation.OpenedAt.IsZero() ||
+	if observation.RecoveryEpisodeId != int64(recoveryEpisodeID) || observation.PublicUrlId != publicURLID ||
+		observation.PublishRunNumber != int64(publishRunNumber) || observation.OpenedAt.IsZero() ||
 		observation.ObservedAt.IsZero() || observation.ObservedSeconds < 0 {
-		return ingressv1.RouteRecoveryObservation{}, errors.New("ingress: control returned an invalid route recovery observation")
+		return ingressv1.PublicURLRecoveryObservation{}, errors.New("ingress: control returned an invalid route recovery observation")
 	}
 	return observation, nil
 }

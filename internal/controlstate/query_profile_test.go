@@ -21,17 +21,17 @@ func TestProfilePlacementQueries(t *testing.T) {
 	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
 	for index := range f.routes {
-		if _, err := f.database.CreateRouteSession(t.Context(), f.request(index), f.now, time.Hour, time.Hour); err != nil {
+		if _, err := f.database.CreatePublishRun(t.Context(), f.request(index), f.now, time.Hour, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 		count := index + 1
 		if count != 1000 && count != 2500 && count != f.routes {
 			continue
 		}
-		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.route_sessions; ANALYZE control.route_session_connections"); err != nil {
+		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.publish_runs; ANALYZE control.publish_run_connections"); err != nil {
 			t.Fatal(err)
 		}
-		rows, err := queries.CountOpenRouteSessionAssignmentsByRelayService(t.Context())
+		rows, err := queries.CountOpenPublishRunAssignmentsByRelayService(t.Context())
 		if err != nil || len(rows) != 2 {
 			t.Fatalf("assignment counts: services=%d: %v", len(rows), err)
 		}
@@ -63,8 +63,8 @@ func TestProfileRoutingHistory(t *testing.T) {
 	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
 	previous := 1
-	for _, perRoute := range []int{4, 10, 100} {
-		total := seedLoadRoutingHistory(t, f, previous, perRoute)
+	for _, perPublicURL := range []int{4, 10, 100} {
+		total := seedLoadRoutingHistory(t, f, previous, perPublicURL)
 		// Snapshot timing comes from the same production histograms as load runs.
 		// Scope the defer to this stage so failures retain its completed samples.
 		func() {
@@ -75,15 +75,15 @@ func TestProfileRoutingHistory(t *testing.T) {
 				snapshot, err := f.controls[trial%2].ReadIngressRoutingTableSnapshot(ctx, ingress.IngressLeaseIdentity, f.now)
 				cancel()
 				t.Logf("history_events=%d snapshot_trial=%d", total, trial+1)
-				if err != nil || len(snapshot.Routes) != f.routes || snapshot.RoutingTableRevision != uint64(total) {
-					t.Fatalf("snapshot routes=%d revision=%d: %v", len(snapshot.Routes), snapshot.RoutingTableRevision, err)
+				if err != nil || len(snapshot.Entries) != f.routes || snapshot.RoutingTableRevision != uint64(total) {
+					t.Fatalf("snapshot routes=%d revision=%d: %v", len(snapshot.Entries), snapshot.RoutingTableRevision, err)
 				}
 				seen := make(map[string]bool, f.routes)
-				for _, event := range snapshot.Routes {
-					if seen[event.RouteID] || event.EntryRevision != uint64(perRoute) || len(event.Projection.PublisherConnections) != 2 {
-						t.Fatalf("unexpected snapshot route=%s entry=%d", event.RouteID, event.EntryRevision)
+				for _, event := range snapshot.Entries {
+					if seen[event.PublicURLID] || event.EntryRevision != uint64(perPublicURL) || len(event.Projection.PublisherConnections) != 2 {
+						t.Fatalf("unexpected snapshot route=%s entry=%d", event.PublicURLID, event.EntryRevision)
 					}
-					seen[event.RouteID] = true
+					seen[event.PublicURLID] = true
 				}
 			}
 		}()
@@ -106,7 +106,7 @@ func TestProfileRoutingHistory(t *testing.T) {
 			}
 		}
 		p.explain(t)
-		previous = perRoute
+		previous = perPublicURL
 	}
 }
 

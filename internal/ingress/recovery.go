@@ -10,7 +10,7 @@ import (
 )
 
 type recoveryControl interface {
-	ObserveRecovery(context.Context, string, uint64, uint64, time.Time) (ingressv1.RouteRecoveryObservation, error)
+	ObserveRecovery(context.Context, string, uint64, uint64, time.Time) (ingressv1.PublicURLRecoveryObservation, error)
 }
 
 // RecoveryReporter retries first-public-byte observations until control
@@ -47,7 +47,7 @@ func NewRecoveryReporter(
 	}, nil
 }
 
-func (r *RecoveryReporter) Observe(routeID string, routeVersion, recoveryEpisodeID uint64, observedAt time.Time) {
+func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recoveryEpisodeID uint64, observedAt time.Time) {
 	if r == nil || r.control == nil || recoveryEpisodeID == 0 {
 		return
 	}
@@ -71,7 +71,7 @@ func (r *RecoveryReporter) Observe(routeID string, routeVersion, recoveryEpisode
 			r.mu.Unlock()
 		}()
 		for {
-			if _, err := r.control.ObserveRecovery(r.ctx, routeID, routeVersion, recoveryEpisodeID, observedAt); err == nil {
+			if _, err := r.control.ObserveRecovery(r.ctx, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt); err == nil {
 				return
 			} else if r.ctx.Err() == nil {
 				r.report(err)

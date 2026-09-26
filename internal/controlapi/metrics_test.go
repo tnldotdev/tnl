@@ -11,13 +11,13 @@ import (
 func TestControlHandlersRecordMatchedOperations(t *testing.T) {
 	metrics := observability.New("control")
 	handler := testHandler(t, Config{Metrics: metrics}, nil, nil, nil)
-	for _, path := range []string{"/v1/health", "/v1/routes/route_private-id"} {
+	for _, path := range []string{"/v1/health", "/v1/public-urls/public_url_private-id"} {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
 	}
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	text := response.Body.String()
-	if strings.Contains(text, "route_private-id") {
+	if strings.Contains(text, "public_url_private-id") {
 		t.Fatal("metrics exposed a route ID")
 	}
 	for _, want := range []string{"tnl_control_requests_total", "tnl_control_request_duration_seconds_count", "tnl_control_requests_in_flight", `outcome="client_error"`, `outcome="success"`} {

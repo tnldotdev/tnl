@@ -51,7 +51,7 @@ export interface DevelopmentContext {
 export interface TnlTunnelAssignment extends TnlDevBootstrap {
   readonly framework: string;
   readonly hostname: string;
-  readonly memberNamespace: string;
+  readonly namespace: string;
   readonly project: ProjectRuntime;
   readonly publicURL: `https://${string}`;
   readonly service: string | null;
@@ -248,7 +248,7 @@ function parseAssignment(
   const object = record(value, "tnl dev response");
   exactKeys(
     object,
-    ["hostname", "memberNamespace", "project", "protocol", "publicURL", "service", "tunnelID"],
+    ["hostname", "namespace", "project", "protocol", "publicURL", "service", "tunnelID"],
     "tnl dev response",
   );
   if (object.protocol !== 1) {
@@ -260,10 +260,7 @@ function parseAssignment(
   if (object.service !== null && !validServiceName(object.service)) {
     throw new Error("tnl dev returned an invalid service");
   }
-  const memberNamespace = requiredHostname(
-    object.memberNamespace,
-    "tnl dev returned member namespace",
-  );
+  const responseNamespace = requiredHostname(object.namespace, "tnl dev returned namespace");
   const hostname = requiredHostname(object.hostname, "tnl dev returned public hostname");
   const publicURL: `https://${string}` = `https://${hostname}`;
   if (object.publicURL !== publicURL) {
@@ -273,11 +270,9 @@ function parseAssignment(
   if (!project.runningUnderTnlDev) {
     throw new Error("tnl dev returned project metadata outside tnl dev");
   }
-  const assignmentNamespace =
-    object.service === null
-      ? project.memberNamespace
-      : project.services[object.service]?.memberNamespace;
-  if (assignmentNamespace !== memberNamespace) {
+  const projectNamespace =
+    object.service === null ? project.namespace : project.services[object.service]?.namespace;
+  if (projectNamespace !== responseNamespace) {
     throw new Error("tnl dev returned inconsistent project metadata");
   }
   if (object.service !== null && project.services[object.service] === undefined) {
@@ -291,7 +286,7 @@ function parseAssignment(
     ...bootstrap,
     framework,
     hostname,
-    memberNamespace,
+    namespace: responseNamespace,
     project,
     publicURL,
     service: object.service,
@@ -321,7 +316,7 @@ function parseProjectDocumentValue(
   const object = record(value, description);
   exactKeys(
     object,
-    ["memberNamespace", "runningUnderTnlDev", "serviceDirectories", "services", "version"],
+    ["namespace", "runningUnderTnlDev", "serviceDirectories", "services", "version"],
     description,
   );
   if (object.version !== 1) {
@@ -334,7 +329,7 @@ function parseProjectDocumentValue(
     throw new Error(`${description} cannot be marked as running under tnl dev`);
   }
   const project = parseProjectMetadata(
-    { memberNamespace: object.memberNamespace, services: object.services },
+    { namespace: object.namespace, services: object.services },
     description,
   );
   const directoryValues = record(object.serviceDirectories, `${description} service directories`);
@@ -362,7 +357,7 @@ function parseProjectDocumentValue(
 }
 
 function projectMetadata(document: ProjectDocument): ProjectMetadata {
-  return Object.freeze({ memberNamespace: document.memberNamespace, services: document.services });
+  return Object.freeze({ namespace: document.namespace, services: document.services });
 }
 
 function selectService(document: ProjectDocument, cwd: string): string | null {

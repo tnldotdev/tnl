@@ -28,7 +28,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	if err := tunnel.SetRoute(t.Context(), "route_0123456789abcdef0123456789abcdef", "route.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), "public_url_0123456789abcdef0123456789abcdef", "route.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetReady(t.Context(), "https://route.example", 1); err != nil {
@@ -56,9 +56,9 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		"total", "starting", "provisioning", "ready", "draining", "stale")
 	tunnels := payload["tunnels"].([]any)
 	assertJSONKeys(t, tunnels[0].(map[string]any),
-		"tunnel_id", "command", "state", "process_id", "server", "project", "service", "route_id", "route_version",
+		"tunnel_id", "command", "state", "process_id", "server", "project", "service", "public_url_id", "publish_run_number",
 		"hostname", "public_url", "target", "started_at", "updated_at", "heartbeat_at", "lease_expires_at")
-	if tunnels[0].(map[string]any)["route_version"] != float64(1) || tunnels[0].(map[string]any)["service"] != "web" {
+	if tunnels[0].(map[string]any)["publish_run_number"] != float64(1) || tunnels[0].(map[string]any)["service"] != "web" {
 		t.Fatalf("tunnel = %v", tunnels[0])
 	}
 
@@ -71,7 +71,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		"+--[ tnl status ]-- 1 local tunnel ",
 		"|-- ready ",
 		"https://route.example",
-		tunnel.ID(),
+		"tunnel              " + tunnel.ID()[:len(tunnel.ID())-1],
 		"+-- 1 ready ",
 	} {
 		if !strings.Contains(human, fragment) {

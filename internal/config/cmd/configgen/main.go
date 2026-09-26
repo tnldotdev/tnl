@@ -95,7 +95,7 @@ func servicesSchema() *jsonschema.Schema {
 	properties.Set("server", &jsonschema.Schema{Type: "string", Description: "Control URL override for this service."})
 	properties.Set("team", &jsonschema.Schema{Type: "string", Description: "Team override for this service."})
 	tunnel := tunnelSchema()
-	tunnel.Description = "Route and tunnel overrides for this service."
+	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
 	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
 	properties.Set("dev", &jsonschema.Schema{Ref: "#/$defs/Dev"})
@@ -111,8 +111,8 @@ func servicesSchema() *jsonschema.Schema {
 
 func tunnelSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("host", &jsonschema.Schema{Type: "string", Description: "Complete route hostname to publish."})
-	properties.Set("subdomain", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the current member namespace."})
+	properties.Set("host", &jsonschema.Schema{Type: "string", Description: "Complete public URL hostname to publish."})
+	properties.Set("subdomain", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the current namespace."})
 	properties.Set("allow_ip", &jsonschema.Schema{
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, MaxItems: integerPointer(63), UniqueItems: true,
 		Description: "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.",

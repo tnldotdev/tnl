@@ -13,12 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"testing/fstest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -250,88 +246,6 @@ func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 	got, err := reopened.Pending(t.Context(), "route.example")
 	if err != nil || !bytes.Equal(pending.CSRDER, got.CSRDER) {
 		t.Fatalf("shared CSR recovery = %v", err)
-	}
-}
-
-func TestCertificatePlanMigrationPreservesAuthenticationAndSettings(t *testing.T) {
-	root, err := prepareRoot(filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	schema, err := migrationFiles.ReadFile("migrations/00001_schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := tnlsqlite.Open(t.Context(), DatabasePath(root), fstest.MapFS{"00001_schema.sql": &fstest.MapFile{Data: schema}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	locks, err := privateSubdir(root, "locks")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := &Database{root: root, locksDir: locks, db: db, queries: clientstatedb.New(db), now: time.Now}
-	defer legacy.Close()
-	store, err := legacy.Server(t.Context(), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	refresh, _, _, err := credentials.NewRefreshToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := ControlSession{AuthorityEndpoint: "https://accounts.example", SessionID: "control_session_0123456789abcdef0123456789abcdef", AccessToken: access.String(), AccessExpiresAt: time.Now().Add(time.Hour), RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour)}
-	if err := store.SaveControlSession(t.Context(), session); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.SaveServer(t.Context(), "https://server.example"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveSelectedTeam(t.Context(), "team_1"); err != nil {
-		t.Fatal(err)
-	}
-	installation, err := legacy.InstallationID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	salt, err := legacy.WorktreeHashSalt(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.ExecContext(t.Context(), `INSERT INTO route_certificates (server_origin, route_id, phase, hostname, key_der, csr_der, issuance_id, route_version, installed, updated_at) VALUES ('https://server.example', ?, 'pending', 'route.example', x'01', x'02', '', 0, 0, 1)`, testRouteID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	migrated := testStore(t, root, "https://server.example")
-	got, found, err := migrated.ControlSession(t.Context())
-	if err != nil || !found || got.AccessToken != session.AccessToken || got.RefreshToken != session.RefreshToken || got.SessionID != session.SessionID {
-		t.Fatalf("migrated authentication: found=%t error=%v", found, err)
-	}
-	if got, _, err := migrated.SelectedTeam(t.Context()); err != nil || got != "team_1" {
-		t.Fatalf("migrated team = %q, %v", got, err)
-	}
-	if got, _, err := migrated.database.SavedServer(t.Context()); err != nil || got != "https://server.example" {
-		t.Fatalf("migrated server = %q, %v", got, err)
-	}
-	if got, err := migrated.database.InstallationID(t.Context()); err != nil || got != installation {
-		t.Fatalf("migrated installation = %q, %v", got, err)
-	}
-	if got, err := migrated.database.WorktreeHashSalt(t.Context()); err != nil || got != salt {
-		t.Fatalf("migrated salt changed: %v", err)
-	}
-	var count int
-	if err := migrated.database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM certificate_material`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("legacy material migrated without plan provenance: count=%d error=%v", count, err)
-	}
-	if err := migrated.database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE name = 'route_certificates'`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("legacy material was not invalidated: count=%d error=%v", count, err)
 	}
 }
 

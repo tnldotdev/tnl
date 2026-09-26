@@ -60,19 +60,19 @@ func waitForIngressRoutingCurrentWithin(t *testing.T, database *sql.DB, expected
 	})
 }
 
-func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, routeID string, routeVersion uint64, expected int) {
+func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, expected int) {
 	t.Helper()
 	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 		var ready int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*) FROM control.route_session_connections AS connections
+			SELECT count(*) FROM control.publish_run_connections AS connections
 			JOIN control.relay_leases AS leases
 			  ON leases.relay_id = connections.connected_relay_id
 			 AND leases.relay_run_id = connections.connected_relay_run_id
 			 AND leases.relay_lease_revision = connections.connected_relay_lease_revision
-			WHERE connections.route_id = $1 AND connections.route_version = $2
+			WHERE connections.public_url_id = $1 AND connections.publish_run_number = $2
 			  AND connections.state = 'ready' AND NOT leases.draining AND leases.lease_expires_at > now()
-		`, routeID, routeVersion).Scan(&ready)
+		`, publicURLID, publishRunNumber).Scan(&ready)
 		return err == nil && ready == expected, err
 	})
 }
@@ -107,14 +107,14 @@ type splitConnectionState struct {
 	connectedRelayRunID   string
 }
 
-func readSplitConnectionState(t *testing.T, database *sql.DB, routeID string, routeVersion uint64, relayServiceID string) splitConnectionState {
+func readSplitConnectionState(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, relayServiceID string) splitConnectionState {
 	t.Helper()
 	var state splitConnectionState
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT publisher_connection_id, connection_assignment_revision, connected_relay_run_id
-		FROM control.route_session_connections
-		WHERE route_id = $1 AND route_version = $2 AND relay_service_id = $3 AND state = 'ready'
-	`, routeID, routeVersion, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
+		FROM control.publish_run_connections
+		WHERE public_url_id = $1 AND publish_run_number = $2 AND relay_service_id = $3 AND state = 'ready'
+	`, publicURLID, publishRunNumber, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -163,13 +163,13 @@ func readSplitIngressLeaseResult(ctx context.Context, database *sql.DB, ingressI
 	return lease
 }
 
-func assertSplitRoutePlacement(t *testing.T, database *sql.DB, routeID string, routeVersion uint64) {
+func assertSplitRoutePlacement(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64) {
 	t.Helper()
 	var connections, services, relays int
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT count(*), count(DISTINCT relay_service_id), count(DISTINCT connected_relay_id)
-		FROM control.route_session_connections WHERE route_id = $1 AND route_version = $2 AND state = 'ready'
-	`, routeID, routeVersion).Scan(&connections, &services, &relays); err != nil {
+		FROM control.publish_run_connections WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'ready'
+	`, publicURLID, publishRunNumber).Scan(&connections, &services, &relays); err != nil {
 		t.Fatal(err)
 	}
 	if connections != 2 || services != 2 || relays != 2 {
@@ -177,28 +177,28 @@ func assertSplitRoutePlacement(t *testing.T, database *sql.DB, routeID string, r
 	}
 }
 
-func assertRouteVersion(t *testing.T, database *sql.DB, routeID string, routeVersion uint64) {
+func assertPublishRunNumber(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64) {
 	t.Helper()
 	var current int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT route_version
-		FROM control.route_sessions WHERE route_id = $1 AND closed_at IS NULL`, routeID).Scan(&current); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT publish_run_number
+		FROM control.publish_runs WHERE public_url_id = $1 AND closed_at IS NULL`, publicURLID).Scan(&current); err != nil {
 		t.Fatal(err)
 	}
-	if uint64(current) != routeVersion {
-		t.Fatalf("route version = %d, want %d", current, routeVersion)
+	if uint64(current) != publishRunNumber {
+		t.Fatalf("publish run number = %d, want %d", current, publishRunNumber)
 	}
 }
 
-func integrationRouteOrderCount(t *testing.T, database *sql.DB, routeID string) int {
+func integrationRouteOrderCount(t *testing.T, database *sql.DB, publicURLID string) int {
 	t.Helper()
 	var count int
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.acme_orders WHERE route_id = $1`, routeID).Scan(&count); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.acme_orders WHERE public_url_id = $1`, publicURLID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
 }
 
-func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, routeID string, routeVersion uint64) {
+func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, publicURLID string, publishRunNumber uint64) {
 	t.Helper()
 	var reportCount int
 	var allFinal bool
@@ -209,7 +209,7 @@ func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, r
 				final, connection_attempts, policy_denials, capacity_denials,
 				visitor_stream_open_failures, successful_streams, ingress_bytes, egress_bytes
 			FROM control.ingress_usage_reports
-			WHERE route_id = $1 AND route_version = $2
+			WHERE public_url_id = $1 AND publish_run_number = $2
 			ORDER BY bucket_start, report_revision DESC
 		)
 		SELECT count(*), coalesce(bool_and(final), false),
@@ -217,7 +217,7 @@ func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, r
 			coalesce(sum(capacity_denials), 0), coalesce(sum(visitor_stream_open_failures), 0),
 			coalesce(sum(successful_streams), 0), coalesce(sum(ingress_bytes), 0), coalesce(sum(egress_bytes), 0)
 		FROM latest
-	`, routeID, routeVersion).Scan(&reportCount, &allFinal, &attempts, &policyDenials, &capacityDenials, &publisherFailures, &successful, &ingressBytes, &egressBytes); err != nil {
+	`, publicURLID, publishRunNumber).Scan(&reportCount, &allFinal, &attempts, &policyDenials, &capacityDenials, &publisherFailures, &successful, &ingressBytes, &egressBytes); err != nil {
 		t.Fatal(err)
 	}
 	if reportCount == 0 || !allFinal || attempts < 1 || successful < 1 || ingressBytes == 0 || egressBytes == 0 || policyDenials != 0 || capacityDenials != 0 || publisherFailures != 0 {
@@ -227,28 +227,28 @@ func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, r
 	var bucketCount int
 	var through time.Time
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), max(bucket_end)
-		FROM control.route_usage_buckets WHERE route_id = $1 AND route_version = $2`, routeID, routeVersion).Scan(&bucketCount, &through); err != nil {
+		FROM control.public_url_usage_buckets WHERE public_url_id = $1 AND publish_run_number = $2`, publicURLID, publishRunNumber).Scan(&bucketCount, &through); err != nil {
 		t.Fatal(err)
 	}
 	if bucketCount == 0 {
-		t.Fatal("route usage bucket was not created")
+		t.Fatal("public URL usage bucket was not created")
 	}
 	state, err := controlstate.Open(integrationOperationContext(t), databaseURL, testStorageKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	finalized, err := state.FinalizeRouteUsageBuckets(integrationOperationContext(t), through, through)
+	finalized, err := state.FinalizePublicURLUsageBuckets(integrationOperationContext(t), through, through)
 	if err != nil || finalized != bucketCount {
-		t.Fatalf("route usage finalization = %d, %v; want %d", finalized, err, bucketCount)
+		t.Fatalf("public URL usage finalization = %d, %v; want %d", finalized, err, bucketCount)
 	}
 	var allFinalized, allComplete bool
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT coalesce(bool_and(finalized), false), coalesce(bool_and(complete), false)
-		FROM control.route_usage_buckets WHERE route_id = $1 AND route_version = $2`, routeID, routeVersion).Scan(&allFinalized, &allComplete); err != nil {
+		FROM control.public_url_usage_buckets WHERE public_url_id = $1 AND publish_run_number = $2`, publicURLID, publishRunNumber).Scan(&allFinalized, &allComplete); err != nil {
 		t.Fatal(err)
 	}
 	if !allFinalized || !allComplete {
-		t.Fatalf("route usage buckets = finalized %t, complete %t", allFinalized, allComplete)
+		t.Fatalf("public URL usage buckets = finalized %t, complete %t", allFinalized, allComplete)
 	}
 }
 

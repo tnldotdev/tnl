@@ -65,17 +65,17 @@ type Config struct {
 	ServerDomain            string `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname         string `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
 	PrivateControlAddress   string `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
-	ManagedDeploymentDomain string `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for member namespaces."`
+	ManagedDeploymentDomain string `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for namespaces."`
 
-	ControlTLSCertificateFile string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static control certificate chain."`
-	ControlTLSPrivateKeyFile  string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static control private key."`
-	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
-	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
-	ACMEDirectoryURL          string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
-	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
-	RouteCertificateWorkers   int    `name:"route-certificate-workers" env:"TNLD_ROUTE_CERTIFICATE_WORKERS" default:"4" help:"Concurrent route certificate workers per control process (1-8)."`
+	ControlTLSCertificateFile   string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static control certificate chain."`
+	ControlTLSPrivateKeyFile    string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static control private key."`
+	RelayTLSCertificateFile     string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
+	RelayTLSPrivateKeyFile      string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
+	ACMEDirectoryURL            string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
+	ACMEEmail                   string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms             bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile                 string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
+	PublicURLCertificateWorkers int    `name:"public-url-certificate-workers" env:"TNLD_PUBLIC_URL_CERTIFICATE_WORKERS" default:"4" help:"Concurrent public URL certificate workers per control process (1-8)."`
 
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
@@ -86,14 +86,14 @@ type Config struct {
 	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
 	RefreshTokenLifetime time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 
-	RouteUsageURL   string `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
-	RouteUsageToken string `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
+	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
+	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."`
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
-	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned route records; repeat for each address."`
-	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned route records; repeat for each address."`
+	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned public URL records; repeat for each address."`
+	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned public URL records; repeat for each address."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
@@ -111,12 +111,12 @@ type Config struct {
 	SourceConnectionRate             float64       `name:"source-connection-rate" env:"TNLD_SOURCE_CONNECTION_RATE" default:"50" help:"New visitor connections per second per source IPv4 address or IPv6 /64, per ingress process."`
 	SourceConnectionBurst            int           `name:"source-connection-burst" env:"TNLD_SOURCE_CONNECTION_BURST" default:"200" help:"Visitor connection burst allowance per source IPv4 address or IPv6 /64, per ingress process."`
 	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"1024" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections."`
-	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"1024" help:"Maximum concurrent route certificate validation connections per ingress process."`
-	ChallengeHostnameConnectionLimit int           `name:"challenge-hostname-connection-limit" env:"TNLD_CHALLENGE_HOSTNAME_CONNECTION_LIMIT" default:"8" help:"Maximum concurrent route certificate validation connections per hostname on each ingress process."`
+	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"1024" help:"Maximum concurrent public URL certificate validation connections per ingress process."`
+	ChallengeHostnameConnectionLimit int           `name:"challenge-hostname-connection-limit" env:"TNLD_CHALLENGE_HOSTNAME_CONNECTION_LIMIT" default:"8" help:"Maximum concurrent public URL certificate validation connections per hostname on each ingress process."`
 	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"1024" help:"Maximum control connections handed off by standalone, held until close."`
 	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"4096" help:"Maximum relay TCP connections handed off by standalone, held until close."`
 	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
-	RouteConnectionLimit             int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
+	PublicURLConnectionLimit         int64         `name:"public-url-connection-limit" env:"TNLD_PUBLIC_URL_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per public URL."`
 	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"4000" help:"Maximum publisher connections held by one relay process."`
 	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
 	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress traffic or the control API."`
@@ -199,10 +199,10 @@ func (c Config) Validate() error {
 		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
 		return errors.New("ingress admission capacities must be positive")
 	}
-	if c.RouteCertificateWorkers < 1 || c.RouteCertificateWorkers > 8 {
-		return errors.New("route certificate workers must be between 1 and 8")
+	if c.PublicURLCertificateWorkers < 1 || c.PublicURLCertificateWorkers > 8 {
+		return errors.New("public URL certificate workers must be between 1 and 8")
 	}
-	if c.VisitorConnectionLimit <= 0 || c.RouteConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
+	if c.VisitorConnectionLimit <= 0 || c.PublicURLConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
 		return errors.New("connection and stream capacities must be positive")
 	}
@@ -261,7 +261,7 @@ func (c Config) validateControl() error {
 	if err := c.validateACME(); err != nil {
 		return err
 	}
-	if err := c.validateRouteUsage(); err != nil {
+	if err := c.validatePublicURLUsage(); err != nil {
 		return err
 	}
 	if err := c.validateDNSAutomation(); err != nil {
@@ -302,17 +302,17 @@ func (c Config) validateACME() error {
 	return nil
 }
 
-func (c Config) validateRouteUsage() error {
-	if (c.RouteUsageURL == "") != (c.RouteUsageToken == "") {
-		return errors.New("route usage URL and token must be configured together")
+func (c Config) validatePublicURLUsage() error {
+	if (c.PublicURLUsageURL == "") != (c.PublicURLUsageToken == "") {
+		return errors.New("public URL usage URL and token must be configured together")
 	}
-	if c.RouteUsageURL == "" {
+	if c.PublicURLUsageURL == "" {
 		return nil
 	}
-	endpoint, err := url.Parse(c.RouteUsageURL)
+	endpoint, err := url.Parse(c.PublicURLUsageURL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" ||
 		endpoint.Scheme != "https" && (endpoint.Scheme != "http" || !isLoopbackHost(endpoint.Hostname())) {
-		return errors.New("route usage URL must be an HTTPS base URL or an HTTP base URL on this computer")
+		return errors.New("public URL usage URL must be an HTTPS base URL or an HTTP base URL on this computer")
 	}
 	return nil
 }
@@ -327,11 +327,11 @@ func (c Config) validateDNSAutomation() error {
 		{"managed", c.Route53ManagedZoneID}, {"server", c.Route53ServerZoneID},
 	} {
 		if zone.id != "" && (strings.TrimSpace(zone.id) != zone.id || strings.ContainsAny(zone.id, "/ ")) {
-			return fmt.Errorf("route 53 %s zone ID must be a canonical bare hosted zone ID", zone.name)
+			return fmt.Errorf("invalid Route 53 %s zone ID: expected a canonical bare hosted zone ID", zone.name)
 		}
 	}
 	if !validDNSLabel(c.Route53Region) {
-		return errors.New("route 53 region is invalid")
+		return errors.New("invalid Route 53 region")
 	}
 	if c.Route53ManagedZoneID == "" && (len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0) {
 		return errors.New("ingress IP addresses require a Route 53 managed zone ID")

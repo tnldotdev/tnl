@@ -93,7 +93,7 @@ func TestLoadPostsDNSReadinessFailureWithoutMeasuringTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Put(ctx, "routes", []string{"https://missing.example.test"}); err != nil {
+	if err := client.Put(ctx, "public_urls", []string{"https://missing.example.test"}); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -116,7 +116,7 @@ func TestLoadPostsDNSReadinessFailureWithoutMeasuringTraffic(t *testing.T) {
 	}()
 	command := loadCommand{
 		workerCommand: workerCommand{CellID: "cell-1", WorkerCount: 1, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret", Timeout: time.Minute},
-		Routes:        1, ResolverAddress: listener.Addr().String(),
+		PublicURLs:    1, ResolverAddress: listener.Addr().String(),
 	}
 	if err := command.run(ctx); err == nil {
 		t.Fatal("DNS setup failure unexpectedly passed")

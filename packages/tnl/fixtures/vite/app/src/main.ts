@@ -9,7 +9,7 @@ if (app !== null) {
     "Vite fixture",
     `url:${tnl?.services.api?.url}`,
     `hostname:${tnl?.services.api?.hostname}`,
-    `namespace:${tnl?.memberNamespace}`,
+    `namespace:${tnl?.namespace}`,
     `under-dev:${tnl?.runningUnderTnlDev}`,
   ].join(" ");
 }

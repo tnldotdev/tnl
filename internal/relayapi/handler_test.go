@@ -162,7 +162,7 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 		}, nil
 	}}
 	body := relayv1.PublisherConnectionClaim{
-		RouteSessionId: "session-1", RouteId: "route-1", RouteVersion: 3,
+		PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 3,
 		PublisherConnectionId: "connection-1", ConnectionSlot: 1, ConnectionAssignmentRevision: 2,
 		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1",
 		RelayLeaseRevision: 4, ClaimId: "claim-1", PublisherConnectionCredential: credential.String(),
@@ -172,7 +172,7 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got.RouteSessionID != "session-1" || got.RouteID != "route-1" || got.RouteVersion != 3 ||
+	if got.PublishRunID != "session-1" || got.PublicURLID != "route-1" || got.PublishRunNumber != 3 ||
 		got.PublisherConnectionID != "connection-1" || got.ConnectionSlot != 1 ||
 		got.ConnectionAssignmentRevision != 2 || got.ConnectionAssignmentIdentity.RelayServiceID != "relay-service-1" ||
 		got.RelayID != "relay-1" || got.RelayRunID != "run-1" || got.RelayLeaseRevision != 4 ||
@@ -214,7 +214,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 				return controlstate.ClaimedPublisherConnection{}, test.err
 			}}
 			body := relayv1.PublisherConnectionClaim{
-				RouteSessionId: "session-1", RouteId: "route-1", RouteVersion: 1,
+				PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 1,
 				PublisherConnectionId: "connection-1", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 				RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1",
 				RelayLeaseRevision: 1, ClaimId: "claim-1", PublisherConnectionCredential: credential.String(),

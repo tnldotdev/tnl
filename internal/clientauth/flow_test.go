@@ -491,8 +491,8 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
 				switch request.URL.Path {
 				case "/v1/auth/refresh":
 					return jsonResponse(200, issued), nil
-				case "/v1/routes/route_1":
-					return jsonResponse(200, controlv1.Route{Id: "route_1", CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000"}), nil
+				case "/v1/public-urls/public_url_1":
+					return jsonResponse(200, controlv1.PublicURL{Id: "public_url_1", CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000"}), nil
 				case "/v1/identity":
 					return jsonResponse(200, authorityv1.IdentityContext{Identity: authorityv1.Identity{Id: "identity_1", DisplayName: "Test"}, PersonalTeamId: "team_1"}), nil
 				default:
@@ -504,9 +504,9 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			route, err := client.Control.GetRoute(t.Context(), "route_1")
-			if err != nil || route.Id != "route_1" || route.CanonicalHostname != "demo.example" || route.Target != "http://127.0.0.1:3000" {
-				t.Fatalf("authenticated route: %#v, %v", route, err)
+			route, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
+			if err != nil || route.Id != "public_url_1" || route.CanonicalHostname != "demo.example" || route.Target != "http://127.0.0.1:3000" {
+				t.Fatalf("authenticated public_url: %#v, %v", route, err)
 			}
 			identity, err := client.Authority.IdentityContext(t.Context())
 			if err != nil || identity.Identity.Id != "identity_1" || identity.PersonalTeamId != "team_1" {
@@ -520,7 +520,7 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
 			if len(requests) != count {
 				t.Fatalf("requests=%d want=%d", len(requests), count)
 			}
-			assertAuthRequest(t, requests[count-2], http.MethodGet, testControlOrigin+"/v1/routes/route_1", want.AccessToken, nil)
+			assertAuthRequest(t, requests[count-2], http.MethodGet, testControlOrigin+"/v1/public-urls/public_url_1", want.AccessToken, nil)
 			assertAuthRequest(t, requests[count-1], http.MethodGet, testAuthorityOrigin+"/v1/identity", want.AccessToken, nil)
 			if refresh {
 				assertAuthRequest(t, requests[1], http.MethodPost, testAuthorityOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
@@ -591,10 +591,10 @@ func TestExplicitAccessTokenDoesNotUseOrChangeSavedLogin(t *testing.T) {
 			old := storedSession(issuedSession(t))
 			explicit := issuedSession(t).AccessToken
 			f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
-				if request.URL.Path != "/v1/routes/route_1" {
+				if request.URL.Path != "/v1/public-urls/public_url_1" {
 					return nil, errors.New("unexpected authentication request")
 				}
-				return jsonResponse(200, controlv1.Route{Id: "route_1"}), nil
+				return jsonResponse(200, controlv1.PublicURL{Id: "public_url_1"}), nil
 			})
 			f.save(t, old)
 			config := f.config
@@ -612,15 +612,15 @@ func TestExplicitAccessTokenDoesNotUseOrChangeSavedLogin(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				route, err := client.Control.GetRoute(t.Context(), "route_1")
-				if err != nil || route.Id != "route_1" {
-					t.Fatalf("explicit authenticated route: %v", err)
+				route, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
+				if err != nil || route.Id != "public_url_1" {
+					t.Fatalf("explicit authenticated public_url: %v", err)
 				}
 				requests := f.transport.snapshot()
 				if len(requests) != 2 {
 					t.Fatalf("requests=%d", len(requests))
 				}
-				assertAuthRequest(t, requests[1], http.MethodGet, testControlOrigin+"/v1/routes/route_1", explicit, nil)
+				assertAuthRequest(t, requests[1], http.MethodGet, testControlOrigin+"/v1/public-urls/public_url_1", explicit, nil)
 			}
 			f.assertSession(t, old)
 			if _, found, err := f.config.State.SavedServer(t.Context()); found || err != nil {

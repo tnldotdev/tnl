@@ -34,10 +34,10 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayTLSPrivateKeyFile:    relayCertificate.privateKeyFile,
 		ACMEDirectoryURL:          acmeServer.URL + "/directory", ACMEEmail: "operator@example.test",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", LoginToken: testLoginToken,
-		RouteCertificateWorkers: 4,
-		StorageKey:              testStorageKey,
-		AccessTokenLifetime:     5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
+		PublicURLCertificateWorkers: 4,
+		StorageKey:                  testStorageKey,
+		AccessTokenLifetime:         5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		VisitorConnectionLimit: 100, PublicURLConnectionLimit: 10, PublisherConnectionLimit: 10,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
@@ -70,7 +70,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 			t.Errorf("standalone metrics missing %q", want)
 		}
 	}
-	if strings.Contains(metricsText, "tnl_routes") {
+	if strings.Contains(metricsText, "tnl_public_urls") {
 		t.Error("standalone metrics retained the unwired route family")
 	}
 

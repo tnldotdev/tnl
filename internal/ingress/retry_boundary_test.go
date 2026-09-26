@@ -21,7 +21,7 @@ func TestIngressRetryBoundary(t *testing.T) {
 		t.Run(fmt.Sprintf("visitor_bytes=%d", committed), func(t *testing.T) {
 			first := newFailAfterProxyBackend(t, committed)
 			fallback := newTLSBackend(t)
-			_, address := startIngress(t, routeConfig(first, fallback))
+			_, address := startIngress(t, publicURLConfig(first, fallback))
 			client := ingressClient(t, address, "route.example", "")
 			err := client.Handshake()
 			if committed != 0 {
@@ -53,7 +53,7 @@ func TestIngressRetryBoundary(t *testing.T) {
 
 func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {
 	first, second := newTLSBackend(t), newTLSBackend(t)
-	_, address := startIngress(t, routeConfig(first, second))
+	_, address := startIngress(t, publicURLConfig(first, second))
 	for _, backend := range []*tlsBackend{first, second} {
 		client := ingressClient(t, address, "route.example", "")
 		if err := client.Handshake(); err != nil {
@@ -72,7 +72,7 @@ func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {
 func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 	first := newTLSBackend(t)
 	second := newFailAfterProxyBackend(t, 1)
-	_, address := startIngress(t, routeConfig(first, second))
+	_, address := startIngress(t, publicURLConfig(first, second))
 	client := ingressClient(t, address, "route.example", "")
 	if err := client.Handshake(); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 				}
 			}
 			fallback := newTLSBackend(t)
-			config := routeConfig(first, contextBackend{fallback})
+			config := publicURLConfig(first, contextBackend{fallback})
 			config.OpenTimeout = 2 * time.Second
 			_, address := startIngress(t, config)
 			client := ingressClient(t, address, "route.example", "")
@@ -154,7 +154,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 
 func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 	entered := make(chan struct{})
-	config := routeConfig(waitingBackend{entered: entered})
+	config := publicURLConfig(waitingBackend{entered: entered})
 	config.OpenTimeout = 2 * time.Second
 	server, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "")
@@ -178,7 +178,7 @@ func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 
 func TestIngressBothBackendsUnavailable(t *testing.T) {
 	first, second := make(chan struct{}), make(chan struct{})
-	config := routeConfig(waitingBackend{first}, waitingBackend{second})
+	config := publicURLConfig(waitingBackend{first}, waitingBackend{second})
 	config.OpenTimeout = 200 * time.Millisecond
 	_, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "")

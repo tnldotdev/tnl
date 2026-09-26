@@ -6,20 +6,20 @@ import (
 )
 
 func TestNewAndValid(t *testing.T) {
-	id, err := New("route_")
+	id, err := New("public_url_")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !Valid(id, "route_") {
+	if !Valid(id, "public_url_") {
 		t.Fatalf("generated ID is invalid: %q", id)
 	}
 	for _, invalid := range []string{
-		"route_",
-		"route_" + strings.Repeat("0", 31),
-		"route_" + strings.Repeat("0", 31) + "A",
+		"public_url_",
+		"public_url_" + strings.Repeat("0", 31),
+		"public_url_" + strings.Repeat("0", 31) + "A",
 		"session_" + strings.Repeat("0", 32),
 	} {
-		if Valid(invalid, "route_") {
+		if Valid(invalid, "public_url_") {
 			t.Fatalf("invalid ID accepted: %q", invalid)
 		}
 	}

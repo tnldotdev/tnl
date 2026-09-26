@@ -35,7 +35,7 @@ func redirectIntegrationConnector(address string, connector muxsession.Connector
 	})
 }
 
-func routeIntegrationConnector(addresses map[string]string, connector muxsession.Connector) muxsession.Connector {
+func publicURLIntegrationConnector(addresses map[string]string, connector muxsession.Connector) muxsession.Connector {
 	return muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 		address := addresses[endpoint.Address]
 		if address == "" {
@@ -117,7 +117,7 @@ func (v *integrationVisitor) requestURLContext(ctx context.Context, method, targ
 	return v.request(request)
 }
 
-func assertIntegrationRouteCertificate(t *testing.T, response *http.Response, hostname string) {
+func assertIntegrationPublicURLCertificate(t *testing.T, response *http.Response, hostname string) {
 	t.Helper()
 	if response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
 		t.Fatal("visitor response has no verified route TLS certificate")
@@ -133,7 +133,7 @@ type integrationPublishingIdentity struct {
 	state                                                   *clientstate.Store
 	routes                                                  *controlclient.Client
 	certificatePlan                                         controlv1.CertificatePlan
-	routeScope                                              controlv1.RouteScope
+	publicURLScope                                          controlv1.PublicURLScope
 }
 
 func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, controlHTTP *http.Client, hostnameLabel string, owners ...*runtimeTopology) *integrationPublishingIdentity {
@@ -199,7 +199,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	hostname := hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin, hostname: hostname, teamID: team.Id, domainID: domain.Id, membershipID: membership.Id,
-		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, routeScope: controlv1.Member,
+		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, publicURLScope: controlv1.Member,
 		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01},
 	}
 }
@@ -207,7 +207,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
 	return publisher.Config{
 		Control: i.routes, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
-		PolicyRevision: i.policyRevision, RouteScope: i.routeScope,
+		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope,
 		Hostname: i.hostname, Target: target, AllowedIPPrefixes: []string{"127.0.0.1/32"},
 		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,
 		FallbackDelay: 10 * time.Millisecond, DrainTime: time.Second,

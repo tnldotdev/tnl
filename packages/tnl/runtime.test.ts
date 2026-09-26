@@ -3,11 +3,11 @@ import { parseRuntimePayload } from "./dist/internal/runtime.js";
 import { startTestProcess } from "./test-helper/process.js";
 
 const project = {
-  memberNamespace: "member.example",
+  namespace: "member.example",
   services: {
     api: {
       hostname: "api.member.example",
-      memberNamespace: "member.example",
+      namespace: "member.example",
       url: "https://api.member.example",
     },
   },
@@ -73,14 +73,14 @@ describe("root runtime", () => {
     [
       "too many services",
       JSON.stringify({
-        memberNamespace: "member.example",
+        namespace: "member.example",
         runningUnderTnlDev: false,
         services: Object.fromEntries(
           Array.from({ length: 33 }, (_, index) => [
             `s${index}`,
             {
               hostname: `s${index}.member.example`,
-              memberNamespace: "member.example",
+              namespace: "member.example",
               url: `https://s${index}.member.example`,
             },
           ]),

@@ -33,7 +33,7 @@ func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {
 	}
 	for _, hostname := range []string{"member.example", "app.member.example"} {
 		t.Run(hostname, func(t *testing.T) {
-			route := certificateTestRoute(t, hostname, control.setup.CertificatePlan)
+			route := certificateTestPublicURL(t, hostname, control.setup.CertificatePlan)
 			if err := route.InstallCertificate(certificate); err != nil {
 				t.Fatalf("authorized namespace certificate rejected: %v", err)
 			}
@@ -47,7 +47,7 @@ func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {
 		})
 	}
 	t.Run("uncovered_depth", func(t *testing.T) {
-		route, err := NewRouteServer(RouteServerConfig{Hostname: "deep.app.member.example", Target: "http://127.0.0.1:3000", Certificate: certificate, CertificatePlan: control.setup.CertificatePlan})
+		route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "deep.app.member.example", Target: "http://127.0.0.1:3000", Certificate: certificate, CertificatePlan: control.setup.CertificatePlan})
 		if err == nil {
 			_ = route.Close()
 			t.Fatal("namespace wildcard certificate covered a deeper hostname")
@@ -57,8 +57,8 @@ func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {
 
 func TestCertificateIssuanceNamespaceCoverage(t *testing.T) {
 	control := newCertificateTestControl(t, "member.example", namespaceCertificateTestPlan())
-	issuance := controlv1.CertificateIssuance{Id: "issuance_1", RouteId: control.setup.Route.Id, RouteSessionId: control.setup.RouteSession.Id,
-		RouteVersion: 1, CertificatePlan: control.setup.CertificatePlan, State: controlv1.CertificateIssuanceStatePending}
+	issuance := controlv1.CertificateIssuance{Id: "issuance_1", PublicUrlId: control.setup.PublicUrl.Id, PublishRunId: control.setup.PublishRun.Id,
+		PublishRunNumber: 1, CertificatePlan: control.setup.CertificatePlan, State: controlv1.CertificateIssuanceStatePending}
 	for _, test := range []struct {
 		hostname string
 		valid    bool
@@ -66,7 +66,7 @@ func TestCertificateIssuanceNamespaceCoverage(t *testing.T) {
 		{"member.example", true}, {"app.member.example", true}, {"deep.app.member.example", false}, {"other.example", false},
 	} {
 		t.Run(test.hostname, func(t *testing.T) {
-			err := validateCertificateIssuance(issuance, issuance.RouteSessionId, issuance.RouteId, 1, test.hostname, issuance.Id, control.setup.CertificatePlan)
+			err := validateCertificateIssuance(issuance, issuance.PublishRunId, issuance.PublicUrlId, 1, test.hostname, issuance.Id, control.setup.CertificatePlan)
 			if (err == nil) != test.valid {
 				t.Fatalf("namespace issuance for %s: %v; want accepted = %t", test.hostname, err, test.valid)
 			}
@@ -80,9 +80,9 @@ func TestCertificateIssuanceRejectsInconsistentIdentityAndState(t *testing.T) {
 		name   string
 		change func(*controlv1.CertificateIssuance)
 	}{
-		{"session", func(i *controlv1.CertificateIssuance) { i.RouteSessionId = "session_other" }},
-		{"route", func(i *controlv1.CertificateIssuance) { i.RouteId = "route_other" }},
-		{"version", func(i *controlv1.CertificateIssuance) { i.RouteVersion++ }},
+		{"session", func(i *controlv1.CertificateIssuance) { i.PublishRunId = "session_other" }},
+		{"route", func(i *controlv1.CertificateIssuance) { i.PublicUrlId = "public_url_other" }},
+		{"version", func(i *controlv1.CertificateIssuance) { i.PublishRunNumber++ }},
 		{"issuance", func(i *controlv1.CertificateIssuance) { i.Id = "issuance_other" }},
 		{"empty_issuance", func(i *controlv1.CertificateIssuance) { i.Id = "" }},
 		{"plan_key", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.CacheKey = "another-key" }},
@@ -94,10 +94,10 @@ func TestCertificateIssuanceRejectsInconsistentIdentityAndState(t *testing.T) {
 		{"pending_with_material", func(i *controlv1.CertificateIssuance) { i.CertificatePem = pointer("invalid") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			i := controlv1.CertificateIssuance{Id: "issuance_1", RouteId: control.setup.Route.Id, RouteSessionId: control.setup.RouteSession.Id,
-				RouteVersion: 1, CertificatePlan: control.setup.CertificatePlan, State: controlv1.CertificateIssuanceStatePending}
+			i := controlv1.CertificateIssuance{Id: "issuance_1", PublicUrlId: control.setup.PublicUrl.Id, PublishRunId: control.setup.PublishRun.Id,
+				PublishRunNumber: 1, CertificatePlan: control.setup.CertificatePlan, State: controlv1.CertificateIssuanceStatePending}
 			test.change(&i)
-			if err := validateCertificateIssuance(i, control.setup.RouteSession.Id, control.setup.Route.Id, 1, "member.example", "issuance_1", control.setup.CertificatePlan); err == nil {
+			if err := validateCertificateIssuance(i, control.setup.PublishRun.Id, control.setup.PublicUrl.Id, 1, "member.example", "issuance_1", control.setup.CertificatePlan); err == nil {
 				t.Fatal("inconsistent issuance was accepted")
 			}
 		})
@@ -128,7 +128,7 @@ func TestCertificateTransactionRejectsInvalidMaterialBeforeCommit(t *testing.T) 
 			i.CertificatePem = pointer("not a certificate")
 		}},
 		{"key_mismatch", func(i *controlv1.CertificateIssuance, _ *x509.Certificate) {
-			certificate := routeTestCertificate(t, "route.example")
+			certificate := publicURLTestCertificate(t, "route.example")
 			i.CertificatePem = pointer(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})))
 		}},
 		{"validity_metadata", func(i *controlv1.CertificateIssuance, _ *x509.Certificate) {

@@ -26,7 +26,7 @@ func TestIntegrationUsageReplayPreservesPostgresTimestampPrecision(t *testing.T)
 	}
 	var attempts int64
 	var observed time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.route_usage_buckets WHERE route_id = $1`, report.RouteID).Scan(&attempts, &observed); err != nil || attempts != 1 || !observed.Equal(report.ObservedThrough.Truncate(time.Microsecond)) {
+	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.public_url_usage_buckets WHERE public_url_id = $1`, report.PublicURLID).Scan(&attempts, &observed); err != nil || attempts != 1 || !observed.Equal(report.ObservedThrough.Truncate(time.Microsecond)) {
 		t.Fatalf("replayed usage attempts=%d observed=%s: %v", attempts, observed, err)
 	}
 }
@@ -54,10 +54,10 @@ func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 			if lock == "route" {
 				// Simulate an identity-changing/deleting writer. Session operations
 				// deliberately allow usage's KEY SHARE route references now.
-				_, err = gate.Exec(ctx, `SELECT id FROM control.routes WHERE id = $1 FOR UPDATE`, older.RouteID)
+				_, err = gate.Exec(ctx, `SELECT id FROM control.public_urls WHERE id = $1 FOR UPDATE`, older.PublicURLID)
 			} else {
-				_, err = controlstatedb.New(gate).LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
-					RouteID: older.RouteID, RouteVersion: int64(older.RouteVersion),
+				_, err = controlstatedb.New(gate).LockPublishRunForUsage(ctx, controlstatedb.LockPublishRunForUsageParams{
+					PublicURLID: older.PublicURLID, PublishRunNumber: int64(older.PublishRunNumber),
 				})
 			}
 			if err != nil {
@@ -123,10 +123,10 @@ func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 			if err := database.pool.QueryRow(ctx, `
 				SELECT buckets.connection_attempts, buckets.policy_denials, sessions.policy_denials, buckets.bucket_revision,
 				       (SELECT count(*) FROM control.ingress_usage_reports)
-				FROM control.route_usage_buckets AS buckets
-				JOIN control.route_sessions AS sessions USING (route_id, route_version)
-				WHERE buckets.route_id = $1 AND buckets.route_version = $2 AND buckets.bucket_start = $3
-			`, next.RouteID, int64(next.RouteVersion), next.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 6 || denials != 3 || sessionDenials != 3 || revision != 3 || reports != 3 {
+				FROM control.public_url_usage_buckets AS buckets
+				JOIN control.publish_runs AS sessions USING (public_url_id, publish_run_number)
+				WHERE buckets.public_url_id = $1 AND buckets.publish_run_number = $2 AND buckets.bucket_start = $3
+			`, next.PublicURLID, int64(next.PublishRunNumber), next.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 6 || denials != 3 || sessionDenials != 3 || revision != 3 || reports != 3 {
 				t.Fatalf("usage after replay/new revision: attempts=%d denials=%d session denials=%d bucket revision=%d reports=%d: %v", attempts, denials, sessionDenials, revision, reports, err)
 			}
 		})
@@ -147,7 +147,7 @@ func TestIntegrationIngressUsageFinalizedReplayChecksLiveGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count, err := database.FinalizeRouteUsageBuckets(t.Context(), watermark, watermark); err != nil || count != 1 {
+	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), watermark, watermark); err != nil || count != 1 {
 		t.Fatalf("finalize bucket: count=%d: %v", count, err)
 	}
 	wrongRun, wrongRevision := lease.IngressLeaseIdentity, lease.IngressLeaseIdentity
@@ -175,17 +175,17 @@ func TestIntegrationIngressUsageFinalizedReplayChecksLiveGuards(t *testing.T) {
 	}
 	next := report
 	next.ReportRevision, next.ConnectionAttempts, next.PolicyDenials = 2, 4, 2
-	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{next}}, base.Add(62*time.Second)); !errors.Is(err, ErrRouteUsageBucketFinalized) {
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{next}}, base.Add(62*time.Second)); !errors.Is(err, ErrPublicURLUsageBucketFinalized) {
 		t.Fatalf("new revision after finalization: %v", err)
 	}
 	var attempts, denials, sessionDenials, revision, reports int64
 	if err := database.pool.QueryRow(t.Context(), `
 		SELECT buckets.connection_attempts, buckets.policy_denials, sessions.policy_denials, buckets.bucket_revision,
 		       (SELECT count(*) FROM control.ingress_usage_reports)
-		FROM control.route_usage_buckets AS buckets
-		JOIN control.route_sessions AS sessions USING (route_id, route_version)
-		WHERE buckets.route_id = $1 AND buckets.route_version = $2 AND buckets.bucket_start = $3
-	`, report.RouteID, int64(report.RouteVersion), report.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 2 || denials != 1 || sessionDenials != 1 || revision != 1 || reports != 1 {
+		FROM control.public_url_usage_buckets AS buckets
+		JOIN control.publish_runs AS sessions USING (public_url_id, publish_run_number)
+		WHERE buckets.public_url_id = $1 AND buckets.publish_run_number = $2 AND buckets.bucket_start = $3
+	`, report.PublicURLID, int64(report.PublishRunNumber), report.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 2 || denials != 1 || sessionDenials != 1 || revision != 1 || reports != 1 {
 		t.Fatalf("finalized usage changed: attempts=%d denials=%d session denials=%d bucket revision=%d reports=%d: %v", attempts, denials, sessionDenials, revision, reports, err)
 	}
 }

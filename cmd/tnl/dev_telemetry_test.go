@@ -28,7 +28,7 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 	readyRequested, allowReady := make(chan struct{}), make(chan struct{})
 	var requested sync.Once
 	fixture := testutil.NewPublishingFixture(t, testutil.PublishingHooks{
-		Ready: func(ctx context.Context, _ controlv1.RouteSessionSetup) error {
+		Ready: func(ctx context.Context, _ controlv1.PublishRunSetup) error {
 			requested.Do(func() { close(readyRequested) })
 			select {
 			case <-allowReady:
@@ -125,7 +125,7 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 	if !strings.Contains(diagnostics.String(), "next") {
 		t.Fatalf("fixture did not incorporate framework before readiness:\n%s", diagnostics.String())
 	}
-	if event.Event != "route_started" || event.Command != "dev" || event.Framework != "next" {
+	if event.Event != "publish_run_started" || event.Command != "dev" || event.Framework != "next" {
 		t.Errorf("ready telemetry = %+v; want framework next already present in ready output", event)
 	}
 	if len(events) != 0 {

@@ -13,9 +13,9 @@ import (
 )
 
 type integrationBinarySplit struct {
-	repositoryRoot, tnlPath, databaseURL, routeHost string
-	environment                                     []string
-	pebble                                          integrationPebble
+	repositoryRoot, tnlPath, databaseURL, publicURLHost string
+	environment                                         []string
+	pebble                                              integrationPebble
 }
 
 func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
@@ -41,9 +41,9 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	}), tnldPath, "migrate")
 
 	const (
-		serverDomain = "127.0.0.2.nip.io"
-		controlHost  = "control." + serverDomain
-		routeHost    = "split-binary.routes.127.0.0.1.nip.io"
+		serverDomain  = "127.0.0.2.nip.io"
+		controlHost   = "control." + serverDomain
+		publicURLHost = "split-binary.routes.127.0.0.1.nip.io"
 	)
 	root := newIntegrationTestCA(t)
 	controlCertificate := root.issueServer(t, controlHost)
@@ -134,7 +134,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 
 	return &integrationBinarySplit{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
-		routeHost: routeHost, environment: clientEnvironment, pebble: pebble}
+		publicURLHost: publicURLHost, environment: clientEnvironment, pebble: pebble}
 }
 
 func startIntegrationBinaryRelay(

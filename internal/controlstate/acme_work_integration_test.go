@@ -40,14 +40,14 @@ func TestIntegrationACMEAccount(t *testing.T) {
 }
 
 func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	request := newTestIssuanceRequest(t, f)
 	issuance, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issuance.State != "pending" || issuance.RouteSessionID != f.setup.RouteSessionID ||
-		issuance.RouteVersion != f.setup.RouteVersion || !reflect.DeepEqual(issuance.CertificatePlan.Identifiers, f.request.CertificateIdentifiers) {
+	if issuance.State != "pending" || issuance.PublishRunID != f.setup.PublishRunID ||
+		issuance.PublishRunNumber != f.setup.PublishRunNumber || !reflect.DeepEqual(issuance.CertificatePlan.Identifiers, f.request.CertificateIdentifiers) {
 		t.Fatalf("issuance = %#v", issuance)
 	}
 	repeated, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now.Add(time.Millisecond))
@@ -58,14 +58,14 @@ func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
 	if _, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now); !errors.Is(err, ErrCertificateIssuanceIdempotency) {
 		t.Fatalf("issuance idempotency: %v", err)
 	}
-	loaded, err := f.database.GetCertificateIssuance(t.Context(), issuance.ID, f.setup.RouteSessionToken, f.now)
+	loaded, err := f.database.GetCertificateIssuance(t.Context(), issuance.ID, f.setup.PublishRunToken, f.now)
 	if err != nil || !reflect.DeepEqual(loaded, issuance) {
 		t.Fatalf("loaded issuance = %#v, %v", loaded, err)
 	}
 }
 
 func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	issuance, err := database.CreateCertificateIssuance(t.Context(), newTestIssuanceRequest(t, f), now)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 	for _, kind := range []string{"lease", "order_revision", "authorization_revision"} {
 		t.Run(kind, func(t *testing.T) {
-			f := newRouteSessionFixture(t)
+			f := newPublishRunFixture(t)
 			prepared := createPlanIssuanceWork(t, f.database, f.now, f.authentication(), f.certificatePlan(), false, nil)
 			work, found, err := f.database.ClaimACMEOrderWork(t.Context(), "stale-test", f.now, time.Minute)
 			if err != nil || !found || work.ID != prepared.ID {
@@ -133,13 +133,13 @@ func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 }
 
 func TestIntegrationTLSChallengeRoutingAndFailedCleanup(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ingress := registerTestIngress(t, database, now)
 	claimTestConnection(t, f, 0, now)
 	work := createPlanIssuanceWork(t, database, now, f.authentication(), f.certificatePlan(), false, nil)
 	for range 2 {
-		presented, err := database.MarkCertificateChallengeReady(t.Context(), work.ID, f.setup.RouteSessionToken, now)
+		presented, err := database.MarkCertificateChallengeReady(t.Context(), work.ID, f.setup.PublishRunToken, now)
 		if err != nil || len(presented.Challenges) != 1 || presented.Challenges[0].Token != work.Authorizations[0].ChallengeToken {
 			t.Fatalf("presented challenge = %#v, %v", presented, err)
 		}
@@ -164,7 +164,7 @@ func TestIntegrationTLSChallengeRoutingAndFailedCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		removed, err := database.MarkCertificateChallengeRemoved(t.Context(), work.ID, f.setup.RouteSessionToken, now)
+		removed, err := database.MarkCertificateChallengeRemoved(t.Context(), work.ID, f.setup.PublishRunToken, now)
 		if err != nil || len(removed.Challenges) != 0 {
 			t.Fatalf("failed challenge cleanup = %#v, %v", removed, err)
 		}
@@ -187,14 +187,14 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if err != nil || len(challenge.Presentations) != 1 || !challenge.Presentations[0].Active || challenge.PresentationReference != work.Authorizations[0].PresentationReference {
 		t.Fatalf("DNS challenge = %#v, %v", challenge, err)
 	}
-	wrong, _, _, err := credentials.NewRouteSessionToken()
+	wrong, _, _, err := credentials.NewPublishRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CloseRouteSession(t.Context(), authentication.RouteSessionID, wrong, now); !errors.Is(err, ErrRouteSessionCredential) {
+	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, wrong, now); !errors.Is(err, ErrPublishRunCredential) {
 		t.Fatalf("wrong close credential: %v", err)
 	}
-	if err := database.CloseRouteSession(t.Context(), authentication.RouteSessionID, authentication.RouteSessionToken, now); err != nil {
+	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
 		t.Fatal(err)
 	}
 	cleanup, found, err := database.ClaimACMEOrderWork(t.Context(), "cleanup", now, time.Minute)
@@ -211,7 +211,7 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if _, err := database.SaveACMEOrderWork(t.Context(), cleanup, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CloseRouteSession(t.Context(), authentication.RouteSessionID, authentication.RouteSessionToken, now); err != nil {
+	if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
 		t.Fatalf("close replay: %v", err)
 	}
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "completed", now.Add(time.Second), time.Minute); err != nil || found {
@@ -219,7 +219,7 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	}
 }
 
-func newTestIssuanceRequest(t *testing.T, f routeSessionFixture) CreateCertificateIssuanceRequest {
+func newTestIssuanceRequest(t *testing.T, f publishRunFixture) CreateCertificateIssuanceRequest {
 	t.Helper()
 	account, err := f.database.EnsureACMEAccount(t.Context(), "https://acme.example.test/directory", "operator@example.test", f.now)
 	if err != nil {

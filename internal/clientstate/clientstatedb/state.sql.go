@@ -243,8 +243,8 @@ INSERT INTO local_tunnels (
     hostname,
     target,
     framework,
-    route_id,
-    route_version,
+    public_url_id,
+    publish_run_number,
     state,
     started_at,
     updated_at,
@@ -300,7 +300,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -325,8 +325,8 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
-			&i.RouteID,
-			&i.RouteVersion,
+			&i.PublicURLID,
+			&i.PublishRunNumber,
 			&i.State,
 			&i.StartedAt,
 			&i.UpdatedAt,
@@ -349,7 +349,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -374,8 +374,8 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
-			&i.RouteID,
-			&i.RouteVersion,
+			&i.PublicURLID,
+			&i.PublishRunNumber,
 			&i.State,
 			&i.StartedAt,
 			&i.UpdatedAt,
@@ -486,46 +486,46 @@ func (q *Queries) SetTunnelDraining(ctx context.Context, arg SetTunnelDrainingPa
 
 const setTunnelProvisioning = `-- name: SetTunnelProvisioning :execrows
 UPDATE local_tunnels
-SET route_version = ?1,
+SET publish_run_number = ?1,
     state = 'provisioning',
     updated_at = ?2
 WHERE id = ?3 AND stopped_at IS NULL
 `
 
 type SetTunnelProvisioningParams struct {
-	RouteVersion int64
-	Now          int64
-	ID           string
+	PublishRunNumber int64
+	Now              int64
+	ID               string
 }
 
 func (q *Queries) SetTunnelProvisioning(ctx context.Context, arg SetTunnelProvisioningParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelProvisioning, arg.RouteVersion, arg.Now, arg.ID)
+	result, err := q.db.ExecContext(ctx, setTunnelProvisioning, arg.PublishRunNumber, arg.Now, arg.ID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const setTunnelReady = `-- name: SetTunnelReady :execrows
+const setTunnelPublicURL = `-- name: SetTunnelPublicURL :execrows
 UPDATE local_tunnels
-SET hostname = ?1,
-    route_version = ?2,
-    state = 'ready',
+SET public_url_id = ?1,
+    hostname = ?2,
+    state = 'provisioning',
     updated_at = ?3
 WHERE id = ?4 AND stopped_at IS NULL
 `
 
-type SetTunnelReadyParams struct {
-	Hostname     string
-	RouteVersion int64
-	Now          int64
-	ID           string
+type SetTunnelPublicURLParams struct {
+	PublicURLID string
+	Hostname    string
+	Now         int64
+	ID          string
 }
 
-func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelReady,
+func (q *Queries) SetTunnelPublicURL(ctx context.Context, arg SetTunnelPublicURLParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setTunnelPublicURL,
+		arg.PublicURLID,
 		arg.Hostname,
-		arg.RouteVersion,
 		arg.Now,
 		arg.ID,
 	)
@@ -535,26 +535,26 @@ func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) 
 	return result.RowsAffected()
 }
 
-const setTunnelRoute = `-- name: SetTunnelRoute :execrows
+const setTunnelReady = `-- name: SetTunnelReady :execrows
 UPDATE local_tunnels
-SET route_id = ?1,
-    hostname = ?2,
-    state = 'provisioning',
+SET hostname = ?1,
+    publish_run_number = ?2,
+    state = 'ready',
     updated_at = ?3
 WHERE id = ?4 AND stopped_at IS NULL
 `
 
-type SetTunnelRouteParams struct {
-	RouteID  string
-	Hostname string
-	Now      int64
-	ID       string
+type SetTunnelReadyParams struct {
+	Hostname         string
+	PublishRunNumber int64
+	Now              int64
+	ID               string
 }
 
-func (q *Queries) SetTunnelRoute(ctx context.Context, arg SetTunnelRouteParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelRoute,
-		arg.RouteID,
+func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setTunnelReady,
 		arg.Hostname,
+		arg.PublishRunNumber,
 		arg.Now,
 		arg.ID,
 	)

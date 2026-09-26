@@ -38,12 +38,12 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	}
 	want := devConfigurationResponse{
 		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
-		Service: nullableService("web"), MemberNamespace: "member.example",
+		Service: nullableService("web"), Namespace: "member.example",
 		Hostname: "agent-feature.example", PublicURL: "https://agent-feature.example",
 		Project: projectmeta.PublicMetadata{
-			MemberNamespace: "member.example", RunningUnderTnlDev: true,
+			Namespace: "member.example", RunningUnderTnlDev: true,
 			Services: map[string]projectmeta.Service{
-				"web": {MemberNamespace: "member.example", Hostname: "agent-feature.example", URL: "https://agent-feature.example"},
+				"web": {Namespace: "member.example", Hostname: "agent-feature.example", URL: "https://agent-feature.example"},
 			},
 		},
 	}

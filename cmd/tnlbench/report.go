@@ -368,7 +368,7 @@ func formatReportMarkdown(r benchmarkReport) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Benchmark result\n\nStatus: **%s**. Visitors: %s. Publisher shutdown: %s. Infrastructure: %s.\n\n", r.Status, r.VisitorStatus, r.ShutdownStatus, r.InfrastructureCleanup)
 	if r.Plan != nil {
-		fmt.Fprintf(&out, "Target: %d routes, %d fresh requests/sec, %d concurrent, %d waiting; %d repeated windows.\n\n", r.Plan.Target.Routes, r.Plan.Target.FreshConnectionsPerSecond, r.Plan.Target.Concurrency, r.Plan.Target.QueueSlots, r.Plan.Target.Repetitions)
+		fmt.Fprintf(&out, "Target: %d public URLs, %d fresh requests/sec, %d concurrent, %d waiting; %d repeated windows.\n\n", r.Plan.Target.PublicURLs, r.Plan.Target.FreshConnectionsPerSecond, r.Plan.Target.Concurrency, r.Plan.Target.QueueSlots, r.Plan.Target.Repetitions)
 	}
 	names := make([]string, 0, len(r.Phases))
 	for name := range r.Phases {

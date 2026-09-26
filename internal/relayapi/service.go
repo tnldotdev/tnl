@@ -145,7 +145,7 @@ func (s *service) ClaimPublisherConnection(
 	body relayv1.PublisherConnectionClaim,
 ) (relayv1.ClaimedPublisherConnection, error) {
 	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		routeSessionID: body.RouteSessionId, routeID: body.RouteId, routeVersion: body.RouteVersion,
+		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
 		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
 		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
 		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
@@ -177,7 +177,7 @@ func (s *service) MarkPublisherConnectionReady(
 	body relayv1.PublisherConnectionTransition,
 ) (relayv1.ClaimedPublisherConnection, error) {
 	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		routeSessionID: body.RouteSessionId, routeID: body.RouteId, routeVersion: body.RouteVersion,
+		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
 		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
 		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
 		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
@@ -199,7 +199,7 @@ func (s *service) DisconnectPublisherConnection(
 	body relayv1.PublisherConnectionDisconnect,
 ) (relayv1.ClaimedPublisherConnection, error) {
 	claim, err := publisherConnectionClaim(publisherConnectionID, publisherConnectionFields{
-		routeSessionID: body.RouteSessionId, routeID: body.RouteId, routeVersion: body.RouteVersion,
+		publishRunID: body.PublishRunId, publicURLID: body.PublicUrlId, publishRunNumber: body.PublishRunNumber,
 		publisherConnectionID: body.PublisherConnectionId, connectionSlot: body.ConnectionSlot,
 		assignmentRevision: body.ConnectionAssignmentRevision, relayServiceID: body.RelayServiceId,
 		relayID: body.RelayId, relayRunID: body.RelayRunId, relayLeaseRevision: body.RelayLeaseRevision,
@@ -223,14 +223,14 @@ func publisherConnectionClaim(
 		return controlstate.PublisherConnectionClaimRequest{}, relayPathMismatchError()
 	}
 	if !serviceapi.ValidIdentifiers(
-		fields.routeSessionID, fields.routeID, fields.publisherConnectionID, fields.relayServiceID,
+		fields.publishRunID, fields.publicURLID, fields.publisherConnectionID, fields.relayServiceID,
 		fields.relayID, fields.relayRunID, fields.claimID,
 	) || fields.connectionSlot < 0 || fields.connectionSlot > 1 {
 		return controlstate.PublisherConnectionClaimRequest{}, serviceapi.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Publisher connection identity is invalid",
 		)
 	}
-	routeVersion, routeOK := serviceapi.Positive(fields.routeVersion)
+	publishRunNumber, routeOK := serviceapi.Positive(fields.publishRunNumber)
 	assignmentRevision, assignmentOK := serviceapi.Positive(fields.assignmentRevision)
 	leaseRevision, leaseOK := serviceapi.Positive(fields.relayLeaseRevision)
 	if !routeOK || !assignmentOK || !leaseOK {
@@ -240,7 +240,7 @@ func publisherConnectionClaim(
 	}
 	return controlstate.PublisherConnectionClaimRequest{
 		ConnectionAssignmentIdentity: controlstate.ConnectionAssignmentIdentity{
-			RouteSessionID: fields.routeSessionID, RouteID: fields.routeID, RouteVersion: routeVersion,
+			PublishRunID: fields.publishRunID, PublicURLID: fields.publicURLID, PublishRunNumber: publishRunNumber,
 			ConnectionSlot: fields.connectionSlot, PublisherConnectionID: fields.publisherConnectionID,
 			ConnectionAssignmentRevision: assignmentRevision, RelayServiceID: fields.relayServiceID,
 		},

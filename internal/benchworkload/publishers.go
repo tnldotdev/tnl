@@ -38,7 +38,7 @@ type PublisherConfig struct {
 	Observe                   func(int, publisher.Event) error
 }
 
-type PublishedRoute struct {
+type PublishedPublicURL struct {
 	Index      int             `json:"index"`
 	Ready      publisher.Event `json:"ready"`
 	Activation time.Duration   `json:"activation"`
@@ -51,12 +51,12 @@ type ShutdownResult struct {
 	Timings                       []time.Duration `json:"timings"`
 }
 
-type routeProcess struct {
+type publicURLProcess struct {
 	index  int
 	cancel context.CancelFunc
 	done   chan struct{}
-	err    error          // published by closing done
-	ready  PublishedRoute // published by the activation channel
+	err    error              // published by closing done
+	ready  PublishedPublicURL // published by the activation channel
 }
 
 type Publishers struct {
@@ -66,7 +66,7 @@ type Publishers struct {
 	database    *clientstate.Database
 	ctx         context.Context
 	cancel      context.CancelFunc
-	processes   []*routeProcess
+	processes   []*publicURLProcess
 	failures    chan error
 	failureOnce sync.Once
 	run         func(context.Context, publisher.Config) error
@@ -152,7 +152,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
 			RequestLimit: config.RequestLimit,
-			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, RouteScope: controlv1.Member,
+			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
@@ -165,9 +165,9 @@ func (g *Publishers) Started() int           { return len(g.processes) }
 
 // Start returns partial readiness on failure. Close must always be called, even
 // after partial activation. Lifecycle methods are called by one coordinator.
-func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute, error) {
+func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPublicURL, error) {
 	type activation struct {
-		process *routeProcess
+		process *publicURLProcess
 		err     error
 	}
 	parallel := g.config.StartParallel
@@ -176,8 +176,8 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 	}
 	activated := make(chan activation, parallel)
 	start := func(index int) {
-		routeCtx, cancel := context.WithCancel(g.ctx)
-		process := &routeProcess{index: index, cancel: cancel, done: make(chan struct{})}
+		publicURLCtx, cancel := context.WithCancel(g.ctx)
+		process := &publicURLProcess{index: index, cancel: cancel, done: make(chan struct{})}
 		g.processes = append(g.processes, process)
 		cfg := g.base
 		cfg.Hostname = fmt.Sprintf("tnlbench-r%06d.%s", index, g.namespace)
@@ -207,15 +207,15 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 				}
 				if event.Type == publisher.EventReady {
 					once.Do(func() {
-						process.ready = PublishedRoute{Index: index, Ready: event, Activation: time.Since(began)}
+						process.ready = PublishedPublicURL{Index: index, Ready: event, Activation: time.Since(began)}
 						close(ready)
 					})
 				}
 				return nil
 			}
 			go func() {
-				process.err = g.run(routeCtx, cfg)
-				if routeCtx.Err() == nil {
+				process.err = g.run(publicURLCtx, cfg)
+				if publicURLCtx.Err() == nil {
 					process.err = fmt.Errorf("publisher %d exited unexpectedly: %w", index, errors.Join(errors.New("publisher exited"), process.err))
 					g.failureOnce.Do(func() {
 						g.failures <- process.err
@@ -234,13 +234,13 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 				err = fmt.Errorf("publisher %d readiness exceeded %s", index, g.config.ReadyTimeout)
 			case <-ctx.Done():
 				err = ctx.Err()
-			case <-routeCtx.Done():
-				err = routeCtx.Err()
+			case <-publicURLCtx.Done():
+				err = publicURLCtx.Err()
 			}
 			activated <- activation{process, err}
 		}()
 	}
-	var result []PublishedRoute
+	var result []PublishedPublicURL
 	next, active := 0, 0
 	var firstErr error
 	var capture sync.Once
@@ -284,14 +284,14 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 	for _, index := range indexes {
 		wanted[index] = true
 	}
-	var selected []*routeProcess
+	var selected []*publicURLProcess
 	for _, process := range g.processes {
 		if wanted[process.index] {
 			selected = append(selected, process)
 		}
 	}
 	durations := make([]time.Duration, len(selected))
-	errorsByRoute := make([]error, len(selected))
+	errorsByPublicURL := make([]error, len(selected))
 	var workers sync.WaitGroup
 	var firstFailure sync.Once
 	parallel := min(g.config.Parallel, len(selected))
@@ -305,13 +305,13 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 				select {
 				case <-process.done:
 					if !CancellationOnly(process.err) {
-						errorsByRoute[i] = fmt.Errorf("stop publisher %d: %w", process.index, process.err)
+						errorsByPublicURL[i] = fmt.Errorf("stop publisher %d: %w", process.index, process.err)
 					}
 				case <-stopCtx.Done():
-					errorsByRoute[i] = fmt.Errorf("stop publisher %d: %w", process.index, stopCtx.Err())
+					errorsByPublicURL[i] = fmt.Errorf("stop publisher %d: %w", process.index, stopCtx.Err())
 				}
 				cancel()
-				if errorsByRoute[i] != nil && g.config.OnFailure != nil {
+				if errorsByPublicURL[i] != nil && g.config.OnFailure != nil {
 					firstFailure.Do(g.config.OnFailure)
 				}
 				durations[i] = time.Since(started)
@@ -322,14 +322,14 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 	result.Duration = time.Since(result.StartedAt)
 	result.Timings = durations
 	result.Attempts = len(selected)
-	for _, err := range errorsByRoute {
+	for _, err := range errorsByPublicURL {
 		if err != nil {
 			result.Failures++
 		} else {
 			result.Successes++
 		}
 	}
-	return result, errors.Join(errorsByRoute...)
+	return result, errors.Join(errorsByPublicURL...)
 }
 
 func (g *Publishers) Close(ctx context.Context) (ShutdownResult, error) {

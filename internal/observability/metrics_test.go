@@ -70,7 +70,7 @@ func TestPrivateCPUProfileIsBounded(t *testing.T) {
 
 func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control := New("control")
-	control.ObserveRouteSessionReadiness("route_session_secret", time.Millisecond, 45*time.Second)
+	control.ObservePublishRunReadiness("publish_run_secret", time.Millisecond, 45*time.Second)
 	control.ObserveCertificateWork("challenge_token_secret", "error_secret", time.Millisecond)
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
@@ -83,8 +83,8 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 		if response.Code != http.StatusOK || strings.Contains(body, "secret") {
 			t.Fatalf("unbounded diagnostic labels: status=%d body=%s", response.Code, body)
 		}
-		if metrics == control && (!strings.Contains(body, `tnl_route_session_readiness_total{outcome="error"} 1`) ||
-			!strings.Contains(body, `tnl_route_certificate_work_total{outcome="retry",stage="other"} 1`)) {
+		if metrics == control && (!strings.Contains(body, `tnl_publish_run_readiness_total{outcome="error"} 1`) ||
+			!strings.Contains(body, `tnl_public_url_certificate_work_total{outcome="retry",stage="other"} 1`)) {
 			t.Fatalf("missing bounded readiness or certificate outcomes: %s", body)
 		}
 		if metrics == ingress && !strings.Contains(body, `tnl_ingress_relay_attempts_total{connection_slot="unknown",outcome="open_failed"} 1`) {
@@ -101,7 +101,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.AddPublisherConnections("ready", 1)
 	metrics.SetIngressStreams(4)
 	metrics.AddRelayStreams(2)
-	metrics.IncCapacityRejection("route_connections")
+	metrics.IncCapacityRejection("public_url_connections")
 	metrics.IncInspectionFailure("client_hello")
 	metrics.IncChallengeRejection("unavailable")
 	metrics.IncSourceLimiterRejection()
@@ -129,7 +129,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_relay_leases":                       {"GAUGE", map[string]string{"state": "active"}, 2},
 		"tnl_publisher_connections":              {"GAUGE", map[string]string{"state": "ready"}, 3},
 		"tnl_streams_active":                     {kind: "GAUGE"},
-		"tnl_capacity_rejections_total":          {"COUNTER", map[string]string{"resource": "route_connections"}, 1},
+		"tnl_capacity_rejections_total":          {"COUNTER", map[string]string{"resource": "public_url_connections"}, 1},
 		"tnl_ingress_inspection_failures_total":  {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
 		"tnl_ingress_challenge_rejections_total": {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
 		"tnl_source_limiter_rejections_total":    {kind: "COUNTER", value: 1},

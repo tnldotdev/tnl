@@ -44,9 +44,9 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	for _, table := range []string{
 		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions",
-		"routes", "route_sessions", "route_session_connections", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events",
+		"public_urls", "publish_runs", "publish_run_connections", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events",
 		"control_tls_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"route_usage_buckets", "route_usage_deliveries", "route_recovery_episodes", "route_recovery_histogram", "admin_audit_events", "maintenance_controls",
+		"public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -73,13 +73,13 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 }
 
 func TestIntegrationPublisherConnectionSchemaConstraints(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	// Exercise the constraints on real rows, rather than matching SQL source
 	// spelling. Each failing statement is atomic and leaves the fixture intact.
 	for _, test := range []struct{ name, query, code string }{
-		{"slot_lower_bound", `UPDATE control.route_session_connections SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
-		{"slot_upper_bound", `UPDATE control.route_session_connections SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
-		{"distinct_services", `UPDATE control.route_session_connections SET relay_service_id = (SELECT relay_service_id FROM control.route_session_connections WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
+		{"slot_lower_bound", `UPDATE control.publish_run_connections SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
+		{"slot_upper_bound", `UPDATE control.publish_run_connections SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
+		{"distinct_services", `UPDATE control.publish_run_connections SET relay_service_id = (SELECT relay_service_id FROM control.publish_run_connections WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := f.database.pool.Exec(t.Context(), test.query)

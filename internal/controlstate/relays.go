@@ -79,9 +79,9 @@ type RelayLease struct {
 
 // ConnectionAssignmentIdentity identifies one exact publisher connection assignment.
 type ConnectionAssignmentIdentity struct {
-	RouteSessionID               string
-	RouteID                      string
-	RouteVersion                 uint64
+	PublishRunID                 string
+	PublicURLID                  string
+	PublishRunNumber             uint64
 	ConnectionSlot               int
 	PublisherConnectionID        string
 	ConnectionAssignmentRevision uint64
@@ -241,7 +241,7 @@ func (d *Database) ClaimPublisherConnection(
 	}
 	defer rollback(ctx, tx, "claim publisher connection", &retErr)()
 	queries := controlstatedb.New(tx)
-	if _, _, err := lockRouteSessionForPublisherConnection(ctx, queries, request, now); err != nil {
+	if _, _, err := lockPublishRunForPublisherConnection(ctx, queries, request, now); err != nil {
 		return ClaimedPublisherConnection{}, err
 	}
 	connection, err := queries.GetPublisherConnectionForClaim(ctx, request.PublisherConnectionID)
@@ -297,7 +297,7 @@ func (d *Database) ClaimPublisherConnection(
 		RelayID: text(request.RelayID), RelayRunID: text(request.RelayRunID),
 		RelayLeaseRevision: pgtype.Int8{Int64: relayRevision, Valid: true}, ClaimID: text(request.ClaimID),
 		ConnectedAt: timestamptz(now), PublisherConnectionID: request.PublisherConnectionID,
-		RouteSessionID: request.RouteSessionID, RouteID: request.RouteID, RouteVersion: positive(request.RouteVersion),
+		PublishRunID: request.PublishRunID, PublicURLID: request.PublicURLID, PublishRunNumber: positive(request.PublishRunNumber),
 		ConnectionSlot: int16(request.ConnectionSlot), ConnectionAssignmentRevision: assignmentRevision,
 		RelayServiceID: request.ConnectionAssignmentIdentity.RelayServiceID,
 	})
@@ -381,7 +381,7 @@ func validatePublisherConnectionClaim(request PublisherConnectionClaimRequest) e
 		return err
 	}
 	for _, value := range []string{
-		request.RouteSessionID, request.RouteID, request.PublisherConnectionID,
+		request.PublishRunID, request.PublicURLID, request.PublisherConnectionID,
 		request.ConnectionAssignmentIdentity.RelayServiceID, request.ClaimID,
 	} {
 		if !validStateText(value) {
@@ -391,11 +391,11 @@ func validatePublisherConnectionClaim(request PublisherConnectionClaimRequest) e
 	if request.ConnectionAssignmentIdentity.RelayServiceID != request.RelayLeaseIdentity.RelayServiceID {
 		return ErrPublisherConnectionRelayService
 	}
-	if request.ConnectionSlot < 0 || request.ConnectionSlot >= routeSessionConnectionCount {
+	if request.ConnectionSlot < 0 || request.ConnectionSlot >= publishRunConnectionCount {
 		return errors.New("controlstate: connection slot is invalid")
 	}
-	if _, ok := positiveInt64(request.RouteVersion); !ok {
-		return errors.New("controlstate: route version must be positive")
+	if _, ok := positiveInt64(request.PublishRunNumber); !ok {
+		return errors.New("controlstate: publish run number must be positive")
 	}
 	if _, ok := positiveInt64(request.ConnectionAssignmentRevision); !ok {
 		return errors.New("controlstate: connection assignment revision must be positive")
@@ -403,9 +403,9 @@ func validatePublisherConnectionClaim(request PublisherConnectionClaimRequest) e
 	return nil
 }
 
-func claimedPublisherConnection(row controlstatedb.ControlRouteSessionConnection) (ClaimedPublisherConnection, error) {
-	if row.RouteVersion <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||
-		row.ConnectionSlot >= routeSessionConnectionCount || !row.ConnectedRelayID.Valid ||
+func claimedPublisherConnection(row controlstatedb.ControlPublishRunConnection) (ClaimedPublisherConnection, error) {
+	if row.PublishRunNumber <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||
+		row.ConnectionSlot >= publishRunConnectionCount || !row.ConnectedRelayID.Valid ||
 		!row.ConnectedRelayRunID.Valid || !row.ConnectedRelayLeaseRevision.Valid ||
 		row.ConnectedRelayLeaseRevision.Int64 <= 0 || !row.ClaimID.Valid ||
 		!row.PublisherConnectionCredentialExpiresAt.Valid || !row.ConnectedAt.Valid {
@@ -418,7 +418,7 @@ func claimedPublisherConnection(row controlstatedb.ControlRouteSessionConnection
 	}
 	return ClaimedPublisherConnection{
 		ConnectionAssignmentIdentity: ConnectionAssignmentIdentity{
-			RouteSessionID: row.RouteSessionID, RouteID: row.RouteID, RouteVersion: uint64(row.RouteVersion),
+			PublishRunID: row.PublishRunID, PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
 			ConnectionSlot: int(row.ConnectionSlot), PublisherConnectionID: row.PublisherConnectionID,
 			ConnectionAssignmentRevision: uint64(row.ConnectionAssignmentRevision), RelayServiceID: row.RelayServiceID,
 		},
@@ -433,7 +433,7 @@ func claimedPublisherConnection(row controlstatedb.ControlRouteSessionConnection
 }
 
 func publisherConnectionClaimMatches(
-	connection controlstatedb.ControlRouteSessionConnection,
+	connection controlstatedb.ControlPublishRunConnection,
 	request PublisherConnectionClaimRequest,
 ) bool {
 	return connection.ConnectedRelayID.Valid && connection.ConnectedRelayID.String == request.RelayID &&
@@ -444,11 +444,11 @@ func publisherConnectionClaimMatches(
 }
 
 func storedConnectionAssignmentMatches(
-	connection controlstatedb.ControlRouteSessionConnection,
+	connection controlstatedb.ControlPublishRunConnection,
 	identity ConnectionAssignmentIdentity,
 ) bool {
-	return connection.RouteSessionID == identity.RouteSessionID && connection.RouteID == identity.RouteID &&
-		matchesPositiveInt64(connection.RouteVersion, identity.RouteVersion) &&
+	return connection.PublishRunID == identity.PublishRunID && connection.PublicURLID == identity.PublicURLID &&
+		matchesPositiveInt64(connection.PublishRunNumber, identity.PublishRunNumber) &&
 		int(connection.ConnectionSlot) == identity.ConnectionSlot &&
 		connection.PublisherConnectionID == identity.PublisherConnectionID &&
 		matchesPositiveInt64(connection.ConnectionAssignmentRevision, identity.ConnectionAssignmentRevision) &&

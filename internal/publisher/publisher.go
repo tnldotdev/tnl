@@ -22,29 +22,29 @@ import (
 
 const defaultProvisioningStalledDelay = 2 * time.Minute
 
-type RouteControlClient interface {
-	CreateRoute(context.Context, controlv1.CreateRouteRequest, string) (controlv1.Route, error)
-	GetRouteByHostname(context.Context, string, string) (controlv1.Route, error)
-	UpdateRoute(context.Context, string, controlv1.UpdateRouteRequest) (controlv1.Route, error)
-	DeleteRoute(context.Context, string) error
-	CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error)
-	CloseRouteSession(context.Context, string, credentials.RouteSessionToken) error
-	MarkRouteSessionReady(context.Context, string, uint64, credentials.RouteSessionToken) error
-	HeartbeatRouteSession(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error)
-	CreateCertificateIssuance(context.Context, string, uint64, credentials.RouteSessionToken, []byte, string) (controlv1.CertificateIssuance, error)
-	GetCertificateIssuance(context.Context, string, credentials.RouteSessionToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.RouteSessionToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.RouteSessionToken) error
-	MarkRouteSessionCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.RouteSessionToken) error
+type PublicURLControlClient interface {
+	CreatePublicURL(context.Context, controlv1.CreatePublicURLRequest, string) (controlv1.PublicURL, error)
+	GetPublicURLByHostname(context.Context, string, string) (controlv1.PublicURL, error)
+	UpdatePublicURL(context.Context, string, controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error)
+	DeletePublicURL(context.Context, string) error
+	CreatePublishRun(context.Context, string, string) (controlv1.PublishRunSetup, error)
+	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
+	MarkPublishRunReady(context.Context, string, uint64, credentials.PublishRunToken) error
+	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
+	CreateCertificateIssuance(context.Context, string, uint64, credentials.PublishRunToken, []byte, string) (controlv1.CertificateIssuance, error)
+	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
+	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
+	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error
+	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
 }
 
 type Config struct {
-	Control                  RouteControlClient
+	Control                  PublicURLControlClient
 	TeamID                   string
 	DomainID                 string
 	MembershipID             string
 	PolicyRevision           uint64
-	RouteScope               controlv1.RouteScope
+	PublicURLScope           controlv1.PublicURLScope
 	Hostname                 string
 	Target                   string
 	RequestLimit             int // Zero selects localproxy.DefaultRequestLimit.
@@ -74,13 +74,13 @@ const (
 )
 
 type Event struct {
-	Type          EventType
-	RouteID       string
-	Hostname      string
-	PublicURL     string
-	RouteVersion  uint64
-	Transport     tunnel.Transport
-	PolicyDenials uint64
+	Type             EventType
+	PublicURLID      string
+	Hostname         string
+	PublicURL        string
+	PublishRunNumber uint64
+	Transport        tunnel.Transport
+	PolicyDenials    uint64
 }
 
 func Run(ctx context.Context, config Config) (result error) {
@@ -128,46 +128,46 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	defer hostLock.Close()
-	route, createdRoute, err := createOrLoadRoute(ctx, config)
+	route, createdPublicURL, err := createOrLoadPublicURL(ctx, config)
 	if err != nil {
 		return err
 	}
-	routeID := route.Id
-	if config.Ephemeral && createdRoute {
+	publicURLID := route.Id
+	if config.Ephemeral && createdPublicURL {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			deleteErr := config.Control.DeleteRoute(cleanupCtx, route.Id)
+			deleteErr := config.Control.DeletePublicURL(cleanupCtx, route.Id)
 			cancel()
 			if deleteErr != nil && !errors.Is(deleteErr, controlclient.ErrNotFound) {
-				result = errors.Join(result, fmt.Errorf("publisher: delete ephemeral route: %w", deleteErr))
+				result = errors.Join(result, fmt.Errorf("publisher: delete ephemeral public_url: %w", deleteErr))
 			}
 		}()
 	}
-	if err := observe(config, Event{Type: EventRouteAssigned, RouteID: routeID, Hostname: route.CanonicalHostname}); err != nil {
+	if err := observe(config, Event{Type: EventRouteAssigned, PublicURLID: publicURLID, Hostname: route.CanonicalHostname}); err != nil {
 		return err
 	}
 	for {
-		setup, err := createRouteSession(ctx, config, route)
+		setup, err := createPublishRun(ctx, config, route)
 		if err != nil {
 			return err
 		}
 		if err := observe(config, Event{
-			Type: EventProvisioning, RouteID: routeID, Hostname: setup.Route.CanonicalHostname,
-			RouteVersion: uint64(setup.RouteSession.RouteVersion),
+			Type: EventProvisioning, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
+			PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
 		}); err != nil {
 			return err
 		}
 		err = runSession(ctx, config, setup, func() error {
 			return observe(config, Event{
-				Type: EventReady, RouteID: routeID, Hostname: setup.Route.CanonicalHostname,
-				PublicURL: "https://" + setup.Route.CanonicalHostname, RouteVersion: uint64(setup.RouteSession.RouteVersion),
+				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
+				PublicURL: "https://" + setup.PublicUrl.CanonicalHostname, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
 			})
 		})
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		closeErr := config.Control.CloseRouteSession(closeCtx, setup.RouteSession.Id, credentials.RouteSessionToken(setup.RouteSessionToken))
+		closeErr := config.Control.ClosePublishRun(closeCtx, setup.PublishRun.Id, credentials.PublishRunToken(setup.PublishRunToken))
 		cancel()
 		if closeErr != nil && !errors.Is(closeErr, controlclient.ErrNotFound) && !errors.Is(closeErr, controlclient.ErrUnauthenticated) {
-			err = errors.Join(err, fmt.Errorf("publisher: close route session: %w", closeErr))
+			err = errors.Join(err, fmt.Errorf("publisher: close publish run: %w", closeErr))
 		}
 		if ctx.Err() != nil {
 			return err
@@ -175,38 +175,38 @@ func Run(ctx context.Context, config Config) (result error) {
 		if !errors.Is(err, controlclient.ErrStatusConflict) {
 			return err
 		}
-		route.NextRouteVersion = setup.RouteSession.RouteVersion + 1
+		route.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
 }
 
-func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, bool, error) {
+func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
 	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(config.AllowedIPPrefixes)
 	if err != nil {
-		return controlv1.Route{}, false, fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
+		return controlv1.PublicURL{}, false, fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
 	}
 	config.AllowedIPPrefixes = allowedIPPrefixes
 	if !config.Ephemeral {
-		route, err := config.Control.GetRouteByHostname(ctx, config.TeamID, config.Hostname)
+		route, err := config.Control.GetPublicURLByHostname(ctx, config.TeamID, config.Hostname)
 		if err != nil && !errors.Is(err, controlclient.ErrNotFound) {
-			return controlv1.Route{}, false, err
+			return controlv1.PublicURL{}, false, err
 		}
 		if err == nil {
 			if err := validateRouteIdentity(route, config); err != nil {
-				return controlv1.Route{}, false, err
+				return controlv1.PublicURL{}, false, err
 			}
-			reconciled, err := reconcileRoute(ctx, config, route)
+			reconciled, err := reconcilePublicURL(ctx, config, route)
 			return reconciled, false, err
 		}
 	}
-	idempotencyKey, err := opaqueID("route_")
+	idempotencyKey, err := opaqueID("public_url_")
 	if err != nil {
-		return controlv1.Route{}, false, err
+		return controlv1.PublicURL{}, false, err
 	}
-	body := controlv1.CreateRouteRequest{
+	body := controlv1.CreatePublicURLRequest{
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
-		Target: config.Target, RouteScope: config.RouteScope,
+		Target: config.Target, PublicUrlScope: config.PublicURLScope,
 	}
-	if config.RouteScope == controlv1.Member && config.MembershipID != "" {
+	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
 	}
 	if config.AllowedIPPrefixes != nil {
@@ -216,30 +216,30 @@ func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, boo
 	if config.Ephemeral {
 		body.Ephemeral = &config.Ephemeral
 	}
-	route, err := config.Control.CreateRoute(ctx, body, idempotencyKey)
-	return route, err == nil, classifyRouteConflict(err)
+	route, err := config.Control.CreatePublicURL(ctx, body, idempotencyKey)
+	return route, err == nil, classifyPublicURLConflict(err)
 }
 
-func validateRouteIdentity(route controlv1.Route, config Config) error {
-	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.RouteScope != config.RouteScope ||
+func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
+	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope ||
 		route.Ephemeral != config.Ephemeral {
-		return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
 	}
-	if config.RouteScope == controlv1.Member {
+	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
-			return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
 		}
 	} else if route.MembershipId != nil {
-		return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
 	}
 	return nil
 }
 
-func reconcileRoute(ctx context.Context, config Config, route controlv1.Route) (controlv1.Route, error) {
+func reconcilePublicURL(ctx context.Context, config Config, route controlv1.PublicURL) (controlv1.PublicURL, error) {
 	if route.LifecycleState != controlv1.Enabled {
-		return controlv1.Route{}, diagnostic.Wrap(
-			diagnostic.RouteConflict,
-			fmt.Errorf("publisher: route %s is not enabled", route.Id),
+		return controlv1.PublicURL{}, diagnostic.Wrap(
+			diagnostic.PublicURLConflict,
+			fmt.Errorf("publisher: public URL %s is not enabled", route.Id),
 		)
 	}
 	currentPolicy := []string{}
@@ -251,23 +251,23 @@ func reconcileRoute(ctx context.Context, config Config, route controlv1.Route) (
 		desiredPolicy = []string{}
 	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
-		updated, err := config.Control.UpdateRoute(ctx, route.Id, controlv1.UpdateRouteRequest{
+		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{
 			Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
 		})
-		return updated, classifyRouteConflict(err)
+		return updated, classifyPublicURLConflict(err)
 	}
 	if route.Target == config.Target {
 		return route, nil
 	}
-	updated, err := config.Control.UpdateRoute(ctx, route.Id, controlv1.UpdateRouteRequest{
+	updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{
 		Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
 	})
-	return updated, classifyRouteConflict(err)
+	return updated, classifyPublicURLConflict(err)
 }
 
-func classifyRouteConflict(err error) error {
+func classifyPublicURLConflict(err error) error {
 	if errors.Is(err, controlclient.ErrNameUnavailable) || errors.Is(err, controlclient.ErrStatusConflict) {
-		return diagnostic.Wrap(diagnostic.RouteConflict, err)
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, err)
 	}
 	return err
 }

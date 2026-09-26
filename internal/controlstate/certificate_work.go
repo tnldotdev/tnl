@@ -40,9 +40,9 @@ type ACMEAuthorizationWork struct {
 type ACMEOrderWork struct {
 	ID                     string
 	Account                ACMEAccount
-	RouteSessionID         string
-	RouteID                string
-	RouteVersion           uint64
+	PublishRunID           string
+	PublicURLID            string
+	PublishRunNumber       uint64
 	CertificateCacheKey    string
 	CertificateScope       string
 	CertificateIdentifiers []string
@@ -283,15 +283,15 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	if order.RouteVersion <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
+	if order.PublishRunNumber <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||
 		len(order.CsrDigest) != 32 {
 		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order work row")
 	}
 	work := ACMEOrderWork{
-		ID: order.ID, Account: account, RouteSessionID: order.RouteSessionID,
-		RouteID: order.RouteID, RouteVersion: uint64(order.RouteVersion), CertificateCacheKey: order.CertificateCacheKey,
+		ID: order.ID, Account: account, PublishRunID: order.PublishRunID,
+		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
 		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: order.State,
 		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,

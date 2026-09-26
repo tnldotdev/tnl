@@ -36,7 +36,7 @@ func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
 			if visitors.Load() != 1 {
 				t.Errorf("capture after %d visitor attempts", visitors.Load())
 			}
-			_, _ = w.Write([]byte(`{"active_operations":[{"operation":"LockRouteSessionForUsage","elapsed_seconds":12}],"error":"upstream visibility unavailable"}`))
+			_, _ = w.Write([]byte(`{"active_operations":[{"operation":"LockPublishRunForUsage","elapsed_seconds":12}],"error":"upstream visibility unavailable"}`))
 		} else {
 			metrics.Add(1)
 			_, _ = w.Write([]byte("tnl_database_pool_acquired_connections 4\n"))
@@ -50,7 +50,7 @@ func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	urls := []string{"https://first.example", "https://second.example"}
-	if err := client.Put(t.Context(), "routes", urls); err != nil {
+	if err := client.Put(t.Context(), "public_urls", urls); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Put(t.Context(), "phase-0", benchworkload.Phase{Name: "correctness", URLs: urls}); err != nil {
@@ -58,7 +58,7 @@ func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
 	}
 	command := loadCommand{
 		workerCommand: workerCommand{CellID: "failure", WorkerCount: 1, CoordinatorURL: server.URL, CoordinatorToken: "secret", Timeout: time.Second},
-		Routes:        2, PublicAddress: listener.Addr().String(), PayloadBytes: 4,
+		PublicURLs:    2, PublicAddress: listener.Addr().String(), PayloadBytes: 4,
 		MetricsURLs: []string{observability.URL + "/metrics#control"}, DiagnosticURLs: []string{observability.URL + "/debug/database"},
 	}
 	if err := command.run(t.Context()); err == nil {

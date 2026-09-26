@@ -30,7 +30,7 @@ func (q *Queries) AdvanceIngressRoutingRetentionFloor(ctx context.Context, revis
 const pruneIngressRoutingHistoryBatch = `-- name: PruneIngressRoutingHistoryBatch :one
 WITH candidates AS MATERIALIZED (
     SELECT events.routing_table_revision, events.canonical_hostname,
-           events.event_kind, events.route_id, events.route_version
+           events.event_kind, events.public_url_id, events.publish_run_number
     FROM control.ingress_routing_table_events AS events
     WHERE events.routing_table_revision > $1::bigint
       AND events.routing_table_revision <= (
@@ -45,14 +45,14 @@ WITH candidates AS MATERIALIZED (
       AND EXISTS (
           SELECT 1 FROM control.ingress_routing_table_events AS newer
           WHERE newer.canonical_hostname = candidates.canonical_hostname
-            AND (newer.event_kind IN ('route_upsert', 'route_tombstone')) =
-                (candidates.event_kind IN ('route_upsert', 'route_tombstone'))
+            AND (newer.event_kind IN ('public_url_upsert', 'public_url_tombstone')) =
+                (candidates.event_kind IN ('public_url_upsert', 'public_url_tombstone'))
             AND newer.routing_table_revision > candidates.routing_table_revision
       )
       AND EXISTS (
           SELECT 1 FROM control.ingress_routing_table_events AS newer
-          WHERE newer.route_id = candidates.route_id
-            AND newer.route_version = candidates.route_version
+          WHERE newer.public_url_id = candidates.public_url_id
+            AND newer.publish_run_number = candidates.publish_run_number
             AND newer.routing_table_revision > candidates.routing_table_revision
       )
     RETURNING events.routing_table_revision
@@ -71,7 +71,7 @@ type PruneIngressRoutingHistoryBatchRow struct {
 
 // Bound candidates visited as well as rows deleted. Advance past anchors even
 // when no row can be removed. Keep the newest hostname/category projection
-// (including tombstones/expired entries) AND each route-version's latest revision.
+// (including tombstones/expired entries) AND each publish run number's latest revision.
 // All checks use this statement's snapshot. Concurrent publications can only
 // make an old anchor redundant; they cannot make a superseded event current.
 func (q *Queries) PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error) {

@@ -31,15 +31,15 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
-	if config.RouteCertificateWorkers != 4 {
-		t.Fatalf("route certificate workers = %d, want 4", config.RouteCertificateWorkers)
+	if config.PublicURLCertificateWorkers != 4 {
+		t.Fatalf("public URL certificate workers = %d, want 4", config.PublicURLCertificateWorkers)
 	}
 	if config.PublisherConnectionLimit != 4000 {
 		t.Fatalf("publisher connection limit = %d, want 4000", config.PublisherConnectionLimit)
 	}
 }
 
-func TestParseRouteCertificateWorkers(t *testing.T) {
+func TestParsePublicURLCertificateWorkers(t *testing.T) {
 	base := []string{
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
@@ -51,8 +51,8 @@ func TestParseRouteCertificateWorkers(t *testing.T) {
 		"--storage-key", testStorageKey,
 	}
 	for _, value := range []string{"0", "9"} {
-		if _, err := Parse(append(base, "--route-certificate-workers", value)); err == nil {
-			t.Fatalf("route certificate worker count %s was accepted", value)
+		if _, err := Parse(append(base, "--public-url-certificate-workers", value)); err == nil {
+			t.Fatalf("public URL certificate worker count %s was accepted", value)
 		}
 	}
 }
@@ -184,7 +184,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		Role: RoleIngress, ControlHostname: "control.tnl.example.com",
 		ClusterSecret: testClusterSecret, IngressID: "ingress-1",
 		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
-		VisitorConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1,
+		VisitorConnectionLimit: 1, PublicURLConnectionLimit: 1, PublisherConnectionLimit: 1,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,

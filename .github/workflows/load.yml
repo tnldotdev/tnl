@@ -58,8 +58,8 @@ jobs:
       - name: Run load tests
         env:
           DELAY: ${{ github.event_name == 'schedule' && '5ms' || inputs.delay || '0ms' }}
-          ROUTES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1000' || '32' }}
-        run: task go:test:load:database DELAY="$DELAY" ROUTES="$ROUTES"
+          PUBLIC_URLS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1000' || '32' }}
+        run: task go:test:load:database DELAY="$DELAY" PUBLIC_URLS="$PUBLIC_URLS"
 
   runtime:
     name: Runtime workloads
@@ -94,7 +94,7 @@ jobs:
       - name: Run reference and extended fault workloads
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
-          task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
+          task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
           task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/ci-forwarding-blackhole
           task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/ci-publisher-blackhole
           task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/ci-udp-fallback

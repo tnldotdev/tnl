@@ -24,10 +24,10 @@ x-runtime: &runtime
         -tnl-test-tier=runtime-load \
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
-        -tnl-runtime-load-routes='${ROUTES:-4}' \
+        -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
-        -tnl-runtime-load-route-certificate-workers='${ROUTE_CERTIFICATE_WORKERS:-4}' \
+        -tnl-runtime-load-public-url-certificate-workers='${PUBLIC_URL_CERTIFICATE_WORKERS:-4}' \
         -tnl-runtime-load-rps='${RPS:-16}' \
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
@@ -50,7 +50,7 @@ x-runtime: &runtime
         -tnl-runtime-load-challenge-connection-limit='${CHALLENGE_CONNECTION_LIMIT:-1024}' \
         -tnl-runtime-load-challenge-hostname-connection-limit='${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}' \
         -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:-20000}' \
-        -tnl-runtime-load-route-connection-limit='${ROUTE_CONNECTION_LIMIT:-500}' \
+        -tnl-runtime-load-public-url-connection-limit='${PUBLIC_URL_CONNECTION_LIMIT:-500}' \
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:-4000}' \
         -tnl-runtime-load-publisher-request-limit='${PUBLISHER_REQUEST_LIMIT:-500}' \
         -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:-4096}' \
@@ -352,10 +352,10 @@ services:
       - -tnl-test-tier=runtime-load
       - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       - -tnl-separated-component=coordinator
-      - "-tnl-runtime-load-routes=${ROUTES:-4}"
+      - "-tnl-runtime-load-public-urls=${PUBLIC_URLS:-4}"
       - "-tnl-runtime-load-start-parallel=${START_PARALLEL:-4}"
       - "-tnl-runtime-load-ready-timeout=${READY_TIMEOUT:-30s}"
-      - "-tnl-runtime-load-route-certificate-workers=${ROUTE_CERTIFICATE_WORKERS:-4}"
+      - "-tnl-runtime-load-public-url-certificate-workers=${PUBLIC_URL_CERTIFICATE_WORKERS:-4}"
       - "-tnl-runtime-load-rps=${RPS:-16}"
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"
@@ -378,7 +378,7 @@ services:
       - "-tnl-runtime-load-challenge-connection-limit=${CHALLENGE_CONNECTION_LIMIT:-1024}"
       - "-tnl-runtime-load-challenge-hostname-connection-limit=${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}"
       - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:-20000}"
-      - "-tnl-runtime-load-route-connection-limit=${ROUTE_CONNECTION_LIMIT:-500}"
+      - "-tnl-runtime-load-public-url-connection-limit=${PUBLIC_URL_CONNECTION_LIMIT:-500}"
       - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:-4000}"
       - "-tnl-runtime-load-publisher-request-limit=${PUBLISHER_REQUEST_LIMIT:-500}"
       - "-tnl-runtime-load-relay-stream-capacity=${RELAY_STREAM_CAPACITY:-4096}"

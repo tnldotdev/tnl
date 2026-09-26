@@ -20,12 +20,12 @@ const MaximumIngressRoutingTablePageSize = 1000
 type IngressRoutingTableEvent struct {
 	RoutingTableRevision uint64
 	Kind                 IngressRoutingTableEventKind
-	RouteID              string
-	RouteVersion         uint64
+	PublicURLID          string
+	PublishRunNumber     uint64
 	CanonicalHostname    string
 	EntryRevision        uint64
 	Projection           IngressRoutingTableProjection
-	RouteExpiresAt       *time.Time
+	PublicUrlExpiresAt   *time.Time
 	CreatedAt            time.Time
 }
 
@@ -33,7 +33,7 @@ type IngressRoutingTableEvent struct {
 type IngressRoutingTableSnapshot struct {
 	RoutingTableRevision  uint64
 	RetainedAfterRevision uint64
-	Routes                []IngressRoutingTableEvent
+	Entries               []IngressRoutingTableEvent
 }
 
 // IngressRoutingTablePage is an ordered revision response.
@@ -80,22 +80,22 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 		Now: timestamptz(now), ThroughRevision: clock.CurrentRevision,
 	})
 	if err != nil {
-		return IngressRoutingTableSnapshot{}, fmt.Errorf("controlstate: read ingress routing-table snapshot: list routes: %w", err)
+		return IngressRoutingTableSnapshot{}, fmt.Errorf("controlstate: read ingress routing-table snapshot: list public_urls: %w", err)
 	}
 	snapshot := IngressRoutingTableSnapshot{
 		RoutingTableRevision:  uint64(clock.CurrentRevision),
 		RetainedAfterRevision: uint64(clock.RetainedAfterRevision),
-		Routes:                make([]IngressRoutingTableEvent, 0, len(rows)),
+		Entries:               make([]IngressRoutingTableEvent, 0, len(rows)),
 	}
 	for _, row := range rows {
 		event, err := ingressRoutingTableEvent(
-			row.RoutingTableRevision, row.EventKind, row.RouteID, row.RouteVersion,
-			row.CanonicalHostname, row.EntryRevision, row.Projection, row.RouteExpiresAt, row.CreatedAt,
+			row.RoutingTableRevision, row.EventKind, row.PublicURLID, row.PublishRunNumber,
+			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {
 			return IngressRoutingTableSnapshot{}, err
 		}
-		snapshot.Routes = append(snapshot.Routes, event)
+		snapshot.Entries = append(snapshot.Entries, event)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IngressRoutingTableSnapshot{}, fmt.Errorf("controlstate: read ingress routing-table snapshot: commit: %w", err)
@@ -168,8 +168,8 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	page.Events = make([]IngressRoutingTableEvent, 0, len(rows))
 	for _, row := range rows {
 		event, err := ingressRoutingTableEvent(
-			row.RoutingTableRevision, row.EventKind, row.RouteID, row.RouteVersion,
-			row.CanonicalHostname, row.EntryRevision, row.Projection, row.RouteExpiresAt, row.CreatedAt,
+			row.RoutingTableRevision, row.EventKind, row.PublicURLID, row.PublishRunNumber,
+			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {
 			return IngressRoutingTablePage{}, err
@@ -195,16 +195,16 @@ func validateIngressRoutingTableClock(clock controlstatedb.ControlIngressRouting
 func ingressRoutingTableEvent(
 	routingTableRevision int64,
 	eventKind string,
-	routeID string,
-	routeVersion int64,
+	publicURLID string,
+	publishRunNumber int64,
 	canonicalHostname string,
 	entryRevision int64,
 	payload []byte,
-	routeExpiresAt pgtype.Timestamptz,
+	publicURLExpiresAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 ) (IngressRoutingTableEvent, error) {
-	if routingTableRevision <= 0 || routeVersion <= 0 || entryRevision <= 0 || !createdAt.Valid ||
-		(eventKind != "route_upsert" && eventKind != "route_tombstone" &&
+	if routingTableRevision <= 0 || publishRunNumber <= 0 || entryRevision <= 0 || !createdAt.Valid ||
+		(eventKind != "public_url_upsert" && eventKind != "public_url_tombstone" &&
 			eventKind != "challenge_upsert" && eventKind != "challenge_tombstone") {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: invalid ingress routing-table event row")
 	}
@@ -217,19 +217,19 @@ func ingressRoutingTableEvent(
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table projection has trailing data")
 	}
-	if projection.RouteID != routeID || projection.RouteVersion != uint64(routeVersion) ||
+	if projection.PublicURLID != publicURLID || projection.PublishRunNumber != uint64(publishRunNumber) ||
 		projection.CanonicalHostname != canonicalHostname {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table projection identity mismatch")
 	}
 	var expiration *time.Time
-	if routeExpiresAt.Valid {
-		value := routeExpiresAt.Time
+	if publicURLExpiresAt.Valid {
+		value := publicURLExpiresAt.Time
 		expiration = &value
 	}
 	return IngressRoutingTableEvent{
 		RoutingTableRevision: uint64(routingTableRevision), Kind: IngressRoutingTableEventKind(eventKind),
-		RouteID: routeID, RouteVersion: uint64(routeVersion), CanonicalHostname: canonicalHostname,
+		PublicURLID: publicURLID, PublishRunNumber: uint64(publishRunNumber), CanonicalHostname: canonicalHostname,
 		EntryRevision: uint64(entryRevision), Projection: projection,
-		RouteExpiresAt: expiration, CreatedAt: createdAt.Time,
+		PublicUrlExpiresAt: expiration, CreatedAt: createdAt.Time,
 	}, nil
 }

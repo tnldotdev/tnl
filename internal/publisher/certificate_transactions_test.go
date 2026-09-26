@@ -107,12 +107,12 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 				}
 				// Reopen the cache and route to include recovery of locally committed, unacknowledged material.
 				var err error
-				state, err = control.store.Certificates(control.setup.Route.TeamId, control.setup.CertificatePlan)
+				state, err = control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
 				if err != nil {
 					t.Fatal(err)
 				}
 				_ = route.Close()
-				route = certificateTestRoute(t, "route.example", control.setup.CertificatePlan)
+				route = certificateTestPublicURL(t, "route.example", control.setup.CertificatePlan)
 				material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
 				if err != nil || material.IssuanceID == "" || !installed {
 					t.Fatalf("response-loss recovery: server_installed=%t error=%v", installed, err)
@@ -227,21 +227,21 @@ func TestInitialCertificateTerminalFailureIsBounded(t *testing.T) {
 }
 
 func TestInitialCertificateUsesCurrentMaterialBeforeContendedLock(t *testing.T) {
-	control, firstRoute, state := newCertificateTransactionTest(t)
-	material, err := attemptCertificateTransaction(t.Context(), control, firstRoute, state, control.setup, false)
+	control, firstPublicURL, state := newCertificateTransactionTest(t)
+	material, err := attemptCertificateTransaction(t.Context(), control, firstPublicURL, state, control.setup, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	setup := control.setup
-	setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
-	setup.RouteSession.RouteVersion = 2
+	setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
+	setup.PublishRun.PublishRunNumber = 2
 	control.setup = setup
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("current certificate triggered another issuance")
 	}
 	acknowledged := false
 	control.installed = func(session string, version uint64, issuance string, notAfter time.Time) error {
-		acknowledged = session == setup.RouteSession.Id && version == 2 && issuance == material.IssuanceID && notAfter.Equal(material.Certificate.Leaf.NotAfter)
+		acknowledged = session == setup.PublishRun.Id && version == 2 && issuance == material.IssuanceID && notAfter.Equal(material.Certificate.Leaf.NotAfter)
 		return nil
 	}
 	lock, err := state.Lock(t.Context())
@@ -250,7 +250,7 @@ func TestInitialCertificateUsesCurrentMaterialBeforeContendedLock(t *testing.T) 
 	}
 	defer lock.Close()
 
-	route := certificateTestRoute(t, "route.example", setup.CertificatePlan)
+	route := certificateTestPublicURL(t, "route.example", setup.CertificatePlan)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)

@@ -49,7 +49,7 @@ const routes = z.coerce
   .int()
   .min(4)
   .max(10_000)
-  .parse(process.env.ROUTES ?? "4");
+  .parse(process.env.PUBLIC_URLS ?? "4");
 const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
 const replicatedRelays = process.env.SCENARIO === "control-restart";
 // Each publisher component owns striped pairs of routes. Small smoke runs

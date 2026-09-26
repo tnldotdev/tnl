@@ -26,7 +26,7 @@ type drainTestRelay struct {
 func drainTestConnections(t *testing.T, ctx context.Context, control *certificateTestControl, kind string) (muxsession.Connector, <-chan drainTestRelay, <-chan muxsession.Session) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
-	certificate := routeTestCertificate(t, "relay.example")
+	certificate := publicURLTestCertificate(t, "relay.example")
 	serverTLS := &tls.Config{Certificates: []tls.Certificate{certificate}}
 	clientTLS := &tls.Config{RootCAs: rootsForCertificate(t, certificate)}
 	relays, publishers := make(chan drainTestRelay, 2), make(chan muxsession.Session, 2)
@@ -104,7 +104,7 @@ func drainTestConnections(t *testing.T, ctx context.Context, control *certificat
 			connection, err := relay.NewPublisherConnection(ref, relayv1.ClaimedPublisherConnection{
 				ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), ConnectionSlot: int(ref.ConnectionSlot),
 				PublisherConnectionId: ref.PublisherConnectionID, RelayId: "relay_1", RelayLeaseRevision: 1,
-				RelayRunId: "relay_run_1", RelayServiceId: ref.RelayServiceID, RouteId: ref.RouteID, RouteSessionId: ref.RouteSessionID, RouteVersion: int64(ref.RouteVersion),
+				RelayRunId: "relay_run_1", RelayServiceId: ref.RelayServiceID, PublicUrlId: ref.PublicURLID, PublishRunId: ref.PublishRunID, PublishRunNumber: int64(ref.PublishRunNumber),
 			}, session)
 			if err != nil {
 				relays <- drainTestRelay{err: err}

@@ -274,16 +274,16 @@ SET state = 'quarantined',
 WHERE id = sqlc.arg(slug_reservation_id)
   AND state = 'active';
 
--- name: LockMembershipRoutes :many
+-- name: LockMembershipPublicURLs :many
 SELECT routes.*
-FROM control.routes AS routes
+FROM control.public_urls AS routes
 WHERE routes.team_id = sqlc.arg(team_id)
   AND (
       routes.membership_id = sqlc.arg(membership_id)
       OR EXISTS (
           SELECT 1
-          FROM control.route_sessions AS sessions
-          WHERE sessions.route_id = routes.id
+          FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
             AND sessions.membership_id = sqlc.arg(membership_id)
             AND sessions.closed_at IS NULL
       )
@@ -292,17 +292,17 @@ WHERE routes.team_id = sqlc.arg(team_id)
 ORDER BY routes.id
 FOR UPDATE;
 
--- name: LockDomainRoutes :many
+-- name: LockDomainPublicURLs :many
 SELECT *
-FROM control.routes
+FROM control.public_urls
 WHERE team_id = sqlc.arg(team_id)
   AND domain_id = sqlc.arg(domain_id)
   AND lifecycle_state <> 'deleted'
 ORDER BY id
 FOR UPDATE;
 
--- name: SuspendAuthorityRoute :execrows
-UPDATE control.routes
+-- name: SuspendAuthorityPublicURL :execrows
+UPDATE control.public_urls
 SET lifecycle_state = 'suspended',
     dns_state = CASE
         WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
@@ -324,7 +324,7 @@ SET lifecycle_state = 'suspended',
     suspension_reason = sqlc.arg(suspension_reason),
     suspended_at = sqlc.arg(suspended_at),
     updated_at = sqlc.arg(suspended_at)
-WHERE id = sqlc.arg(route_id)
+WHERE id = sqlc.arg(public_url_id)
   AND lifecycle_state <> 'deleted'
   AND mutation_revision < 9223372036854775807;
 

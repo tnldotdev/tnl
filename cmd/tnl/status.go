@@ -80,8 +80,8 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		if tunnel.Framework != "" {
 			fields = append(fields, clioutput.Field{Label: "framework", Value: tunnel.Framework})
 		}
-		if tunnel.RouteVersion != 0 {
-			fields = append(fields, clioutput.Field{Label: "route version", Value: strconv.FormatUint(tunnel.RouteVersion, 10)})
+		if tunnel.PublishRunNumber != 0 {
+			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(tunnel.PublishRunNumber, 10)})
 		}
 		fields = append(fields, clioutput.Field{Label: "tunnel", Value: tunnel.ID})
 		blocks = append(blocks, clioutput.Section(string(tunnel.State), clioutput.Fields(fields...)))

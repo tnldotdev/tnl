@@ -77,7 +77,7 @@ func New(target, hostname string, requestLimit int) (http.Handler, error) {
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return nil, diagnostic.Wrap(diagnostic.RouteInvalid, errors.New("localproxy: hostname must be canonical"))
+		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {

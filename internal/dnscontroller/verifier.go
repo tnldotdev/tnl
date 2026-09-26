@@ -87,7 +87,7 @@ func (v *AuthoritativeVerifier) Verify(ctx context.Context, domain string, expec
 	return true, nil
 }
 
-func (v *AuthoritativeVerifier) VerifyRoute(
+func (v *AuthoritativeVerifier) VerifyPublicURL(
 	ctx context.Context,
 	hostname string,
 	expectedIPv4, expectedIPv6, nameservers []string,

@@ -226,7 +226,7 @@ func publisherHello() tunnelv1.Message {
 	return tunnelv1.Message{
 		Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "credential",
 		PublisherConnection: &tunnelv1.PublisherConnectionRef{
-			RouteSessionID: "route_session_1", RouteID: "route_1", RouteVersion: 2,
+			PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 2,
 			PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0,
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
@@ -235,7 +235,7 @@ func publisherHello() tunnelv1.Message {
 func visitorStreamHeader() tunnelv1.VisitorStreamHeader {
 	return tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_connection_1",
-		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
 	}
 }
@@ -243,9 +243,9 @@ func internalForwardingHeader() tunnelv1.InternalForwardingHeader {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	return tunnelv1.InternalForwardingHeader{
 		ProtocolVersion: 1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
-		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0, ConnectionAssignmentRevision: 3,
 		RelayServiceID: "relay_service_1", RelayID: "relay_1", RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
-		RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
+		PublicUrlExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 	}
 }

@@ -20,7 +20,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, _, err := credentials.NewRouteSessionToken()
+	session, _, _, err := credentials.NewPublishRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 		switch request.URL.Path {
 		case "/v1/discovery":
 			_, _ = response.Write([]byte(`{} {}`))
-		case "/v1/route-sessions/session/heartbeat":
+		case "/v1/publish-runs/session/heartbeat":
 			if request.Header.Get("Authorization") != "Bearer "+session.String() {
 				t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
 			}
@@ -51,8 +51,8 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if _, err := client.Discovery(t.Context()); err == nil {
 		t.Fatal("Discovery accepted trailing JSON")
 	}
-	if _, err := client.HeartbeatRouteSession(t.Context(), "session", 1, session); !errors.Is(err, ErrStatusConflict) {
-		t.Fatalf("HeartbeatRouteSession error = %v, want status conflict", err)
+	if _, err := client.HeartbeatPublishRun(t.Context(), "session", 1, session); !errors.Is(err, ErrStatusConflict) {
+		t.Fatalf("HeartbeatPublishRun error = %v, want status conflict", err)
 	}
 }
 
@@ -126,7 +126,7 @@ func TestClientDoesNotFollowAuthenticatedRedirects(t *testing.T) {
 			defer destination.Close()
 
 			source := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if request.URL.Path != "/v1/routes/route_1" || request.Header.Get("Authorization") != "Bearer access" {
+				if request.URL.Path != "/v1/public-urls/public_url_1" || request.Header.Get("Authorization") != "Bearer access" {
 					t.Errorf("unexpected authenticated request: %s %s", request.Method, request.URL)
 				}
 				response.Header().Set("Location", destination.URL+"/record")
@@ -139,7 +139,7 @@ func TestClientDoesNotFollowAuthenticatedRedirects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.GetRoute(t.Context(), "route_1"); err == nil {
+			if _, err := client.GetPublicURL(t.Context(), "public_url_1"); err == nil {
 				t.Fatal("redirect response was accepted")
 			}
 			if destinationCalls != 0 {
@@ -152,17 +152,17 @@ func TestClientDoesNotFollowAuthenticatedRedirects(t *testing.T) {
 	}
 }
 
-func TestClientUpdatesRoute(t *testing.T) {
+func TestClientUpdatesPublicURL(t *testing.T) {
 	target := "http://127.0.0.1:4000"
 	prefixes := []string{}
-	want := controlv1.Route{
-		Id: "route_1", TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
-		Target: target, AllowedIpPrefixes: &prefixes, RouteScope: "member", PolicyRevision: 2,
-		LifecycleState: "enabled", NextRouteVersion: 3,
+	want := controlv1.PublicURL{
+		Id: "public_url_1", TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
+		Target: target, AllowedIpPrefixes: &prefixes, PublicUrlScope: "member", PolicyRevision: 2,
+		LifecycleState: "enabled", NextPublishRunNumber: 3,
 		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPatch || request.URL.Path != "/v1/routes/route_1" {
+		if request.Method != http.MethodPatch || request.URL.Path != "/v1/public-urls/public_url_1" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
 		if request.Header.Get("Authorization") != "Bearer access" || request.Header.Get("Accept") != "application/json, application/problem+json" || request.Header.Get("Content-Type") != "application/json" {
@@ -182,7 +182,7 @@ func TestClientUpdatesRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := client.UpdateRoute(t.Context(), "route_1", controlv1.UpdateRouteRequest{
+	route, err := client.UpdatePublicURL(t.Context(), "public_url_1", controlv1.UpdatePublicURLRequest{
 		Target: target, AllowedIpPrefixes: prefixes,
 	})
 	if err != nil {

@@ -175,8 +175,8 @@ func (h *handler) disconnectPublisherConnection(
 }
 
 type publisherConnectionFields struct {
-	routeSessionID, routeID                      string
-	routeVersion                                 int64
+	publishRunID, publicURLID                    string
+	publishRunNumber                             int64
 	publisherConnectionID                        string
 	connectionSlot                               int
 	assignmentRevision                           int64
@@ -213,7 +213,7 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
 	case errors.Is(err, controlstate.ErrRelayTransportCertificateNotFound):
 		return http.StatusServiceUnavailable, "certificate_unavailable", "The relay transport certificate is not ready"
-	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrRouteSessionStale):
+	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrPublishRunStale):
 		return http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current"
 	case errors.Is(err, controlstate.ErrPublisherConnectionAlreadyClaimed):
 		return http.StatusConflict, "publisher_connection_already_claimed", "The publisher connection is already claimed"
@@ -289,8 +289,8 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 
 func claimedPublisherConnection(connection controlstate.ClaimedPublisherConnection) relayv1.ClaimedPublisherConnection {
 	return relayv1.ClaimedPublisherConnection{
-		RouteSessionId: connection.RouteSessionID, RouteId: connection.RouteID,
-		RouteVersion: int64(connection.RouteVersion), PublisherConnectionId: connection.PublisherConnectionID,
+		PublishRunId: connection.PublishRunID, PublicUrlId: connection.PublicURLID,
+		PublishRunNumber: int64(connection.PublishRunNumber), PublisherConnectionId: connection.PublisherConnectionID,
 		ConnectionSlot:               connection.ConnectionSlot,
 		ConnectionAssignmentRevision: int64(connection.ConnectionAssignmentRevision),
 		RelayServiceId:               connection.ConnectionAssignmentIdentity.RelayServiceID,

@@ -23,8 +23,8 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := make([]Route, 2)
-	sessions := make([]RouteSessionAuthentication, 2)
+	routes := make([]PublicURL, 2)
+	sessions := make([]PublishRunAuthentication, 2)
 	for index := range routes {
 		hostname := fmt.Sprintf("route-%d.example.test", index)
 		plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
@@ -42,16 +42,16 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	defer rollbackTestTransaction(t, second)
 	emit := func(tx pgx.Tx, index int) (int64, error) {
 		queries := controlstatedb.New(tx)
-		route, err := queries.LockRouteForSession(ctx, routes[index].ID)
+		route, err := queries.LockPublicURLForRun(ctx, routes[index].ID)
 		if err != nil {
 			return 0, err
 		}
-		session, err := queries.GetRouteSession(ctx, sessions[index].RouteSessionID)
+		session, err := queries.GetPublishRun(ctx, sessions[index].PublishRunID)
 		if err != nil {
 			return 0, err
 		}
 		pending := pendingIngressRoutingTableEvents{}
-		published, err := pending.addRouteEvent(ctx, queries, route, session, nil, IngressRouteTombstone, now)
+		published, err := pending.addRouteEvent(ctx, queries, route, session, nil, IngressPublicURLTombstone, now)
 		if err != nil {
 			return 0, err
 		}
@@ -95,14 +95,14 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err = database.ReadIngressRoutingTableEvents(ctx, lease.IngressLeaseIdentity, 0, 10, now)
-	if err != nil || len(page.Events) != 1 || page.Events[0].RouteID != routes[0].ID || page.NextRevision != uint64(firstRevision) {
+	if err != nil || len(page.Events) != 1 || page.Events[0].PublicURLID != routes[0].ID || page.NextRevision != uint64(firstRevision) {
 		t.Fatalf("first committed page = %#v, %v", page, err)
 	}
 	if err := second.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	page, err = database.ReadIngressRoutingTableEvents(ctx, lease.IngressLeaseIdentity, page.NextRevision, 10, now)
-	if err != nil || len(page.Events) != 1 || page.Events[0].RouteID != routes[1].ID ||
+	if err != nil || len(page.Events) != 1 || page.Events[0].PublicURLID != routes[1].ID ||
 		page.NextRevision != uint64(secondRevision) || secondRevision <= firstRevision || page.More {
 		t.Fatalf("next committed page skipped an event: %#v, %v", page, err)
 	}
@@ -125,16 +125,16 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	}
 	defer rollbackTestTransaction(t, second)
 	firstQueries := controlstatedb.New(first)
-	storedRoute, err := firstQueries.LockRouteForSession(ctx, route.ID)
+	storedPublicURL, err := firstQueries.LockPublicURLForRun(ctx, route.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedSession, err := firstQueries.GetRouteSession(ctx, authentication.RouteSessionID)
+	storedSession, err := firstQueries.GetPublishRun(ctx, authentication.PublishRunID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstPending := pendingIngressRoutingTableEvents{}
-	firstPublished, err := firstPending.addRouteEvent(ctx, firstQueries, storedRoute, storedSession, nil, IngressRouteTombstone, now)
+	firstPublished, err := firstPending.addRouteEvent(ctx, firstQueries, storedPublicURL, storedSession, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,13 +147,13 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	var secondPublished *publishedIngressRoutingTableEvent
 	workers.Go(func() {
 		secondQueries := controlstatedb.New(second)
-		storedRoute, err := secondQueries.LockRouteForSession(ctx, route.ID)
+		storedPublicURL, err := secondQueries.LockPublicURLForRun(ctx, route.ID)
 		if err == nil {
-			storedSession, sessionErr := secondQueries.GetRouteSession(ctx, authentication.RouteSessionID)
+			storedSession, sessionErr := secondQueries.GetPublishRun(ctx, authentication.PublishRunID)
 			err = sessionErr
 			if err == nil {
 				secondPending := pendingIngressRoutingTableEvents{}
-				secondPublished, err = secondPending.addRouteEvent(ctx, secondQueries, storedRoute, storedSession, nil, IngressRouteTombstone, now.Add(time.Second))
+				secondPublished, err = secondPending.addRouteEvent(ctx, secondQueries, storedPublicURL, storedSession, nil, IngressPublicURLTombstone, now.Add(time.Second))
 				if err == nil {
 					err = secondPending.publish(ctx, secondQueries)
 				}
@@ -195,27 +195,27 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 		t.Fatal(err)
 	}
 	queries := controlstatedb.New(tx)
-	storedA, err := queries.LockRouteForSession(t.Context(), routeA.ID)
+	storedA, err := queries.LockPublicURLForRun(t.Context(), routeA.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessionA, err := queries.GetRouteSession(t.Context(), authenticationA.RouteSessionID)
+	sessionA, err := queries.GetPublishRun(t.Context(), authenticationA.PublishRunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedB, err := queries.LockRouteForSession(t.Context(), routeB.ID)
+	storedB, err := queries.LockPublicURLForRun(t.Context(), routeB.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessionB, err := queries.GetRouteSession(t.Context(), authenticationB.RouteSessionID)
+	sessionB, err := queries.GetPublishRun(t.Context(), authenticationB.PublishRunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `UPDATE control.routes SET target = 'http://127.0.0.1:4999' WHERE id = $1`, routeA.ID); err != nil {
+	if _, err := tx.Exec(t.Context(), `UPDATE control.public_urls SET target = 'http://127.0.0.1:4999' WHERE id = $1`, routeA.ID); err != nil {
 		t.Fatal(err)
 	}
 	pending := pendingIngressRoutingTableEvents{}
-	first, err := pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressRouteTombstone, now)
+	first, err := pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressRouteTombstone, now)
+	third, err := pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton`).Scan(&clock); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT target FROM control.routes WHERE id = $1`, routeA.ID).Scan(&target); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT target FROM control.public_urls WHERE id = $1`, routeA.ID).Scan(&target); err != nil {
 		t.Fatal(err)
 	}
 	if events != baselineEvents || clock != baselineClock || target != routeA.Target {
@@ -258,16 +258,16 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	}
 	defer rollbackTestTransaction(t, tx)
 	queries = controlstatedb.New(tx)
-	storedA, err = queries.LockRouteForSession(t.Context(), routeA.ID)
+	storedA, err = queries.LockPublicURLForRun(t.Context(), routeA.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedB, err = queries.LockRouteForSession(t.Context(), routeB.ID)
+	storedB, err = queries.LockPublicURLForRun(t.Context(), routeB.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pending = pendingIngressRoutingTableEvents{}
-	first, err = pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressRouteTombstone, now)
+	first, err = pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err = pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressRouteTombstone, now)
+	third, err = pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,41 +297,41 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
 	}
 	_, heartbeatAuthentication := newExternalPlanSession(t, database, now, "team_cycle_heartbeat", "heartbeat-cycle.example.test", "managed:example.test", plan("heartbeat-cycle.example.test"))
-	replacementRoute, replacementAuthentication := newExternalPlanSession(t, database, now, "team_cycle_replacement", "replacement-cycle.example.test", "managed:example.test", plan("replacement-cycle.example.test"))
-	for _, authentication := range []RouteSessionAuthentication{heartbeatAuthentication, replacementAuthentication} {
-		if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET state = 'ready', ready_at = $2 WHERE id = $1`, authentication.RouteSessionID, now); err != nil {
+	replacementPublicURL, replacementAuthentication := newExternalPlanSession(t, database, now, "team_cycle_replacement", "replacement-cycle.example.test", "managed:example.test", plan("replacement-cycle.example.test"))
+	for _, authentication := range []PublishRunAuthentication{heartbeatAuthentication, replacementAuthentication} {
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2 WHERE id = $1`, authentication.PublishRunID, now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_session_connections AS connections
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections AS connections
 			SET state = 'ready', connected_relay_id = leases.relay_id,
 			    connected_relay_run_id = leases.relay_run_id,
 			    connected_relay_lease_revision = leases.relay_lease_revision,
 			    claim_id = 'transaction-cycle', connected_at = $2, ready_at = $2
 			FROM control.relay_leases AS leases
-			WHERE connections.route_session_id = $1
-			  AND leases.relay_service_id = connections.relay_service_id`, authentication.RouteSessionID, now); err != nil {
+			WHERE connections.publish_run_id = $1
+			  AND leases.relay_service_id = connections.relay_service_id`, authentication.PublishRunID, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_session_connections
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections
 		SET state = 'closed', disconnected_at = $2, closed_at = $2
-		WHERE route_session_id = $1 AND connection_slot = 0`, heartbeatAuthentication.RouteSessionID, now); err != nil {
+		WHERE publish_run_id = $1 AND connection_slot = 0`, heartbeatAuthentication.PublishRunID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET publisher_expires_at = $1 WHERE id = $2`, now.Add(time.Second), replacementAuthentication.RouteSessionID); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at = $1 WHERE id = $2`, now.Add(time.Second), replacementAuthentication.PublishRunID); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_"+replacementRoute.TeamID, now)
+	secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_"+replacementPublicURL.TeamID, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacementRequest := RouteSessionRequest{
-		RouteID: replacementRoute.ID, TeamID: replacementRoute.TeamID, MembershipID: replacementRoute.MembershipID,
-		ActingIdentityID: "identity_" + replacementRoute.TeamID, RetrySecret: secret[:], IdempotencyKey: "replacement",
+	replacementRequest := PublishRunRequest{
+		PublicURLID: replacementPublicURL.ID, TeamID: replacementPublicURL.TeamID, MembershipID: replacementPublicURL.MembershipID,
+		ActingIdentityID: "identity_" + replacementPublicURL.TeamID, RetrySecret: secret[:], IdempotencyKey: "replacement",
 		RequestDigest: sha256.Sum256([]byte("replacement")), PolicyRevision: 1,
-		CertificateCacheKey: replacementRoute.CanonicalHostname, CertificateScope: replacementRoute.CanonicalHostname,
-		CertificateIdentifiers: []string{replacementRoute.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
-		AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: replacementRoute.MutationRevision + 1,
+		CertificateCacheKey: replacementPublicURL.CanonicalHostname, CertificateScope: replacementPublicURL.CanonicalHostname,
+		CertificateIdentifiers: []string{replacementPublicURL.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
+		AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: replacementPublicURL.MutationRevision + 1,
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -345,16 +345,16 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	heartbeatDone := make(chan error, 1)
-	var heartbeatSetup RouteSessionSetup
+	var heartbeatSetup PublishRunSetup
 	workers.Go(func() {
 		var err error
-		heartbeatSetup, err = database.HeartbeatRouteSession(ctx, heartbeatAuthentication, now.Add(2*time.Second), 48*time.Hour, time.Hour)
+		heartbeatSetup, err = database.HeartbeatPublishRun(ctx, heartbeatAuthentication, now.Add(2*time.Second), 48*time.Hour, time.Hour)
 		heartbeatDone <- err
 	})
 	heartbeatPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), heartbeatDone)
 	replacementDone := make(chan error, 1)
 	workers.Go(func() {
-		_, err := database.CreateRouteSession(ctx, replacementRequest, now.Add(2*time.Second), time.Hour, time.Hour)
+		_, err := database.CreatePublishRun(ctx, replacementRequest, now.Add(2*time.Second), time.Hour, time.Hour)
 		replacementDone <- err
 	})
 	// The closed slot needs a new reservation (a failed ready slot may reuse its
@@ -394,7 +394,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer rollbackTestTransaction(t, gate)
-				if _, err := controlstatedb.New(gate).LockRouteForSession(ctx, fixture.route.ID); err != nil {
+				if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, fixture.route.ID); err != nil {
 					t.Fatal(err)
 				}
 				workers := newIntegrationWorkers(t, cancel)
@@ -421,21 +421,21 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					case "create":
 						request := fixture.createRequest
 						request.IdempotencyKey, request.CanonicalHostname = "sibling", "sibling.member."+fixture.domain.CanonicalDomain
-						_, err = database.CreateRoute(ctx, request, now)
+						_, err = database.CreatePublicURL(ctx, request, now)
 					case "session":
-						_, err = database.CreateRouteSession(ctx, fixture.sessionRequest, now, time.Hour, time.Hour)
+						_, err = database.CreatePublishRun(ctx, fixture.sessionRequest, now, time.Hour, time.Hour)
 					case "update":
-						_, err = database.UpdateAuthorizedRoute(ctx, AuthorizedRouteUpdateRequest{
-							RouteID: fixture.route.ID, TeamID: fixture.route.TeamID, ActingIdentityID: fixture.member.IdentityID,
+						_, err = database.UpdateAuthorizedPublicURL(ctx, AuthorizedRouteUpdateRequest{
+							PublicURLID: fixture.route.ID, TeamID: fixture.route.TeamID, ActingIdentityID: fixture.member.IdentityID,
 							Target: "http://127.0.0.1:3001", AllowedIPPrefixes: []string{},
 							PolicyRevision: uint64(fixture.route.PolicyRevision), ExpectedMutationRevision: fixture.route.MutationRevision,
 						}, now)
 					case "delete":
-						err = database.DeleteRoute(ctx, fixture.member.IdentityID, fixture.route.ID, now)
+						err = database.DeletePublicURL(ctx, fixture.member.IdentityID, fixture.route.ID, now)
 					}
 					operationDone <- err
 				})
-				// Route operations must wait on the team, not acquire the route first.
+				// PublicURL operations must wait on the team, not acquire the route first.
 				waitForPostgresBlock(t, ctx, database, mutationPID, operationDone)
 				if err := gate.Commit(ctx); err != nil {
 					t.Fatal(err)
@@ -448,18 +448,18 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 				switch operation {
 				case "create":
 					if mutation != "role" {
-						want = ErrRouteAccess
+						want = ErrPublicURLAccess
 					}
 				case "session":
-					want = ErrRouteAuthority
+					want = ErrPublicURLAuthority
 				case "update":
 					want = ErrRouteNotEnabled
 					if mutation == "role" {
-						want = ErrRouteAccess
+						want = ErrPublicURLAccess
 					}
 				case "delete":
 					if mutation == "remove" {
-						want = ErrRouteNotFound
+						want = ErrPublicURLNotFound
 					}
 				}
 				if !errors.Is(err, want) {
@@ -476,26 +476,26 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 			fixture := newTransactionAuthorityFixture(t)
 			database, now := fixture.database, fixture.now
 			registerCertificatePlanRelays(t, database, now)
-			setup, err := database.CreateRouteSession(t.Context(), fixture.sessionRequest, now, time.Hour, time.Hour)
+			setup, err := database.CreatePublishRun(t.Context(), fixture.sessionRequest, now, time.Hour, time.Hour)
 			if err != nil {
 				t.Fatal(err)
 			}
-			authentication := RouteSessionAuthentication{
-				RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID, RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
+			authentication := PublishRunAuthentication{
+				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 			}
 			plan := CertificatePlan{CacheKey: fixture.route.CanonicalHostname, Scope: fixture.route.CanonicalHostname,
 				Identifiers: []string{fixture.route.CanonicalHostname}, ChallengeMethod: "dns-01"}
 			work := createPlanIssuanceWork(t, database, now, authentication, plan, true, nil)
 			if certificateState == "installed" {
-				if _, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
+				if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if err := database.ReleaseTeamDomain(t.Context(), fixture.owner, fixture.member.TeamID, fixture.domain.ID, now); err != nil {
 				t.Fatal(err)
 			}
-			if err := database.DeleteRoute(t.Context(), fixture.owner, fixture.route.ID, now); err != nil {
-				t.Fatalf("delete suspended route: %v", err)
+			if err := database.DeletePublicURL(t.Context(), fixture.owner, fixture.route.ID, now); err != nil {
+				t.Fatalf("delete suspended public_url: %v", err)
 			}
 			var state string
 			var notAfter time.Time
@@ -519,14 +519,14 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 			}
 			ready, err := database.DNSAuthorityReleaseReady(t.Context(), fixture.domain.ID, notAfter)
 			if err != nil || ready {
-				t.Fatalf("pending public route DNS must block release even after certificate expiry: %t, %v", ready, err)
+				t.Fatalf("pending public URL DNS must block release even after certificate expiry: %t, %v", ready, err)
 			}
-			dnsWork, found, err := database.ClaimDNSRouteWork(t.Context(), "cleanup", now, time.Minute)
-			if err != nil || !found || dnsWork.RouteID != fixture.route.ID || dnsWork.State != RouteDNSRemoving {
+			dnsWork, found, err := database.ClaimDNSPublicURLWork(t.Context(), "cleanup", now, time.Minute)
+			if err != nil || !found || dnsWork.PublicURLID != fixture.route.ID || dnsWork.State != PublicURLDNSRemoving {
 				t.Fatalf("claim route cleanup: %#v, %t, %v", dnsWork, found, err)
 			}
-			dnsWork.State, dnsWork.AvailableAt = RouteDNSRemoved, time.Time{}
-			if _, err := database.SaveDNSRouteWork(t.Context(), dnsWork, now); err != nil {
+			dnsWork.State, dnsWork.AvailableAt = PublicURLDNSRemoved, time.Time{}
+			if _, err := database.SaveDNSPublicURLWork(t.Context(), dnsWork, now); err != nil {
 				t.Fatal(err)
 			}
 			for _, observed := range []time.Time{now, notAfter.Add(-time.Microsecond), notAfter, notAfter.Add(time.Second)} {
@@ -663,10 +663,10 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 	if _, err := database.EnsureExternalAuthorityPrincipal(ctx, identity, now); err != nil {
 		t.Fatal(err)
 	}
-	request := CreateRouteRequest{
+	request := CreatePublicURLRequest{
 		TeamID: "team_external", DomainID: "domain_external", ActingIdentityID: identity,
 		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.example.test",
-		Target: "http://127.0.0.1:3000", RouteScope: RouteScopeShared, DNSState: RouteDNSUnmanaged,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, DNSState: PublicURLDNSUnmanaged,
 		AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
 	}
 	gate, err := database.pool.Begin(ctx)
@@ -674,16 +674,16 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'route_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'public_url_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	created := make(chan error, 1)
-	var route Route
+	var route PublicURL
 	workers.Go(func() {
 		var err error
-		route, err = database.CreateRoute(ctx, request, now)
+		route, err = database.CreatePublicURL(ctx, request, now)
 		created <- err
 	})
 	creatorPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), created)
@@ -705,10 +705,10 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 		}
 	}
 	current, err := database.GetRouteForAuthorization(ctx, route.ID)
-	if err != nil || current.LifecycleState != RouteLifecycleSuspended {
-		t.Fatalf("revocation missed concurrent route: %#v, %v", current, err)
+	if err != nil || current.LifecycleState != PublicURLLifecycleSuspended {
+		t.Fatalf("revocation missed concurrent public_url: %#v, %v", current, err)
 	}
-	if _, err := database.CreateRoute(ctx, request, now); !errors.Is(err, ErrRouteAuthority) {
+	if _, err := database.CreatePublicURL(ctx, request, now); !errors.Is(err, ErrPublicURLAuthority) {
 		t.Fatalf("stale hosted creation replay = %v", err)
 	}
 	assertNoBuiltinAuthority(t, database)
@@ -726,19 +726,19 @@ func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 		request.IdempotencyKey = fmt.Sprintf("ephemeral-%t", suspended)
 		request.CanonicalHostname = request.IdempotencyKey + ".member." + fixture.domain.CanonicalDomain
 		request.Ephemeral = true
-		route, err := database.CreateRoute(t.Context(), request, now)
+		route, err := database.CreatePublicURL(t.Context(), request, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if suspended {
-			if _, err := controlstatedb.New(database.pool).SuspendAuthorityRoute(t.Context(), controlstatedb.SuspendAuthorityRouteParams{
-				RouteID: route.ID, SuspensionReason: text("test"), SuspendedAt: timestamptz(now),
+			if _, err := controlstatedb.New(database.pool).SuspendAuthorityPublicURL(t.Context(), controlstatedb.SuspendAuthorityPublicURLParams{
+				PublicURLID: route.ID, SuspensionReason: text("test"), SuspendedAt: timestamptz(now),
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), now.Add(ephemeralRouteGracePeriod))
+	count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralRouteGracePeriod))
 	if err != nil || count != 2 {
 		t.Fatalf("mixed enabled/suspended expiry batch = %d, %v; want 2", count, err)
 	}
@@ -746,11 +746,11 @@ func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 	if err := database.pool.QueryRow(t.Context(), `
 		SELECT count(*) FILTER (WHERE lifecycle_state = 'deleted' AND suspended_at IS NULL AND dns_state = 'removing'),
 		       (SELECT count(*) FROM control.admin_audit_events WHERE request_id LIKE 'ephemeral_expiry/%')
-		FROM control.routes WHERE ephemeral
+		FROM control.public_urls WHERE ephemeral
 	`).Scan(&deleted, &audited); err != nil || deleted != 2 || audited != 2 {
 		t.Fatalf("deleted/audited batch = %d/%d, %v; want 2/2", deleted, audited, err)
 	}
-	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), now.Add(ephemeralRouteGracePeriod)); err != nil || count != 0 {
+	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralRouteGracePeriod)); err != nil || count != 0 {
 		t.Fatalf("repeated expiry batch = %d, %v", count, err)
 	}
 }
@@ -761,9 +761,9 @@ type transactionAuthorityFixture struct {
 	owner          string
 	member         Membership
 	domain         Domain
-	route          Route
-	createRequest  CreateRouteRequest
-	sessionRequest RouteSessionRequest
+	route          PublicURL
+	createRequest  CreatePublicURLRequest
+	sessionRequest PublishRunRequest
 }
 
 func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
@@ -808,19 +808,19 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	if _, err := database.SaveDNSAuthorityWork(t.Context(), work, now); err != nil {
 		t.Fatal(err)
 	}
-	request := CreateRouteRequest{
+	request := CreatePublicURLRequest{
 		TeamID: team.ID, DomainID: domain.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
 		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.member." + domain.CanonicalDomain,
-		Target: "http://127.0.0.1:3000", RouteScope: RouteScopeMember, DNSState: RouteDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
 	}
-	route, err := database.CreateRoute(t.Context(), request, now)
+	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return transactionAuthorityFixture{
 		database: database, now: now, owner: owner, member: member, domain: domain, route: route, createRequest: request,
-		sessionRequest: RouteSessionRequest{
-			RouteID: route.ID, TeamID: team.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
+		sessionRequest: PublishRunRequest{
+			PublicURLID: route.ID, TeamID: team.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
 			RequireLocalAuthority: true, RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
 			CertificateCacheKey: route.CanonicalHostname, CertificateScope: route.CanonicalHostname,

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -21,8 +20,8 @@ func assertAssignmentTotals(t *testing.T, db controlstatedb.DBTX, want int64) {
 	err := db.QueryRow(t.Context(), `
 		WITH actual AS (
 			SELECT connections.relay_service_id, count(*) AS assignment_count
-			FROM control.route_session_connections AS connections
-			JOIN control.route_sessions AS sessions ON sessions.id = connections.route_session_id
+			FROM control.publish_run_connections AS connections
+			JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
 			WHERE sessions.closed_at IS NULL
 			  AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 			GROUP BY connections.relay_service_id
@@ -39,11 +38,11 @@ func assertAssignmentTotals(t *testing.T, db controlstatedb.DBTX, want int64) {
 }
 
 func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ctx := t.Context()
 	assertAssignmentTotals(t, database.pool, 2)
-	if _, err := database.CreateRouteSession(ctx, f.request, now, time.Minute, time.Minute); err != nil {
+	if _, err := database.CreatePublishRun(ctx, f.request, now, time.Minute, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, database.pool, 2)
@@ -70,35 +69,35 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 		name, query string
 		want        int64
 	}{
-		{"draining", `UPDATE control.route_session_connections SET state = 'draining' WHERE connection_slot = 0`, 2},
-		{"service transfer", `UPDATE control.route_session_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`, 2},
-		{"expire", `UPDATE control.route_session_connections SET state = 'expired' WHERE connection_slot = 1`, 1},
-		{"reassign expired", `UPDATE control.route_session_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
-		{"close slot", `UPDATE control.route_session_connections SET state = 'closed' WHERE connection_slot = 1`, 1},
-		{"reassign closed", `UPDATE control.route_session_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
-		{"close parent first", `UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
-		{"close slot after parent", `UPDATE control.route_session_connections SET state = 'expired' WHERE connection_slot = 1`, 0},
-		{"reopen parent", `UPDATE control.route_sessions SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
-		{"save slots", `CREATE TEMP TABLE saved_assignments ON COMMIT DROP AS TABLE control.route_session_connections`, 1},
-		{"delete slots", `DELETE FROM control.route_session_connections`, 0},
-		{"insert active and expired slots", `INSERT INTO control.route_session_connections SELECT * FROM saved_assignments`, 1},
-		{"insert conflict retry", `INSERT INTO control.route_session_connections SELECT * FROM saved_assignments ON CONFLICT DO NOTHING`, 1},
-		{"close children first", `UPDATE control.route_session_connections SET state = 'closed'`, 0},
-		{"close parent after children", `UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
-		{"delete closed children", `DELETE FROM control.route_session_connections`, 0},
+		{"draining", `UPDATE control.publish_run_connections SET state = 'draining' WHERE connection_slot = 0`, 2},
+		{"service transfer", `UPDATE control.publish_run_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`, 2},
+		{"expire", `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 1`, 1},
+		{"reassign expired", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
+		{"close slot", `UPDATE control.publish_run_connections SET state = 'closed' WHERE connection_slot = 1`, 1},
+		{"reassign closed", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
+		{"close parent first", `UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
+		{"close slot after parent", `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 1`, 0},
+		{"reopen parent", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
+		{"save slots", `CREATE TEMP TABLE saved_assignments ON COMMIT DROP AS TABLE control.publish_run_connections`, 1},
+		{"delete slots", `DELETE FROM control.publish_run_connections`, 0},
+		{"insert active and expired slots", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments`, 1},
+		{"insert conflict retry", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments ON CONFLICT DO NOTHING`, 1},
+		{"close children first", `UPDATE control.publish_run_connections SET state = 'closed'`, 0},
+		{"close parent after children", `UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
+		{"delete closed children", `DELETE FROM control.publish_run_connections`, 0},
 		{"prepare historical slots", `UPDATE saved_assignments SET session_open = false`, 0},
-		{"insert into closed parent", `INSERT INTO control.route_session_connections SELECT * FROM saved_assignments`, 0},
-		{"reopen with inserted slots", `UPDATE control.route_sessions SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
+		{"insert into closed parent", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments`, 0},
+		{"reopen with inserted slots", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
 		{"close children and parent in one statement", `WITH closed AS (
-			UPDATE control.route_session_connections SET state = 'closed' RETURNING route_session_id
-		) UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'
-		WHERE id IN (SELECT route_session_id FROM closed)`, 0},
-		{"reopen after compound closure", `UPDATE control.route_sessions SET state = 'starting', closed_at = NULL, close_reason = NULL`, 0},
-		{"restore assignment", `UPDATE control.route_session_connections SET state = 'assigned' WHERE connection_slot = 1`, 1},
+			UPDATE control.publish_run_connections SET state = 'closed' RETURNING publish_run_id
+		) UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'
+		WHERE id IN (SELECT publish_run_id FROM closed)`, 0},
+		{"reopen after compound closure", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 0},
+		{"restore assignment", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 1},
 		{"close parent and children in one statement", `WITH closed AS (
-			UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' RETURNING id
-		) UPDATE control.route_session_connections SET state = 'closed'
-		WHERE route_session_id IN (SELECT id FROM closed)`, 0},
+			UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' RETURNING id
+		) UPDATE control.publish_run_connections SET state = 'closed'
+		WHERE publish_run_id IN (SELECT id FROM closed)`, 0},
 	}
 	for _, step := range steps {
 		t.Run(step.name, func(t *testing.T) {
@@ -123,7 +122,7 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 		t.Fatalf("disconnect retry = %v", err)
 	}
 	assertAssignmentTotals(t, database.pool, 1)
-	if _, err := database.HeartbeatRouteSession(ctx, f.authentication(), now, time.Minute, time.Minute); err != nil {
+	if _, err := database.HeartbeatPublishRun(ctx, f.authentication(), now, time.Minute, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, database.pool, 2)
@@ -131,13 +130,13 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, database.pool, 2)
-	recovered, err := database.HeartbeatRouteSession(ctx, f.authentication(), now, time.Minute, time.Minute)
+	recovered, err := database.HeartbeatPublishRun(ctx, f.authentication(), now, time.Minute, time.Minute)
 	if err != nil || recovered.PublisherConnections[0].RelayServiceID != "spare" {
 		t.Fatalf("disabled-service recovery chose %q: %v", recovered.PublisherConnections[0].RelayServiceID, err)
 	}
 	assertAssignmentTotals(t, database.pool, 2)
 	for range 2 {
-		if err := database.CloseRouteSession(ctx, f.setup.RouteSessionID, f.setup.RouteSessionToken, now); err != nil {
+		if err := database.ClosePublishRun(ctx, f.setup.PublishRunID, f.setup.PublishRunToken, now); err != nil {
 			t.Fatal(err)
 		}
 		assertAssignmentTotals(t, database.pool, 0)
@@ -145,20 +144,20 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 }
 
 func TestIntegrationAssignmentTotalsRollbackAndStoredReservations(t *testing.T) {
-	database, now, request, _ := newRouteSessionPrerequisites(t)
+	database, now, request, _ := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	// Fail after the assignment triggers have run, at the final audit insertion.
-	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.admin_audit_events ADD CONSTRAINT reject_session_audit CHECK (operation <> 'route_session.create')`); err != nil {
+	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.admin_audit_events ADD CONSTRAINT reject_session_audit CHECK (operation <> 'publish_run.create')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateRouteSession(ctx, request, now, time.Minute, time.Minute); err == nil {
+	if _, err := database.CreatePublishRun(ctx, request, now, time.Minute, time.Minute); err == nil {
 		t.Fatal("creation unexpectedly succeeded")
 	}
 	assertAssignmentTotals(t, database.pool, 0)
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.admin_audit_events DROP CONSTRAINT reject_session_audit`); err != nil {
 		t.Fatal(err)
 	}
-	setup, err := database.CreateRouteSession(ctx, request, now, time.Minute, time.Minute)
+	setup, err := database.CreatePublishRun(ctx, request, now, time.Minute, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,85 +176,43 @@ func TestIntegrationAssignmentTotalsRollbackAndStoredReservations(t *testing.T) 
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CloseRouteSession(ctx, setup.RouteSessionID, setup.RouteSessionToken, now.Add(2*time.Hour)); err != nil {
+	if err := database.ClosePublishRun(ctx, setup.PublishRunID, setup.PublishRunToken, now.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, database.pool, 0)
 }
 
 func TestIntegrationAssignmentTotalsRejectParentFlagDrift(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	tx, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, tx)
-	if _, err := tx.Exec(t.Context(), `UPDATE control.route_session_connections SET session_open = false WHERE connection_slot = 0`); err != nil {
+	if _, err := tx.Exec(t.Context(), `UPDATE control.publish_run_connections SET session_open = false WHERE connection_slot = 0`); err != nil {
 		t.Fatal(err)
 	}
 	var constraint *pgconn.PgError
-	if err := tx.Commit(t.Context()); !errors.As(err, &constraint) || constraint.ConstraintName != "route_session_connections_assignment_parent" {
+	if err := tx.Commit(t.Context()); !errors.As(err, &constraint) || constraint.ConstraintName != "publish_run_connections_assignment_parent" {
 		t.Fatalf("parent flag drift commit error = %v", err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 2)
-}
-
-func TestIntegrationAssignmentTotalsBackfill(t *testing.T) {
-	fixtures, _ := relayServiceProgressSessions(t)
-	database := fixtures[0].database
-	ctx := t.Context()
-	tx, err := database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, tx)
-	migration, err := migrationFiles.ReadFile("migrations/00004_relay_assignment_totals.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up, down, ok := strings.Cut(string(migration), "-- +goose Down")
-	if !ok {
-		t.Fatal("missing down migration")
-	}
-	if _, err := tx.Exec(ctx, down); err != nil {
-		t.Fatal(err)
-	}
-	// Historical closed parents may still have active-looking slots. Preserve
-	// those rows and exclude them, exactly as the old recount did.
-	if _, err := tx.Exec(ctx, `UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' WHERE id = $1`, fixtures[0].setup.RouteSessionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE control.route_session_connections SET state = 'expired' WHERE route_session_id = $1 AND connection_slot = 0`, fixtures[1].setup.RouteSessionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, up); err != nil {
-		t.Fatal(err)
-	}
-	assertAssignmentTotals(t, tx, 7)
-	var rows int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM control.route_session_connections`).Scan(&rows); err != nil || rows != 10 {
-		t.Fatalf("backfill changed stored assignments: %d, %v", rows, err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE control.route_sessions SET state = 'starting', closed_at = NULL, close_reason = NULL WHERE id = $1`, fixtures[0].setup.RouteSessionID); err != nil {
-		t.Fatal(err)
-	}
-	assertAssignmentTotals(t, tx, 9)
 }
 
 func TestIntegrationAssignmentTotalsParentTransitionRace(t *testing.T) {
 	for _, reopen := range []bool{false, true} {
 		for _, mutation := range []string{"expire", "delete", "transfer"} {
 			t.Run(fmt.Sprintf("reopen=%t/%s", reopen, mutation), func(t *testing.T) {
-				f := newRouteSessionFixture(t)
+				f := newPublishRunFixture(t)
 				database := f.database
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
 				if _, err := database.RegisterRelay(ctx, relayLifecycleRegistration("spare"), f.now, time.Hour); err != nil {
 					t.Fatal(err)
 				}
-				closeParent := `UPDATE control.route_sessions SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' WHERE id = $1`
+				closeParent := `UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' WHERE id = $1`
 				if reopen {
-					if _, err := database.pool.Exec(ctx, closeParent, f.setup.RouteSessionID); err != nil {
+					if _, err := database.pool.Exec(ctx, closeParent, f.setup.PublishRunID); err != nil {
 						t.Fatal(err)
 					}
 					assertAssignmentTotals(t, database.pool, 0)
@@ -273,17 +230,17 @@ func TestIntegrationAssignmentTotalsParentTransitionRace(t *testing.T) {
 				done := make(chan error, 1)
 				parentQuery := closeParent
 				if reopen {
-					parentQuery = `UPDATE control.route_sessions SET state = 'starting', closed_at = NULL, close_reason = NULL WHERE id = $1`
+					parentQuery = `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL WHERE id = $1`
 				}
-				workers.Go(func() { _, err := database.pool.Exec(ctx, parentQuery, f.setup.RouteSessionID); done <- err })
+				workers.Go(func() { _, err := database.pool.Exec(ctx, parentQuery, f.setup.PublishRunID); done <- err })
 				// The parent holds its row while its eligibility cascade waits for
 				// this slot. A slot delta must not acquire the parent in reverse.
 				waitForPostgresBlock(t, ctx, database, int32(child.Conn().PgConn().PID()), done)
-				query := `UPDATE control.route_session_connections SET state = 'expired' WHERE connection_slot = 0`
+				query := `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 0`
 				if mutation == "delete" {
-					query = `DELETE FROM control.route_session_connections WHERE connection_slot = 0`
+					query = `DELETE FROM control.publish_run_connections WHERE connection_slot = 0`
 				} else if mutation == "transfer" {
-					query = `UPDATE control.route_session_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`
+					query = `UPDATE control.publish_run_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`
 				}
 				if _, err := child.Exec(ctx, query); err != nil {
 					t.Fatal(err)
@@ -320,7 +277,7 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 	f, database, now := fixtures[0], fixtures[0].database, fixtures[0].now
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if _, err := database.pool.Exec(ctx, `UPDATE control.route_sessions SET publisher_expires_at = $2 WHERE id = $1`, f.setup.RouteSessionID, now.Add(time.Second)); err != nil {
+	if _, err := database.pool.Exec(ctx, `UPDATE control.publish_runs SET publisher_expires_at = $2 WHERE id = $1`, f.setup.PublishRunID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	gate, err := database.pool.Begin(ctx)
@@ -328,7 +285,7 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'route_session_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'publish_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
@@ -337,14 +294,14 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 	request := f.request
 	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
 	workers.Go(func() {
-		_, err := database.CreateRouteSession(ctx, request, now.Add(2*time.Second), time.Hour, time.Hour)
+		_, err := database.CreatePublishRun(ctx, request, now.Add(2*time.Second), time.Hour, time.Hour)
 		replacement <- err
 	})
 	// Expiry has released reservations and holds the totals guard, but placement
 	// is paused at the maintenance row before taking any service locks.
 	replacementPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), replacement)
 	workers.Go(func() {
-		_, err := database.HeartbeatRouteSession(ctx, fixtures[1].authentication(), now.Add(2*time.Second), time.Hour, time.Hour)
+		_, err := database.HeartbeatPublishRun(ctx, fixtures[1].authentication(), now.Add(2*time.Second), time.Hour, time.Hour)
 		heartbeat <- err
 	})
 	waitForPostgresBlock(t, ctx, database, replacementPID, heartbeat)
@@ -386,21 +343,21 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 			// Bulk closure visits y/z before a/b; the competing single closure
 			// visits a/z. Per-statement ordered counter locks alone would cycle.
 			for index, services := range [][2]string{{"y", "z"}, {"a", "b"}, {"a", "z"}} {
-				if _, err := database.pool.Exec(ctx, `UPDATE control.route_session_connections SET relay_service_id = CASE connection_slot WHEN 0 THEN $2 ELSE $3 END WHERE route_session_id = $1`, fixtures[index].setup.RouteSessionID, services[0], services[1]); err != nil {
+				if _, err := database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET relay_service_id = CASE connection_slot WHEN 0 THEN $2 ELSE $3 END WHERE publish_run_id = $1`, fixtures[index].setup.PublishRunID, services[0], services[1]); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if cleanup {
 				for _, f := range fixtures[:2] {
-					if _, err := database.pool.Exec(ctx, `UPDATE control.routes SET ephemeral = true, expires_at = $2 WHERE id = $1`, f.setup.RouteID, now.Add(time.Second)); err != nil {
+					if _, err := database.pool.Exec(ctx, `UPDATE control.public_urls SET ephemeral = true, expires_at = $2 WHERE id = $1`, f.setup.PublicURLID, now.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := database.pool.Exec(ctx, `UPDATE control.route_sessions SET publisher_expires_at = $2 WHERE id = $1`, f.setup.RouteSessionID, now.Add(time.Second)); err != nil {
+					if _, err := database.pool.Exec(ctx, `UPDATE control.publish_runs SET publisher_expires_at = $2 WHERE id = $1`, f.setup.PublishRunID, now.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
 				}
 			} else {
-				if _, err := database.pool.Exec(ctx, `UPDATE control.routes SET team_id = $2 WHERE id = $1`, fixtures[1].setup.RouteID, fixtures[0].setup.TeamID); err != nil {
+				if _, err := database.pool.Exec(ctx, `UPDATE control.public_urls SET team_id = $2 WHERE id = $1`, fixtures[1].setup.PublicURLID, fixtures[0].setup.TeamID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -420,7 +377,7 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 				var closed int
 				var err error
 				if cleanup {
-					closed, err = database.DeleteExpiredEphemeralRoutes(ctx, now.Add(2*time.Second))
+					closed, err = database.DeleteExpiredEphemeralPublicURLs(ctx, now.Add(2*time.Second))
 				} else {
 					_, closed, err = database.ApplyHostedPolicyRevocation(ctx, "https://authority.example.test", fixtures[0].setup.TeamID, 2, true, nil, nil, now)
 				}
@@ -432,7 +389,7 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 			bulkPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), bulk)
 			workers.Go(func() {
 				f := fixtures[2]
-				single <- database.CloseRouteSession(ctx, f.setup.RouteSessionID, f.setup.RouteSessionToken, now)
+				single <- database.ClosePublishRun(ctx, f.setup.PublishRunID, f.setup.PublishRunToken, now)
 			})
 			waitForPostgresBlock(t, ctx, database, bulkPID, single)
 			if err := gate.Commit(ctx); err != nil {

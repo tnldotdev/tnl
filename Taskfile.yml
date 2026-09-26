@@ -220,24 +220,24 @@ tasks:
         '
 
   go:test:load:database:
-    desc: Run database load tests (DELAY=0ms/5ms/20ms, ROUTES=1000, HISTORY=1 event/route, RUN=^TestLoad)
+    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
     vars:
       DELAY: '{{default "0ms" .DELAY}}'
-      ROUTES: '{{default "1000" .ROUTES}}'
+      PUBLIC_URLS: '{{default "1000" .PUBLIC_URLS}}'
       HISTORY: '{{default "1" .HISTORY}}'
       DURATION: '{{default "0s" .DURATION}}'
       RETENTION: '{{default "0s" .RETENTION}}'
       RUN: '{{default "^TestLoad" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-routes='{{.ROUTES}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
+      - node scripts/run-go-tests-with-postgres.ts -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
   go:test:load:runtime:
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
-      ROUTES: '{{default "4" .ROUTES}}'
+      PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
       START_PARALLEL: '{{default "4" .START_PARALLEL}}'
       READY_TIMEOUT: '{{default "30s" .READY_TIMEOUT}}'
-      ROUTE_CERTIFICATE_WORKERS: '{{default "4" .ROUTE_CERTIFICATE_WORKERS}}'
+      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "4" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
       RPS: '{{default "16" .RPS}}'
       DURATION: '{{default "10s" .DURATION}}'
       WORKERS: '{{default "128" .WORKERS}}'
@@ -261,7 +261,7 @@ tasks:
       CHALLENGE_CONNECTION_LIMIT: '{{default "1024" .CHALLENGE_CONNECTION_LIMIT}}'
       CHALLENGE_HOSTNAME_CONNECTION_LIMIT: '{{default "8" .CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}'
       VISITOR_CONNECTION_LIMIT: '{{default "20000" .VISITOR_CONNECTION_LIMIT}}'
-      ROUTE_CONNECTION_LIMIT: '{{default "500" .ROUTE_CONNECTION_LIMIT}}'
+      PUBLIC_URL_CONNECTION_LIMIT: '{{default "500" .PUBLIC_URL_CONNECTION_LIMIT}}'
       PUBLISHER_CONNECTION_LIMIT: '{{default "4000" .PUBLISHER_CONNECTION_LIMIT}}'
       PUBLISHER_REQUEST_LIMIT: '{{default "500" .PUBLISHER_REQUEST_LIMIT}}'
       RELAY_STREAM_CAPACITY: '{{default "4096" .RELAY_STREAM_CAPACITY}}'
@@ -275,10 +275,10 @@ tasks:
       RACE: '{{default "0" .RACE}}'
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
-      ROUTES: "{{.ROUTES}}"
+      PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: "{{.START_PARALLEL}}"
       READY_TIMEOUT: "{{.READY_TIMEOUT}}"
-      ROUTE_CERTIFICATE_WORKERS: "{{.ROUTE_CERTIFICATE_WORKERS}}"
+      PUBLIC_URL_CERTIFICATE_WORKERS: "{{.PUBLIC_URL_CERTIFICATE_WORKERS}}"
       RPS: "{{.RPS}}"
       DURATION: "{{.DURATION}}"
       WORKERS: "{{.WORKERS}}"
@@ -302,7 +302,7 @@ tasks:
       CHALLENGE_CONNECTION_LIMIT: "{{.CHALLENGE_CONNECTION_LIMIT}}"
       CHALLENGE_HOSTNAME_CONNECTION_LIMIT: "{{.CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}"
       VISITOR_CONNECTION_LIMIT: "{{.VISITOR_CONNECTION_LIMIT}}"
-      ROUTE_CONNECTION_LIMIT: "{{.ROUTE_CONNECTION_LIMIT}}"
+      PUBLIC_URL_CONNECTION_LIMIT: "{{.PUBLIC_URL_CONNECTION_LIMIT}}"
       PUBLISHER_CONNECTION_LIMIT: "{{.PUBLISHER_CONNECTION_LIMIT}}"
       PUBLISHER_REQUEST_LIMIT: "{{.PUBLISHER_REQUEST_LIMIT}}"
       RELAY_STREAM_CAPACITY: "{{.RELAY_STREAM_CAPACITY}}"

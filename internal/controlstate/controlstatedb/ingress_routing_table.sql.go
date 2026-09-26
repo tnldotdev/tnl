@@ -20,12 +20,12 @@ WITH clock_guard AS MATERIALIZED (
 ), inserted AS (
     INSERT INTO control.ingress_routing_table_events (
         event_kind,
-        route_id,
-        route_version,
+        public_url_id,
+        publish_run_number,
         canonical_hostname,
         entry_revision,
         projection,
-        route_expires_at,
+        public_url_expires_at,
         created_at
     ) SELECT
         $1,
@@ -52,15 +52,15 @@ FROM advanced
 `
 
 type InsertFinalIngressRoutingTableEventParams struct {
-	EventKind         string
-	RouteID           string
-	RouteVersion      int64
-	CanonicalHostname string
-	EntryRevision     int64
-	Projection        []byte
-	RouteExpiresAt    pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	EventKind          string
+	PublicURLID        string
+	PublishRunNumber   int64
+	CanonicalHostname  string
+	EntryRevision      int64
+	Projection         []byte
+	PublicUrlExpiresAt pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
 }
 
 // Acquire the clock before identity allocation in this same command. Single-event
@@ -69,12 +69,12 @@ type InsertFinalIngressRoutingTableEventParams struct {
 func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertFinalIngressRoutingTableEvent,
 		arg.EventKind,
-		arg.RouteID,
-		arg.RouteVersion,
+		arg.PublicURLID,
+		arg.PublishRunNumber,
 		arg.CanonicalHostname,
 		arg.EntryRevision,
 		arg.Projection,
-		arg.RouteExpiresAt,
+		arg.PublicUrlExpiresAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -86,12 +86,12 @@ func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg I
 const insertIngressRoutingTableEvent = `-- name: InsertIngressRoutingTableEvent :one
 INSERT INTO control.ingress_routing_table_events (
     event_kind,
-    route_id,
-    route_version,
+    public_url_id,
+    publish_run_number,
     canonical_hostname,
     entry_revision,
     projection,
-    route_expires_at,
+    public_url_expires_at,
     created_at
 ) VALUES (
     $1,
@@ -107,25 +107,25 @@ RETURNING routing_table_revision
 `
 
 type InsertIngressRoutingTableEventParams struct {
-	EventKind         string
-	RouteID           string
-	RouteVersion      int64
-	CanonicalHostname string
-	EntryRevision     int64
-	Projection        []byte
-	RouteExpiresAt    pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
+	EventKind          string
+	PublicURLID        string
+	PublishRunNumber   int64
+	CanonicalHostname  string
+	EntryRevision      int64
+	Projection         []byte
+	PublicUrlExpiresAt pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
 }
 
 func (q *Queries) InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertIngressRoutingTableEvent,
 		arg.EventKind,
-		arg.RouteID,
-		arg.RouteVersion,
+		arg.PublicURLID,
+		arg.PublishRunNumber,
 		arg.CanonicalHostname,
 		arg.EntryRevision,
 		arg.Projection,
-		arg.RouteExpiresAt,
+		arg.PublicUrlExpiresAt,
 		arg.CreatedAt,
 	)
 	var routing_table_revision int64
@@ -137,27 +137,27 @@ const latestIngressRoutingEntryRevision = `-- name: LatestIngressRoutingEntryRev
 SELECT COALESCE((
     SELECT entry_revision
     FROM control.ingress_routing_table_events
-    WHERE route_id = $1
-      AND route_version = $2
+    WHERE public_url_id = $1
+      AND publish_run_number = $2
     ORDER BY routing_table_revision DESC
     LIMIT 1
 ), 0)::bigint
 `
 
 type LatestIngressRoutingEntryRevisionParams struct {
-	RouteID      string
-	RouteVersion int64
+	PublicURLID      string
+	PublishRunNumber int64
 }
 
 func (q *Queries) LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error) {
-	row := q.db.QueryRow(ctx, latestIngressRoutingEntryRevision, arg.RouteID, arg.RouteVersion)
+	row := q.db.QueryRow(ctx, latestIngressRoutingEntryRevision, arg.PublicURLID, arg.PublishRunNumber)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const listIngressRoutingTableEvents = `-- name: ListIngressRoutingTableEvents :many
-SELECT routing_table_revision, event_kind, route_id, route_version, canonical_hostname, entry_revision, projection, route_expires_at, created_at
+SELECT routing_table_revision, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at
 FROM control.ingress_routing_table_events
 WHERE routing_table_revision > $1
   AND routing_table_revision <= $2
@@ -183,12 +183,12 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 		if err := rows.Scan(
 			&i.RoutingTableRevision,
 			&i.EventKind,
-			&i.RouteID,
-			&i.RouteVersion,
+			&i.PublicURLID,
+			&i.PublishRunNumber,
 			&i.CanonicalHostname,
 			&i.EntryRevision,
 			&i.Projection,
-			&i.RouteExpiresAt,
+			&i.PublicUrlExpiresAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -207,13 +207,13 @@ WITH latest AS (
     FROM control.ingress_routing_table_events AS history
     WHERE history.routing_table_revision <= $2
     GROUP BY history.canonical_hostname,
-        CASE WHEN history.event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
+        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'route' ELSE 'challenge' END
 )
-SELECT events.routing_table_revision, events.event_kind, events.route_id, events.route_version, events.canonical_hostname, events.entry_revision, events.projection, events.route_expires_at, events.created_at
+SELECT events.routing_table_revision, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.routing_table_revision = latest.routing_table_revision
-WHERE events.event_kind IN ('route_upsert', 'challenge_upsert')
-  AND events.route_expires_at > $1
+WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
+  AND events.public_url_expires_at > $1
 ORDER BY events.canonical_hostname
 `
 
@@ -236,12 +236,12 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 		if err := rows.Scan(
 			&i.RoutingTableRevision,
 			&i.EventKind,
-			&i.RouteID,
-			&i.RouteVersion,
+			&i.PublicURLID,
+			&i.PublishRunNumber,
 			&i.CanonicalHostname,
 			&i.EntryRevision,
 			&i.Projection,
-			&i.RouteExpiresAt,
+			&i.PublicUrlExpiresAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

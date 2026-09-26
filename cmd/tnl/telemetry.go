@@ -192,7 +192,7 @@ func withTelemetryObserver(
 				if framework != nil {
 					name = telemetryFramework(framework())
 				}
-				reporter.Report(newTelemetryPayload("route_started", command, serverKind, name))
+				reporter.Report(newTelemetryPayload("publish_run_started", command, serverKind, name))
 			})
 		}
 		return nil

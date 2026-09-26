@@ -81,7 +81,7 @@ func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
 		CertificateAuthority: benchmarkCertificateAuthorityPebble,
 		ServerDomain:         "bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedDomain:        "routes.bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain:        "public-urls.bench-20260916-120000-abcdefgh.bench.example.com",
 		ManagedPostgres:      testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
 	}
 	data, err := json.Marshal(manifest)
@@ -103,7 +103,7 @@ func TestManifestCleanupOwnershipChecks(t *testing.T) {
 		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
 		CertificateAuthority: benchmarkCertificateAuthorityPebble,
 		ServerDomain:         "bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedDomain:        "routes.bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain:        "public-urls.bench-20260916-120000-abcdefgh.bench.example.com",
 		ManagedPostgres:      testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
 		Apps:                 []manifestApp{{Role: "control", Name: "tnl-bench-bench-20260916-120000-abcdefgh-ctl"}},
 		Zones: []manifestZone{{
@@ -172,7 +172,7 @@ func TestCleanupRunSkipsRemovedAppsAndPersistsProgress(t *testing.T) {
 		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed",
 		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
 		CertificateAuthority: benchmarkCertificateAuthorityPebble,
-		ServerDomain:         runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
+		ServerDomain:         runID + ".bench.example.com", ManagedDomain: "public-urls." + runID + ".bench.example.com",
 		ManagedPostgres: testManifestManagedPostgres(runID),
 		Apps:            []manifestApp{{Role: "control", Name: apps["control"]}},
 	}
@@ -226,7 +226,7 @@ func TestCleanupRunDestroysControlBeforeManagedPostgres(t *testing.T) {
 		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc", Topology: testTopology(),
 		CertificateAuthority: benchmarkCertificateAuthorityPebble,
 		ParentDomain:         "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
-		ManagedDomain: "routes." + runID + ".bench.example.com", ManagedPostgres: database,
+		ManagedDomain: "public-urls." + runID + ".bench.example.com", ManagedPostgres: database,
 		Apps: []manifestApp{{Role: "control", Name: apps["control"]}},
 	}
 	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
@@ -251,7 +251,7 @@ func TestCleanupRunPreservesManagedPostgresWhenControlRemovalFails(t *testing.T)
 		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc", Topology: testTopology(),
 		CertificateAuthority: benchmarkCertificateAuthorityPebble,
 		ParentDomain:         "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
-		ManagedDomain: "routes." + runID + ".bench.example.com", ManagedPostgres: database,
+		ManagedDomain: "public-urls." + runID + ".bench.example.com", ManagedPostgres: database,
 		Apps: []manifestApp{{Role: "control", Name: benchmarkAppNames(runID, 2)["control"]}},
 	}
 	executor := &executorStub{errs: []error{errors.New("destroy failed")}}

@@ -231,7 +231,7 @@ func TestCancellationDoesNotHideJoinedCloseFailure(t *testing.T) {
 func TestAssignmentsPartitionRoutesAndBalanceBudgets(t *testing.T) {
 	seen := make(map[int]bool)
 	for worker := range 6 {
-		for _, index := range RouteIndexes(43, 6, worker) {
+		for _, index := range PublicURLIndexes(43, 6, worker) {
 			if seen[index] {
 				t.Fatal("duplicate route")
 			}

@@ -10,12 +10,12 @@ import (
 )
 
 func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
-	for _, kind := range []ingressv1.IngressRoutingTableEventKind{ingressv1.RouteUpsert, ingressv1.ChallengeUpsert} {
+	for _, kind := range []ingressv1.IngressRoutingTableEventKind{ingressv1.PublicUrlUpsert, ingressv1.ChallengeUpsert} {
 		t.Run(string(kind), func(t *testing.T) {
 			now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 			makeEvent := func(revision int64, name string) ingressv1.IngressRoutingTableEvent {
 				entry := forwardingTestEntry(now, "relay.example:443")
-				entry.RouteId = "route_" + name
+				entry.PublicUrlId = "public_url_" + name
 				entry.CanonicalHostname = name + ".example"
 				entry.PolicyRevision = 1
 				entry.IpPolicy = ingressv1.Allowlist
@@ -23,9 +23,9 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 				recoveryEpisodeID := int64(1)
 				entry.RecoveryEpisodeId = &recoveryEpisodeID
 				return ingressv1.IngressRoutingTableEvent{
-					RoutingTableRevision: revision, Kind: kind, RouteId: entry.RouteId,
-					RouteVersion: entry.RouteVersion, CanonicalHostname: entry.CanonicalHostname,
-					EntryRevision: revision, Entry: entry, RouteExpiresAt: &entry.RouteExpiresAt, CreatedAt: now,
+					RoutingTableRevision: revision, Kind: kind, PublicUrlId: entry.PublicUrlId,
+					PublishRunNumber: entry.PublishRunNumber, CanonicalHostname: entry.CanonicalHostname,
+					EntryRevision: revision, Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
 				}
 			}
 			var table RoutingTable
@@ -94,9 +94,9 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 	entry.IpPolicy = ingressv1.AllowAll
 	event := ingressv1.IngressRoutingTableEvent{
 		RoutingTableRevision: 1, Kind: ingressv1.ChallengeUpsert,
-		RouteId: entry.RouteId, RouteVersion: entry.RouteVersion,
+		PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
 		CanonicalHostname: entry.CanonicalHostname, EntryRevision: 1,
-		Entry: entry, RouteExpiresAt: &entry.RouteExpiresAt, CreatedAt: now,
+		Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
 	}
 	for _, test := range []struct {
 		name, reason string
@@ -106,13 +106,13 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 		{"renewed relay with old projected deadline", "", func(e *ingressv1.IngressRoutingTableEvent) {
 			e.Entry.PublisherConnections[0].LeaseExpiresAt = now
 		}},
-		{"route expired", "route_expired", func(e *ingressv1.IngressRoutingTableEvent) {
-			e.Entry.RouteExpiresAt = now
-			e.RouteExpiresAt = &e.Entry.RouteExpiresAt
+		{"route expired", "public_url_expired", func(e *ingressv1.IngressRoutingTableEvent) {
+			e.Entry.PublicUrlExpiresAt = now
+			e.PublicUrlExpiresAt = &e.Entry.PublicUrlExpiresAt
 		}},
 		{"tombstone", "tombstone", func(e *ingressv1.IngressRoutingTableEvent) {
 			e.Kind = ingressv1.ChallengeTombstone
-			e.RouteExpiresAt = nil
+			e.PublicUrlExpiresAt = nil
 			e.Entry.PublisherConnections = nil
 		}},
 	} {

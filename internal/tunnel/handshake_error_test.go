@@ -15,7 +15,7 @@ func TestIsTerminalHandshakeError(t *testing.T) {
 	}{
 		{tunnelv1.InvalidMessage, true},
 		{tunnelv1.Unauthenticated, true},
-		{tunnelv1.StaleRouteVersion, true},
+		{tunnelv1.StalePublishRunNumber, true},
 		{tunnelv1.StaleConnectionAssignment, true},
 		{tunnelv1.DuplicatePublisherConnection, true},
 		{tunnelv1.DrainingPublisherConnection, false},

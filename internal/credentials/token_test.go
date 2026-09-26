@@ -84,7 +84,7 @@ func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
 	if verifier.Matches(LoginToken(strings.Replace(token.String(), loginPrefix, accessPrefix, 1))) {
 		t.Fatal("access-class token matched login verifier")
 	}
-	if _, err := ParseLoginToken(LoginToken("tnl_route_invalid")); !errors.Is(err, ErrInvalidLoginToken) {
+	if _, err := ParseLoginToken(LoginToken("tnl_public_url_invalid")); !errors.Is(err, ErrInvalidLoginToken) {
 		t.Fatalf("wrong-class error = %v", err)
 	}
 }
@@ -133,11 +133,11 @@ func TestInvitationTokenRoundTrip(t *testing.T) {
 }
 
 func TestDataPlaneTokenClasses(t *testing.T) {
-	session, sessionID, sessionHash, err := NewRouteSessionToken()
+	session, sessionID, sessionHash, err := NewPublishRunToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotID, gotHash, err := ParseRouteSessionToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
+	if gotID, gotHash, err := ParsePublishRunToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
 		t.Fatalf("session round trip = %q, %x, %v", gotID, gotHash, err)
 	}
 	connection, connectionHash, err := NewPublisherConnectionCredential()

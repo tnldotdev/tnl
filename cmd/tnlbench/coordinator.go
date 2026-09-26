@@ -20,7 +20,7 @@ type coordinatorCommand struct {
 	CellID           string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" required:"" help:"Workload identity."`
 	PublisherWorkers int           `name:"publisher-workers" env:"TNL_BENCH_PUBLISHER_WORKERS" required:"" help:"Publisher processes."`
 	LoadWorkers      int           `name:"load-workers" env:"TNL_BENCH_LOAD_WORKERS" required:"" help:"Visitor processes."`
-	Routes           int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Expected route count."`
+	PublicURLs       int           `name:"public-urls" env:"TNL_BENCH_PUBLIC_URLS" required:"" help:"Expected public URL count."`
 	Repetitions      int           `name:"repetitions" env:"TNL_BENCH_REPETITIONS" default:"1" help:"Steady measurement windows."`
 	Warmup           time.Duration `name:"warmup" env:"TNL_BENCH_WARMUP" default:"5s" help:"Warmup."`
 	Duration         time.Duration `name:"duration" env:"TNL_BENCH_DURATION" default:"10s" help:"Offer window duration."`
@@ -29,7 +29,7 @@ type coordinatorCommand struct {
 }
 
 func (c coordinatorCommand) Validate() error {
-	if c.PublisherWorkers < 1 || c.LoadWorkers < 1 || c.Routes < 1 || c.Repetitions < 1 || c.Repetitions > 10 || c.Duration <= 0 || c.Timeout <= 0 || c.Warmup < 0 {
+	if c.PublisherWorkers < 1 || c.LoadWorkers < 1 || c.PublicURLs < 1 || c.Repetitions < 1 || c.Repetitions > 10 || c.Duration <= 0 || c.Timeout <= 0 || c.Warmup < 0 {
 		return errors.New("invalid coordinator workload")
 	}
 	return nil
@@ -123,14 +123,14 @@ func (c coordinatorCommand) execute(ctx context.Context, client *benchworkload.C
 		}
 	}()
 	resources = append(resources, sampleBoundaryResources(ctx, c.MetricsURLs, "activation-before")...)
-	urls := make([]string, c.Routes)
+	urls := make([]string, c.PublicURLs)
 	seenHostnames := make(map[string]bool)
 	for i := range c.PublisherWorkers {
-		var routes []benchworkload.PublishedRoute
-		if err := client.Wait(ctx, fmt.Sprintf("publisher-%d.ready", i), &routes); err != nil {
+		var publicURLs []benchworkload.PublishedPublicURL
+		if err := client.Wait(ctx, fmt.Sprintf("publisher-%d.ready", i), &publicURLs); err != nil {
 			return nil, err
 		}
-		for _, route := range routes {
+		for _, route := range publicURLs {
 			u, err := url.Parse(route.Ready.PublicURL)
 			if err != nil || u.Scheme != "https" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Port() != "" {
 				return nil, errors.New("invalid publisher route URL")
@@ -149,7 +149,7 @@ func (c coordinatorCommand) execute(ctx context.Context, client *benchworkload.C
 		}
 	}
 	resources = append(resources, sampleBoundaryResources(ctx, c.MetricsURLs, "activation-after")...)
-	if err := client.Put(ctx, "routes", urls); err != nil {
+	if err := client.Put(ctx, "public_urls", urls); err != nil {
 		return nil, err
 	}
 	for i := range c.LoadWorkers {

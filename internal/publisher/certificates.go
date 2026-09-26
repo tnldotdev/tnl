@@ -31,12 +31,12 @@ func logRenewalFailure(logf func(string, ...any), err error) {
 
 func issueInitialCertificate(
 	ctx context.Context,
-	server RouteControlClient,
-	route *RouteServer,
+	server PublicURLControlClient,
+	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.RouteSessionSetup,
+	setup controlv1.PublishRunSetup,
 ) (clientstate.Material, error) {
-	hostname := setup.Route.CanonicalHostname
+	hostname := setup.PublicUrl.CanonicalHostname
 	current, found, err := state.Current(ctx, hostname)
 	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
 		return clientstate.Material{}, err
@@ -85,14 +85,14 @@ func issueInitialCertificate(
 // The caller holds the cache lock while issuing or retrying the certificate.
 func attemptCertificateTransaction(
 	ctx context.Context,
-	server RouteControlClient,
-	route *RouteServer,
+	server PublicURLControlClient,
+	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.RouteSessionSetup,
+	setup controlv1.PublishRunSetup,
 	renew bool,
 ) (clientstate.Material, error) {
-	routeSessionID, routeID, hostname := setup.RouteSession.Id, setup.Route.Id, setup.Route.CanonicalHostname
-	version, routeSessionToken := uint64(setup.RouteSession.RouteVersion), credentials.RouteSessionToken(setup.RouteSessionToken)
+	publishRunID, publicURLID, hostname := setup.PublishRun.Id, setup.PublicUrl.Id, setup.PublicUrl.CanonicalHostname
+	version, publishRunToken := uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)
 	staged, found, err := state.Staged(ctx, hostname)
 	if errors.Is(err, clientstate.ErrCertificateExpired) {
 		if _, err := state.NewPending(ctx, hostname); err != nil {
@@ -121,12 +121,12 @@ func attemptCertificateTransaction(
 		return clientstate.Material{}, err
 	}
 	idempotencyKey := certificateIdempotencyKey(pending.CSRDER)
-	issuance, err := server.CreateCertificateIssuance(ctx, routeSessionID, version, routeSessionToken, pending.CSRDER, idempotencyKey)
+	issuance, err := server.CreateCertificateIssuance(ctx, publishRunID, version, publishRunToken, pending.CSRDER, idempotencyKey)
 	if err != nil {
 		return clientstate.Material{}, err
 	}
 	if err := validateCertificateAttempt(
-		ctx, server, route, state, issuance, routeSessionID, routeID, version, routeSessionToken, hostname, route.challengeIssuanceID, setup.CertificatePlan,
+		ctx, server, route, state, issuance, publishRunID, publicURLID, version, publishRunToken, hostname, route.challengeIssuanceID, setup.CertificatePlan,
 	); err != nil {
 		return clientstate.Material{}, err
 	}
@@ -147,12 +147,12 @@ func attemptCertificateTransaction(
 		}
 		route.challengeIssuanceID, route.challengeID = issuance.Id, installedChallenge.ID
 		issuanceID := issuance.Id
-		issuance, err = server.MarkCertificateChallengeReady(ctx, issuanceID, routeSessionToken)
+		issuance, err = server.MarkCertificateChallengeReady(ctx, issuanceID, publishRunToken)
 		if err != nil {
 			return clientstate.Material{}, err
 		}
 		if err := validateCertificateAttempt(
-			ctx, server, route, state, issuance, routeSessionID, routeID, version, routeSessionToken,
+			ctx, server, route, state, issuance, publishRunID, publicURLID, version, publishRunToken,
 			hostname, issuanceID, setup.CertificatePlan,
 		); err != nil {
 			return clientstate.Material{}, err
@@ -161,7 +161,7 @@ func attemptCertificateTransaction(
 			return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
 		}
 	}
-	if err := removeCertificateChallenge(ctx, server, route, issuance, routeSessionToken, hostname); err != nil {
+	if err := removeCertificateChallenge(ctx, server, route, issuance, publishRunToken, hostname); err != nil {
 		return clientstate.Material{}, err
 	}
 	block, _ := pem.Decode([]byte(*issuance.CertificatePem))
@@ -185,22 +185,22 @@ func attemptCertificateTransaction(
 
 func installCertificateMaterial(
 	ctx context.Context,
-	server RouteControlClient,
-	route *RouteServer,
+	server PublicURLControlClient,
+	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.RouteSessionSetup,
+	setup controlv1.PublishRunSetup,
 	material clientstate.Material,
 	staged bool,
 ) error {
-	// A shared cache entry is never permission for this route session to serve it.
-	if err := server.MarkRouteSessionCertificateInstalled(
-		ctx, setup.RouteSession.Id, uint64(setup.RouteSession.RouteVersion), material.IssuanceID,
-		material.Certificate.Leaf.NotAfter, credentials.RouteSessionToken(setup.RouteSessionToken),
+	// A shared cache entry is never permission for this publish run to serve it.
+	if err := server.MarkPublishRunCertificateInstalled(
+		ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), material.IssuanceID,
+		material.Certificate.Leaf.NotAfter, credentials.PublishRunToken(setup.PublishRunToken),
 	); err != nil {
 		return err
 	}
 	if staged {
-		if err := state.Promote(ctx, setup.Route.CanonicalHostname, material.IssuanceID); err != nil {
+		if err := state.Promote(ctx, setup.PublicUrl.CanonicalHostname, material.IssuanceID); err != nil {
 			return err
 		}
 	}
@@ -222,22 +222,22 @@ func certificateChallenge(challenge *controlv1.CertificateChallenge, hostname st
 
 func validateCertificateAttempt(
 	ctx context.Context,
-	server RouteControlClient,
-	route *RouteServer,
+	server PublicURLControlClient,
+	route *PublicURLServer,
 	state *clientstate.CertificateCache,
 	issuance controlv1.CertificateIssuance,
-	routeSessionID, routeID string,
+	publishRunID, publicURLID string,
 	version uint64,
-	routeSessionToken credentials.RouteSessionToken,
+	publishRunToken credentials.PublishRunToken,
 	hostname, expectedID string,
 	plan controlv1.CertificatePlan,
 ) error {
-	err := validateCertificateIssuance(issuance, routeSessionID, routeID, version, hostname, expectedID, plan)
+	err := validateCertificateIssuance(issuance, publishRunID, publicURLID, version, hostname, expectedID, plan)
 	var terminal *terminalCertificateIssuanceError
 	if !errors.As(err, &terminal) {
 		return err
 	}
-	if removeErr := removeCertificateChallenge(ctx, server, route, issuance, routeSessionToken, hostname); removeErr != nil {
+	if removeErr := removeCertificateChallenge(ctx, server, route, issuance, publishRunToken, hostname); removeErr != nil {
 		return removeErr
 	}
 	if _, rotateErr := state.NewPending(ctx, hostname); rotateErr != nil {
@@ -246,7 +246,7 @@ func validateCertificateAttempt(
 	return err
 }
 
-func removeCertificateChallenge(ctx context.Context, server RouteControlClient, route *RouteServer, issuance controlv1.CertificateIssuance, token credentials.RouteSessionToken, hostname string) error {
+func removeCertificateChallenge(ctx context.Context, server PublicURLControlClient, route *PublicURLServer, issuance controlv1.CertificateIssuance, token credentials.PublishRunToken, hostname string) error {
 	id := ""
 	if challenge := tlsALPNChallenge(issuance.Challenges, hostname); challenge != nil {
 		id = challenge.Token
@@ -267,16 +267,16 @@ func removeCertificateChallenge(ctx context.Context, server RouteControlClient, 
 
 func validateCertificateIssuance(
 	issuance controlv1.CertificateIssuance,
-	routeSessionID, routeID string,
+	publishRunID, publicURLID string,
 	version uint64,
 	hostname string,
 	expectedID string,
 	plan controlv1.CertificatePlan,
 ) error {
-	if issuance.Id == "" || issuance.RouteSessionId != routeSessionID || issuance.RouteId != routeID ||
-		issuance.RouteVersion != int64(version) || expectedID != "" && issuance.Id != expectedID ||
+	if issuance.Id == "" || issuance.PublishRunId != publishRunID || issuance.PublicUrlId != publicURLID ||
+		issuance.PublishRunNumber != int64(version) || expectedID != "" && issuance.Id != expectedID ||
 		!certificateidentity.SamePlan(issuance.CertificatePlan, plan) || !certificateidentity.Covers(plan.Identifiers, hostname) {
-		return errors.New("publisher: server returned a certificate issuance for a different route session")
+		return errors.New("publisher: server returned a certificate issuance for a different publish run")
 	}
 	if !issuance.State.Valid() {
 		return errors.New("publisher: server returned an unknown certificate issuance state")

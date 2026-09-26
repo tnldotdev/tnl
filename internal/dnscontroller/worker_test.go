@@ -80,7 +80,7 @@ func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
 			if kind == "authority" {
 				store.work = testDNSWork(started)
 			} else {
-				store.routeWork = claimedRouteWork(started)
+				store.publicURLWork = claimedRouteWork(started)
 			}
 			provider := &providerStub{err: errors.New("provider unavailable"), beforeCall: func() {
 				now = now.Add(5 * time.Second)
@@ -94,7 +94,7 @@ func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
 			availableAt := store.saved.AvailableAt
 			delay := time.Second
 			if kind == "route" {
-				availableAt = store.routeSaved.AvailableAt
+				availableAt = store.publicURLSaved.AvailableAt
 				delay = 4 * time.Second
 			}
 			if want := now.Add(delay); !availableAt.Equal(want) {
@@ -106,14 +106,14 @@ func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
 
 func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
-	store := &dnsStoreStub{routeWork: controlstate.DNSRouteWork{
-		RouteID: "route_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
-		CanonicalHostname: "api.tunnels.example.test", State: controlstate.RouteDNSPending,
+	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
+		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
+		CanonicalHostname: "api.tunnels.example.test", State: controlstate.PublicURLDNSPending,
 		DNSRevision: 1, Attempts: 1, AvailableAt: now,
 		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
 	}}
 	provider := &providerStub{zone: Zone{ID: "ZMANAGED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
-	verifier := &verifierStub{routeVerified: true}
+	verifier := &verifierStub{publicURLVerified: true}
 	worker := testDNSWorker(t, store, provider, verifier, now)
 	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
 	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
@@ -123,8 +123,8 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 		t.Fatalf("route iteration = found %v, error %v", found, err)
 	}
 	if provider.publishCalls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ClaimedZone ||
-		store.routeSaved.State != controlstate.RouteDNSPublished || verifier.routeCalls != 1 {
-		t.Fatalf("published route = %#v, provider = %#v, verifier = %#v", store.routeSaved, provider, verifier)
+		store.publicURLSaved.State != controlstate.PublicURLDNSPublished || verifier.publicURLCalls != 1 {
+		t.Fatalf("published route = %#v, provider = %#v, verifier = %#v", store.publicURLSaved, provider, verifier)
 	}
 }
 
@@ -189,16 +189,16 @@ func testDNSWork(now time.Time) controlstate.DNSAuthorityWork {
 }
 
 type dnsStoreStub struct {
-	work                          controlstate.DNSAuthorityWork
-	saved                         controlstate.DNSAuthorityWork
-	routeWork                     controlstate.DNSRouteWork
-	routeSaved                    controlstate.DNSRouteWork
-	releaseReady                  bool
-	authority                     controlstate.DNSAuthority
-	authorityReferences           []string
-	getErr, saveErr, routeSaveErr error
-	saves, routeSaves             int
-	savedAt, routeSavedAt         time.Time
+	work                              controlstate.DNSAuthorityWork
+	saved                             controlstate.DNSAuthorityWork
+	publicURLWork                     controlstate.DNSPublicURLWork
+	publicURLSaved                    controlstate.DNSPublicURLWork
+	releaseReady                      bool
+	authority                         controlstate.DNSAuthority
+	authorityReferences               []string
+	getErr, saveErr, publicURLSaveErr error
+	saves, publicURLSaves             int
+	savedAt, publicURLSavedAt         time.Time
 }
 
 func (s *dnsStoreStub) ClaimDNSAuthorityWork(
@@ -235,29 +235,29 @@ func (s *dnsStoreStub) GetDNSAuthority(_ context.Context, reference string) (con
 	return s.authority, s.getErr
 }
 
-func (s *dnsStoreStub) ClaimDNSRouteWork(
+func (s *dnsStoreStub) ClaimDNSPublicURLWork(
 	context.Context,
 	string,
 	time.Time,
 	time.Duration,
-) (controlstate.DNSRouteWork, bool, error) {
-	if s.routeWork.RouteID == "" {
-		return controlstate.DNSRouteWork{}, false, nil
+) (controlstate.DNSPublicURLWork, bool, error) {
+	if s.publicURLWork.PublicURLID == "" {
+		return controlstate.DNSPublicURLWork{}, false, nil
 	}
-	work := s.routeWork
-	s.routeWork = controlstate.DNSRouteWork{}
+	work := s.publicURLWork
+	s.publicURLWork = controlstate.DNSPublicURLWork{}
 	return work, true, nil
 }
 
-func (s *dnsStoreStub) SaveDNSRouteWork(
+func (s *dnsStoreStub) SaveDNSPublicURLWork(
 	_ context.Context,
-	work controlstate.DNSRouteWork,
+	work controlstate.DNSPublicURLWork,
 	now time.Time,
-) (controlstate.DNSRouteWork, error) {
-	s.routeSaves++
-	s.routeSaved = work
-	s.routeSavedAt = now
-	return work, s.routeSaveErr
+) (controlstate.DNSPublicURLWork, error) {
+	s.publicURLSaves++
+	s.publicURLSaved = work
+	s.publicURLSavedAt = now
+	return work, s.publicURLSaveErr
 }
 
 type providerStub struct {
@@ -267,7 +267,7 @@ type providerStub struct {
 	releaseCalls            int
 	publishCalls            int
 	removeCalls             int
-	record                  RouteRecord
+	record                  PublicURLRecord
 	ensureWork, releaseWork controlstate.DNSAuthorityWork
 	beforeCall              func()
 }
@@ -290,7 +290,7 @@ func (p *providerStub) ReleaseClaimedZone(_ context.Context, work controlstate.D
 	return p.err
 }
 
-func (p *providerStub) PublishRoute(_ context.Context, record RouteRecord) (Zone, error) {
+func (p *providerStub) PublishPublicURL(_ context.Context, record PublicURLRecord) (Zone, error) {
 	p.publishCalls++
 	p.record = record
 	if p.beforeCall != nil {
@@ -299,7 +299,7 @@ func (p *providerStub) PublishRoute(_ context.Context, record RouteRecord) (Zone
 	return p.zone, p.err
 }
 
-func (p *providerStub) RemoveRoute(_ context.Context, record RouteRecord) (Zone, error) {
+func (p *providerStub) RemovePublicURL(_ context.Context, record PublicURLRecord) (Zone, error) {
 	p.removeCalls++
 	p.record = record
 	if p.beforeCall != nil {
@@ -309,33 +309,33 @@ func (p *providerStub) RemoveRoute(_ context.Context, record RouteRecord) (Zone,
 }
 
 type verifierStub struct {
-	verified                               bool
-	err                                    error
-	calls                                  int
-	domain                                 string
-	routeVerified                          bool
-	routeCalls                             int
-	routeHostname                          string
-	routeIPv4, routeIPv6, routeNameservers []string
+	verified                                   bool
+	err                                        error
+	calls                                      int
+	domain                                     string
+	publicURLVerified                          bool
+	publicURLCalls                             int
+	publicURLHostname                          string
+	routeIPv4, routeIPv6, publicURLNameservers []string
 }
 
-func (v *verifierStub) VerifyRoute(
+func (v *verifierStub) VerifyPublicURL(
 	_ context.Context,
 	hostname string,
 	ipv4 []string,
 	ipv6 []string,
 	nameservers []string,
 ) (bool, error) {
-	v.routeCalls++
-	v.routeHostname = hostname
-	v.routeIPv4, v.routeIPv6, v.routeNameservers = ipv4, ipv6, nameservers
-	return v.routeVerified, v.err
+	v.publicURLCalls++
+	v.publicURLHostname = hostname
+	v.routeIPv4, v.routeIPv6, v.publicURLNameservers = ipv4, ipv6, nameservers
+	return v.publicURLVerified, v.err
 }
 
-func claimedRouteWork(now time.Time) controlstate.DNSRouteWork {
-	return controlstate.DNSRouteWork{
-		RouteID: "route_claimed", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_0123456789abcdef0123456789abcdef",
-		CanonicalHostname: "api.claimed.example.test", State: controlstate.RouteDNSPending,
+func claimedRouteWork(now time.Time) controlstate.DNSPublicURLWork {
+	return controlstate.DNSPublicURLWork{
+		PublicURLID: "public_url_claimed", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_0123456789abcdef0123456789abcdef",
+		CanonicalHostname: "api.claimed.example.test", State: controlstate.PublicURLDNSPending,
 		DNSRevision: 7, Attempts: 3, WorkerID: "dns_worker_test", WorkEpoch: 9, WorkExpiresAt: now.Add(time.Minute),
 	}
 }
@@ -357,24 +357,24 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 			authority.State, authority.ProviderZoneID = "ready", "ZCLAIMED"
 			authority.Nameservers = []string{"ns-1.example.test", "ns-2.example.test"}
 			if test.removing {
-				work.State, authority.State = controlstate.RouteDNSRemoving, "releasing"
+				work.State, authority.State = controlstate.PublicURLDNSRemoving, "releasing"
 			}
-			store := &dnsStoreStub{routeWork: work, authority: authority}
+			store := &dnsStoreStub{publicURLWork: work, authority: authority}
 			provider := &providerStub{zone: Zone{ID: "ZCLAIMED"}}
 			wantNameservers := authority.Nameservers
 			if test.providerNameservers {
 				provider.zone.Nameservers = []string{"ns-3.example.test", "ns-4.example.test"}
 				wantNameservers = provider.zone.Nameservers
 			}
-			verifier := &verifierStub{routeVerified: test.propagated}
+			verifier := &verifierStub{publicURLVerified: test.propagated}
 			worker := testDNSWorker(t, store, provider, verifier, now)
 			worker.config.IngressIPv4Addresses, worker.config.IngressIPv6Addresses = []string{"192.0.2.10"}, []string{"2001:db8::10"}
 			if found, err := worker.processOne(t.Context()); !found || err != nil {
 				t.Fatalf("process = %v, %v", found, err)
 			}
-			wantRecord := RouteRecord{
+			wantRecord := PublicURLRecord{
 				ZoneID: "ZCLAIMED", ZoneDomain: "claimed.example.test", ClaimedZone: true,
-				AuthorityReference: authority.Reference, TeamID: "team_1", DomainID: "domain_1", RouteID: "route_claimed",
+				AuthorityReference: authority.Reference, TeamID: "team_1", DomainID: "domain_1", PublicURLID: "public_url_claimed",
 				CanonicalHostname: "api.claimed.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 			}
 			if !reflect.DeepEqual(provider.record, wantRecord) || !reflect.DeepEqual(store.authorityReferences, []string{authority.Reference}) {
@@ -384,8 +384,8 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 			if test.removing {
 				wantIPv4, wantIPv6 = nil, nil
 			}
-			if verifier.routeCalls != 1 || verifier.routeHostname != "api.claimed.example.test" ||
-				!reflect.DeepEqual(verifier.routeIPv4, wantIPv4) || !reflect.DeepEqual(verifier.routeIPv6, wantIPv6) || !reflect.DeepEqual(verifier.routeNameservers, wantNameservers) {
+			if verifier.publicURLCalls != 1 || verifier.publicURLHostname != "api.claimed.example.test" ||
+				!reflect.DeepEqual(verifier.routeIPv4, wantIPv4) || !reflect.DeepEqual(verifier.routeIPv6, wantIPv6) || !reflect.DeepEqual(verifier.publicURLNameservers, wantNameservers) {
 				t.Fatalf("verification = %#v", verifier)
 			}
 			if test.removing && (provider.removeCalls != 1 || provider.publishCalls != 0) || !test.removing && (provider.publishCalls != 1 || provider.removeCalls != 0) {
@@ -395,13 +395,13 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 			want.AvailableAt = now.Add(time.Second)
 			if test.propagated {
 				want.AvailableAt = time.Time{}
-				want.State = controlstate.RouteDNSPublished
+				want.State = controlstate.PublicURLDNSPublished
 				if test.removing {
-					want.State = controlstate.RouteDNSRemoved
+					want.State = controlstate.PublicURLDNSRemoved
 				}
 			}
-			if !reflect.DeepEqual(store.routeSaved, want) || store.routeSaves != 1 || !store.routeSavedAt.Equal(now) {
-				t.Fatalf("saved = %#v, want %#v", store.routeSaved, want)
+			if !reflect.DeepEqual(store.publicURLSaved, want) || store.publicURLSaves != 1 || !store.publicURLSavedAt.Equal(now) {
+				t.Fatalf("saved = %#v, want %#v", store.publicURLSaved, want)
 			}
 		})
 	}
@@ -412,20 +412,20 @@ func TestWorkerClaimedRouteAuthorityBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name, domain, state, zone string
 		lookupErr                 error
-		wantState                 controlstate.RouteDNSState
+		wantState                 controlstate.PublicURLDNSState
 		wantDelay                 time.Duration
 	}{
-		{"pending authority", "claimed.example.test", "pending", "", nil, controlstate.RouteDNSPending, time.Second},
-		{"wrong domain", "other.example.test", "ready", "Z123", nil, controlstate.RouteDNSFailed, 0},
-		{"released authority", "claimed.example.test", "released", "Z123", nil, controlstate.RouteDNSFailed, 0},
-		{"missing zone", "claimed.example.test", "ready", "", nil, controlstate.RouteDNSFailed, 0},
-		{"lookup failure", "claimed.example.test", "ready", "Z123", errors.New("lookup unavailable"), controlstate.RouteDNSPending, 4 * time.Second},
+		{"pending authority", "claimed.example.test", "pending", "", nil, controlstate.PublicURLDNSPending, time.Second},
+		{"wrong domain", "other.example.test", "ready", "Z123", nil, controlstate.PublicURLDNSFailed, 0},
+		{"released authority", "claimed.example.test", "released", "Z123", nil, controlstate.PublicURLDNSFailed, 0},
+		{"missing zone", "claimed.example.test", "ready", "", nil, controlstate.PublicURLDNSFailed, 0},
+		{"lookup failure", "claimed.example.test", "ready", "Z123", errors.New("lookup unavailable"), controlstate.PublicURLDNSPending, 4 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			work := claimedRouteWork(now)
 			authority := testDNSWork(now).DNSAuthority
 			authority.CanonicalDomain, authority.State, authority.ProviderZoneID = test.domain, test.state, test.zone
-			store := &dnsStoreStub{routeWork: work, authority: authority, getErr: test.lookupErr}
+			store := &dnsStoreStub{publicURLWork: work, authority: authority, getErr: test.lookupErr}
 			provider, verifier := &providerStub{}, &verifierStub{}
 			worker := testDNSWorker(t, store, provider, verifier, now)
 			if found, err := worker.processOne(t.Context()); !found || err != nil {
@@ -435,12 +435,12 @@ func TestWorkerClaimedRouteAuthorityBoundaries(t *testing.T) {
 			if test.wantDelay != 0 {
 				wantAvailable = now.Add(test.wantDelay)
 			}
-			if store.routeSaved.State != test.wantState || !store.routeSaved.AvailableAt.Equal(wantAvailable) ||
-				provider.publishCalls != 0 || provider.removeCalls != 0 || verifier.routeCalls != 0 {
-				t.Fatalf("authority boundary: saved %#v, provider %#v, verifier %#v", store.routeSaved, provider, verifier)
+			if store.publicURLSaved.State != test.wantState || !store.publicURLSaved.AvailableAt.Equal(wantAvailable) ||
+				provider.publishCalls != 0 || provider.removeCalls != 0 || verifier.publicURLCalls != 0 {
+				t.Fatalf("authority boundary: saved %#v, provider %#v, verifier %#v", store.publicURLSaved, provider, verifier)
 			}
-			if (store.routeSaved.LastError != "") != (test.state != "pending") {
-				t.Fatalf("last error = %q", store.routeSaved.LastError)
+			if (store.publicURLSaved.LastError != "") != (test.state != "pending") {
+				t.Fatalf("last error = %q", store.publicURLSaved.LastError)
 			}
 		})
 	}
@@ -451,14 +451,14 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 	failure := errors.New("database connection lost")
 	for _, kind := range []string{"authority", "route"} {
 		t.Run(kind, func(t *testing.T) {
-			store := &dnsStoreStub{saveErr: failure, routeSaveErr: failure}
+			store := &dnsStoreStub{saveErr: failure, publicURLSaveErr: failure}
 			provider := &providerStub{zone: Zone{ID: "Z123", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
-			verifier := &verifierStub{routeVerified: true}
+			verifier := &verifierStub{publicURLVerified: true}
 			worker := testDNSWorker(t, store, provider, verifier, now)
 			if kind == "authority" {
 				store.work = testDNSWork(now)
 			} else {
-				store.routeWork = claimedRouteWork(now)
+				store.publicURLWork = claimedRouteWork(now)
 				worker.config.ManagedDomain, worker.config.ManagedZoneID = "claimed.example.test", "Z123"
 			}
 			if found, err := worker.processOne(t.Context()); !found || !errors.Is(err, failure) {
@@ -468,15 +468,15 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 				if provider.ensureCalls != 1 || store.saves != 1 || store.saved.ProviderZoneID != "Z123" || store.saved.LastError != "" {
 					t.Fatalf("authority save = %#v", store)
 				}
-			} else if provider.publishCalls != 1 || verifier.routeCalls != 1 || store.routeSaves != 1 || store.routeSaved.State != controlstate.RouteDNSPublished || store.routeSaved.LastError != "" {
+			} else if provider.publishCalls != 1 || verifier.publicURLCalls != 1 || store.publicURLSaves != 1 || store.publicURLSaved.State != controlstate.PublicURLDNSPublished || store.publicURLSaved.LastError != "" {
 				t.Fatalf("route save = %#v", store)
 			}
 			// A failed save leaves the original durable work available for a later claim.
-			store.saveErr, store.routeSaveErr = nil, nil
+			store.saveErr, store.publicURLSaveErr = nil, nil
 			if kind == "authority" {
 				store.work = testDNSWork(now)
 			} else {
-				store.routeWork = claimedRouteWork(now)
+				store.publicURLWork = claimedRouteWork(now)
 			}
 			if found, err := worker.processOne(t.Context()); !found || err != nil {
 				t.Fatalf("retry = %v, %v", found, err)
@@ -485,7 +485,7 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 				if provider.ensureCalls != 2 || !reflect.DeepEqual(provider.ensureWork, testDNSWork(now)) || store.saves != 2 {
 					t.Fatalf("authority retry = %#v, %#v", provider, store)
 				}
-			} else if provider.publishCalls != 2 || provider.record.RouteID != "route_claimed" || store.routeSaves != 2 {
+			} else if provider.publishCalls != 2 || provider.record.PublicURLID != "public_url_claimed" || store.publicURLSaves != 2 {
 				t.Fatalf("route retry = %#v, %#v", provider, store)
 			}
 		})
@@ -494,7 +494,7 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 
 func TestWorkerRouteFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	for _, state := range []controlstate.RouteDNSState{controlstate.RouteDNSPending, controlstate.RouteDNSRemoving} {
+	for _, state := range []controlstate.PublicURLDNSState{controlstate.PublicURLDNSPending, controlstate.PublicURLDNSRemoving} {
 		for _, test := range []struct {
 			name                     string
 			providerErr, verifierErr error
@@ -507,7 +507,7 @@ func TestWorkerRouteFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 			t.Run(string(state)+"/"+test.name, func(t *testing.T) {
 				work := claimedRouteWork(now)
 				work.State, work.Attempts = state, 20
-				store := &dnsStoreStub{routeWork: work}
+				store := &dnsStoreStub{publicURLWork: work}
 				provider, verifier := &providerStub{err: test.providerErr}, &verifierStub{err: test.verifierErr}
 				worker := testDNSWorker(t, store, provider, verifier, now)
 				worker.config.ManagedDomain, worker.config.ManagedZoneID = "claimed.example.test", "Z123"
@@ -516,22 +516,22 @@ func TestWorkerRouteFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 				}
 				wantState, wantAt := state, now.Add(time.Minute)
 				if test.terminal {
-					wantState, wantAt = controlstate.RouteDNSFailed, time.Time{}
+					wantState, wantAt = controlstate.PublicURLDNSFailed, time.Time{}
 				}
 				wantError := test.providerErr
 				if wantError == nil {
 					wantError = test.verifierErr
 				}
-				if store.routeSaved.State != wantState || !store.routeSaved.AvailableAt.Equal(wantAt) || store.routeSaved.LastError != wantError.Error() ||
-					store.routeSaved.DNSRevision != 7 || store.routeSaved.WorkEpoch != 9 || store.routeSaves != 1 {
-					t.Fatalf("saved failure = %#v", store.routeSaved)
+				if store.publicURLSaved.State != wantState || !store.publicURLSaved.AvailableAt.Equal(wantAt) || store.publicURLSaved.LastError != wantError.Error() ||
+					store.publicURLSaved.DNSRevision != 7 || store.publicURLSaved.WorkEpoch != 9 || store.publicURLSaves != 1 {
+					t.Fatalf("saved failure = %#v", store.publicURLSaved)
 				}
 				wantVerifications := 0
 				if test.providerErr == nil {
 					wantVerifications = 1
 				}
-				if verifier.routeCalls != wantVerifications {
-					t.Fatalf("verification calls = %d", verifier.routeCalls)
+				if verifier.publicURLCalls != wantVerifications {
+					t.Fatalf("verification calls = %d", verifier.publicURLCalls)
 				}
 			})
 		}
@@ -550,13 +550,13 @@ func TestWorkerCancellationDoesNotPersistRetry(t *testing.T) {
 			if kind == "authority" {
 				store.work = testDNSWork(now)
 			} else {
-				store.routeWork = claimedRouteWork(now)
+				store.publicURLWork = claimedRouteWork(now)
 				worker.config.ManagedDomain, worker.config.ManagedZoneID = "claimed.example.test", "Z123"
 			}
 			if found, err := worker.processOne(ctx); !found || !errors.Is(err, context.Canceled) {
 				t.Fatalf("process = %v, %v", found, err)
 			}
-			if store.saves != 0 || store.routeSaves != 0 {
+			if store.saves != 0 || store.publicURLSaves != 0 {
 				t.Fatalf("canceled operation persisted: %#v", store)
 			}
 		})

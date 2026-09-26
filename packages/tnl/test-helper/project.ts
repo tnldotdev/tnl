@@ -23,18 +23,18 @@ export async function createProjectFixture(prefix: string) {
 
 export function testProjectDocument() {
   return {
-    memberNamespace: "member.example",
+    namespace: "member.example",
     runningUnderTnlDev: false,
     serviceDirectories: { api: "apps/api", web: "apps/web" },
     services: {
       api: {
         hostname: "api.member.example",
-        memberNamespace: "member.example",
+        namespace: "member.example",
         url: "https://api.member.example",
       },
       web: {
         hostname: "web.member.example",
-        memberNamespace: "member.example",
+        namespace: "member.example",
         url: "https://web.member.example",
       },
     },
@@ -43,8 +43,8 @@ export function testProjectDocument() {
 }
 
 export function testPublicProject(runningUnderTnlDev: boolean) {
-  const { memberNamespace, services } = testProjectDocument();
-  return { memberNamespace, runningUnderTnlDev, services };
+  const project = testProjectDocument();
+  return { namespace: project.namespace, runningUnderTnlDev, services: project.services };
 }
 
 export async function withCurrentDirectory<T>(

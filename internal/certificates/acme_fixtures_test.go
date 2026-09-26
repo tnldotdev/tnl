@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 )
 
-// This stub shares ACME behavior only. Route and relay rules stay in their tests.
+// This stub shares ACME behavior only. PublicURL and relay rules stay in their tests.
 type acmeStub struct {
 	order, finalizedOrder acmeclient.Order
 	authorization         acmeclient.Authorization

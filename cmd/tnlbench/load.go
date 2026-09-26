@@ -13,7 +13,7 @@ import (
 
 type loadCommand struct {
 	workerCommand
-	Routes          int      `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total routes."`
+	PublicURLs      int      `name:"public-urls" env:"TNL_BENCH_PUBLIC_URLS" required:"" help:"Total public URLs."`
 	PublicAddress   string   `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" help:"Optional ingress host:port override."`
 	ResolverAddress string   `name:"resolver-address" env:"TNL_BENCH_RESOLVER_ADDRESS" help:"Optional DNS server."`
 	FreshRate       int      `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Assigned fresh requests/sec."`
@@ -29,7 +29,7 @@ func (c loadCommand) Validate() error {
 	if err := c.workerCommand.validate(); err != nil {
 		return err
 	}
-	if c.Routes <= 0 || c.FreshRate < 0 || c.FreshRate >= 40 || c.HeldStreams < 0 || c.Concurrency < 1 || c.QueueSlots < 0 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 {
+	if c.PublicURLs <= 0 || c.FreshRate < 0 || c.FreshRate >= 40 || c.HeldStreams < 0 || c.Concurrency < 1 || c.QueueSlots < 0 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 {
 		return errors.New("invalid visitor limits or unsafe source rate")
 	}
 	for _, address := range []string{c.PublicAddress, c.ResolverAddress} {
@@ -70,11 +70,11 @@ func (c loadCommand) run(parent context.Context) (retErr error) {
 		}
 	}()
 	var urls []string
-	if err := coordination.Wait(ctx, "routes", &urls); err != nil {
+	if err := coordination.Wait(ctx, "public_urls", &urls); err != nil {
 		return err
 	}
-	if len(urls) != c.Routes {
-		return errors.New("coordinator route count mismatch")
+	if len(urls) != c.PublicURLs {
+		return errors.New("coordinator public URL count mismatch")
 	}
 	if c.PublicAddress == "" {
 		var hostnames []string

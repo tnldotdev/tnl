@@ -6,7 +6,7 @@ import (
 )
 
 // Every worker phase shares one bounded first-failure capture. Call before
-// stopping other routes so teardown cannot erase the initiating activity.
+// stopping other public URLs so teardown cannot erase the initiating activity.
 type failureCapture struct {
 	ctx                         context.Context
 	metricsURLs, diagnosticURLs []string

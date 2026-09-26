@@ -20,7 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/routeusageworker"
+	"github.com/tnldotdev/tnl/internal/publicurlusageworker"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -115,7 +115,7 @@ func serveWithRelayClientTLS(
 		}
 		var dnsProvider *dnscontroller.Route53Provider
 		var dnsVerifier *dnscontroller.AuthoritativeVerifier
-		var routeDNSChallenges certificates.RouteDNSChallenges
+		var routeDNSChallenges certificates.PublicURLDNSChallenges
 		var relayDNSChallenges certificates.RelayDNSChallenges
 		dnsConfig := dnscontroller.Config{
 			ManagedDomain: cfg.ManagedDomain(), ManagedZoneID: cfg.Route53ManagedZoneID,
@@ -160,19 +160,19 @@ func serveWithRelayClientTLS(
 			if err != nil {
 				return err
 			}
-			for index := range cfg.RouteCertificateWorkers {
-				routeWorkerID, err := opaqueid.New("route_certificate_worker_")
+			for index := range cfg.PublicURLCertificateWorkers {
+				publicURLWorkerID, err := opaqueid.New("public_url_certificate_worker_")
 				if err != nil {
-					return fmt.Errorf("create route certificate worker identity: %w", err)
+					return fmt.Errorf("create public URL certificate worker identity: %w", err)
 				}
-				routeWorker, err := certificates.NewRouteWorker(database, certificates.RouteConfig{
-					WorkerID: routeWorkerID, Profile: cfg.ACMEProfile,
+				publicURLWorker, err := certificates.NewPublicURLWorker(database, certificates.PublicURLConfig{
+					WorkerID: publicURLWorkerID, Profile: cfg.ACMEProfile,
 					HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges, Observer: metrics,
 				})
 				if err != nil {
 					return err
 				}
-				d.forward(fmt.Sprintf("run route certificate worker %d", index+1), runAsync(func() error { return routeWorker.Run(lifetime) }))
+				d.forward(fmt.Sprintf("run public URL certificate worker %d", index+1), runAsync(func() error { return publicURLWorker.Run(lifetime) }))
 			}
 			if relayDNSChallenges != nil {
 				relayWorkerID, err := opaqueid.New("relay_certificate_worker_")
@@ -193,18 +193,18 @@ func serveWithRelayClientTLS(
 				return err
 			}
 		}
-		if cfg.RouteUsageURL != "" {
-			workerID, err := opaqueid.New("route_usage_worker_")
+		if cfg.PublicURLUsageURL != "" {
+			workerID, err := opaqueid.New("public_url_usage_worker_")
 			if err != nil {
-				return fmt.Errorf("create route usage worker identity: %w", err)
+				return fmt.Errorf("create public URL usage worker identity: %w", err)
 			}
-			worker, err := routeusageworker.New(database, routeusageworker.Config{
-				WorkerID: workerID, Endpoint: cfg.RouteUsageURL, Token: cfg.RouteUsageToken,
+			worker, err := publicurlusageworker.New(database, publicurlusageworker.Config{
+				WorkerID: workerID, Endpoint: cfg.PublicURLUsageURL, Token: cfg.PublicURLUsageToken,
 			})
 			if err != nil {
 				return err
 			}
-			d.forward("run route usage worker", runAsync(func() error { return worker.Run(lifetime) }))
+			d.forward("run public URL usage worker", runAsync(func() error { return worker.Run(lifetime) }))
 		}
 		if cfg.DNSAutomationEnabled() {
 			workerID, err := opaqueid.New("dns_worker_")

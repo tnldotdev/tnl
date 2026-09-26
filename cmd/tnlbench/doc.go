@@ -1,2 +1,2 @@
-// Command tnlbench measures the complete tnl route path.
+// Command tnlbench measures the complete tnl public URL path.
 package main

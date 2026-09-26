@@ -132,10 +132,10 @@ func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bo
 	if err := f.metadata.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	f.hostname = f.project.subdomain + "." + f.metadata.MemberNamespace
+	f.hostname = f.project.subdomain + "." + f.metadata.Namespace
 	f.publicURL = "https://" + f.hostname
-	wantService := projectmeta.Service{MemberNamespace: f.metadata.MemberNamespace, Hostname: f.hostname, URL: f.publicURL}
-	if !strings.HasSuffix(f.metadata.MemberNamespace, ".routes.127.0.0.1.nip.io") || len(f.metadata.Services) != 1 ||
+	wantService := projectmeta.Service{Namespace: f.metadata.Namespace, Hostname: f.hostname, URL: f.publicURL}
+	if !strings.HasSuffix(f.metadata.Namespace, ".routes.127.0.0.1.nip.io") || len(f.metadata.Services) != 1 ||
 		f.metadata.Services["api"] != wantService || f.metadata.ServiceDirectories["api"] != "." || !reflect.DeepEqual(*r.Runtime, f.metadata.Public(true)) {
 		t.Fatalf("generated metadata = %#v, Vite runtime = %#v", f.metadata, r.Runtime)
 	}
@@ -151,7 +151,7 @@ func (f *integrationViteFixture) waitTunnel(t *testing.T, wantState clientstate.
 		}
 		if len(snapshot.Tunnels) == 1 {
 			tunnel = snapshot.Tunnels[0]
-			if tunnel.State == wantState && tunnel.RouteVersion != 0 {
+			if tunnel.State == wantState && tunnel.PublishRunNumber != 0 {
 				return true, nil
 			}
 		}
@@ -162,7 +162,7 @@ func (f *integrationViteFixture) waitTunnel(t *testing.T, wantState clientstate.
 		}
 		return false, nil
 	})
-	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.ProcessID != f.dev.command.Process.Pid || tunnel.Framework != "vite" || tunnel.Target != f.report.Target || tunnel.Hostname != f.hostname || tunnel.PublicURL != f.publicURL || tunnel.RouteID == "" || tunnel.RouteVersion != 1 {
+	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.ProcessID != f.dev.command.Process.Pid || tunnel.Framework != "vite" || tunnel.Target != f.report.Target || tunnel.Hostname != f.hostname || tunnel.PublicURL != f.publicURL || tunnel.PublicURLID == "" || tunnel.PublishRunNumber != 1 {
 		t.Fatalf("configured Vite tunnel = %#v, child = %#v", tunnel, f.report)
 	}
 	return tunnel
@@ -175,7 +175,7 @@ func (f *integrationViteFixture) assertCertificatePlan(t *testing.T, tunnel clie
 	var challenge, scope string
 	var identifiers []byte
 	if err := f.database.QueryRowContext(ctx, `SELECT certificate_challenge, certificate_scope, to_json(certificate_identifiers)
-		FROM control.route_sessions WHERE route_id = $1 AND route_version = $2`, tunnel.RouteID, tunnel.RouteVersion).Scan(&challenge, &scope, &identifiers); err != nil {
+		FROM control.publish_runs WHERE public_url_id = $1 AND publish_run_number = $2`, tunnel.PublicURLID, tunnel.PublishRunNumber).Scan(&challenge, &scope, &identifiers); err != nil {
 		t.Fatal(err)
 	}
 	var names []string
@@ -193,7 +193,7 @@ func (f *integrationViteFixture) assertCertificatePlan(t *testing.T, tunnel clie
 func (f *integrationViteFixture) stopTunnel(t *testing.T, tunnel clientstate.TunnelInfo) {
 	t.Helper()
 	stopIntegrationBinaryProcess(t, f.dev)
-	waitForReadyPublisherConnections(t, f.database, tunnel.RouteID, tunnel.RouteVersion, 0)
+	waitForReadyPublisherConnections(t, f.database, tunnel.PublicURLID, tunnel.PublishRunNumber, 0)
 }
 
 func (f *integrationViteFixture) assertCleanup(t *testing.T) {
@@ -206,8 +206,8 @@ func (f *integrationViteFixture) assertCleanup(t *testing.T) {
 	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var open int
-		err := f.database.QueryRowContext(ctx, `SELECT count(*) FROM control.route_sessions AS sessions
-			JOIN control.routes AS routes ON routes.id = sessions.route_id
+		err := f.database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_runs AS sessions
+			JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
 			WHERE routes.canonical_hostname = $1 AND sessions.closed_at IS NULL`, f.hostname).Scan(&open)
 		return err == nil && open == 0, err
 	})
@@ -220,7 +220,7 @@ func dialIntegrationWebsocket(t *testing.T, config *websocket.Config) *websocket
 	defer cancel()
 	connection, err := config.DialContext(ctx)
 	if err != nil {
-		t.Fatalf("connect HMR through public route: %v", err)
+		t.Fatalf("connect HMR through public public_url: %v", err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 	if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
@@ -260,7 +260,7 @@ func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname strin
 	for {
 		var payload string
 		if err := websocket.Message.Receive(connection, &payload); err != nil {
-			t.Fatalf("receive Vite HMR update through public route: %v", err)
+			t.Fatalf("receive Vite HMR update through public public_url: %v", err)
 		}
 		var message struct {
 			Type    string `json:"type"`
@@ -297,7 +297,7 @@ func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname, sour
 	for !connected {
 		var payload string
 		if err := websocket.Message.Receive(connection, &payload); err != nil {
-			t.Fatalf("receive Next.js HMR connection message through public route: %v", err)
+			t.Fatalf("receive Next.js HMR connection message through public public_url: %v", err)
 		}
 		var message struct {
 			Type string `json:"type"`
@@ -320,7 +320,7 @@ func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname, sour
 	for {
 		var payload string
 		if err := websocket.Message.Receive(connection, &payload); err != nil {
-			t.Fatalf("receive Next.js HMR update through public route: %v", err)
+			t.Fatalf("receive Next.js HMR update through public public_url: %v", err)
 		}
 		var message struct {
 			Type string `json:"type"`

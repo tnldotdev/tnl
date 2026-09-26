@@ -257,7 +257,7 @@ CREATE TABLE control.runtime_secrets (
     created_at timestamptz NOT NULL
 );
 
-CREATE TABLE control.routes (
+CREATE TABLE control.public_urls (
     id text PRIMARY KEY CHECK (id <> ''),
     team_id text NOT NULL CHECK (team_id <> ''),
     domain_id text NOT NULL CHECK (domain_id <> ''),
@@ -267,7 +267,7 @@ CREATE TABLE control.routes (
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     canonical_hostname text NOT NULL CHECK (canonical_hostname <> ''),
     target text NOT NULL CHECK (target <> ''),
-    route_scope text NOT NULL CHECK (route_scope IN ('member', 'shared')),
+    public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
     ip_policy text NOT NULL CHECK (ip_policy IN ('allow_all', 'allowlist')),
     allowed_ip_prefixes cidr[] NOT NULL DEFAULT '{}'::cidr[],
@@ -281,7 +281,7 @@ CREATE TABLE control.routes (
     dns_attempts bigint NOT NULL DEFAULT 0 CHECK (dns_attempts >= 0),
     dns_available_at timestamptz,
     dns_last_error text,
-    next_route_version bigint NOT NULL DEFAULT 1 CHECK (next_route_version >= 1),
+    next_publish_run_number bigint NOT NULL DEFAULT 1 CHECK (next_publish_run_number >= 1),
     mutation_revision bigint NOT NULL DEFAULT 1 CHECK (mutation_revision >= 1),
     ephemeral boolean NOT NULL DEFAULT false,
     expires_at timestamptz,
@@ -291,7 +291,7 @@ CREATE TABLE control.routes (
     updated_at timestamptz NOT NULL,
     suspended_at timestamptz,
     deleted_at timestamptz,
-    CHECK ((route_scope = 'member') = (membership_id IS NOT NULL)),
+    CHECK ((public_url_scope = 'member') = (membership_id IS NOT NULL)),
     CHECK ((ip_policy = 'allowlist') = (cardinality(allowed_ip_prefixes) > 0)),
     CHECK (cardinality(allowed_ip_prefixes) <= 64),
     CHECK (array_position(allowed_ip_prefixes, NULL) IS NULL),
@@ -306,35 +306,35 @@ CREATE TABLE control.routes (
     CHECK (suspension_reason IS NULL OR suspension_revision > 0)
 );
 
-CREATE UNIQUE INDEX routes_current_hostname
-    ON control.routes (canonical_hostname)
+CREATE UNIQUE INDEX public_urls_current_hostname
+    ON control.public_urls (canonical_hostname)
     WHERE lifecycle_state <> 'deleted' OR dns_state NOT IN ('unmanaged', 'removed');
-CREATE UNIQUE INDEX routes_creator_idempotency
-    ON control.routes (created_by_identity_id, idempotency_key);
-CREATE INDEX routes_team
-    ON control.routes (team_id, created_at DESC, id)
+CREATE UNIQUE INDEX public_urls_creator_idempotency
+    ON control.public_urls (created_by_identity_id, idempotency_key);
+CREATE INDEX public_urls_team
+    ON control.public_urls (team_id, created_at DESC, id)
     WHERE lifecycle_state <> 'deleted';
-CREATE INDEX routes_domain
-    ON control.routes (domain_id)
+CREATE INDEX public_urls_domain
+    ON control.public_urls (domain_id)
     WHERE lifecycle_state <> 'deleted';
-CREATE INDEX routes_available_dns_work
-    ON control.routes (dns_available_at, id)
+CREATE INDEX public_urls_available_dns_work
+    ON control.public_urls (dns_available_at, id)
     WHERE dns_state IN ('pending', 'removing');
-CREATE INDEX routes_ephemeral_expiration
-    ON control.routes (expires_at, id)
+CREATE INDEX public_urls_ephemeral_expiration
+    ON control.public_urls (expires_at, id)
     WHERE ephemeral AND lifecycle_state <> 'deleted';
 
-CREATE TABLE control.route_sessions (
+CREATE TABLE control.publish_runs (
     id text PRIMARY KEY CHECK (id <> ''),
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     team_id text NOT NULL CHECK (team_id <> ''),
     membership_id text,
     acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
-    session_token_id text NOT NULL UNIQUE CHECK (session_token_id <> ''),
-    session_token_digest bytea NOT NULL UNIQUE CHECK (octet_length(session_token_digest) = 32),
+    publish_run_token_id text NOT NULL UNIQUE CHECK (publish_run_token_id <> ''),
+    publish_run_token_digest bytea NOT NULL UNIQUE CHECK (octet_length(publish_run_token_digest) = 32),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
     policy_denials bigint NOT NULL DEFAULT 0 CHECK (policy_denials >= 0),
     certificate_cache_key text NOT NULL CHECK (certificate_cache_key <> ''),
@@ -351,9 +351,9 @@ CREATE TABLE control.route_sessions (
     ready_at timestamptz,
     closed_at timestamptz,
     close_reason text,
-    UNIQUE (route_id, route_version),
-    UNIQUE (route_id, idempotency_key),
-    UNIQUE (id, route_id, route_version),
+    UNIQUE (public_url_id, publish_run_number),
+    UNIQUE (public_url_id, idempotency_key),
+    UNIQUE (id, public_url_id, publish_run_number),
     CHECK (array_position(certificate_identifiers, NULL) IS NULL),
     CHECK (last_heartbeat_at >= created_at),
     CHECK (publisher_expires_at > created_at),
@@ -366,11 +366,11 @@ CREATE TABLE control.route_sessions (
     CHECK ((closed_at IS NULL) = (close_reason IS NULL))
 );
 
-CREATE UNIQUE INDEX route_sessions_nonterminal_route
-    ON control.route_sessions (route_id)
+CREATE UNIQUE INDEX publish_runs_nonterminal_route
+    ON control.publish_runs (public_url_id)
     WHERE closed_at IS NULL;
-CREATE INDEX route_sessions_expiration
-    ON control.route_sessions (publisher_expires_at, id)
+CREATE INDEX publish_runs_expiration
+    ON control.publish_runs (publisher_expires_at, id)
     WHERE closed_at IS NULL;
 
 CREATE TABLE control.relay_services (
@@ -444,10 +444,10 @@ CREATE INDEX ingress_leases_ready
     ON control.ingress_leases (lease_expires_at, ingress_id)
     WHERE NOT draining;
 
-CREATE TABLE control.route_session_connections (
-    route_session_id text NOT NULL,
-    route_id text NOT NULL,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+CREATE TABLE control.publish_run_connections (
+    publish_run_id text NOT NULL,
+    public_url_id text NOT NULL,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     connection_slot smallint NOT NULL CHECK (connection_slot BETWEEN 0 AND 1),
     publisher_connection_id text NOT NULL UNIQUE CHECK (publisher_connection_id <> ''),
     connection_assignment_revision bigint NOT NULL CHECK (connection_assignment_revision >= 1),
@@ -466,10 +466,10 @@ CREATE TABLE control.route_session_connections (
     ready_at timestamptz,
     disconnected_at timestamptz,
     closed_at timestamptz,
-    PRIMARY KEY (route_session_id, connection_slot),
-    UNIQUE (route_session_id, relay_service_id),
-    FOREIGN KEY (route_session_id, route_id, route_version)
-        REFERENCES control.route_sessions(id, route_id, route_version) ON DELETE RESTRICT,
+    PRIMARY KEY (publish_run_id, connection_slot),
+    UNIQUE (publish_run_id, relay_service_id),
+    FOREIGN KEY (publish_run_id, public_url_id, publish_run_number)
+        REFERENCES control.publish_runs(id, public_url_id, publish_run_number) ON DELETE RESTRICT,
     CHECK (publisher_connection_credential_expires_at > assigned_at),
     CHECK (
         (connected_relay_id IS NULL AND connected_relay_run_id IS NULL AND connected_relay_lease_revision IS NULL AND claim_id IS NULL AND connected_at IS NULL) OR
@@ -482,11 +482,11 @@ CREATE TABLE control.route_session_connections (
     CHECK (closed_at IS NULL OR closed_at >= assigned_at)
 );
 
-CREATE INDEX route_session_connections_relay_claims
-    ON control.route_session_connections (connected_relay_id, connected_relay_run_id, connected_relay_lease_revision)
+CREATE INDEX publish_run_connections_relay_claims
+    ON control.publish_run_connections (connected_relay_id, connected_relay_run_id, connected_relay_lease_revision)
     WHERE state IN ('connected', 'ready', 'draining');
-CREATE INDEX route_session_connections_replacement
-    ON control.route_session_connections (route_session_id, connection_slot)
+CREATE INDEX publish_run_connections_replacement
+    ON control.publish_run_connections (publish_run_id, connection_slot)
     WHERE state IN ('closed', 'expired');
 
 CREATE TABLE control.ingress_routing_table_clock (
@@ -506,18 +506,18 @@ INSERT INTO control.ingress_routing_table_clock (
 
 CREATE TABLE control.ingress_routing_table_events (
     routing_table_revision bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    event_kind text NOT NULL CHECK (event_kind IN ('route_upsert', 'route_tombstone', 'challenge_upsert', 'challenge_tombstone')),
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    event_kind text NOT NULL CHECK (event_kind IN ('public_url_upsert', 'public_url_tombstone', 'challenge_upsert', 'challenge_tombstone')),
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     canonical_hostname text NOT NULL CHECK (canonical_hostname <> ''),
     entry_revision bigint NOT NULL CHECK (entry_revision >= 1),
     projection bytea NOT NULL,
-    route_expires_at timestamptz,
+    public_url_expires_at timestamptz,
     created_at timestamptz NOT NULL
 );
 
 CREATE INDEX ingress_routing_table_events_route
-    ON control.ingress_routing_table_events (route_id, route_version, routing_table_revision);
+    ON control.ingress_routing_table_events (public_url_id, publish_run_number, routing_table_revision);
 CREATE INDEX ingress_routing_table_events_retention
     ON control.ingress_routing_table_events (created_at, routing_table_revision);
 
@@ -599,9 +599,9 @@ CREATE INDEX relay_certificate_orders_available_work
 CREATE TABLE control.acme_orders (
     id text PRIMARY KEY CHECK (id <> ''),
     account_id text NOT NULL REFERENCES control.acme_accounts(id) ON DELETE RESTRICT,
-    route_session_id text NOT NULL REFERENCES control.route_sessions(id) ON DELETE RESTRICT,
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    publish_run_id text NOT NULL REFERENCES control.publish_runs(id) ON DELETE RESTRICT,
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     certificate_cache_key text NOT NULL CHECK (certificate_cache_key <> ''),
@@ -628,8 +628,8 @@ CREATE TABLE control.acme_orders (
     last_error text,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
-    UNIQUE (route_session_id, idempotency_key),
-    UNIQUE (route_id, route_version, csr_digest, account_id),
+    UNIQUE (publish_run_id, idempotency_key),
+    UNIQUE (public_url_id, publish_run_number, csr_digest, account_id),
     CHECK (array_position(certificate_identifiers, NULL) IS NULL),
     CHECK ((work_owner IS NULL) = (work_expires_at IS NULL)),
     CHECK ((not_before IS NULL) = (not_after IS NULL)),
@@ -642,7 +642,7 @@ CREATE INDEX acme_orders_available_work
     ON control.acme_orders (available_at, id)
     WHERE state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed', 'canceled');
 CREATE INDEX acme_orders_route
-    ON control.acme_orders (route_id, route_version, created_at DESC);
+    ON control.acme_orders (public_url_id, publish_run_number, created_at DESC);
 
 CREATE TABLE control.acme_authorizations (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -680,7 +680,7 @@ CREATE INDEX acme_authorizations_available_work
     ON control.acme_authorizations (available_at, id)
     WHERE state NOT IN ('complete', 'canceled');
 
-CREATE TABLE control.route_usage_configuration (
+CREATE TABLE control.public_url_usage_configuration (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     visitor_network_hash_master_key bytea NOT NULL CHECK (octet_length(visitor_network_hash_master_key) = 32),
     created_at timestamptz NOT NULL
@@ -713,8 +713,8 @@ CREATE TABLE control.ingress_usage_reports (
     report_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ingress_id text NOT NULL,
     ingress_run_id text NOT NULL,
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     bucket_start timestamptz NOT NULL,
     bucket_end timestamptz NOT NULL,
     observed_through timestamptz NOT NULL,
@@ -732,18 +732,18 @@ CREATE TABLE control.ingress_usage_reports (
     received_at timestamptz NOT NULL,
     FOREIGN KEY (ingress_id, ingress_run_id)
         REFERENCES control.ingress_usage_runs(ingress_id, ingress_run_id) ON DELETE RESTRICT,
-    UNIQUE (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision),
+    UNIQUE (ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, report_revision),
     CHECK (bucket_end > bucket_start),
     CHECK (observed_through >= bucket_start AND observed_through <= bucket_end)
 );
 
 CREATE INDEX ingress_usage_reports_aggregation
-    ON control.ingress_usage_reports (route_id, route_version, bucket_start, report_id);
+    ON control.ingress_usage_reports (public_url_id, publish_run_number, bucket_start, report_id);
 
-CREATE TABLE control.route_usage_buckets (
+CREATE TABLE control.public_url_usage_buckets (
     bucket_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     team_id text NOT NULL CHECK (team_id <> ''),
     acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     bucket_start timestamptz NOT NULL,
@@ -763,19 +763,19 @@ CREATE TABLE control.route_usage_buckets (
     complete boolean NOT NULL DEFAULT false,
     finalized_at timestamptz,
     updated_at timestamptz NOT NULL,
-    UNIQUE (route_id, route_version, bucket_start),
+    UNIQUE (public_url_id, publish_run_number, bucket_start),
     CHECK (bucket_end > bucket_start),
     CHECK (observed_through >= bucket_start AND observed_through <= bucket_end),
     CHECK (finalized = (finalized_at IS NOT NULL))
 );
 
-CREATE INDEX route_usage_buckets_pending
-    ON control.route_usage_buckets (bucket_start, bucket_id)
+CREATE INDEX public_url_usage_buckets_pending
+    ON control.public_url_usage_buckets (bucket_start, bucket_id)
     WHERE NOT finalized;
 
-CREATE TABLE control.route_usage_deliveries (
+CREATE TABLE control.public_url_usage_deliveries (
     delivery_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    bucket_id bigint NOT NULL REFERENCES control.route_usage_buckets(bucket_id) ON DELETE RESTRICT,
+    bucket_id bigint NOT NULL REFERENCES control.public_url_usage_buckets(bucket_id) ON DELETE RESTRICT,
     source_revision bigint NOT NULL CHECK (source_revision >= 1),
     delivery_key text NOT NULL UNIQUE CHECK (delivery_key <> ''),
     state text NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered', 'failed')),
@@ -797,14 +797,14 @@ CREATE TABLE control.route_usage_deliveries (
     CHECK ((state = 'delivered') = (delivered_at IS NOT NULL))
 );
 
-CREATE INDEX route_usage_deliveries_available
-    ON control.route_usage_deliveries (available_at, delivery_id)
+CREATE INDEX public_url_usage_deliveries_available
+    ON control.public_url_usage_deliveries (available_at, delivery_id)
     WHERE state <> 'delivered';
 
-CREATE TABLE control.route_recovery_episodes (
+CREATE TABLE control.public_url_recovery_episodes (
     recovery_episode_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint NOT NULL CHECK (route_version >= 1),
+    public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     state text NOT NULL CHECK (state IN ('open', 'observed', 'canceled')),
     opened_at timestamptz NOT NULL,
     observed_at timestamptz,
@@ -817,11 +817,11 @@ CREATE TABLE control.route_recovery_episodes (
     )
 );
 
-CREATE UNIQUE INDEX route_recovery_episodes_open
-    ON control.route_recovery_episodes (route_id, route_version)
+CREATE UNIQUE INDEX public_url_recovery_episodes_open
+    ON control.public_url_recovery_episodes (public_url_id, publish_run_number)
     WHERE state = 'open';
 
-CREATE TABLE control.route_recovery_histogram (
+CREATE TABLE control.public_url_recovery_histogram (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     observation_count bigint NOT NULL DEFAULT 0 CHECK (observation_count >= 0),
     observation_sum_seconds double precision NOT NULL DEFAULT 0 CHECK (observation_sum_seconds >= 0),
@@ -850,11 +850,11 @@ CREATE TABLE control.route_recovery_histogram (
     CHECK (bucket_le_120 <= observation_count)
 );
 
-INSERT INTO control.route_recovery_histogram (singleton, updated_at)
+INSERT INTO control.public_url_recovery_histogram (singleton, updated_at)
 VALUES (true, now());
 
 CREATE TABLE control.maintenance_controls (
-    control_name text PRIMARY KEY CHECK (control_name IN ('route_creation', 'route_session_creation', 'certificate_issuance')),
+    control_name text PRIMARY KEY CHECK (control_name IN ('public_url_creation', 'publish_run_creation', 'certificate_issuance')),
     allowed boolean NOT NULL,
     revision bigint NOT NULL CHECK (revision >= 1),
     updated_at timestamptz NOT NULL,
@@ -868,8 +868,8 @@ INSERT INTO control.maintenance_controls (
     updated_at,
     updated_by
 ) VALUES
-    ('route_creation', true, 1, now(), 'system'),
-    ('route_session_creation', true, 1, now(), 'system'),
+    ('public_url_creation', true, 1, now(), 'system'),
+    ('publish_run_creation', true, 1, now(), 'system'),
     ('certificate_issuance', true, 1, now(), 'system');
 
 CREATE TABLE control.admin_audit_events (
@@ -887,3 +887,110 @@ CREATE TABLE control.admin_audit_events (
 
 CREATE INDEX admin_audit_events_occurred_at
     ON control.admin_audit_events (occurred_at DESC, event_id DESC);
+
+ALTER TABLE control.acme_authorizations
+    ALTER COLUMN challenge_type DROP NOT NULL,
+    ALTER COLUMN challenge_url DROP NOT NULL,
+    ALTER COLUMN challenge_token DROP NOT NULL,
+    ALTER COLUMN challenge_digest DROP NOT NULL,
+    DROP CONSTRAINT acme_authorizations_authorization_url_key,
+    ADD UNIQUE (order_id, authorization_url),
+    ADD CONSTRAINT acme_authorizations_challenge_material CHECK (
+        (challenge_type IS NOT NULL AND challenge_url IS NOT NULL AND challenge_token IS NOT NULL AND challenge_digest IS NOT NULL)
+        OR
+        (challenge_type IS NULL AND challenge_url IS NULL AND challenge_token IS NULL AND challenge_digest IS NULL
+            AND presentation_reference IS NULL AND state = 'complete' AND validated_at IS NOT NULL
+            AND cleanup_completed_at IS NOT NULL AND presented_at IS NULL AND attempts = 0
+            AND expires_at IS NOT NULL AND expires_at > validated_at)
+    );
+
+CREATE TABLE control.oidc_assertion_exchanges (
+    assertion_digest bytea PRIMARY KEY CHECK (octet_length(assertion_digest) = 32),
+    consumed_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    CHECK (expires_at > consumed_at)
+);
+CREATE INDEX oidc_assertion_exchanges_expires_at
+    ON control.oidc_assertion_exchanges (expires_at);
+
+ALTER TABLE control.publish_runs
+    ADD COLUMN assignments_open boolean GENERATED ALWAYS AS (closed_at IS NULL) STORED,
+    ADD CONSTRAINT publish_runs_assignment_parent UNIQUE (id, assignments_open);
+ALTER TABLE control.publish_run_connections
+    ADD COLUMN session_open boolean NOT NULL DEFAULT true,
+    ADD CONSTRAINT publish_run_connections_assignment_parent
+        FOREIGN KEY (publish_run_id, session_open)
+        REFERENCES control.publish_runs (id, assignments_open) ON UPDATE CASCADE
+        DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE control.relay_service_assignment_totals (
+    relay_service_id text PRIMARY KEY REFERENCES control.relay_services(relay_service_id) ON DELETE CASCADE,
+    assignment_count bigint NOT NULL DEFAULT 0 CHECK (assignment_count >= 0)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.initialize_relay_assignment_total() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO control.relay_service_assignment_totals (relay_service_id)
+    VALUES (NEW.relay_service_id);
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER initialize_relay_assignment_total
+AFTER INSERT ON control.relay_services
+FOR EACH ROW EXECUTE FUNCTION control.initialize_relay_assignment_total();
+
+-- +goose StatementBegin
+CREATE FUNCTION control.update_relay_assignment_totals() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    old_service text;
+    new_service text;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        IF OLD.session_open AND OLD.state IN ('assigned', 'connected', 'ready', 'draining') THEN
+            old_service := OLD.relay_service_id;
+        END IF;
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        IF NEW.session_open AND NEW.state IN ('assigned', 'connected', 'ready', 'draining') THEN
+            new_service := NEW.relay_service_id;
+        END IF;
+    END IF;
+    IF old_service IS NOT DISTINCT FROM new_service THEN
+        RETURN NULL;
+    END IF;
+
+    PERFORM pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0));
+    IF old_service IS NOT NULL THEN
+        UPDATE control.relay_service_assignment_totals
+        SET assignment_count = assignment_count - 1 WHERE relay_service_id = old_service;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'missing relay assignment total for %', old_service USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    IF new_service IS NOT NULL THEN
+        UPDATE control.relay_service_assignment_totals
+        SET assignment_count = assignment_count + 1 WHERE relay_service_id = new_service;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'missing relay assignment total for %', new_service USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER update_relay_assignment_totals
+AFTER INSERT OR UPDATE OR DELETE ON control.publish_run_connections
+FOR EACH ROW EXECUTE FUNCTION control.update_relay_assignment_totals();
+
+CREATE INDEX ingress_routing_table_events_snapshot_anchor
+    ON control.ingress_routing_table_events (
+        canonical_hostname,
+        (event_kind IN ('public_url_upsert', 'public_url_tombstone')),
+        routing_table_revision
+    );

@@ -43,7 +43,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			seedHostedChallenge(t, database, sql, name, domain, reference)
 			if !claimed {
-				challenge, err := database.GetDNSChallengeContext(t.Context(), "route_"+name, "authorization_"+name)
+				challenge, err := database.GetDNSChallengeContext(t.Context(), "public_url_"+name, "authorization_"+name)
 				if err != nil || challenge.CanonicalDomain != "" || challenge.DNSAuthorityReference != reference {
 					t.Fatalf("hosted managed context = %#v, error %v", challenge, err)
 				}
@@ -56,7 +56,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Present(t.Context(), "route_"+name, "authorization_"+name); err != nil {
+			if err := manager.Present(t.Context(), "public_url_"+name, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if provider.record.ClaimedZone != claimed || provider.record.ZoneDomain != domain || provider.record.RecordName != "_acme-challenge.member."+domain {
@@ -65,21 +65,21 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'presented' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if valid, err := manager.Verify(t.Context(), "route_"+name, "authorization_"+name); err != nil || !valid {
+			if valid, err := manager.Verify(t.Context(), "public_url_"+name, "authorization_"+name); err != nil || !valid {
 				t.Fatalf("verify = %v, %v", valid, err)
 			}
 			if claimed {
 				if _, err := sql.Exec(t.Context(), `UPDATE control.dns_authorities SET state = 'releasing' WHERE authority_reference = $1`, reference); err != nil {
 					t.Fatal(err)
 				}
-				if valid, err := manager.Verify(t.Context(), "route_"+name, "authorization_"+name); err == nil || valid {
+				if valid, err := manager.Verify(t.Context(), "public_url_"+name, "authorization_"+name); err == nil || valid {
 					t.Fatalf("releasing authority verified new work: %v, %v", valid, err)
 				}
 			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'cleaning' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Cleanup(t.Context(), "route_"+name, "authorization_"+name); err != nil {
+			if err := manager.Cleanup(t.Context(), "public_url_"+name, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if len(provider.record.DesiredOwnedValues) != 0 || len(provider.record.PreviouslyOwnedValues) != 1 {
@@ -89,10 +89,10 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if err := manager.Cleanup(t.Context(), "wrong_route", "authorization_"+name); !errors.Is(err, controlstate.ErrDNSChallengeNotFound) {
 				t.Fatalf("wrong route identity = %v", err)
 			}
-			if _, err := sql.Exec(t.Context(), `UPDATE control.routes SET canonical_hostname = $2 WHERE id = $1`, "route_"+name, "outside."+name+".example.test"); err != nil {
+			if _, err := sql.Exec(t.Context(), `UPDATE control.public_urls SET canonical_hostname = $2 WHERE id = $1`, "public_url_"+name, "outside."+name+".example.test"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Cleanup(t.Context(), "route_"+name, "authorization_"+name); err == nil || provider.calls != calls {
+			if err := manager.Cleanup(t.Context(), "public_url_"+name, "authorization_"+name); err == nil || provider.calls != calls {
 				t.Fatalf("out-of-scope route cleanup = %v, calls %d", err, provider.calls)
 			}
 		})
@@ -143,7 +143,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
-	workers.Go(func() { firstDone <- manager.Present(ctx, "route_new", "authorization_new") })
+	workers.Go(func() { firstDone <- manager.Present(ctx, "public_url_new", "authorization_new") })
 	select {
 	case <-providerStarted:
 	case err := <-firstDone:
@@ -154,7 +154,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	if _, err := sql.Exec(ctx, `UPDATE control.acme_authorizations SET state = 'cleaning' WHERE id = 'authorization_old'`); err != nil {
 		t.Fatal(err)
 	}
-	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "route_old", "authorization_old") })
+	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "public_url_old", "authorization_old") })
 	// Observe PostgreSQL contention rather than assuming a goroutine was scheduled.
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
@@ -276,9 +276,9 @@ func seedHostedChallenge(t *testing.T, database *controlstate.Database, sql *pgx
 		args  []any
 	}{
 		{`INSERT INTO control.identities (id, kind, display_name, created_at, updated_at) VALUES ('external_identity', 'authority', 'External identity', $1, $1) ON CONFLICT DO NOTHING`, []any{now}},
-		{`INSERT INTO control.routes (id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, created_at, updated_at) VALUES ($1, 'external_team', $2, 'external_membership', 'external_identity', $1, $3, $4, 'http://127.0.0.1:3000', 'member', 1, 'allow_all', 'enabled', $5, 'published', $6, $6)`, []any{"route_" + name, domainID, digest[:], name + "." + base, reference, now}},
-		{`INSERT INTO control.route_sessions (id, route_id, team_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at) VALUES ($1, $2, 'external_team', 'external_identity', 1, $1, $3, $1, $3, 1, $4, $4, $5, 'dns-01', 'starting', $6, $6, $7)`, []any{"session_" + name, "route_" + name, digest[:], base, []string{base, "*." + base}, now, now.Add(time.Hour)}},
-		{`INSERT INTO control.acme_orders (id, account_id, route_session_id, route_id, route_version, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 1, $1, $5, $6, $6, $7, 'dns-01', $8, $9, 'authorizing', $10, $10, $10)`, []any{"order_" + name, account.ID, "session_" + name, "route_" + name, digest[:], base, []string{base, "*." + base}, csr, csrDigest[:], now}},
+		{`INSERT INTO control.public_urls (id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, created_at, updated_at) VALUES ($1, 'external_team', $2, 'external_membership', 'external_identity', $1, $3, $4, 'http://127.0.0.1:3000', 'member', 1, 'allow_all', 'enabled', $5, 'published', $6, $6)`, []any{"public_url_" + name, domainID, digest[:], name + "." + base, reference, now}},
+		{`INSERT INTO control.publish_runs (id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at) VALUES ($1, $2, 'external_team', 'external_identity', 1, $1, $3, $1, $3, 1, $4, $4, $5, 'dns-01', 'starting', $6, $6, $7)`, []any{"session_" + name, "public_url_" + name, digest[:], base, []string{base, "*." + base}, now, now.Add(time.Hour)}},
+		{`INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 1, $1, $5, $6, $6, $7, 'dns-01', $8, $9, 'authorizing', $10, $10, $10)`, []any{"order_" + name, account.ID, "session_" + name, "public_url_" + name, digest[:], base, []string{base, "*." + base}, csr, csrDigest[:], now}},
 		{`INSERT INTO control.acme_authorizations (id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token, challenge_digest, presentation_reference, state, available_at, expires_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 'dns-01', $5, 'token', $6, $1, 'presenting', $7, $8, $7, $7)`, []any{"authorization_" + name, "order_" + name, "*." + base, "https://acme.example.test/authz/" + name, "https://acme.example.test/challenge/" + name, digest[:], now, now.Add(time.Hour)}},
 	} {
 		if _, err := sql.Exec(t.Context(), statement.query, statement.args...); err != nil {

@@ -72,7 +72,7 @@ func TestAdminServerStatusRejectsNegativeCounters(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"role":"control","started_at":"` + now + `","current_time":"` + now + `","enabled_routes":-1,"suspended_routes":0,"starting_route_sessions":0,"ready_route_sessions":0,"ingress_leases":0,"relay_leases":0}`))
+		_, _ = response.Write([]byte(`{"role":"control","started_at":"` + now + `","current_time":"` + now + `","enabled_routes":-1,"suspended_routes":0,"starting_publish_runs":0,"ready_publish_runs":0,"ingress_leases":0,"relay_leases":0}`))
 	}))
 	defer server.Close()
 	client, err := New(server.URL, server.Client(), "access")

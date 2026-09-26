@@ -268,7 +268,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "route ")
+	return strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -326,10 +326,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Domain.List.remoteFlags, true)
 	case "domain release <domain>":
 		apply(&flags.Domain.Release.remoteFlags, true)
-	case "route list":
-		apply(&flags.Route.List.remoteFlags, true)
-	case "route delete <route-id>":
-		apply(&flags.Route.Delete.remoteFlags, true)
+	case "url list":
+		apply(&flags.URL.List.remoteFlags, true)
+	case "url delete <public-url-id>":
+		apply(&flags.URL.Delete.remoteFlags, true)
 	}
 	return contextErr
 }

@@ -80,10 +80,10 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 		now := time.Now()
 		return tunnelv1.WriteInternalForwardingHeader(forwardClient, tunnelv1.InternalForwardingHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-			VisitorConnectionID: "visitor", RouteID: "route", RouteSessionID: "session", RouteVersion: 1,
+			VisitorConnectionID: "visitor", PublicURLID: "route", PublishRunID: "session", PublishRunNumber: 1,
 			PublisherConnectionID: "connection", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 			RelayServiceID: "relay-service", RelayID: "relay", RelayRunID: "relay-run", RelayLeaseRevision: 1,
-			RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
+			PublicUrlExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 		})
 	})
 	if err := relayAwait(t, headerResult); err != nil {

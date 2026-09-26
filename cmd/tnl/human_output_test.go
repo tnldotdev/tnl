@@ -29,14 +29,14 @@ func TestAuthenticationPromptUsesCommandFrame(t *testing.T) {
 
 func TestHumanTransitionUsesSharedShape(t *testing.T) {
 	var output bytes.Buffer
-	if err := writeHumanTransition(&output, "tnl route delete", "deleted", "route.example", "", "route deleted", ""); err != nil {
+	if err := writeHumanTransition(&output, "tnl url delete", "deleted", "route.example", "", "public URL deleted", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
 	for _, fragment := range []string{
-		"+--[ tnl route delete ]-- deleted ",
+		"+--[ tnl url delete ]-- deleted ",
 		"route.example",
-		"route deleted",
+		"public URL deleted",
 	} {
 		if !strings.Contains(got, fragment) {
 			t.Fatalf("transition does not contain %q:\n%s", fragment, got)
@@ -45,10 +45,10 @@ func TestHumanTransitionUsesSharedShape(t *testing.T) {
 }
 
 func TestHumanOutputLabels(t *testing.T) {
-	if got := countState(1, "route", "routes"); got != "1 route" {
+	if got := countState(1, "public URL", "public URLs"); got != "1 public URL" {
 		t.Fatalf("singular count = %q", got)
 	}
-	if got := countState(2, "route", "routes"); got != "2 routes" {
+	if got := countState(2, "public URL", "public URLs"); got != "2 public URLs" {
 		t.Fatalf("plural count = %q", got)
 	}
 	if allowedState(true) != "allowed" || allowedState(false) != "blocked" {

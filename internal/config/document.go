@@ -47,7 +47,7 @@ type Service struct {
 	Directory *string  `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
 	Server    *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL override for this service."`
 	Team      *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Team override for this service."`
-	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Route and tunnel overrides for this service."`
+	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish   *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev       *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
 }

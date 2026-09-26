@@ -17,7 +17,7 @@ func TestQueryActivityPrivacyBoundsAndCancellation(t *testing.T) {
 	var contexts []context.Context
 	parent, cancel := context.WithCancel(t.Context())
 	for index := range maximumActiveQueries + 5 {
-		statement := "-- name: LockRouteSessionForUsage :one\nSELECT secret FROM secret_table WHERE token = $1"
+		statement := "-- name: LockPublishRunForUsage :one\nSELECT secret FROM secret_table WHERE token = $1"
 		if index%2 == 0 {
 			statement = "-- name: do_not_export :one\nSELECT 'private-url'"
 		}
@@ -28,7 +28,7 @@ func TestQueryActivityPrivacyBoundsAndCancellation(t *testing.T) {
 		t.Fatalf("operations=%d omitted=%d", len(operations), omitted)
 	}
 	for _, operation := range operations {
-		if operation.ElapsedSeconds < 0 || operation.Operation != "unknown" && operation.Operation != "LockRouteSessionForUsage" {
+		if operation.ElapsedSeconds < 0 || operation.Operation != "unknown" && operation.Operation != "LockPublishRunForUsage" {
 			t.Fatalf("unsafe operation: %+v", operation)
 		}
 	}

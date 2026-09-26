@@ -18,17 +18,17 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	oldDigest, newDigest := sha256.Sum256([]byte("old")), sha256.Sum256([]byte("new"))
 	thirdDigest := sha256.Sum256([]byte("third"))
 	snapshot := controlstate.DNSChallengeContext{
-		RouteID: "route_old", TeamID: "team_1", DomainID: "domain_1", CanonicalDomain: "tunnels.example.test",
+		PublicURLID: "public_url_old", TeamID: "team_1", DomainID: "domain_1", CanonicalDomain: "tunnels.example.test",
 		AuthorizationID: "authorization_old", Identifier: "*.member.tunnels.example.test", State: "presenting",
 		PresentationReference: "presentation_old", ChallengeDigest: oldDigest,
 		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: oldDigest, Active: true}, {ChallengeDigest: newDigest, Active: true}},
 	}
 	var mu sync.Mutex
-	store := &challengeStoreStub{getContext: func(_ context.Context, routeID, authorizationID string) (controlstate.DNSChallengeContext, error) {
+	store := &challengeStoreStub{getContext: func(_ context.Context, publicURLID, authorizationID string) (controlstate.DNSChallengeContext, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		copy := snapshot
-		copy.RouteID = routeID
+		copy.PublicURLID = publicURLID
 		copy.Presentations = slices.Clone(snapshot.Presentations)
 		if authorizationID == "authorization_new" {
 			copy.AuthorizationID, copy.PresentationReference = "authorization_new", "presentation_new"
@@ -63,7 +63,7 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
-	workers.Go(func() { firstDone <- manager.Present(ctx, "route_new", "authorization_new") })
+	workers.Go(func() { firstDone <- manager.Present(ctx, "public_url_new", "authorization_new") })
 	select {
 	case <-firstStarted:
 	case <-ctx.Done():
@@ -75,7 +75,7 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	mu.Unlock()
 	lockRequested := make(chan struct{})
 	store.lockRequested = func() { close(lockRequested) }
-	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "route_old", "authorization_old") })
+	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "public_url_old", "authorization_old") })
 	select {
 	case <-lockRequested:
 	case <-ctx.Done():

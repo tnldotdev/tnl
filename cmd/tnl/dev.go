@@ -180,9 +180,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
-		MemberNamespace: services.memberNamespace, Hostname: services.hostname,
+		Namespace: services.namespace, Hostname: services.hostname,
 		PublicURL: "https://" + services.hostname,
-		Project:   runtimeProjectMetadata(metadata, flags.Service, services.memberNamespace, services.hostname),
+		Project:   runtimeProjectMetadata(metadata, flags.Service, services.namespace, services.hostname),
 	}
 	var configuration *devConfigurationRequest
 	target := forcedTarget
@@ -473,13 +473,13 @@ type devConfigurationRequest struct {
 }
 
 type devConfigurationResponse struct {
-	Protocol        int                        `json:"protocol"`
-	TunnelID        string                     `json:"tunnelID"`
-	Service         *string                    `json:"service"`
-	MemberNamespace string                     `json:"memberNamespace"`
-	Hostname        string                     `json:"hostname"`
-	PublicURL       string                     `json:"publicURL"`
-	Project         projectmeta.PublicMetadata `json:"project"`
+	Protocol  int                        `json:"protocol"`
+	TunnelID  string                     `json:"tunnelID"`
+	Service   *string                    `json:"service"`
+	Namespace string                     `json:"namespace"`
+	Hostname  string                     `json:"hostname"`
+	PublicURL string                     `json:"publicURL"`
+	Project   projectmeta.PublicMetadata `json:"project"`
 }
 
 func nullableService(service string) *string {
@@ -491,17 +491,17 @@ func nullableService(service string) *string {
 
 func runtimeProjectMetadata(
 	metadata projectmeta.Metadata,
-	service, memberNamespace, hostname string,
+	service, namespace, hostname string,
 ) projectmeta.PublicMetadata {
 	project := metadata.Public(true)
 	if service == "" {
-		project.MemberNamespace = memberNamespace
+		project.Namespace = namespace
 		return project
 	}
 	project.Services[service] = projectmeta.Service{
-		MemberNamespace: memberNamespace,
-		Hostname:        hostname,
-		URL:             "https://" + hostname,
+		Namespace: namespace,
+		Hostname:  hostname,
+		URL:       "https://" + hostname,
 	}
 	return project
 }

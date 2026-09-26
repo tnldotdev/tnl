@@ -20,7 +20,7 @@ const (
 type workloadOptions struct {
 	Suite                string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target."`
 	ProfileFile          string        `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/fly.json" type:"path" help:"Fly infrastructure configuration."`
-	Routes               int           `name:"routes" env:"BENCH_ROUTES" default:"4" help:"Published routes."`
+	PublicURLs           int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Published public URLs."`
 	FreshRate            int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Total fresh HTTPS requests per second."`
 	HeldStreams          int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
 	Concurrency          int           `name:"concurrency" env:"BENCH_CONCURRENCY" default:"128" help:"Total concurrent fresh requests."`
@@ -29,7 +29,7 @@ type workloadOptions struct {
 	Repetitions          int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows in one deployment."`
 	Warmup               time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Warmup before measurement."`
 	Duration             time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Fixed offer duration per window."`
-	CertificateAuthority string        `name:"certificate-authority" env:"BENCH_CERTIFICATE_AUTHORITY" default:"pebble" enum:"pebble,letsencrypt" help:"Route certificate issuer."`
+	CertificateAuthority string        `name:"certificate-authority" env:"BENCH_CERTIFICATE_AUTHORITY" default:"pebble" enum:"pebble,letsencrypt" help:"PublicURL certificate issuer."`
 }
 
 type planCommand struct {
@@ -70,7 +70,7 @@ type benchmarkManagedPostgres struct {
 }
 type benchmarkWorkerLimits struct {
 	PublisherMachines             int `json:"publisher_machines"`
-	RoutesPerPublisher            int `json:"routes_per_publisher"`
+	PublicURLsPerPublisher        int `json:"public_urls_per_publisher"`
 	FreshConnectionsPerLoadSecond int `json:"fresh_connections_per_load_second"`
 	HeldStreamsPerLoad            int `json:"held_streams_per_load"`
 }
@@ -91,7 +91,7 @@ type benchmarkPlan struct {
 
 type planCell struct {
 	ID                        string `json:"id"`
-	Routes                    int    `json:"routes"`
+	PublicURLs                int    `json:"public_urls"`
 	FreshConnectionsPerSecond int    `json:"fresh_connections_per_second"`
 	HeldStreams               int    `json:"held_streams"`
 	PayloadBytes              int    `json:"payload_bytes"`
@@ -129,10 +129,10 @@ func (c workloadOptions) build() (benchmarkPlan, error) {
 	if c.Suite != "smoke" && c.Suite != "target" {
 		return benchmarkPlan{}, errors.New("suite must be smoke or target")
 	}
-	if c.Routes < 1 || c.Routes > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > 10*time.Minute || c.Duration%time.Second != 0 || c.Warmup%time.Second != 0 {
+	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > 10*time.Minute || c.Duration%time.Second != 0 || c.Warmup%time.Second != 0 {
 		return benchmarkPlan{}, errors.New("invalid workload shape or duration")
 	}
-	if c.Suite == "smoke" && (c.Routes > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
+	if c.Suite == "smoke" && (c.PublicURLs > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
 	if c.CertificateAuthority != benchmarkCertificateAuthorityPebble && c.CertificateAuthority != benchmarkCertificateAuthorityLetsEncrypt {
@@ -141,7 +141,7 @@ func (c workloadOptions) build() (benchmarkPlan, error) {
 	if c.CertificateAuthority == benchmarkCertificateAuthorityLetsEncrypt && c.Suite != "smoke" {
 		return benchmarkPlan{}, errors.New("public CA checks use the small smoke workload")
 	}
-	publishers := divideRoundUp(c.Routes, profile.WorkerLimits.RoutesPerPublisher)
+	publishers := divideRoundUp(c.PublicURLs, profile.WorkerLimits.PublicURLsPerPublisher)
 	visitors := max(1, divideRoundUp(c.FreshRate, profile.WorkerLimits.FreshConnectionsPerLoadSecond), divideRoundUp(c.HeldStreams, profile.WorkerLimits.HeldStreamsPerLoad))
 	if publishers > profile.WorkerLimits.PublisherMachines || visitors > c.Concurrency {
 		return benchmarkPlan{}, errors.New("target exceeds publisher capacity or needs at least one concurrent request per visitor process")
@@ -149,11 +149,11 @@ func (c workloadOptions) build() (benchmarkPlan, error) {
 	if 2*publishers+visitors*(c.Repetitions+3)+c.Repetitions+8 > 4096 {
 		return benchmarkPlan{}, errors.New("target exceeds bounded coordinator event capacity")
 	}
-	cell := planCell{ID: fmt.Sprintf("r%d-c%d-s%d-b%d", c.Routes, c.FreshRate, c.HeldStreams, c.PayloadBytes), Routes: c.Routes,
+	cell := planCell{ID: fmt.Sprintf("r%d-c%d-s%d-b%d", c.PublicURLs, c.FreshRate, c.HeldStreams, c.PayloadBytes), PublicURLs: c.PublicURLs,
 		FreshConnectionsPerSecond: c.FreshRate, HeldStreams: c.HeldStreams, PayloadBytes: c.PayloadBytes,
 		Concurrency: c.Concurrency, QueueSlots: c.QueueSlots, PublisherWorkers: publishers, LoadWorkers: visitors,
 		WarmupSeconds: int(c.Warmup / time.Second), DurationSeconds: int(c.Duration / time.Second), Repetitions: c.Repetitions,
-		TimeoutSeconds: divideRoundUp(divideRoundUp(c.Routes, publishers), 4)*30 + 5*60 + divideRoundUp(c.HeldStreams, visitors)*5 + divideRoundUp(c.Routes, visitors)*5 + int(c.Warmup/time.Second) + c.Repetitions*(int(c.Duration/time.Second)+30) + 2*60,
+		TimeoutSeconds: divideRoundUp(divideRoundUp(c.PublicURLs, publishers), 4)*30 + 5*60 + divideRoundUp(c.HeldStreams, visitors)*5 + divideRoundUp(c.PublicURLs, visitors)*5 + int(c.Warmup/time.Second) + c.Repetitions*(int(c.Duration/time.Second)+30) + 2*60,
 	}
 	return benchmarkPlan{SchemaVersion: 4, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
 		Topology: profile.Topology, Machines: profile.Machines, ManagedPostgres: profile.ManagedPostgres, WorkerLimits: profile.WorkerLimits,
@@ -169,7 +169,7 @@ func validateBenchmarkProfile(p benchmarkProfile) error {
 	if p.Topology.ControlProcesses < 1 || p.Topology.ControlProcesses > 10 || p.Topology.IngressProcesses < 1 || p.Topology.IngressProcesses > 10 || p.Topology.RelayServices < 2 || p.Topology.RelayServices > 26 || p.Topology.RelayProcessesPerService < 1 || p.Topology.RelayProcessesPerService > 10 {
 		return errors.New("invalid topology")
 	}
-	if p.WorkerLimits.PublisherMachines < 1 || p.WorkerLimits.PublisherMachines > 16 || p.WorkerLimits.RoutesPerPublisher < 1 || p.WorkerLimits.RoutesPerPublisher > 10_000 || p.WorkerLimits.FreshConnectionsPerLoadSecond < 1 || p.WorkerLimits.FreshConnectionsPerLoadSecond >= 40 || p.WorkerLimits.HeldStreamsPerLoad < 1 {
+	if p.WorkerLimits.PublisherMachines < 1 || p.WorkerLimits.PublisherMachines > 16 || p.WorkerLimits.PublicURLsPerPublisher < 1 || p.WorkerLimits.PublicURLsPerPublisher > 10_000 || p.WorkerLimits.FreshConnectionsPerLoadSecond < 1 || p.WorkerLimits.FreshConnectionsPerLoadSecond >= 40 || p.WorkerLimits.HeldStreamsPerLoad < 1 {
 		return errors.New("invalid generator limits or unsafe per-source rate")
 	}
 	db := p.ManagedPostgres
@@ -216,7 +216,7 @@ func writeHumanPlan(w io.Writer, p benchmarkPlan) error {
 	fmt.Fprintf(&out, "DNS: two temporary Route 53 zones; public addresses for control, ingress, %d relay services, and coordinator\n", p.Topology.RelayServices)
 	t := p.Target
 	fmt.Fprintf(&out, "Generators: %d publisher (%s), %d visitor (%s), one coordinator (%s)\n", t.PublisherWorkers, p.Machines.Publisher, t.LoadWorkers, p.Machines.Load, p.Machines.Coordinator)
-	fmt.Fprintf(&out, "Target: %d routes, %d fresh/s, %d held, %d bytes\nVisitors: %d concurrent, %d waiting, 5s request budget\nWindows: %d x %ds, warmup %ds, workload limit %ds\nMaximum run duration: %s\n", t.Routes, t.FreshConnectionsPerSecond, t.HeldStreams, t.PayloadBytes, t.Concurrency, t.QueueSlots, t.Repetitions, t.DurationSeconds, t.WarmupSeconds, t.TimeoutSeconds, time.Duration(p.MaximumDurationSeconds)*time.Second)
+	fmt.Fprintf(&out, "Target: %d public URLs, %d fresh/s, %d held, %d bytes\nVisitors: %d concurrent, %d waiting, 5s request budget\nWindows: %d x %ds, warmup %ds, workload limit %ds\nMaximum run duration: %s\n", t.PublicURLs, t.FreshConnectionsPerSecond, t.HeldStreams, t.PayloadBytes, t.Concurrency, t.QueueSlots, t.Repetitions, t.DurationSeconds, t.WarmupSeconds, t.TimeoutSeconds, time.Duration(p.MaximumDurationSeconds)*time.Second)
 	fmt.Fprintln(&out, "Execution creates paid Fly and DNS resources and requires explicit BENCH_SUITE and BENCH_APPROVED=1.")
 	_, err := io.Copy(w, &out)
 	return err

@@ -19,18 +19,18 @@ type retentionEvent struct {
 	ttl     time.Duration
 }
 
-func seedRetentionEvents(t *testing.T, f routeSessionFixture, events []retentionEvent) []int64 {
+func seedRetentionEvents(t *testing.T, f publishRunFixture, events []retentionEvent) []int64 {
 	t.Helper()
 	var revisions []int64
 	for index, event := range events {
-		projection := IngressRoutingTableProjection{RouteSessionID: f.setup.RouteSessionID, RouteID: f.setup.RouteID, RouteVersion: uint64(event.version), CanonicalHostname: f.request.CertificateIdentifiers[0], PolicyRevision: 1, RouteExpiresAt: f.now.Add(event.ttl)}
+		projection := IngressRoutingTableProjection{PublishRunID: f.setup.PublishRunID, PublicURLID: f.setup.PublicURLID, PublishRunNumber: uint64(event.version), CanonicalHostname: f.request.CertificateIdentifiers[0], PolicyRevision: 1, PublicUrlExpiresAt: f.now.Add(event.ttl)}
 		payload, err := json.Marshal(projection)
 		if err != nil {
 			t.Fatal(err)
 		}
 		revision, err := controlstatedb.New(f.database.pool).InsertIngressRoutingTableEvent(t.Context(), controlstatedb.InsertIngressRoutingTableEventParams{
-			EventKind: string(event.kind), RouteID: f.setup.RouteID, RouteVersion: event.version, CanonicalHostname: projection.CanonicalHostname,
-			EntryRevision: int64(index + 1), Projection: payload, RouteExpiresAt: timestamptz(projection.RouteExpiresAt), CreatedAt: timestamptz(f.now.Add(-event.age)),
+			EventKind: string(event.kind), PublicURLID: f.setup.PublicURLID, PublishRunNumber: event.version, CanonicalHostname: projection.CanonicalHostname,
+			EntryRevision: int64(index + 1), Projection: payload, PublicUrlExpiresAt: timestamptz(projection.PublicUrlExpiresAt), CreatedAt: timestamptz(f.now.Add(-event.age)),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -44,16 +44,16 @@ func seedRetentionEvents(t *testing.T, f routeSessionFixture, events []retention
 }
 
 func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	old := time.Hour
 	revisions := seedRetentionEvents(t, f, []retentionEvent{
-		{IngressRouteUpsert, 1, old, time.Hour},
+		{IngressPublicURLUpsert, 1, old, time.Hour},
 		{IngressChallengeUpsert, 1, old, time.Hour},
-		{IngressRouteUpsert, 1, old, -time.Second},
-		{IngressRouteTombstone, 2, old, -time.Second},
+		{IngressPublicURLUpsert, 1, old, -time.Second},
+		{IngressPublicURLTombstone, 2, old, -time.Second},
 		{IngressChallengeTombstone, 2, old, -time.Second},
-		{IngressRouteUpsert, 3, time.Minute, time.Hour},
-		{IngressRouteUpsert, 3, old, time.Hour}, // Old timestamp after a recent revision.
+		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
+		{IngressPublicURLUpsert, 3, old, time.Hour}, // Old timestamp after a recent revision.
 		{IngressChallengeUpsert, 3, time.Minute, time.Hour},
 	})
 	ingress := registerTestIngress(t, f.database, f.now)
@@ -70,11 +70,11 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 		t.Fatalf("batch=%+v: %v", batch, err)
 	}
 	after, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-	if err != nil || !reflect.DeepEqual(before.Routes, after.Routes) || before.RoutingTableRevision != after.RoutingTableRevision {
+	if err != nil || !reflect.DeepEqual(before.Entries, after.Entries) || before.RoutingTableRevision != after.RoutingTableRevision {
 		t.Fatalf("snapshot changed after pruning: %v", err)
 	}
 	for _, version := range []int64{1, 2, 3} {
-		revision, err := controlstatedb.New(f.database.pool).LatestIngressRoutingEntryRevision(t.Context(), controlstatedb.LatestIngressRoutingEntryRevisionParams{RouteID: f.setup.RouteID, RouteVersion: version})
+		revision, err := controlstatedb.New(f.database.pool).LatestIngressRoutingEntryRevision(t.Context(), controlstatedb.LatestIngressRoutingEntryRevisionParams{PublicURLID: f.setup.PublicURLID, PublishRunNumber: version})
 		want := map[int64]int64{1: 3, 2: 5, 3: 8}[version]
 		if err != nil || revision != want {
 			t.Fatalf("version %d latest=%d want=%d: %v", version, revision, want, err)
@@ -96,8 +96,8 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 }
 
 func TestIntegrationRoutingRetentionReaderSnapshotsAndClock(t *testing.T) {
-	f := newRouteSessionFixture(t)
-	seedRetentionEvents(t, f, []retentionEvent{{IngressRouteUpsert, 1, time.Hour, time.Hour}, {IngressRouteTombstone, 1, time.Hour, 0}, {IngressChallengeUpsert, 1, time.Hour, -time.Second}})
+	f := newPublishRunFixture(t)
+	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour, 0}, {IngressChallengeUpsert, 1, time.Hour, -time.Second}})
 	ctx := t.Context()
 	reader, err := f.database.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -152,8 +152,8 @@ func TestIntegrationRoutingRetentionReaderSnapshotsAndClock(t *testing.T) {
 }
 
 func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
-	f := newRouteSessionFixture(t)
-	revisions := seedRetentionEvents(t, f, []retentionEvent{{IngressRouteUpsert, 1, time.Hour, time.Hour}, {IngressRouteUpsert, 1, time.Hour, time.Hour}})
+	f := newPublishRunFixture(t)
+	revisions := seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLUpsert, 1, time.Hour, time.Hour}})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if _, err := f.database.AdvanceIngressRoutingRetention(ctx, f.now); err != nil {
@@ -218,11 +218,11 @@ func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
 }
 
 func TestIntegrationRoutingRetentionBoundsScannedAnchors(t *testing.T) {
-	f := newRouteSessionFixture(t)
-	// Different route versions each need their own latest entry-revision anchor.
+	f := newPublishRunFixture(t)
+	// Different publish run numbers each need their own latest entry-revision anchor.
 	if _, err := f.database.pool.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events
-		(event_kind, route_id, route_version, canonical_hostname, entry_revision, projection, created_at)
-		SELECT 'route_tombstone', $1, n, $2, 1, '{}'::bytea, $3 FROM generate_series(1, 2001) AS n`, f.setup.RouteID, f.request.CertificateIdentifiers[0], f.now.Add(-time.Hour)); err != nil {
+		(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, created_at)
+		SELECT 'public_url_tombstone', $1, n, $2, 1, '{}'::bytea, $3 FROM generate_series(1, 2001) AS n`, f.setup.PublicURLID, f.request.CertificateIdentifiers[0], f.now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = (SELECT max(routing_table_revision) FROM control.ingress_routing_table_events)`); err != nil {
@@ -242,21 +242,21 @@ func TestIntegrationRoutingRetentionBoundsScannedAnchors(t *testing.T) {
 }
 
 func TestIntegrationRoutingRetentionRevisionGap(t *testing.T) {
-	f := newRouteSessionFixture(t)
-	seedRetentionEvents(t, f, []retentionEvent{{IngressRouteUpsert, 1, time.Hour, time.Hour}})
+	f := newPublishRunFixture(t)
+	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}})
 	tx, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, tx)
-	if _, err := tx.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events (event_kind,route_id,route_version,canonical_hostname,entry_revision,projection,route_expires_at,created_at)
-		SELECT event_kind,route_id,route_version,canonical_hostname,entry_revision+1,projection,route_expires_at,created_at FROM control.ingress_routing_table_events`); err != nil {
+	if _, err := tx.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events (event_kind,public_url_id,publish_run_number,canonical_hostname,entry_revision,projection,public_url_expires_at,created_at)
+		SELECT event_kind,public_url_id,publish_run_number,canonical_hostname,entry_revision+1,projection,public_url_expires_at,created_at FROM control.ingress_routing_table_events`); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	recent := seedRetentionEvents(t, f, []retentionEvent{{IngressRouteUpsert, 2, time.Minute, time.Hour}})
+	recent := seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 2, time.Minute, time.Hour}})
 	if recent[0] != 3 {
 		t.Fatalf("missing rollback gap: %v", recent)
 	}
@@ -275,17 +275,17 @@ func TestIntegrationRoutingRetentionRevisionGap(t *testing.T) {
 }
 
 func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ingress := registerTestIngress(t, database, now)
 	readyTestSession(t, f)
 	for step := 1; step <= 2; step++ {
-		if _, err := database.HeartbeatRouteSession(t.Context(), f.authentication(), now.Add(time.Duration(step)*time.Second), time.Minute, time.Minute); err != nil {
+		if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(time.Duration(step)*time.Second), time.Minute, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}
 	queries := controlstatedb.New(database.pool)
-	key := controlstatedb.LatestIngressRoutingEntryRevisionParams{RouteID: f.setup.RouteID, RouteVersion: int64(f.setup.RouteVersion)}
+	key := controlstatedb.LatestIngressRoutingEntryRevisionParams{PublicURLID: f.setup.PublicURLID, PublishRunNumber: int64(f.setup.PublishRunNumber)}
 	previous, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key)
 	if err != nil {
 		t.Fatal(err)
@@ -301,17 +301,17 @@ func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
 	if batch, err := database.PruneIngressRoutingHistory(t.Context(), 0); err != nil || batch.Deleted < 2 {
 		t.Fatalf("prune genuine heartbeat history: %+v, %v", batch, err)
 	}
-	if _, err := database.HeartbeatRouteSession(t.Context(), f.authentication(), now.Add(3*time.Second), time.Minute, time.Minute); err != nil {
+	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(3*time.Second), time.Minute, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if revision, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key); err != nil || revision != previous+1 {
 		t.Fatalf("post-pruning heartbeat entry revision = %d, want %d: %v", revision, previous+1, err)
 	}
-	if err := database.CloseRouteSession(t.Context(), f.setup.RouteSessionID, f.setup.RouteSessionToken, now.Add(4*time.Second)); err != nil {
+	if err := database.ClosePublishRun(t.Context(), f.setup.PublishRunID, f.setup.PublishRunToken, now.Add(4*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, floor, 10, now.Add(4*time.Second))
-	if err != nil || page.ResnapshotRequired || len(page.Events) != 2 || page.Events[1].Kind != IngressRouteTombstone {
+	if err != nil || page.ResnapshotRequired || len(page.Events) != 2 || page.Events[1].Kind != IngressPublicURLTombstone {
 		t.Fatalf("post-pruning publication suffix: %+v, %v", page, err)
 	}
 	if _, err := database.AdvanceIngressRoutingRetention(t.Context(), now.Add(5*time.Second)); err != nil {
@@ -321,35 +321,35 @@ func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now.Add(5*time.Second))
-	if err != nil || len(snapshot.Routes) != 0 {
+	if err != nil || len(snapshot.Entries) != 0 {
 		t.Fatalf("closed route resurrected after pruning: %v", err)
 	}
 	f.now = now.Add(6 * time.Second)
 	f.request.IdempotencyKey = "retention-republish"
 	var issuanceID string
 	var notAfter time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT id, not_after FROM control.acme_orders WHERE route_session_id = $1 AND state = 'installed'`, f.setup.RouteSessionID).Scan(&issuanceID, &notAfter); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT id, not_after FROM control.acme_orders WHERE publish_run_id = $1 AND state = 'installed'`, f.setup.PublishRunID).Scan(&issuanceID, &notAfter); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.routes WHERE id = $1`, f.request.RouteID).Scan(&f.request.ExpectedMutationRevision); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id = $1`, f.request.PublicURLID).Scan(&f.request.ExpectedMutationRevision); err != nil {
 		t.Fatal(err)
 	}
-	f.setup, err = database.CreateRouteSession(t.Context(), f.request, f.now, time.Minute, time.Minute)
+	f.setup, err = database.CreatePublishRun(t.Context(), f.request, f.now, time.Minute, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.MarkRouteCertificateInstalled(t.Context(), f.authentication(), issuanceID, notAfter, f.now); err != nil {
+	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), f.authentication(), issuanceID, notAfter, f.now); err != nil {
 		t.Fatal(err)
 	}
 	for slot := range f.setup.PublisherConnections {
 		claimTestConnection(t, f, slot, f.now)
 	}
-	if _, err := database.MarkRouteSessionReady(t.Context(), f.authentication(), f.now); err != nil {
+	if _, err := database.MarkPublishRunReady(t.Context(), f.authentication(), f.now); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err = database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-	if err != nil || len(snapshot.Routes) != 1 || snapshot.Routes[0].RouteVersion != f.setup.RouteVersion || f.setup.RouteVersion <= uint64(key.RouteVersion) {
-		t.Fatalf("republished hostname did not select the new route version: %v", err)
+	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].PublishRunNumber != f.setup.PublishRunNumber || f.setup.PublishRunNumber <= uint64(key.PublishRunNumber) {
+		t.Fatalf("republished hostname did not select the new publish run number: %v", err)
 	}
 	if revision, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key); err != nil || revision != previous+2 {
 		t.Fatalf("old version lost its tombstone anchor: revision %d, want %d: %v", revision, previous+2, err)

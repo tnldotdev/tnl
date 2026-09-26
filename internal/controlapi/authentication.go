@@ -10,33 +10,33 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func (h *handler) authenticateRouteSessionRequest(
+func (h *handler) authenticatePublishRunRequest(
 	response http.ResponseWriter,
 	request *http.Request,
-	routeSessionID string,
-	routeVersion uint64,
-) (controlstate.RouteSessionAuthentication, bool) {
+	publishRunID string,
+	publishRunNumber uint64,
+) (controlstate.PublishRunAuthentication, bool) {
 	token, ok := requestBearerToken(request)
 	if !ok {
 		writeBearerProblem(response)
-		return controlstate.RouteSessionAuthentication{}, false
+		return controlstate.PublishRunAuthentication{}, false
 	}
 	if h.store == nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		log.Printf("authenticate route session request_id=%s: store unavailable", requestID)
-		return controlstate.RouteSessionAuthentication{}, false
+		log.Printf("authenticate publish run request_id=%s: store unavailable", requestID)
+		return controlstate.PublishRunAuthentication{}, false
 	}
-	authentication, err := h.store.RouteSessionAuthentication(
-		request.Context(), routeSessionID, routeVersion, credentials.RouteSessionToken(token),
+	authentication, err := h.store.PublishRunAuthentication(
+		request.Context(), publishRunID, publishRunNumber, credentials.PublishRunToken(token),
 	)
-	if errors.Is(err, controlstate.ErrRouteSessionCredential) {
+	if errors.Is(err, controlstate.ErrPublishRunCredential) {
 		writeBearerProblem(response)
-		return controlstate.RouteSessionAuthentication{}, false
+		return controlstate.PublishRunAuthentication{}, false
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		log.Printf("authenticate route session request_id=%s: %v", requestID, err)
-		return controlstate.RouteSessionAuthentication{}, false
+		log.Printf("authenticate publish run request_id=%s: %v", requestID, err)
+		return controlstate.PublishRunAuthentication{}, false
 	}
 	return authentication, true
 }

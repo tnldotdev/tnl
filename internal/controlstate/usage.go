@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 const (
@@ -26,20 +26,20 @@ const (
 )
 
 var (
-	ErrIngressUsageReportInvalid   = errors.New("controlstate: ingress usage report is invalid")
-	ErrIngressUsageReportStale     = errors.New("controlstate: ingress usage report revision is stale")
-	ErrIngressUsageReportConflict  = errors.New("controlstate: ingress usage report conflicts with stored state")
-	ErrIngressUsageRouteNotFound   = errors.New("controlstate: ingress usage route version was not found")
-	ErrRouteUsageBucketFinalized   = errors.New("controlstate: route usage bucket is finalized")
-	ErrRouteUsageDeliveryWorkStale = errors.New("controlstate: route usage delivery work is stale")
-	ErrRouteUsageDeliveryInvalid   = errors.New("controlstate: route usage delivery work is invalid")
+	ErrIngressUsageReportInvalid       = errors.New("controlstate: ingress usage report is invalid")
+	ErrIngressUsageReportStale         = errors.New("controlstate: ingress usage report revision is stale")
+	ErrIngressUsageReportConflict      = errors.New("controlstate: ingress usage report conflicts with stored state")
+	ErrIngressUsagePublicURLNotFound   = errors.New("controlstate: ingress usage publish run number was not found")
+	ErrPublicURLUsageBucketFinalized   = errors.New("controlstate: public URL usage bucket is finalized")
+	ErrPublicURLUsageDeliveryWorkStale = errors.New("controlstate: public URL usage delivery work is stale")
+	ErrPublicURLUsageDeliveryInvalid   = errors.New("controlstate: public URL usage delivery work is invalid")
 )
 
 // IngressUsageReport contains cumulative usage for one ingress process, route
 // version, and time bucket.
 type IngressUsageReport struct {
-	RouteID                   string
-	RouteVersion              uint64
+	PublicURLID               string
+	PublishRunNumber          uint64
 	BucketStart               time.Time
 	BucketEnd                 time.Time
 	ObservedThrough           time.Time
@@ -65,7 +65,7 @@ type IngressUsageBatch struct {
 }
 
 // ReportIngressUsage deduplicates cumulative reports and applies only numeric
-// deltas to aggregate route usage buckets.
+// deltas to aggregate public URL usage buckets.
 func (d *Database) ReportIngressUsage(
 	ctx context.Context,
 	identity IngressLeaseIdentity,
@@ -151,15 +151,15 @@ func (d *Database) ReportIngressUsage(
 }
 
 type ingressUsageKey struct {
-	routeID      string
-	routeVersion int64
-	bucketStart  time.Time
+	publicURLID      string
+	publishRunNumber int64
+	bucketStart      time.Time
 }
 
 type ingressUsageHistory map[ingressUsageKey]controlstatedb.ListLatestIngressUsageReportsRow
 
-func usageHistoryKey(routeID string, version int64, bucketStart time.Time) ingressUsageKey {
-	return ingressUsageKey{routeID, version, bucketStart.UTC().Truncate(time.Microsecond)}
+func usageHistoryKey(publicURLID string, version int64, bucketStart time.Time) ingressUsageKey {
+	return ingressUsageKey{publicURLID, version, bucketStart.UTC().Truncate(time.Microsecond)}
 }
 
 func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Queries, identity IngressLeaseIdentity, reports []IngressUsageReport) (ingressUsageHistory, error) {
@@ -169,8 +169,8 @@ func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Querie
 	}
 	params := controlstatedb.ListLatestIngressUsageReportsParams{IngressID: identity.IngressID, IngressRunID: identity.IngressRunID}
 	for _, report := range reports {
-		params.RouteIds = append(params.RouteIds, report.RouteID)
-		params.RouteVersions = append(params.RouteVersions, positive(report.RouteVersion))
+		params.PublicUrlIds = append(params.PublicUrlIds, report.PublicURLID)
+		params.PublishRunNumbers = append(params.PublishRunNumbers, positive(report.PublishRunNumber))
 		params.BucketStarts = append(params.BucketStarts, timestamptz(report.BucketStart))
 	}
 	rows, err := queries.ListLatestIngressUsageReports(ctx, params)
@@ -178,7 +178,7 @@ func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Querie
 		return nil, fmt.Errorf("controlstate: report ingress usage: read latest reports: %w", err)
 	}
 	for _, row := range rows {
-		latest[usageHistoryKey(row.RouteID, row.RouteVersion, row.BucketStart.Time)] = row
+		latest[usageHistoryKey(row.PublicURLID, row.PublishRunNumber, row.BucketStart.Time)] = row
 	}
 	return latest, nil
 }
@@ -194,14 +194,14 @@ func applyIngressUsageReport(
 	receivedAt time.Time,
 	latest ingressUsageHistory,
 ) error {
-	routeVersion, _ := positiveInt64(report.RouteVersion)
+	publishRunNumber, _ := positiveInt64(report.PublishRunNumber)
 	reportRevision, _ := positiveInt64(report.ReportRevision)
-	key := usageHistoryKey(report.RouteID, routeVersion, report.BucketStart)
+	key := usageHistoryKey(report.PublicURLID, publishRunNumber, report.BucketStart)
 	previous, exists := latest[key]
 	if exists && reportRevision <= previous.ReportRevision {
 		stored, err := queries.GetIngressUsageReport(ctx, controlstatedb.GetIngressUsageReportParams{
-			IngressID: identity.IngressID, IngressRunID: identity.IngressRunID, RouteID: report.RouteID,
-			RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart), ReportRevision: reportRevision,
+			IngressID: identity.IngressID, IngressRunID: identity.IngressRunID, PublicURLID: report.PublicURLID,
+			PublishRunNumber: publishRunNumber, BucketStart: timestamptz(report.BucketStart), ReportRevision: reportRevision,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrIngressUsageReportStale
@@ -222,21 +222,21 @@ func applyIngressUsageReport(
 	if err != nil {
 		return err
 	}
-	if _, err := queries.LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
-		RouteID: report.RouteID, RouteVersion: routeVersion,
+	if _, err := queries.LockPublishRunForUsage(ctx, controlstatedb.LockPublishRunForUsageParams{
+		PublicURLID: report.PublicURLID, PublishRunNumber: publishRunNumber,
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrIngressUsageRouteNotFound
+		return ErrIngressUsagePublicURLNotFound
 	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: lock route version: %w", err)
+		return fmt.Errorf("controlstate: report ingress usage: lock publish run number: %w", err)
 	}
-	bucket, bucketErr := queries.GetRouteUsageBucketForUpdate(ctx, controlstatedb.GetRouteUsageBucketForUpdateParams{
-		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart),
+	bucket, bucketErr := queries.GetPublicURLUsageBucketForUpdate(ctx, controlstatedb.GetPublicURLUsageBucketForUpdateParams{
+		PublicURLID: report.PublicURLID, PublishRunNumber: publishRunNumber, BucketStart: timestamptz(report.BucketStart),
 	})
 	if bucketErr != nil && !errors.Is(bucketErr, pgx.ErrNoRows) {
 		return fmt.Errorf("controlstate: report ingress usage: lock aggregate bucket: %w", bucketErr)
 	}
 	if bucketErr == nil && bucket.Finalized {
-		return ErrRouteUsageBucketFinalized
+		return ErrPublicURLUsageBucketFinalized
 	}
 	mergedHistogramData, err := mergeIngressUsageHistogramData(
 		bucket.HistogramData, bucketErr == nil, identity, report.HistogramData,
@@ -258,15 +258,15 @@ func applyIngressUsageReport(
 		return ErrIngressUsageReportConflict
 	}
 	if !applied.BucketUpdated {
-		return ErrRouteUsageBucketFinalized
+		return ErrPublicURLUsageBucketFinalized
 	}
 	if delta.policyDenials != 0 && !applied.PolicyDenialsUpdated {
-		return errors.New("controlstate: route-session policy denial counter is exhausted")
+		return errors.New("controlstate: publish-run policy denial counter is exhausted")
 	}
 	// Later entries in the same page may advance or replay this key again.
 	// Match PostgreSQL timestamp precision, just as a fresh read would.
 	latest[key] = controlstatedb.ListLatestIngressUsageReportsRow{
-		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(key.bucketStart),
+		PublicURLID: report.PublicURLID, PublishRunNumber: publishRunNumber, BucketStart: timestamptz(key.bucketStart),
 		BucketEnd: timestamptz(report.BucketEnd.Truncate(time.Microsecond)), ObservedThrough: timestamptz(report.ObservedThrough.Truncate(time.Microsecond)),
 		ReportRevision: reportRevision, ConnectionAttempts: params.ConnectionAttempts, PolicyDenials: params.PolicyDenials,
 		CapacityDenials: params.CapacityDenials, VisitorStreamOpenFailures: params.VisitorStreamOpenFailures,
@@ -365,24 +365,24 @@ func mergeIngressUsageHistogramData(
 	return encoded, nil
 }
 
-func aggregateIngressUsageHistogramData(data []byte) (routeusage.Checkpoint, error) {
+func aggregateIngressUsageHistogramData(data []byte) (publicurlusage.Checkpoint, error) {
 	var envelope ingressUsageHistogramEnvelope
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil || envelope.Version != usageHistogramEnvelopeVersion || envelope.Runs == nil {
-		return routeusage.Checkpoint{}, errors.New("controlstate: ingress usage histogram data is invalid")
+		return publicurlusage.Checkpoint{}, errors.New("controlstate: ingress usage histogram data is invalid")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return routeusage.Checkpoint{}, errors.New("controlstate: ingress usage histogram data has trailing content")
+		return publicurlusage.Checkpoint{}, errors.New("controlstate: ingress usage histogram data has trailing content")
 	}
-	var result routeusage.Checkpoint
+	var result publicurlusage.Checkpoint
 	for _, data := range envelope.Runs {
-		checkpoint, err := routeusage.ParseCheckpoint(data)
+		checkpoint, err := publicurlusage.ParseCheckpoint(data)
 		if err != nil {
-			return routeusage.Checkpoint{}, fmt.Errorf("controlstate: parse ingress usage checkpoint: %w", err)
+			return publicurlusage.Checkpoint{}, fmt.Errorf("controlstate: parse ingress usage checkpoint: %w", err)
 		}
 		if err := result.Merge(checkpoint); err != nil {
-			return routeusage.Checkpoint{}, fmt.Errorf("controlstate: merge ingress usage checkpoint: %w", err)
+			return publicurlusage.Checkpoint{}, fmt.Errorf("controlstate: merge ingress usage checkpoint: %w", err)
 		}
 	}
 	return result, nil
@@ -397,12 +397,12 @@ func validateIngressUsageBatch(batch IngressUsageBatch) error {
 		return ErrIngressUsageReportInvalid
 	}
 	for _, report := range batch.Reports {
-		if !validStateText(report.RouteID) || report.BucketStart.IsZero() || !report.BucketEnd.After(report.BucketStart) ||
+		if !validStateText(report.PublicURLID) || report.BucketStart.IsZero() || !report.BucketEnd.After(report.BucketStart) ||
 			report.ObservedThrough.Before(report.BucketStart) || report.ObservedThrough.After(report.BucketEnd) ||
 			len(report.HistogramData) > maximumIngressUsageHistogramData || batch.Complete && !report.Final {
 			return ErrIngressUsageReportInvalid
 		}
-		if _, ok := positiveInt64(report.RouteVersion); !ok {
+		if _, ok := positiveInt64(report.PublishRunNumber); !ok {
 			return ErrIngressUsageReportInvalid
 		}
 		if _, ok := positiveInt64(report.ReportRevision); !ok {
@@ -411,7 +411,7 @@ func validateIngressUsageBatch(batch IngressUsageBatch) error {
 		if _, ok := ingressUsageCountersFromReport(report); !ok {
 			return ErrIngressUsageReportInvalid
 		}
-		if _, err := routeusage.ParseCheckpoint(report.HistogramData); err != nil {
+		if _, err := publicurlusage.ParseCheckpoint(report.HistogramData); err != nil {
 			return ErrIngressUsageReportInvalid
 		}
 	}
@@ -426,7 +426,7 @@ func ingressUsageReportParams(
 	counters, _ := ingressUsageCountersFromReport(report)
 	return controlstatedb.ApplyIngressUsageReportParams{
 		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
-		RouteID: report.RouteID, RouteVersion: positive(report.RouteVersion),
+		PublicURLID: report.PublicURLID, PublishRunNumber: positive(report.PublishRunNumber),
 		BucketStart: timestamptz(report.BucketStart), BucketEnd: timestamptz(report.BucketEnd),
 		ObservedThrough: timestamptz(report.ObservedThrough), ReportRevision: positive(report.ReportRevision),
 		ConnectionAttempts: counters.connectionAttempts,
@@ -440,7 +440,7 @@ func ingressUsageReportParams(
 
 func ingressUsageReportMatches(stored controlstatedb.ControlIngressUsageReport, report IngressUsageReport) bool {
 	counters, ok := ingressUsageCountersFromReport(report)
-	return ok && stored.RouteID == report.RouteID && matchesPositiveInt64(stored.RouteVersion, report.RouteVersion) &&
+	return ok && stored.PublicURLID == report.PublicURLID && matchesPositiveInt64(stored.PublishRunNumber, report.PublishRunNumber) &&
 		stored.BucketStart.Valid && stored.BucketStart.Time.Equal(report.BucketStart) &&
 		stored.BucketEnd.Valid && stored.BucketEnd.Time.Equal(report.BucketEnd) &&
 		// PostgreSQL stores timestamptz at microsecond precision. Reporter clocks
@@ -455,14 +455,14 @@ func ingressUsageReportMatches(stored controlstatedb.ControlIngressUsageReport, 
 }
 
 func compareIngressUsageReports(left, right IngressUsageReport) int {
-	if left.RouteID != right.RouteID {
-		if left.RouteID < right.RouteID {
+	if left.PublicURLID != right.PublicURLID {
+		if left.PublicURLID < right.PublicURLID {
 			return -1
 		}
 		return 1
 	}
-	if left.RouteVersion != right.RouteVersion {
-		if left.RouteVersion < right.RouteVersion {
+	if left.PublishRunNumber != right.PublishRunNumber {
+		if left.PublishRunNumber < right.PublishRunNumber {
 			return -1
 		}
 		return 1
@@ -492,60 +492,60 @@ func (d *Database) MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, no
 	return len(runs), nil
 }
 
-// FinalizeRouteUsageBuckets closes aggregate buckets through a cutoff and
+// FinalizePublicURLUsageBuckets closes aggregate buckets through a cutoff and
 // creates one stored delivery record for each finalized revision.
-func (d *Database) FinalizeRouteUsageBuckets(
+func (d *Database) FinalizePublicURLUsageBuckets(
 	ctx context.Context,
 	through time.Time,
 	now time.Time,
 ) (result int, retErr error) {
 	if through.After(now) {
-		return 0, errors.New("controlstate: route usage finalization cutoff is in the future")
+		return 0, errors.New("controlstate: public URL usage finalization cutoff is in the future")
 	}
 	if err := d.requireOpen(); err != nil {
 		return 0, err
 	}
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return 0, fmt.Errorf("controlstate: finalize route usage buckets: begin transaction: %w", err)
+		return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: begin transaction: %w", err)
 	}
-	defer rollback(ctx, tx, "finalize route usage buckets", &retErr)()
+	defer rollback(ctx, tx, "finalize public URL usage buckets", &retErr)()
 	queries := controlstatedb.New(tx)
-	buckets, err := queries.FinalizeRouteUsageBuckets(ctx, controlstatedb.FinalizeRouteUsageBucketsParams{
+	buckets, err := queries.FinalizePublicURLUsageBuckets(ctx, controlstatedb.FinalizePublicURLUsageBucketsParams{
 		FinalizedAt: timestamptz(now), Through: timestamptz(through),
 	})
 	if err != nil {
-		return 0, fmt.Errorf("controlstate: finalize route usage buckets: update buckets: %w", err)
+		return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: update buckets: %w", err)
 	}
 	for _, bucket := range buckets {
 		deliveryKey, err := opaqueid.New("usage_report_")
 		if err != nil {
-			return 0, fmt.Errorf("controlstate: finalize route usage buckets: create delivery key: %w", err)
+			return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: create delivery key: %w", err)
 		}
-		_, err = queries.InsertRouteUsageDelivery(ctx, controlstatedb.InsertRouteUsageDeliveryParams{
+		_, err = queries.InsertPublicURLUsageDelivery(ctx, controlstatedb.InsertPublicURLUsageDeliveryParams{
 			BucketID: bucket.BucketID, SourceRevision: bucket.BucketRevision,
 			DeliveryKey: deliveryKey,
 			AvailableAt: timestamptz(now), CreatedAt: timestamptz(now),
 		})
 		if err != nil {
-			return 0, fmt.Errorf("controlstate: finalize route usage buckets: insert delivery: %w", err)
+			return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: insert delivery: %w", err)
 		}
 		result++
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("controlstate: finalize route usage buckets: commit: %w", err)
+		return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: commit: %w", err)
 	}
 	return result, nil
 }
 
-// RouteUsageDeliveryWork is one immutable finalized bucket held under a
+// PublicURLUsageDeliveryWork is one immutable finalized bucket held under a
 // PostgreSQL work lease.
-type RouteUsageDeliveryWork struct {
+type PublicURLUsageDeliveryWork struct {
 	DeliveryID                uint64
 	DeliveryKey               string
 	SourceRevision            uint64
-	RouteID                   string
-	RouteVersion              uint64
+	PublicURLID               string
+	PublishRunNumber          uint64
 	TeamID                    string
 	ActingIdentityID          string
 	BucketStart               time.Time
@@ -559,7 +559,7 @@ type RouteUsageDeliveryWork struct {
 	ConnectionNanoseconds     uint64
 	IngressBytes              uint64
 	EgressBytes               uint64
-	Checkpoint                routeusage.Checkpoint
+	Checkpoint                publicurlusage.Checkpoint
 	Complete                  bool
 	Attempts                  uint64
 	WorkerID                  string
@@ -567,115 +567,115 @@ type RouteUsageDeliveryWork struct {
 	WorkExpiresAt             time.Time
 }
 
-// ClaimRouteUsageDeliveries claims up to batchSize finalized buckets.
-func (d *Database) ClaimRouteUsageDeliveries(
+// ClaimPublicURLUsageDeliveries claims up to batchSize finalized buckets.
+func (d *Database) ClaimPublicURLUsageDeliveries(
 	ctx context.Context,
 	workerID string,
 	batchSize int,
 	now time.Time,
 	leaseDuration time.Duration,
-) (result []RouteUsageDeliveryWork, retErr error) {
+) (result []PublicURLUsageDeliveryWork, retErr error) {
 	if !validStateText(workerID) || batchSize <= 0 || batchSize > 32 || leaseDuration <= 0 {
-		return nil, ErrRouteUsageDeliveryInvalid
+		return nil, ErrPublicURLUsageDeliveryInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return nil, err
 	}
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return nil, fmt.Errorf("controlstate: claim route usage deliveries: begin transaction: %w", err)
+		return nil, fmt.Errorf("controlstate: claim public URL usage deliveries: begin transaction: %w", err)
 	}
-	defer rollback(ctx, tx, "claim route usage deliveries", &retErr)()
+	defer rollback(ctx, tx, "claim public URL usage deliveries", &retErr)()
 	queries := controlstatedb.New(tx)
-	deliveries, err := queries.ClaimRouteUsageDeliveries(ctx, controlstatedb.ClaimRouteUsageDeliveriesParams{
+	deliveries, err := queries.ClaimPublicURLUsageDeliveries(ctx, controlstatedb.ClaimPublicURLUsageDeliveriesParams{
 		WorkOwner: text(workerID), WorkExpiresAt: timestamptz(now.Add(leaseDuration)),
 		ClaimedAt: timestamptz(now), BatchSize: int32(batchSize),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("controlstate: claim route usage deliveries: claim: %w", err)
+		return nil, fmt.Errorf("controlstate: claim public URL usage deliveries: claim: %w", err)
 	}
-	result = make([]RouteUsageDeliveryWork, 0, len(deliveries))
+	result = make([]PublicURLUsageDeliveryWork, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		bucket, err := queries.GetRouteUsageBucketByID(ctx, delivery.BucketID)
+		bucket, err := queries.GetPublicURLUsageBucketByID(ctx, delivery.BucketID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrRouteUsageDeliveryInvalid
+			return nil, ErrPublicURLUsageDeliveryInvalid
 		}
 		if err != nil {
-			return nil, fmt.Errorf("controlstate: claim route usage deliveries: read bucket: %w", err)
+			return nil, fmt.Errorf("controlstate: claim public URL usage deliveries: read bucket: %w", err)
 		}
-		work, err := routeUsageDeliveryWork(delivery, bucket)
+		work, err := publicURLUsageDeliveryWork(delivery, bucket)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, work)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("controlstate: claim route usage deliveries: commit: %w", err)
+		return nil, fmt.Errorf("controlstate: claim public URL usage deliveries: commit: %w", err)
 	}
 	return result, nil
 }
 
-func (d *Database) CompleteRouteUsageDelivery(
+func (d *Database) CompletePublicURLUsageDelivery(
 	ctx context.Context,
-	work RouteUsageDeliveryWork,
+	work PublicURLUsageDeliveryWork,
 	now time.Time,
 ) error {
-	if err := validateRouteUsageDeliveryWork(work); err != nil {
+	if err := validatePublicURLUsageDeliveryWork(work); err != nil {
 		return err
 	}
 	if err := d.requireOpen(); err != nil {
 		return err
 	}
-	if _, err := controlstatedb.New(d.pool).CompleteRouteUsageDelivery(ctx, controlstatedb.CompleteRouteUsageDeliveryParams{
+	if _, err := controlstatedb.New(d.pool).CompletePublicURLUsageDelivery(ctx, controlstatedb.CompletePublicURLUsageDeliveryParams{
 		CompletedAt: timestamptz(now), DeliveryID: int64(work.DeliveryID),
 		WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrRouteUsageDeliveryWorkStale
+		return ErrPublicURLUsageDeliveryWorkStale
 	} else if err != nil {
-		return fmt.Errorf("controlstate: complete route usage delivery: %w", err)
+		return fmt.Errorf("controlstate: complete public URL usage delivery: %w", err)
 	}
 	return nil
 }
 
-func (d *Database) RetryRouteUsageDelivery(
+func (d *Database) RetryPublicURLUsageDelivery(
 	ctx context.Context,
-	work RouteUsageDeliveryWork,
+	work PublicURLUsageDeliveryWork,
 	availableAt time.Time,
 	lastError string,
 	now time.Time,
 ) error {
-	if err := validateRouteUsageDeliveryWork(work); err != nil || !availableAt.After(now) ||
+	if err := validatePublicURLUsageDeliveryWork(work); err != nil || !availableAt.After(now) ||
 		lastError == "" || len(lastError) > 2048 {
-		return ErrRouteUsageDeliveryInvalid
+		return ErrPublicURLUsageDeliveryInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return err
 	}
-	if _, err := controlstatedb.New(d.pool).RetryRouteUsageDelivery(ctx, controlstatedb.RetryRouteUsageDeliveryParams{
+	if _, err := controlstatedb.New(d.pool).RetryPublicURLUsageDelivery(ctx, controlstatedb.RetryPublicURLUsageDeliveryParams{
 		AvailableAt: timestamptz(availableAt), LastError: text(lastError), DeliveryID: int64(work.DeliveryID),
 		WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch), CompletedAt: timestamptz(now),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrRouteUsageDeliveryWorkStale
+		return ErrPublicURLUsageDeliveryWorkStale
 	} else if err != nil {
-		return fmt.Errorf("controlstate: retry route usage delivery: %w", err)
+		return fmt.Errorf("controlstate: retry public URL usage delivery: %w", err)
 	}
 	return nil
 }
 
-func routeUsageDeliveryWork(
-	delivery controlstatedb.ControlRouteUsageDelivery,
-	bucket controlstatedb.ControlRouteUsageBucket,
-) (RouteUsageDeliveryWork, error) {
+func publicURLUsageDeliveryWork(
+	delivery controlstatedb.ControlPublicUrlUsageDelivery,
+	bucket controlstatedb.ControlPublicUrlUsageBucket,
+) (PublicURLUsageDeliveryWork, error) {
 	checkpoint, err := aggregateIngressUsageHistogramData(bucket.HistogramData)
 	if err != nil {
-		return RouteUsageDeliveryWork{}, err
+		return PublicURLUsageDeliveryWork{}, err
 	}
 	if delivery.DeliveryID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, "usage_report_") ||
-		delivery.SourceRevision <= 0 || delivery.SourceRevision != bucket.BucketRevision || bucket.RouteVersion <= 0 ||
+		delivery.SourceRevision <= 0 || delivery.SourceRevision != bucket.BucketRevision || bucket.PublishRunNumber <= 0 ||
 		!validStateText(bucket.TeamID) || !validStateText(bucket.ActingIdentityID) ||
 		!bucket.BucketStart.Valid || !bucket.BucketEnd.Valid || !bucket.ObservedThrough.Valid ||
 		!delivery.WorkOwner.Valid || delivery.WorkEpoch <= 0 || !delivery.WorkExpiresAt.Valid || delivery.Attempts <= 0 {
-		return RouteUsageDeliveryWork{}, ErrRouteUsageDeliveryInvalid
+		return PublicURLUsageDeliveryWork{}, ErrPublicURLUsageDeliveryInvalid
 	}
 	values := []int64{
 		bucket.ConnectionAttempts, bucket.PolicyDenials, bucket.CapacityDenials, bucket.VisitorStreamOpenFailures,
@@ -683,13 +683,13 @@ func routeUsageDeliveryWork(
 	}
 	for _, value := range values {
 		if value < 0 {
-			return RouteUsageDeliveryWork{}, ErrRouteUsageDeliveryInvalid
+			return PublicURLUsageDeliveryWork{}, ErrPublicURLUsageDeliveryInvalid
 		}
 	}
-	return RouteUsageDeliveryWork{
+	return PublicURLUsageDeliveryWork{
 		DeliveryID: uint64(delivery.DeliveryID), DeliveryKey: delivery.DeliveryKey,
-		SourceRevision: uint64(delivery.SourceRevision), RouteID: bucket.RouteID,
-		RouteVersion: uint64(bucket.RouteVersion), TeamID: bucket.TeamID, ActingIdentityID: bucket.ActingIdentityID,
+		SourceRevision: uint64(delivery.SourceRevision), PublicURLID: bucket.PublicURLID,
+		PublishRunNumber: uint64(bucket.PublishRunNumber), TeamID: bucket.TeamID, ActingIdentityID: bucket.ActingIdentityID,
 		BucketStart: bucket.BucketStart.Time,
 		BucketEnd:   bucket.BucketEnd.Time, ObservedThrough: bucket.ObservedThrough.Time,
 		ConnectionAttempts: uint64(bucket.ConnectionAttempts), PolicyDenials: uint64(bucket.PolicyDenials),
@@ -701,10 +701,10 @@ func routeUsageDeliveryWork(
 	}, nil
 }
 
-func validateRouteUsageDeliveryWork(work RouteUsageDeliveryWork) error {
+func validatePublicURLUsageDeliveryWork(work PublicURLUsageDeliveryWork) error {
 	if work.DeliveryID == 0 || work.DeliveryID > math.MaxInt64 || !opaqueid.Valid(work.DeliveryKey, "usage_report_") ||
 		!validStateText(work.WorkerID) || work.WorkEpoch == 0 || work.WorkEpoch > math.MaxInt64 || work.WorkExpiresAt.IsZero() {
-		return ErrRouteUsageDeliveryInvalid
+		return ErrPublicURLUsageDeliveryInvalid
 	}
 	return nil
 }

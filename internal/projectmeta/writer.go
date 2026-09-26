@@ -106,9 +106,9 @@ func renderDeclarations(metadata Metadata) []byte {
 	var output strings.Builder
 	output.WriteString("import \"@tnldotdev/tnl\";\n\ndeclare module \"@tnldotdev/tnl\" {\n")
 	output.WriteString("  interface TnlProjectMetadata {\n")
-	output.WriteString("    readonly memberNamespace: ")
-	if commonMemberNamespace(metadata) {
-		output.WriteString(typeScriptString(metadata.MemberNamespace))
+	output.WriteString("    readonly namespace: ")
+	if commonNamespace(metadata) {
+		output.WriteString(typeScriptString(metadata.Namespace))
 	} else {
 		output.WriteString("string")
 	}
@@ -122,8 +122,8 @@ func renderDeclarations(metadata Metadata) []byte {
 		service := metadata.Services[name]
 		output.WriteString("      readonly ")
 		output.WriteString(typeScriptPropertyName(name))
-		output.WriteString(": {\n        readonly memberNamespace: ")
-		output.WriteString(typeScriptString(service.MemberNamespace))
+		output.WriteString(": {\n        readonly namespace: ")
+		output.WriteString(typeScriptString(service.Namespace))
 		output.WriteString(";\n        readonly hostname: ")
 		output.WriteString(typeScriptString(service.Hostname))
 		output.WriteString(";\n        readonly url: ")
@@ -134,9 +134,9 @@ func renderDeclarations(metadata Metadata) []byte {
 	return []byte(output.String())
 }
 
-func commonMemberNamespace(metadata Metadata) bool {
+func commonNamespace(metadata Metadata) bool {
 	for _, service := range metadata.Services {
-		if service.MemberNamespace != metadata.MemberNamespace {
+		if service.Namespace != metadata.Namespace {
 			return false
 		}
 	}

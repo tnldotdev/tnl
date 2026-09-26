@@ -48,7 +48,7 @@ func TestBearerTransportReplaysOnceAndTransfersFinalBody(t *testing.T) {
 			transport := &bearerTransport{base: f.transport, source: source}
 			const payload = `{"target":"http://127.0.0.1:3000"}`
 			originalBody := &trackedBody{Reader: strings.NewReader(payload)}
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes?test=replay", originalBody)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/public-urls?test=replay", originalBody)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +149,7 @@ func TestBearerTransportDoesNotRefreshOtherResponses(t *testing.T) {
 
 func TestBearerTransportOriginRestrictionsAndExplicitAuthorization(t *testing.T) {
 	for _, origin := range []string{testControlOrigin, testAuthorityOrigin, "https://unrelated.example", "https://control.example.attacker.example", "http://control.example", "https://control.example:444"} {
-		for _, authorization := range []string{"", "Bearer route-session-credential"} {
+		for _, authorization := range []string{"", "Bearer publish-run-credential"} {
 			t.Run(origin+"/"+map[bool]string{false: "automatic", true: "explicit"}[authorization != ""], func(t *testing.T) {
 				body := &trackedBody{Reader: strings.NewReader("response")}
 				base := &recordingTransport{respond: func(*http.Request) (*http.Response, error) {
@@ -202,7 +202,7 @@ func TestBearerTransportRefreshFailureClosesDiscardedResponse(t *testing.T) {
 		return &http.Response{StatusCode: 401, Header: http.Header{"Www-Authenticate": {"Bearer"}}, Body: body}, nil
 	})
 	f.save(t, old)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testControlOrigin+"/v1/routes", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testControlOrigin+"/v1/public-urls", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestAuthenticatedRequestBodyFailuresDoNotSendPartialRequests(t *testing.T) 
 			base := &recordingTransport{respond: func(*http.Request) (*http.Response, error) { return nil, errors.New("unexpected request") }}
 			source := &tokenSource{control: control{serverEndpoint: testControlOrigin}, explicit: "access"}
 			original := &trackedBody{Reader: strings.NewReader("payload")}
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", original)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/public-urls", original)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -248,7 +248,7 @@ func TestBearerTransportReplayBodyFailureKeepsRefreshedSession(t *testing.T) {
 	})
 	f.save(t, old)
 	originalBody := &trackedBody{Reader: strings.NewReader("payload")}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", originalBody)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/public-urls", originalBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestBearerTransportNetworkFailureDoesNotRetryAgain(t *testing.T) {
 			f.save(t, old)
 			const payload = "request body"
 			originalBody := &trackedBody{Reader: strings.NewReader(payload)}
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/routes", originalBody)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, testControlOrigin+"/v1/public-urls", originalBody)
 			if err != nil {
 				t.Fatal(err)
 			}

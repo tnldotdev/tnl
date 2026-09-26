@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 // A finite shutdown workload with one-hour logical leases, not a cadence test.
@@ -26,7 +26,7 @@ func TestLoadShutdown(t *testing.T) {
 	closing := len(sessions) / 2
 	byID := make(map[string]int, len(sessions))
 	for index, session := range sessions {
-		byID[session.setup.RouteID] = index
+		byID[session.setup.PublicURLID] = index
 	}
 	var ingresses [2]IngressLease
 	for index := range ingresses {
@@ -82,14 +82,14 @@ func TestLoadShutdown(t *testing.T) {
 					}
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-					updated, err := f.controls[worker%2].HeartbeatRouteSession(callCtx, session.authentication(), f.now.Add(time.Duration(sweep)*time.Millisecond), time.Hour, time.Hour)
+					updated, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), f.now.Add(time.Duration(sweep)*time.Millisecond), time.Hour, time.Hour)
 					stop()
 					if err != nil {
 						fail(fmt.Errorf("healthy heartbeat: %w", err))
 						return
 					}
-					if updated.RouteVersion != session.setup.RouteVersion || updated.State != RouteSessionReady {
-						fail(fmt.Errorf("healthy session changed: %s", session.setup.RouteID))
+					if updated.PublishRunNumber != session.setup.PublishRunNumber || updated.State != PublishRunReady {
+						fail(fmt.Errorf("healthy session changed: %s", session.setup.PublicURLID))
 						return
 					}
 					heartbeats.Add(1)
@@ -115,10 +115,10 @@ func TestLoadShutdown(t *testing.T) {
 					var reports []IngressUsageReport
 					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
 						n := revision * uint64(index+1)
-						reports = append(reports, IngressUsageReport{RouteID: session.setup.RouteID, RouteVersion: session.setup.RouteVersion,
+						reports = append(reports, IngressUsageReport{PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
 							BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: f.now, ReportRevision: revision,
 							ConnectionAttempts: 2 * n, SuccessfulStreams: n, PolicyDenials: n, IngressBytes: 100 * n, EgressBytes: 200 * n,
-							HistogramData: (routeusage.Checkpoint{}).MarshalBinary()})
+							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})
 					}
 					for range 2 {
 						callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
@@ -173,7 +173,7 @@ func TestLoadShutdown(t *testing.T) {
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 					at := time.Now()
-					err := f.controls[worker%2].CloseRouteSession(callCtx, session.setup.RouteSessionID, session.setup.RouteSessionToken, f.now.Add(time.Second))
+					err := f.controls[worker%2].ClosePublishRun(callCtx, session.setup.PublishRunID, session.setup.PublishRunToken, f.now.Add(time.Second))
 					elapsed := time.Since(at)
 					stop()
 					for old := maximumClose.Load(); int64(elapsed) > old; old = maximumClose.Load() {
@@ -182,7 +182,7 @@ func TestLoadShutdown(t *testing.T) {
 						}
 					}
 					if err != nil {
-						fail(fmt.Errorf("close route=%s elapsed=%s: %w", session.setup.RouteID, elapsed, err))
+						fail(fmt.Errorf("close route=%s elapsed=%s: %w", session.setup.PublicURLID, elapsed, err))
 						return
 					}
 					closed.Add(1)
@@ -210,13 +210,13 @@ func TestLoadShutdown(t *testing.T) {
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(len(sessions)-closing)*2)
 	middle, err := f.database.ReadIngressRoutingTableSnapshot(ctx, ingresses[0].IngressLeaseIdentity, f.now.Add(time.Second))
-	if err != nil || len(middle.Routes) != len(sessions)-closing {
-		t.Fatalf("healthy routes after partial shutdown: count=%d, %v", len(middle.Routes), err)
+	if err != nil || len(middle.Entries) != len(sessions)-closing {
+		t.Fatalf("healthy routes after partial shutdown: count=%d, %v", len(middle.Entries), err)
 	}
-	for _, event := range middle.Routes {
-		index, exists := byID[event.RouteID]
-		if !exists || index < closing || event.RouteVersion != sessions[index].setup.RouteVersion || len(event.Projection.PublisherConnections) != 2 {
-			t.Fatalf("unexpected surviving route %s", event.RouteID)
+	for _, event := range middle.Entries {
+		index, exists := byID[event.PublicURLID]
+		if !exists || index < closing || event.PublishRunNumber != sessions[index].setup.PublishRunNumber || len(event.Projection.PublisherConnections) != 2 {
+			t.Fatalf("unexpected surviving route %s", event.PublicURLID)
 		}
 	}
 	// Usage is still accepted for closed historical versions and must not be lost
@@ -227,9 +227,9 @@ func TestLoadShutdown(t *testing.T) {
 		if err := f.database.pool.QueryRow(ctx, `SELECT b.connection_attempts = $2*2 AND b.successful_streams = $2
 			AND b.policy_denials = $2 AND b.ingress_bytes = $2*100 AND b.egress_bytes = $2*200
 			AND s.policy_denials = $2 AND (s.closed_at IS NOT NULL) = $3
-			FROM control.route_usage_buckets b JOIN control.route_sessions s ON s.route_id = b.route_id AND s.route_version = b.route_version
-			WHERE s.id = $1`, session.setup.RouteSessionID, want, index < closing).Scan(&matches); err != nil || !matches {
-			t.Fatalf("shutdown accounting route=%s want=%d: %v", session.setup.RouteID, want, err)
+			FROM control.public_url_usage_buckets b JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number
+			WHERE s.id = $1`, session.setup.PublishRunID, want, index < closing).Scan(&matches); err != nil || !matches {
+			t.Fatalf("shutdown accounting route=%s want=%d: %v", session.setup.PublicURLID, want, err)
 		}
 	}
 	closeRange(closing, len(sessions))
@@ -238,23 +238,23 @@ func TestLoadShutdown(t *testing.T) {
 	}
 	var openSessions, activeConnections int64
 	if err := f.database.pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM control.route_sessions WHERE closed_at IS NULL OR assignments_open OR state <> 'closed'),
-		(SELECT count(*) FROM control.route_session_connections WHERE state <> 'closed')`).Scan(&openSessions, &activeConnections); err != nil || openSessions != 0 || activeConnections != 0 {
+		(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open OR state <> 'closed'),
+		(SELECT count(*) FROM control.publish_run_connections WHERE state <> 'closed')`).Scan(&openSessions, &activeConnections); err != nil || openSessions != 0 || activeConnections != 0 {
 		t.Fatalf("remaining sessions=%d connections=%d: %v", openSessions, activeConnections, err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
 	var buckets int
-	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.route_usage_buckets`).Scan(&buckets); err != nil || buckets != len(sessions) {
+	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_url_usage_buckets`).Scan(&buckets); err != nil || buckets != len(sessions) {
 		t.Fatalf("usage bucket count=%d: %v", buckets, err)
 	}
 	// A repeated close must not publish another tombstone or release capacity twice.
-	if err := f.controls[0].CloseRouteSession(ctx, sessions[0].setup.RouteSessionID, sessions[0].setup.RouteSessionToken, f.now.Add(time.Second)); err != nil {
+	if err := f.controls[0].ClosePublishRun(ctx, sessions[0].setup.PublishRunID, sessions[0].setup.PublishRunToken, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	final, err := f.database.ReadIngressRoutingTableSnapshot(ctx, ingresses[0].IngressLeaseIdentity, f.now.Add(time.Second))
 	wantRevision := uint64(initialRevision) + uint64(heartbeats.Load()) + uint64(len(sessions))
-	if err != nil || len(final.Routes) != 0 || final.RoutingTableRevision != wantRevision {
-		t.Fatalf("final routing rows=%d revision=%d want=%d: %v", len(final.Routes), final.RoutingTableRevision, wantRevision, err)
+	if err != nil || len(final.Entries) != 0 || final.RoutingTableRevision != wantRevision {
+		t.Fatalf("final routing rows=%d revision=%d want=%d: %v", len(final.Entries), final.RoutingTableRevision, wantRevision, err)
 	}
 	t.Logf("shutdown_verified sessions=%d connections=%d usage_buckets=%d final_revision=%d", len(sessions), 2*len(sessions), len(sessions), wantRevision)
 }
@@ -276,19 +276,19 @@ func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, 
 			return fmt.Errorf("shutdown routing read: resnapshot=%t: %w", page.ResnapshotRequired, err)
 		}
 		for _, event := range page.Events {
-			index, exists := routes[event.RouteID]
-			if !exists || event.RoutingTableRevision != cursor+1 || retired[event.RouteID] {
-				return fmt.Errorf("shutdown routing lost order or resurrected route %s", event.RouteID)
+			index, exists := routes[event.PublicURLID]
+			if !exists || event.RoutingTableRevision != cursor+1 || retired[event.PublicURLID] {
+				return fmt.Errorf("shutdown routing lost order or resurrected route %s", event.PublicURLID)
 			}
 			switch event.Kind {
-			case IngressRouteTombstone:
+			case IngressPublicURLTombstone:
 				if index >= closing {
-					return fmt.Errorf("healthy route %s retired", event.RouteID)
+					return fmt.Errorf("healthy route %s retired", event.PublicURLID)
 				}
-				retired[event.RouteID] = true
-			case IngressRouteUpsert:
+				retired[event.PublicURLID] = true
+			case IngressPublicURLUpsert:
 				if index < closing || len(event.Projection.PublisherConnections) != 2 {
-					return fmt.Errorf("unexpected shutdown upsert %s", event.RouteID)
+					return fmt.Errorf("unexpected shutdown upsert %s", event.PublicURLID)
 				}
 			default:
 				return fmt.Errorf("unexpected shutdown event %s", event.Kind)

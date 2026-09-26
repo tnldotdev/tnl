@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
 // A database-state model of one relay restart, not a process-crash or visitor
@@ -27,9 +27,9 @@ func TestLoadRelayRecovery(t *testing.T) {
 	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
 	var affected, unaffected []int
 	byID := make(map[string]int, f.routes)
-	current := make([]RouteSessionSetup, f.routes)
+	current := make([]PublishRunSetup, f.routes)
 	for index, session := range sessions {
-		byID[session.setup.RouteID], current[index] = index, session.setup
+		byID[session.setup.PublicURLID], current[index] = index, session.setup
 		if session.leases[failed.RelayServiceID].RelayLeaseIdentity == failed.RelayLeaseIdentity {
 			affected = append(affected, index)
 		} else {
@@ -51,25 +51,25 @@ func TestLoadRelayRecovery(t *testing.T) {
 		ingresses[index] = lease
 	}
 	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Routes) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
-		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Routes), f.routes, err)
+	if err != nil || len(initial.Entries) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
+		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Entries), f.routes, err)
 	}
 	entries := make(map[string]uint64, f.routes)
-	for _, event := range initial.Routes {
-		index, ok := byID[event.RouteID]
-		if !ok || entries[event.RouteID] != 0 || event.EntryRevision != uint64(f.history) {
-			t.Fatalf("unexpected initial route %s", event.RouteID)
+	for _, event := range initial.Entries {
+		index, ok := byID[event.PublicURLID]
+		if !ok || entries[event.PublicURLID] != 0 || event.EntryRevision != uint64(f.history) {
+			t.Fatalf("unexpected initial route %s", event.PublicURLID)
 		}
 		if err := checkRecoveryLoadProjection(event, sessions[index], current[index], RelayLease{}, f.now, true); err != nil {
 			t.Fatal(err)
 		}
-		entries[event.RouteID] = event.EntryRevision
+		entries[event.PublicURLID] = event.EntryRevision
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
-	var recovered, healthyRoutes, heartbeats atomic.Int64
+	var recovered, healthyPublicURLs, heartbeats atomic.Int64
 	var pages [2]atomic.Int64
 	var usageRevisions [2]uint64 // One writer per ingress; read only after joining.
 	recoveryTimes := make([]time.Duration, f.routes)
@@ -82,7 +82,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 			maximum = max(maximum, elapsed)
 		}
 		t.Logf("affected=%d recovered=%d unaffected_verified=%d/%d healthy_heartbeats=%d usage_pages=%d+%d usage_revisions=%d+%d workflows=64 elapsed=%s",
-			len(affected), recovered.Load(), healthyRoutes.Load(), len(unaffected), heartbeats.Load(), pages[0].Load(), pages[1].Load(), usageRevisions[0], usageRevisions[1], time.Since(started))
+			len(affected), recovered.Load(), healthyPublicURLs.Load(), len(unaffected), heartbeats.Load(), pages[0].Load(), pages[1].Load(), usageRevisions[0], usageRevisions[1], time.Since(started))
 		t.Logf("successful_slot_recovery_mean=%s max=%s (heartbeat through readiness)", total/time.Duration(max(1, recovered.Load())), maximum)
 		f.logStats(t)
 	}()
@@ -119,7 +119,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 				began := time.Now()
 				setup, err := recoverLoadRelaySlot(ctx, f.controls[worker%2], sessions[index], failed, restarted, now)
 				if err != nil {
-					fail(fmt.Errorf("recover route=%s: %w", sessions[index].setup.RouteID, err))
+					fail(fmt.Errorf("recover route=%s: %w", sessions[index].setup.PublicURLID, err))
 					return
 				}
 				current[index], recoveryTimes[index] = setup, time.Since(began)
@@ -140,28 +140,28 @@ func TestLoadRelayRecovery(t *testing.T) {
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 					// One owner per route advances its logical heartbeats monotonically.
 					at := now.Add(time.Since(started))
-					setup, err := f.controls[worker%2].HeartbeatRouteSession(callCtx, session.authentication(), at, time.Hour, time.Hour)
+					setup, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), at, time.Hour, time.Hour)
 					stop()
 					if err != nil {
-						fail(fmt.Errorf("healthy heartbeat route=%s: %w", session.setup.RouteID, err))
+						fail(fmt.Errorf("healthy heartbeat route=%s: %w", session.setup.PublicURLID, err))
 						return
 					}
-					if setup.RouteID != session.setup.RouteID || setup.RouteSessionID != session.setup.RouteSessionID ||
-						setup.RouteVersion != session.setup.RouteVersion || setup.RouteSessionToken != session.setup.RouteSessionToken ||
-						setup.State != RouteSessionReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(f.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(at) {
-						fail(fmt.Errorf("healthy heartbeat changed session route=%s", session.setup.RouteID))
+					if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunID != session.setup.PublishRunID ||
+						setup.PublishRunNumber != session.setup.PublishRunNumber || setup.PublishRunToken != session.setup.PublishRunToken ||
+						setup.State != PublishRunReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(f.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(at) {
+						fail(fmt.Errorf("healthy heartbeat changed session route=%s", session.setup.PublicURLID))
 						return
 					}
 					for slot, connection := range setup.PublisherConnections {
 						expected := session.setup.PublisherConnections[slot]
 						expected.State = PublisherConnectionReady
 						if connection != expected {
-							fail(fmt.Errorf("healthy heartbeat changed assignment route=%s slot=%d", setup.RouteID, slot))
+							fail(fmt.Errorf("healthy heartbeat changed assignment route=%s slot=%d", setup.PublicURLID, slot))
 							return
 						}
 					}
 					if sweep == 0 {
-						healthyRoutes.Add(1)
+						healthyPublicURLs.Add(1)
 					}
 					heartbeats.Add(1)
 					healthyStarted.Do(func() { backgroundReady <- struct{}{} })
@@ -182,10 +182,10 @@ func TestLoadRelayRecovery(t *testing.T) {
 					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
 						n := revision * uint64(index+1)
 						reports = append(reports, IngressUsageReport{
-							RouteID: session.setup.RouteID, RouteVersion: session.setup.RouteVersion,
+							PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
 							BucketStart: bucketStart, BucketEnd: bucketStart.Add(time.Minute), ObservedThrough: f.now,
 							ReportRevision: revision, ConnectionAttempts: n, PolicyDenials: n,
-							HistogramData: (routeusage.Checkpoint{}).MarshalBinary(),
+							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
 						})
 					}
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
@@ -257,7 +257,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	if firstErr != nil {
 		t.Fatal(firstErr)
 	}
-	if ctx.Err() != nil || recovered.Load() != int64(len(affected)) || healthyRoutes.Load() != int64(len(unaffected)) {
+	if ctx.Err() != nil || recovered.Load() != int64(len(affected)) || healthyPublicURLs.Load() != int64(len(unaffected)) {
 		t.Fatalf("incomplete recovery workload: %v", ctx.Err())
 	}
 	for index, revision := range usageRevisions {
@@ -278,8 +278,8 @@ func TestLoadRelayRecovery(t *testing.T) {
 	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
 	final, err := f.database.ReadIngressRoutingTableSnapshot(callCtx, ingresses[0].IngressLeaseIdentity, verifyAt)
 	stop()
-	if err != nil || len(final.Routes) != f.routes {
-		t.Fatalf("final snapshot: routes=%d want=%d: %v", len(final.Routes), f.routes, err)
+	if err != nil || len(final.Entries) != f.routes {
+		t.Fatalf("final snapshot: routes=%d want=%d: %v", len(final.Entries), f.routes, err)
 	}
 	cursor := initial.RoutingTableRevision
 	sawDegraded := make(map[string]bool, len(affected))
@@ -291,18 +291,18 @@ func TestLoadRelayRecovery(t *testing.T) {
 			t.Fatalf("recovery events after=%d: %v", cursor, err)
 		}
 		for _, event := range page.Events {
-			index, ok := byID[event.RouteID]
-			if !ok || event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.RouteID]+1 {
-				t.Fatalf("missing or unordered recovery event after=%d route=%s", cursor, event.RouteID)
+			index, ok := byID[event.PublicURLID]
+			if !ok || event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.PublicURLID]+1 {
+				t.Fatalf("missing or unordered recovery event after=%d route=%s", cursor, event.PublicURLID)
 			}
 			if err := checkRecoveryLoadProjection(event, sessions[index], current[index], restarted, verifyAt, false); err != nil {
 				t.Fatal(err)
 			}
-			if len(event.Projection.PublisherConnections) == 1 && !sawDegraded[event.RouteID] {
-				sawDegraded[event.RouteID] = true
+			if len(event.Projection.PublisherConnections) == 1 && !sawDegraded[event.PublicURLID] {
+				sawDegraded[event.PublicURLID] = true
 				degraded++
 			}
-			cursor, entries[event.RouteID] = event.RoutingTableRevision, event.EntryRevision
+			cursor, entries[event.PublicURLID] = event.RoutingTableRevision, event.EntryRevision
 			events++
 		}
 		if page.NextRevision != cursor || page.More != (cursor < final.RoutingTableRevision) {
@@ -313,15 +313,15 @@ func TestLoadRelayRecovery(t *testing.T) {
 		t.Fatalf("missing intermediate survivor projections: got=%d want=%d", degraded, len(affected))
 	}
 	seen := make(map[string]bool, f.routes)
-	for _, event := range final.Routes {
-		index, ok := byID[event.RouteID]
-		if !ok || seen[event.RouteID] || event.EntryRevision != entries[event.RouteID] {
-			t.Fatalf("unexpected final snapshot route=%s", event.RouteID)
+	for _, event := range final.Entries {
+		index, ok := byID[event.PublicURLID]
+		if !ok || seen[event.PublicURLID] || event.EntryRevision != entries[event.PublicURLID] {
+			t.Fatalf("unexpected final snapshot route=%s", event.PublicURLID)
 		}
 		if err := checkRecoveryLoadProjection(event, sessions[index], current[index], restarted, verifyAt, true); err != nil {
 			t.Fatal(err)
 		}
-		seen[event.RouteID] = true
+		seen[event.PublicURLID] = true
 		verified++
 	}
 	// Check committed usage per route/session, not merely successful calls or a
@@ -330,28 +330,28 @@ func TestLoadRelayRecovery(t *testing.T) {
 	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	rows, err := f.database.pool.Query(callCtx, `
-		SELECT b.route_id, b.route_version, s.id,
+		SELECT b.public_url_id, b.publish_run_number, s.id,
 			(b.bucket_start = $1 AND b.bucket_end = $2 AND b.observed_through = $3
 			 AND b.connection_attempts = $4 AND b.policy_denials = $4 AND s.policy_denials = $4) IS TRUE
-		FROM control.route_usage_buckets b
-		JOIN control.route_sessions s ON s.route_id = b.route_id AND s.route_version = b.route_version`,
+		FROM control.public_url_usage_buckets b
+		JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number`,
 		bucketStart, bucketStart.Add(time.Minute), f.now, int64(units))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var routeID, sessionID string
+		var publicURLID, sessionID string
 		var version uint64
 		var matches bool
-		if err := rows.Scan(&routeID, &version, &sessionID, &matches); err != nil {
+		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
 			t.Fatal(err)
 		}
-		index, ok := byID[routeID]
-		if !ok || !matches || version != sessions[index].setup.RouteVersion || sessionID != sessions[index].setup.RouteSessionID {
-			t.Fatalf("unexpected recovery usage bucket route=%s", routeID)
+		index, ok := byID[publicURLID]
+		if !ok || !matches || version != sessions[index].setup.PublishRunNumber || sessionID != sessions[index].setup.PublishRunID {
+			t.Fatalf("unexpected recovery usage bucket route=%s", publicURLID)
 		}
-		delete(byID, routeID)
+		delete(byID, publicURLID)
 	}
 	if err := rows.Err(); err != nil || len(byID) != 0 || ctx.Err() != nil {
 		t.Fatalf("recovery usage verification: missing=%d err=%v context=%v", len(byID), err, ctx.Err())
@@ -363,10 +363,10 @@ func TestLoadRelayRecovery(t *testing.T) {
 // assignments. Check identity, monotonic revisions, and surviving connections
 // live; the post-join event walk verifies every final replacement and stale run.
 func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, failedRelayID string, now time.Time, workDone <-chan struct{}, backgroundReady chan<- struct{}) error {
-	expected := make(map[string]IngressRoutingTableEvent, len(initial.Routes))
-	entries := make(map[string]uint64, len(initial.Routes))
-	for _, event := range initial.Routes {
-		expected[event.RouteID], entries[event.RouteID] = event, event.EntryRevision
+	expected := make(map[string]IngressRoutingTableEvent, len(initial.Entries))
+	entries := make(map[string]uint64, len(initial.Entries))
+	for _, event := range initial.Entries {
+		expected[event.PublicURLID], entries[event.PublicURLID] = event, event.EntryRevision
 	}
 	cursor := initial.RoutingTableRevision
 	var snapshots, renewals int
@@ -387,36 +387,36 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 		if err != nil {
 			return fmt.Errorf("snapshot: %w", err)
 		}
-		if snapshot.RoutingTableRevision < cursor || len(snapshot.Routes) != len(expected) {
-			return fmt.Errorf("snapshot routes=%d want=%d revision=%d previous=%d", len(snapshot.Routes), len(expected), snapshot.RoutingTableRevision, cursor)
+		if snapshot.RoutingTableRevision < cursor || len(snapshot.Entries) != len(expected) {
+			return fmt.Errorf("snapshot routes=%d want=%d revision=%d previous=%d", len(snapshot.Entries), len(expected), snapshot.RoutingTableRevision, cursor)
 		}
 		seen := make(map[string]bool, len(expected))
-		for _, event := range snapshot.Routes {
-			before, ok := expected[event.RouteID]
-			if !ok || seen[event.RouteID] || event.Kind != IngressRouteUpsert || event.RouteVersion != before.RouteVersion ||
-				event.CanonicalHostname != before.CanonicalHostname || event.Projection.RouteSessionID != before.Projection.RouteSessionID ||
-				event.EntryRevision < entries[event.RouteID] || event.RoutingTableRevision > snapshot.RoutingTableRevision ||
-				!event.Projection.RouteExpiresAt.After(now) {
-				return fmt.Errorf("snapshot lost current session or revision route=%s", event.RouteID)
+		for _, event := range snapshot.Entries {
+			before, ok := expected[event.PublicURLID]
+			if !ok || seen[event.PublicURLID] || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != before.PublishRunNumber ||
+				event.CanonicalHostname != before.CanonicalHostname || event.Projection.PublishRunID != before.Projection.PublishRunID ||
+				event.EntryRevision < entries[event.PublicURLID] || event.RoutingTableRevision > snapshot.RoutingTableRevision ||
+				!event.Projection.PublicUrlExpiresAt.After(now) {
+				return fmt.Errorf("snapshot lost current session or revision route=%s", event.PublicURLID)
 			}
 			connections := event.Projection.PublisherConnections
 			if len(connections) < 1 || len(connections) > 2 {
-				return fmt.Errorf("snapshot connection count=%d route=%s", len(connections), event.RouteID)
+				return fmt.Errorf("snapshot connection count=%d route=%s", len(connections), event.PublicURLID)
 			}
 			var slots [2]bool
 			for _, connection := range connections {
 				slot := connection.ConnectionSlot
 				if slot < 0 || slot >= len(slots) || slots[slot] {
-					return fmt.Errorf("snapshot invalid or duplicate slot=%d route=%s", slot, event.RouteID)
+					return fmt.Errorf("snapshot invalid or duplicate slot=%d route=%s", slot, event.PublicURLID)
 				}
 				slots[slot] = true
 			}
 			for _, connection := range before.Projection.PublisherConnections {
 				if connection.RelayID != failedRelayID && !slices.Contains(connections, connection) {
-					return fmt.Errorf("snapshot lost surviving connection route=%s slot=%d", event.RouteID, connection.ConnectionSlot)
+					return fmt.Errorf("snapshot lost surviving connection route=%s slot=%d", event.PublicURLID, connection.ConnectionSlot)
 				}
 			}
-			seen[event.RouteID], entries[event.RouteID] = true, event.EntryRevision
+			seen[event.PublicURLID], entries[event.PublicURLID] = true, event.EntryRevision
 		}
 		cursor = snapshot.RoutingTableRevision
 		snapshots++
@@ -447,16 +447,16 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 	return ctx.Err()
 }
 
-func recoverLoadRelaySlot(ctx context.Context, control *Database, session routeSessionFixture, failed, restarted RelayLease, now time.Time) (RouteSessionSetup, error) {
+func recoverLoadRelaySlot(ctx context.Context, control *Database, session publishRunFixture, failed, restarted RelayLease, now time.Time) (PublishRunSetup, error) {
 	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	setup, err := control.HeartbeatRouteSession(callCtx, session.authentication(), now, time.Hour, time.Hour)
+	setup, err := control.HeartbeatPublishRun(callCtx, session.authentication(), now, time.Hour, time.Hour)
 	stop()
 	if err != nil {
 		return setup, fmt.Errorf("replenish: %w", err)
 	}
-	if setup.RouteID != session.setup.RouteID || setup.RouteSessionID != session.setup.RouteSessionID ||
-		setup.RouteVersion != session.setup.RouteVersion || setup.RouteSessionToken != session.setup.RouteSessionToken ||
-		setup.State != RouteSessionReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(session.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(now) {
+	if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunID != session.setup.PublishRunID ||
+		setup.PublishRunNumber != session.setup.PublishRunNumber || setup.PublishRunToken != session.setup.PublishRunToken ||
+		setup.State != PublishRunReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(session.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(now) {
 		return setup, errors.New("replenishment changed the ready session")
 	}
 	for slot, connection := range setup.PublisherConnections {
@@ -468,8 +468,8 @@ func recoverLoadRelaySlot(ctx context.Context, control *Database, session routeS
 			}
 			continue
 		}
-		if connection.ConnectionSlot != slot || connection.RouteSessionID != setup.RouteSessionID ||
-			connection.RouteID != setup.RouteID || connection.RouteVersion != setup.RouteVersion || connection.RelayServiceID != previous.RelayServiceID ||
+		if connection.ConnectionSlot != slot || connection.PublishRunID != setup.PublishRunID ||
+			connection.PublicURLID != setup.PublicURLID || connection.PublishRunNumber != setup.PublishRunNumber || connection.RelayServiceID != previous.RelayServiceID ||
 			connection.ConnectionAssignmentRevision <= previous.ConnectionAssignmentRevision || connection.PublisherConnectionID == previous.PublisherConnectionID ||
 			connection.PublisherConnectionCredential == previous.PublisherConnectionCredential || connection.State != PublisherConnectionAssigned ||
 			!connection.PublisherConnectionCredentialExpiresAt.After(now) {
@@ -519,21 +519,21 @@ func recoverLoadRelaySlot(ctx context.Context, control *Database, session routeS
 	return setup, nil
 }
 
-func checkRecoveryLoadProjection(event IngressRoutingTableEvent, session routeSessionFixture, current RouteSessionSetup, restarted RelayLease, now time.Time, complete bool) error {
-	if event.Kind != IngressRouteUpsert || event.RouteID != session.setup.RouteID || event.RouteVersion != session.setup.RouteVersion ||
-		event.CanonicalHostname != session.request.CertificateIdentifiers[0] || event.Projection.RouteSessionID != session.setup.RouteSessionID ||
-		!event.Projection.RouteExpiresAt.After(now) {
-		return fmt.Errorf("projection lost ready session route=%s", event.RouteID)
+func checkRecoveryLoadProjection(event IngressRoutingTableEvent, session publishRunFixture, current PublishRunSetup, restarted RelayLease, now time.Time, complete bool) error {
+	if event.Kind != IngressPublicURLUpsert || event.PublicURLID != session.setup.PublicURLID || event.PublishRunNumber != session.setup.PublishRunNumber ||
+		event.CanonicalHostname != session.request.CertificateIdentifiers[0] || event.Projection.PublishRunID != session.setup.PublishRunID ||
+		!event.Projection.PublicUrlExpiresAt.After(now) {
+		return fmt.Errorf("projection lost ready session route=%s", event.PublicURLID)
 	}
 	connections := event.Projection.PublisherConnections
 	if len(connections) < 1 || len(connections) > 2 || (complete && len(connections) != 2) {
-		return fmt.Errorf("projection connection count=%d route=%s complete=%t", len(connections), event.RouteID, complete)
+		return fmt.Errorf("projection connection count=%d route=%s complete=%t", len(connections), event.PublicURLID, complete)
 	}
 	var seen [2]bool
 	for _, connection := range connections {
 		slot := connection.ConnectionSlot
 		if slot < 0 || slot >= len(seen) || seen[slot] {
-			return fmt.Errorf("duplicate or invalid projection slot=%d route=%s", slot, event.RouteID)
+			return fmt.Errorf("duplicate or invalid projection slot=%d route=%s", slot, event.PublicURLID)
 		}
 		seen[slot] = true
 		expected := current.PublisherConnections[slot]
@@ -544,12 +544,12 @@ func checkRecoveryLoadProjection(event IngressRoutingTableEvent, session routeSe
 		if connection.PublisherConnectionID != expected.PublisherConnectionID || connection.ConnectionAssignmentRevision != expected.ConnectionAssignmentRevision ||
 			connection.RelayServiceID != expected.RelayServiceID || connection.RelayID != lease.RelayID || connection.RelayRunID != lease.RelayRunID ||
 			connection.RelayLeaseRevision != lease.RelayLeaseRevision || !connection.LeaseExpiresAt.After(now) {
-			return fmt.Errorf("projection lost current assignment/relay run route=%s slot=%d", event.RouteID, slot)
+			return fmt.Errorf("projection lost current assignment/relay run route=%s slot=%d", event.PublicURLID, slot)
 		}
 	}
 	for slot, connection := range session.setup.PublisherConnections {
 		if session.leases[connection.RelayServiceID].RelayID != restarted.RelayID && !seen[slot] {
-			return fmt.Errorf("projection lost surviving connection route=%s slot=%d", event.RouteID, slot)
+			return fmt.Errorf("projection lost surviving connection route=%s slot=%d", event.PublicURLID, slot)
 		}
 	}
 	return nil

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/publicurlusage"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -33,9 +33,9 @@ type usageReportBatch struct {
 }
 
 type usageBucketKey struct {
-	routeID      string
-	routeVersion uint64
-	start        time.Time
+	publicURLID      string
+	publishRunNumber uint64
+	start            time.Time
 }
 
 type usageCounters struct {
@@ -59,15 +59,15 @@ type usageBucket struct {
 	dirty                        bool
 	final                        bool
 	finalReported                bool
-	visitorStreamOpenLatency     routeusage.DurationHistogram
-	timeToFirstPublisherByte     routeusage.DurationHistogram
-	successfulConnectionDuration routeusage.DurationHistogram
-	visitors                     *routeusage.VisitorSketch
+	visitorStreamOpenLatency     publicurlusage.DurationHistogram
+	timeToFirstPublisherByte     publicurlusage.DurationHistogram
+	successfulConnectionDuration publicurlusage.DurationHistogram
+	visitors                     *publicurlusage.VisitorSketch
 }
 
 type usageVisitorKey struct {
-	routeID string
-	start   time.Time
+	publicURLID string
+	start       time.Time
 }
 
 // UsageReporter aggregates cumulative minute buckets for one ingress process.
@@ -80,7 +80,7 @@ type UsageReporter struct {
 	flushToken      chan struct{}
 	mu              sync.Mutex
 	buckets         map[usageBucketKey]*usageBucket
-	visitors        map[usageVisitorKey]*routeusage.VisitorSketch
+	visitors        map[usageVisitorKey]*publicurlusage.VisitorSketch
 	active          map[*usageConnection]struct{}
 	observedThrough time.Time
 	latestAt        time.Time
@@ -108,22 +108,22 @@ func NewUsageReporter(control usageControl, interval time.Duration, report func(
 	}
 	return &UsageReporter{
 		control: control, interval: interval, report: report,
-		buckets: make(map[usageBucketKey]*usageBucket), visitors: make(map[usageVisitorKey]*routeusage.VisitorSketch),
+		buckets: make(map[usageBucketKey]*usageBucket), visitors: make(map[usageVisitorKey]*publicurlusage.VisitorSketch),
 		active: make(map[*usageConnection]struct{}), flushToken: make(chan struct{}, 1),
 	}, nil
 }
 
 // Open starts cumulative accounting for one visitor connection.
-func (r *UsageReporter) Open(routeID string, routeVersion uint64, source netip.Addr, at time.Time) UsageConnection {
+func (r *UsageReporter) Open(publicURLID string, publishRunNumber uint64, source netip.Addr, at time.Time) UsageConnection {
 	r.mu.Lock()
 	at = r.normalizeAt(at)
 	visitorNetworkHashKey, hasVisitorNetworkHashKey := r.control.VisitorNetworkHashKey(at)
-	connection := &usageConnection{reporter: r, routeID: routeID, routeVersion: routeVersion, attemptedAt: at}
+	connection := &usageConnection{reporter: r, publicURLID: publicURLID, publishRunNumber: publishRunNumber, attemptedAt: at}
 	if !r.closed {
 		r.active[connection] = struct{}{}
 		r.increment(connection.bucket(at), func(counters *usageCounters) *uint64 { return &counters.connectionAttempts }, 1)
 		if hasVisitorNetworkHashKey {
-			r.observeVisitor(routeID, source, at, visitorNetworkHashKey)
+			r.observeVisitor(publicURLID, source, at, visitorNetworkHashKey)
 		}
 	} else {
 		connection.closed = true
@@ -278,14 +278,14 @@ func (r *UsageReporter) prepare(now time.Time, final bool) error {
 			if observedThrough.After(bucketEnd) {
 				observedThrough = bucketEnd
 			}
-			checkpoint := routeusage.Checkpoint{
+			checkpoint := publicurlusage.Checkpoint{
 				VisitorStreamOpenLatency:     bucket.visitorStreamOpenLatency,
 				TimeToFirstPublisherByte:     bucket.timeToFirstPublisherByte,
 				SuccessfulConnectionDuration: bucket.successfulConnectionDuration,
 				VisitorNetworks:              *bucket.visitors,
 			}
 			report := ingressv1.IngressUsageReport{
-				RouteId: key.routeID, RouteVersion: int64(key.routeVersion),
+				PublicUrlId: key.publicURLID, PublishRunNumber: int64(key.publishRunNumber),
 				BucketStart: key.start, BucketEnd: bucketEnd, ObservedThrough: observedThrough,
 				ReportRevision:     int64(bucket.revision),
 				ConnectionAttempts: int64(bucket.counters.connectionAttempts), PolicyDenials: int64(bucket.counters.policyDenials),
@@ -311,7 +311,7 @@ func (r *UsageReporter) acknowledge(reports []ingressv1.IngressUsageReport) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, report := range reports {
-		key := usageBucketKey{routeID: report.RouteId, routeVersion: uint64(report.RouteVersion), start: report.BucketStart}
+		key := usageBucketKey{publicURLID: report.PublicUrlId, publishRunNumber: uint64(report.PublishRunNumber), start: report.BucketStart}
 		bucket := r.buckets[key]
 		if bucket == nil || bucket.pending == nil || bucket.pending.ReportRevision != report.ReportRevision {
 			continue
@@ -327,14 +327,14 @@ func (r *UsageReporter) acknowledge(reports []ingressv1.IngressUsageReport) {
 	r.cleanupVisitors()
 }
 
-func (r *UsageReporter) bucket(routeID string, routeVersion uint64, at time.Time) *usageBucket {
-	key := usageBucketKey{routeID: routeID, routeVersion: routeVersion, start: at.UTC().Truncate(time.Minute)}
+func (r *UsageReporter) bucket(publicURLID string, publishRunNumber uint64, at time.Time) *usageBucket {
+	key := usageBucketKey{publicURLID: publicURLID, publishRunNumber: publishRunNumber, start: at.UTC().Truncate(time.Minute)}
 	bucket := r.buckets[key]
 	if bucket == nil {
-		visitorKey := usageVisitorKey{routeID: routeID, start: key.start}
+		visitorKey := usageVisitorKey{publicURLID: publicURLID, start: key.start}
 		visitors := r.visitors[visitorKey]
 		if visitors == nil {
-			visitors = new(routeusage.VisitorSketch)
+			visitors = new(publicurlusage.VisitorSketch)
 			r.visitors[visitorKey] = visitors
 		}
 		bucket = &usageBucket{key: key, visitors: visitors}
@@ -343,14 +343,14 @@ func (r *UsageReporter) bucket(routeID string, routeVersion uint64, at time.Time
 	return bucket
 }
 
-func (r *UsageReporter) observeVisitor(routeID string, source netip.Addr, at time.Time, key [32]byte) {
+func (r *UsageReporter) observeVisitor(publicURLID string, source netip.Addr, at time.Time, key [32]byte) {
 	start := at.UTC().Truncate(time.Minute)
-	visitors := r.visitors[usageVisitorKey{routeID: routeID, start: start}]
-	if visitors == nil || !visitors.Observe(key, routeID, source) {
+	visitors := r.visitors[usageVisitorKey{publicURLID: publicURLID, start: start}]
+	if visitors == nil || !visitors.Observe(key, publicURLID, source) {
 		return
 	}
 	for bucketKey, bucket := range r.buckets {
-		if bucketKey.routeID == routeID && bucketKey.start.Equal(start) {
+		if bucketKey.publicURLID == publicURLID && bucketKey.start.Equal(start) {
 			bucket.mutation++
 			bucket.dirty = true
 		}
@@ -360,7 +360,7 @@ func (r *UsageReporter) observeVisitor(routeID string, source netip.Addr, at tim
 func (r *UsageReporter) cleanupVisitors() {
 	used := make(map[usageVisitorKey]struct{}, len(r.visitors))
 	for bucketKey := range r.buckets {
-		used[usageVisitorKey{routeID: bucketKey.routeID, start: bucketKey.start}] = struct{}{}
+		used[usageVisitorKey{publicURLID: bucketKey.publicURLID, start: bucketKey.start}] = struct{}{}
 	}
 	for visitorKey := range r.visitors {
 		if _, exists := used[visitorKey]; !exists {
@@ -411,16 +411,16 @@ func (r *UsageReporter) normalizeAt(at time.Time) time.Time {
 }
 
 func compareUsageBucketKeys(left, right usageBucketKey) int {
-	if left.routeID < right.routeID {
+	if left.publicURLID < right.publicURLID {
 		return -1
 	}
-	if left.routeID > right.routeID {
+	if left.publicURLID > right.publicURLID {
 		return 1
 	}
-	if left.routeVersion < right.routeVersion {
+	if left.publishRunNumber < right.publishRunNumber {
 		return -1
 	}
-	if left.routeVersion > right.routeVersion {
+	if left.publishRunNumber > right.publishRunNumber {
 		return 1
 	}
 	return left.start.Compare(right.start)
@@ -428,8 +428,8 @@ func compareUsageBucketKeys(left, right usageBucketKey) int {
 
 type usageConnection struct {
 	reporter           *UsageReporter
-	routeID            string
-	routeVersion       uint64
+	publicURLID        string
+	publishRunNumber   uint64
 	attemptedAt        time.Time
 	lastAt             time.Time
 	streamOpened       bool
@@ -442,7 +442,7 @@ type usageConnection struct {
 }
 
 func (c *usageConnection) bucket(at time.Time) *usageBucket {
-	return c.reporter.bucket(c.routeID, c.routeVersion, at)
+	return c.reporter.bucket(c.publicURLID, c.publishRunNumber, at)
 }
 
 func (c *usageConnection) PolicyDenied(at time.Time) {
@@ -556,7 +556,7 @@ func (c *usageConnection) observeVisitorStreamOpen(at time.Time) {
 
 func (r *UsageReporter) observeDuration(
 	bucket *usageBucket,
-	histogram *routeusage.DurationHistogram,
+	histogram *publicurlusage.DurationHistogram,
 	duration time.Duration,
 ) {
 	if err := histogram.Observe(duration); err != nil {

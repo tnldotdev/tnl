@@ -15,24 +15,24 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-hello", Message{
 		Type: Hello, ProtocolVersion: Version, Role: Publisher, Credential: "credential",
 		PublisherConnection: &PublisherConnectionRef{
-			RouteSessionID: "route_session_1", RouteID: "route_1", RouteVersion: 2,
+			PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 2,
 			PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1,
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
-		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
 	}, WriteVisitorStreamHeader, ReadVisitorStreamHeader)
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	assertGoldenFrame(t, "internal-forwarding-header", InternalForwardingHeader{
 		ProtocolVersion: Version, Kind: InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
-		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1,
 		ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1", RelayID: "relay_1",
 		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
-		RouteExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
+		PublicUrlExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
 	}, WriteInternalForwardingHeader, ReadInternalForwardingHeader)
 	assertGoldenFrame(t, "stream-response", StreamResponse{
 		Type: StreamRejected, Code: StaleConnectionAssignment,

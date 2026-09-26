@@ -35,7 +35,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"config path", "config check", "config generate",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
-		"domain claim", "domain default", "domain list", "domain release", "route list", "route delete",
+		"domain claim", "domain default", "domain list", "domain release", "url list", "url delete",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -45,6 +45,9 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"host", "list"}); err == nil {
 		t.Fatal("obsolete host command was accepted")
+	}
+	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
+		t.Fatal("obsolete route command was accepted")
 	}
 }
 
@@ -147,7 +150,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	}
 }
 
-func TestResolvePublishHostnameUsesMemberNamespace(t *testing.T) {
+func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
 	current := teamContext{
 		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4},
 		membership: authorityv1.Membership{

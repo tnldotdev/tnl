@@ -16,14 +16,14 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestRouteSessionAuthenticationRejectsAmbiguousHeadersBeforeStore(t *testing.T) {
+func TestPublishRunAuthenticationRejectsAmbiguousHeadersBeforeStore(t *testing.T) {
 	// Any call through this embedded nil store panics, proving parsing happens first.
 	h := &handler{store: struct{ Store }{}}
 	for _, values := range [][]string{nil, {"Bearer first", "Bearer second"}, {"Bearer first,second"}} {
 		request := httptest.NewRequest(http.MethodPost, "/", nil)
 		request.Header["Authorization"] = values
 		response := httptest.NewRecorder()
-		if _, ok := h.authenticateRouteSessionRequest(response, request, "route_session_1", 1); ok || response.Code != http.StatusUnauthorized {
+		if _, ok := h.authenticatePublishRunRequest(response, request, "publish_run_1", 1); ok || response.Code != http.StatusUnauthorized {
 			t.Fatalf("headers %q: authenticated=%v, status=%d", values, ok, response.Code)
 		}
 	}
@@ -34,7 +34,7 @@ func TestRouteSessionAuthenticationRejectsAmbiguousHeadersBeforeStore(t *testing
 	}
 }
 
-func TestRouteSessionAuthenticationMapsCredentialAndStoreFailures(t *testing.T) {
+func TestPublishRunAuthenticationMapsCredentialAndStoreFailures(t *testing.T) {
 	databaseFailure := errors.New("database unavailable")
 	for _, test := range []struct {
 		name       string
@@ -44,8 +44,8 @@ func TestRouteSessionAuthenticationMapsCredentialAndStoreFailures(t *testing.T) 
 		wantLog    bool
 	}{
 		{name: "store unavailable", wantStatus: http.StatusServiceUnavailable, wantCode: controlv1.Unavailable, wantLog: true},
-		{name: "invalid credential", store: routeAuthenticationStoreStub{err: fmt.Errorf("wrapped: %w", controlstate.ErrRouteSessionCredential)}, wantStatus: http.StatusUnauthorized, wantCode: controlv1.Unauthenticated},
-		{name: "database failure", store: routeAuthenticationStoreStub{err: databaseFailure}, wantStatus: http.StatusServiceUnavailable, wantCode: controlv1.Unavailable, wantLog: true},
+		{name: "invalid credential", store: publicURLAuthenticationStoreStub{err: fmt.Errorf("wrapped: %w", controlstate.ErrPublishRunCredential)}, wantStatus: http.StatusUnauthorized, wantCode: controlv1.Unauthenticated},
+		{name: "database failure", store: publicURLAuthenticationStoreStub{err: databaseFailure}, wantStatus: http.StatusServiceUnavailable, wantCode: controlv1.Unavailable, wantLog: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -54,9 +54,9 @@ func TestRouteSessionAuthenticationMapsCredentialAndStoreFailures(t *testing.T) 
 			t.Cleanup(func() { log.SetOutput(previous) })
 
 			request := httptest.NewRequest(http.MethodPost, "/", nil)
-			request.Header.Set("Authorization", "Bearer route-session-secret")
+			request.Header.Set("Authorization", "Bearer publish-run-secret")
 			response := httptest.NewRecorder()
-			if _, ok := (&handler{store: test.store}).authenticateRouteSessionRequest(response, request, "route_session_1", 1); ok {
+			if _, ok := (&handler{store: test.store}).authenticatePublishRunRequest(response, request, "publish_run_1", 1); ok {
 				t.Fatal("authentication succeeded")
 			}
 			var problem controlv1.Problem
@@ -69,23 +69,23 @@ func TestRouteSessionAuthenticationMapsCredentialAndStoreFailures(t *testing.T) 
 			if test.wantLog != (logs.Len() != 0) {
 				t.Fatalf("log = %q", logs.String())
 			}
-			if test.wantLog && (!bytes.Contains(logs.Bytes(), []byte(problem.RequestId)) || bytes.Contains(logs.Bytes(), []byte("route-session-secret"))) {
+			if test.wantLog && (!bytes.Contains(logs.Bytes(), []byte(problem.RequestId)) || bytes.Contains(logs.Bytes(), []byte("publish-run-secret"))) {
 				t.Fatalf("log does not safely correlate request %q: %q", problem.RequestId, logs.String())
 			}
 		})
 	}
 }
 
-type routeAuthenticationStoreStub struct {
+type publicURLAuthenticationStoreStub struct {
 	Store
 	err error
 }
 
-func (s routeAuthenticationStoreStub) RouteSessionAuthentication(
+func (s publicURLAuthenticationStoreStub) PublishRunAuthentication(
 	context.Context,
 	string,
 	uint64,
-	credentials.RouteSessionToken,
-) (controlstate.RouteSessionAuthentication, error) {
-	return controlstate.RouteSessionAuthentication{}, s.err
+	credentials.PublishRunToken,
+) (controlstate.PublishRunAuthentication, error) {
+	return controlstate.PublishRunAuthentication{}, s.err
 }

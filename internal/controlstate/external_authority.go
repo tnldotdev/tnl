@@ -79,43 +79,43 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 
 // GetRouteForAuthorization returns stored route data for an authority request.
 // Callers must not expose the result before the authority approves it.
-func (d *Database) GetRouteForAuthorization(ctx context.Context, routeID string) (Route, error) {
-	return d.getRouteForAuthorization(ctx, routeID, "")
+func (d *Database) GetRouteForAuthorization(ctx context.Context, publicURLID string) (PublicURL, error) {
+	return d.getPublicURLForAuthorization(ctx, publicURLID, "")
 }
 
-// GetRouteForSessionAuthorization returns the route version from an earlier
-// matching route-session request, or the next version for a new request.
+// GetRouteForSessionAuthorization returns the publish run number from an earlier
+// matching publish-run request, or the next version for a new request.
 func (d *Database) GetRouteForSessionAuthorization(
 	ctx context.Context,
-	routeID, idempotencyKey string,
-) (Route, error) {
+	publicURLID, idempotencyKey string,
+) (PublicURL, error) {
 	if !validStateText(idempotencyKey) || len(idempotencyKey) > 128 {
-		return Route{}, ErrRouteInvalid
+		return PublicURL{}, ErrPublicURLInvalid
 	}
-	return d.getRouteForAuthorization(ctx, routeID, idempotencyKey)
+	return d.getPublicURLForAuthorization(ctx, publicURLID, idempotencyKey)
 }
 
-func (d *Database) getRouteForAuthorization(ctx context.Context, routeID, routeSessionIdempotencyKey string) (Route, error) {
-	if !validStateText(routeID) {
-		return Route{}, ErrRouteInvalid
+func (d *Database) getPublicURLForAuthorization(ctx context.Context, publicURLID, publishRunIdempotencyKey string) (PublicURL, error) {
+	if !validStateText(publicURLID) {
+		return PublicURL{}, ErrPublicURLInvalid
 	}
 	if err := d.requireOpen(); err != nil {
-		return Route{}, err
+		return PublicURL{}, err
 	}
-	row, err := controlstatedb.New(d.pool).GetExternalAuthorityRoute(ctx, controlstatedb.GetExternalAuthorityRouteParams{
-		RouteID: routeID, RouteSessionIdempotencyKey: routeSessionIdempotencyKey,
+	row, err := controlstatedb.New(d.pool).GetExternalAuthorityPublicURL(ctx, controlstatedb.GetExternalAuthorityPublicURLParams{
+		PublicURLID: publicURLID, PublishRunIdempotencyKey: publishRunIdempotencyKey,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Route{}, ErrRouteNotFound
+		return PublicURL{}, ErrPublicURLNotFound
 	}
 	if err != nil {
-		return Route{}, fmt.Errorf("controlstate: get route for authorization: %w", err)
+		return PublicURL{}, fmt.Errorf("controlstate: get route for authorization: %w", err)
 	}
-	result := routeFromValues(
+	result := publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenRouteSessionID, row.CreatedAt, row.UpdatedAt,
+		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
-	result.AuthorizationRouteVersion = uint64(row.AuthorizationRouteVersion)
+	result.AuthorizationPublishRunNumber = uint64(row.AuthorizationPublishRunNumber)
 	return result, nil
 }

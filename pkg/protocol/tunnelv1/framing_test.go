@@ -174,7 +174,7 @@ func TestStreamWriterRejectsOversizeBeforeWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.RouteID, h.RouteSessionID, h.VisitorConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256)
+	h.PublicURLID, h.PublishRunID, h.VisitorConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256)
 	if err := h.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestStreamWriterRejectsOversizeBeforeWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher.RouteID, publisher.RouteSessionID, publisher.VisitorConnectionID, publisher.PublisherConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256), strings.Repeat("p", 256)
+	publisher.PublicURLID, publisher.PublishRunID, publisher.VisitorConnectionID, publisher.PublisherConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256), strings.Repeat("p", 256)
 	if err := publisher.Validate(); err != nil {
 		t.Fatal(err)
 	}

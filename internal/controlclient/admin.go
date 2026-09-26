@@ -14,8 +14,8 @@ func (c *Client) AdminServerStatus(ctx context.Context) (controlv1.AdminServerSt
 		return controlv1.AdminServerStatus{}, err
 	}
 	if !status.Role.Valid() || status.StartedAt.IsZero() || status.CurrentTime.IsZero() ||
-		status.EnabledRoutes < 0 || status.SuspendedRoutes < 0 || status.StartingRouteSessions < 0 ||
-		status.ReadyRouteSessions < 0 || status.IngressLeases < 0 || status.RelayLeases < 0 {
+		status.EnabledPublicUrls < 0 || status.SuspendedPublicUrls < 0 || status.StartingPublishRuns < 0 ||
+		status.ReadyPublishRuns < 0 || status.IngressLeases < 0 || status.RelayLeases < 0 {
 		return controlv1.AdminServerStatus{}, errors.New("controlclient: server returned an invalid status")
 	}
 	return status, nil

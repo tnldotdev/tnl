@@ -90,7 +90,7 @@ func (r *CertificateCache) material(ctx context.Context, hostname, phase string)
 		return Material{}, false, nil
 	}
 	if err != nil {
-		return Material{}, false, fmt.Errorf("clientstate: read route certificate: %w", err)
+		return Material{}, false, fmt.Errorf("clientstate: read public URL certificate: %w", err)
 	}
 	if phase == certificatePhasePending && len(stored.CertificatePem) == 0 {
 		return Material{}, false, nil
@@ -127,7 +127,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 		return r.pendingFromDB(ctx, stored, hostname)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return Pending{}, fmt.Errorf("clientstate: read pending route certificate: %w", err)
+		return Pending{}, fmt.Errorf("clientstate: read pending public URL certificate: %w", err)
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -150,7 +150,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 		KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "",
 		UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
-		return Pending{}, fmt.Errorf("clientstate: save pending route certificate: %w", err)
+		return Pending{}, fmt.Errorf("clientstate: save pending public URL certificate: %w", err)
 	}
 	return Pending{Key: key, CSRDER: csrDER, keyDER: keyDER}, nil
 }
@@ -192,7 +192,7 @@ func (r *CertificateCache) Stage(
 		IssuanceID: issuanceID,
 		UpdatedAt:  r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
-		return Material{}, fmt.Errorf("clientstate: stage route certificate: %w", err)
+		return Material{}, fmt.Errorf("clientstate: stage public URL certificate: %w", err)
 	}
 	return Material{
 		Certificate: installed, RenewAt: renewAt.UTC(), IssuanceID: issuanceID,
@@ -243,7 +243,7 @@ func (r *CertificateCache) NewPending(ctx context.Context, hostname string) (Pen
 	if err := r.store.database.queries.DeleteCertificateMaterial(ctx, clientstatedb.DeleteCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
 	}); err != nil {
-		return Pending{}, fmt.Errorf("clientstate: replace pending route certificate: %w", err)
+		return Pending{}, fmt.Errorf("clientstate: replace pending public URL certificate: %w", err)
 	}
 	return r.Pending(ctx, hostname)
 }
@@ -330,11 +330,11 @@ func parseKey(keyDER []byte) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-func databaseVersion(routeVersion uint64) (int64, error) {
-	if routeVersion > math.MaxInt64 {
-		return 0, errors.New("clientstate: route version exceeds database range")
+func databaseVersion(publishRunNumber uint64) (int64, error) {
+	if publishRunNumber > math.MaxInt64 {
+		return 0, errors.New("clientstate: publish run number exceeds database range")
 	}
-	return int64(routeVersion), nil
+	return int64(publishRunNumber), nil
 }
 
 func unixNanoTime(value int64) time.Time {
@@ -344,6 +344,6 @@ func unixNanoTime(value int64) time.Time {
 	return time.Unix(0, value).UTC()
 }
 
-func validRouteID(value string) bool {
-	return opaqueid.Valid(value, "route_")
+func validPublicURLID(value string) bool {
+	return opaqueid.Valid(value, "public_url_")
 }

@@ -41,24 +41,24 @@ type ControlSession struct {
 }
 
 type LocalTunnel struct {
-	ID             string
-	Command        string
-	ProcessID      int64
-	ServerOrigin   string
-	ProjectRoot    string
-	Service        string
-	Hostname       string
-	Target         string
-	Framework      string
-	RouteID        string
-	RouteVersion   int64
-	State          string
-	StartedAt      int64
-	UpdatedAt      int64
-	HeartbeatAt    int64
-	LeaseExpiresAt int64
-	StoppedAt      sql.NullInt64
-	LastError      string
+	ID               string
+	Command          string
+	ProcessID        int64
+	ServerOrigin     string
+	ProjectRoot      string
+	Service          string
+	Hostname         string
+	Target           string
+	Framework        string
+	PublicURLID      string
+	PublishRunNumber int64
+	State            string
+	StartedAt        int64
+	UpdatedAt        int64
+	HeartbeatAt      int64
+	LeaseExpiresAt   int64
+	StoppedAt        sql.NullInt64
+	LastError        string
 }
 
 type ServerProfile struct {

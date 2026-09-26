@@ -31,15 +31,15 @@ const alternateAttemptTimeout = 250 * time.Millisecond
 
 const visitorConnectionIDPrefix = "visitor_connection_"
 
-type Route struct {
+type PublicURL struct {
 	ID                string
-	RouteVersion      uint64
+	PublishRunNumber  uint64
 	RecoveryEpisodeID uint64
 	AllowedIPPrefixes []netip.Prefix
 	Backends          []routebackend.Backend
 }
 
-type LookupFunc func(string) (Route, bool)
+type LookupFunc func(string) (PublicURL, bool)
 
 type BackendLookupFunc func(string) ([]routebackend.Backend, bool)
 
@@ -79,7 +79,7 @@ type Config struct {
 	SourceConnectionRate            float64
 	SourceConnectionBurst           int
 	MaxConnections                  int
-	MaxRouteConnections             int
+	MaxPublicURLConnections         int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
@@ -104,7 +104,7 @@ type Server struct {
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
 	backends    map[net.Conn]struct{}
-	byRoute     map[string]int
+	byPublicURL map[string]int
 	byChallenge map[string]int
 	pending     int
 	admitted    [connectionKinds]int
@@ -119,7 +119,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if listener == nil || config.Lookup == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
-	if config.MaxConnections <= 0 || config.MaxRouteConnections <= 0 {
+	if config.MaxConnections <= 0 || config.MaxPublicURLConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
 	if err := admissionDefaults(&config); err != nil {
@@ -160,7 +160,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		cancelOpens: cancelOpens,
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
-		byRoute:     make(map[string]int),
+		byPublicURL: make(map[string]int),
 		byChallenge: make(map[string]int),
 		done:        make(chan struct{}),
 	}, nil
@@ -291,7 +291,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.transfer(public)
 		return nil
 	}
-	var route Route
+	var route PublicURL
 	var backends []routebackend.Backend
 	var ok bool
 	var challengeReason string
@@ -327,7 +327,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	var usage UsageConnection
 	if !challenge && s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.RouteVersion, source.Addr(), time.Now().UTC())
+		usage = s.config.OpenUsage(route.ID, route.PublishRunNumber, source.Addr(), time.Now().UTC())
 		if usage != nil {
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
@@ -418,7 +418,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			stopAttempt()
 			s.observeAttempt(attempt, openErr, started)
 			s.observeRelayAttempt(backend, "open_failed")
-			lastErr = fmt.Errorf("ingress: open route: %w", openErr)
+			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
 			continue
 		}
 		if usage != nil && !opened {
@@ -489,7 +489,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			}
 			if route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 				recoveryOnce.Do(func() {
-					s.config.ObserveRecovery(route.ID, route.RouteVersion, route.RecoveryEpisodeID, now)
+					s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, now)
 				})
 			}
 		}
@@ -513,9 +513,9 @@ func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome strin
 	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
 }
 
-func (s *Server) reportForwardingFailure(challenge bool, route Route, visitorID, reason string, attempts int) {
+func (s *Server) reportForwardingFailure(challenge bool, route PublicURL, visitorID, reason string, attempts int) {
 	if !challenge && s.config.OnForwardingFailure != nil {
-		s.config.OnForwardingFailure(route.ID, route.RouteVersion, visitorID, reason, attempts)
+		s.config.OnForwardingFailure(route.ID, route.PublishRunNumber, visitorID, reason, attempts)
 	}
 }
 

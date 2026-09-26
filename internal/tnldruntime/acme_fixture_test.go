@@ -76,7 +76,7 @@ func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string)
 		"domainBlocklist": []string{}, "retryAfter": map[string]int{"authz": 0, "order": 0},
 		"keyAlgorithm": "ecdsa", "profiles": map[string]any{
 			"default":   map[string]any{"description": "integration", "validityPeriod": 3600},
-			"tlsserver": map[string]any{"description": "tnl route TLS", "validityPeriod": 3600},
+			"tlsserver": map[string]any{"description": "tnl visitor TLS", "validityPeriod": 3600},
 		},
 	}}
 	encoded, err := json.Marshal(configuration)

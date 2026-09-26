@@ -181,9 +181,9 @@ func (e HealthResponseStatus) Valid() bool {
 
 // Defines values for MaintenanceControlName.
 const (
-	MaintenanceControlNameCertificateIssuance  MaintenanceControlName = "certificate_issuance"
-	MaintenanceControlNameRouteCreation        MaintenanceControlName = "route_creation"
-	MaintenanceControlNameRouteSessionCreation MaintenanceControlName = "route_session_creation"
+	MaintenanceControlNameCertificateIssuance MaintenanceControlName = "certificate_issuance"
+	MaintenanceControlNamePublicUrlCreation   MaintenanceControlName = "public_url_creation"
+	MaintenanceControlNamePublishRunCreation  MaintenanceControlName = "publish_run_creation"
 )
 
 // Valid indicates whether the value is a known member of the MaintenanceControlName enum.
@@ -191,9 +191,9 @@ func (e MaintenanceControlName) Valid() bool {
 	switch e {
 	case MaintenanceControlNameCertificateIssuance:
 		return true
-	case MaintenanceControlNameRouteCreation:
+	case MaintenanceControlNamePublicUrlCreation:
 		return true
-	case MaintenanceControlNameRouteSessionCreation:
+	case MaintenanceControlNamePublishRunCreation:
 		return true
 	default:
 		return false
@@ -230,8 +230,8 @@ const (
 	NotFound             ProblemCode = "not_found"
 	PlacementUnavailable ProblemCode = "placement_unavailable"
 	PolicyRevisionStale  ProblemCode = "policy_revision_stale"
+	PublishRunOpen       ProblemCode = "publish_run_open"
 	RateLimited          ProblemCode = "rate_limited"
-	RouteSessionOpen     ProblemCode = "route_session_open"
 	Unauthenticated      ProblemCode = "unauthenticated"
 	Unavailable          ProblemCode = "unavailable"
 )
@@ -259,13 +259,79 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case PolicyRevisionStale:
 		return true
-	case RateLimited:
+	case PublishRunOpen:
 		return true
-	case RouteSessionOpen:
+	case RateLimited:
 		return true
 	case Unauthenticated:
 		return true
 	case Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicURLLifecycleState.
+const (
+	Enabled   PublicURLLifecycleState = "enabled"
+	Suspended PublicURLLifecycleState = "suspended"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLLifecycleState enum.
+func (e PublicURLLifecycleState) Valid() bool {
+	switch e {
+	case Enabled:
+		return true
+	case Suspended:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicURLScope.
+const (
+	Member PublicURLScope = "member"
+	Shared PublicURLScope = "shared"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLScope enum.
+func (e PublicURLScope) Valid() bool {
+	switch e {
+	case Member:
+		return true
+	case Shared:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublishRunState.
+const (
+	PublishRunStateCanceled PublishRunState = "canceled"
+	PublishRunStateClosed   PublishRunState = "closed"
+	PublishRunStateDraining PublishRunState = "draining"
+	PublishRunStateExpired  PublishRunState = "expired"
+	PublishRunStateReady    PublishRunState = "ready"
+	PublishRunStateStarting PublishRunState = "starting"
+)
+
+// Valid indicates whether the value is a known member of the PublishRunState enum.
+func (e PublishRunState) Valid() bool {
+	switch e {
+	case PublishRunStateCanceled:
+		return true
+	case PublishRunStateClosed:
+		return true
+	case PublishRunStateDraining:
+		return true
+	case PublishRunStateExpired:
+		return true
+	case PublishRunStateReady:
+		return true
+	case PublishRunStateStarting:
 		return true
 	default:
 		return false
@@ -332,72 +398,6 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for RouteLifecycleState.
-const (
-	Enabled   RouteLifecycleState = "enabled"
-	Suspended RouteLifecycleState = "suspended"
-)
-
-// Valid indicates whether the value is a known member of the RouteLifecycleState enum.
-func (e RouteLifecycleState) Valid() bool {
-	switch e {
-	case Enabled:
-		return true
-	case Suspended:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RouteScope.
-const (
-	Member RouteScope = "member"
-	Shared RouteScope = "shared"
-)
-
-// Valid indicates whether the value is a known member of the RouteScope enum.
-func (e RouteScope) Valid() bool {
-	switch e {
-	case Member:
-		return true
-	case Shared:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RouteSessionState.
-const (
-	RouteSessionStateCanceled RouteSessionState = "canceled"
-	RouteSessionStateClosed   RouteSessionState = "closed"
-	RouteSessionStateDraining RouteSessionState = "draining"
-	RouteSessionStateExpired  RouteSessionState = "expired"
-	RouteSessionStateReady    RouteSessionState = "ready"
-	RouteSessionStateStarting RouteSessionState = "starting"
-)
-
-// Valid indicates whether the value is a known member of the RouteSessionState enum.
-func (e RouteSessionState) Valid() bool {
-	switch e {
-	case RouteSessionStateCanceled:
-		return true
-	case RouteSessionStateClosed:
-		return true
-	case RouteSessionStateDraining:
-		return true
-	case RouteSessionStateExpired:
-		return true
-	case RouteSessionStateReady:
-		return true
-	case RouteSessionStateStarting:
-		return true
-	default:
-		return false
-	}
-}
-
 // AdminDrainRelayRequest defines model for AdminDrainRelayRequest.
 type AdminDrainRelayRequest struct {
 	Deadline           time.Time  `json:"deadline"`
@@ -433,15 +433,15 @@ type AdminRelayPage struct {
 
 // AdminServerStatus defines model for AdminServerStatus.
 type AdminServerStatus struct {
-	CurrentTime           time.Time             `json:"current_time"`
-	EnabledRoutes         int                   `json:"enabled_routes"`
-	IngressLeases         int                   `json:"ingress_leases"`
-	ReadyRouteSessions    int                   `json:"ready_route_sessions"`
-	RelayLeases           int                   `json:"relay_leases"`
-	Role                  AdminServerStatusRole `json:"role"`
-	StartedAt             time.Time             `json:"started_at"`
-	StartingRouteSessions int                   `json:"starting_route_sessions"`
-	SuspendedRoutes       int                   `json:"suspended_routes"`
+	CurrentTime         time.Time             `json:"current_time"`
+	EnabledPublicUrls   int                   `json:"enabled_public_urls"`
+	IngressLeases       int                   `json:"ingress_leases"`
+	ReadyPublishRuns    int                   `json:"ready_publish_runs"`
+	RelayLeases         int                   `json:"relay_leases"`
+	Role                AdminServerStatusRole `json:"role"`
+	StartedAt           time.Time             `json:"started_at"`
+	StartingPublishRuns int                   `json:"starting_publish_runs"`
+	SuspendedPublicUrls int                   `json:"suspended_public_urls"`
 }
 
 // AdminServerStatusRole defines model for AdminServerStatus.Role.
@@ -473,26 +473,26 @@ type CertificateChallengeMethod string
 
 // CertificateInstalledRequest defines model for CertificateInstalledRequest.
 type CertificateInstalledRequest struct {
-	IssuanceId   IssuanceID `json:"issuance_id"`
-	NotAfter     time.Time  `json:"not_after"`
-	RouteVersion int64      `json:"route_version"`
+	IssuanceId       IssuanceID `json:"issuance_id"`
+	NotAfter         time.Time  `json:"not_after"`
+	PublishRunNumber int64      `json:"publish_run_number"`
 }
 
 // CertificateIssuance defines model for CertificateIssuance.
 type CertificateIssuance struct {
-	CertificatePem  *string                  `json:"certificate_pem,omitempty"`
-	CertificatePlan CertificatePlan          `json:"certificate_plan"`
-	Challenges      *[]CertificateChallenge  `json:"challenges,omitempty"`
-	CreatedAt       time.Time                `json:"created_at"`
-	Id              IssuanceID               `json:"id"`
-	NotAfter        *time.Time               `json:"not_after,omitempty"`
-	NotBefore       *time.Time               `json:"not_before,omitempty"`
-	RetryAt         *time.Time               `json:"retry_at,omitempty"`
-	RouteId         RouteID                  `json:"route_id"`
-	RouteSessionId  RouteSessionID           `json:"route_session_id"`
-	RouteVersion    int64                    `json:"route_version"`
-	State           CertificateIssuanceState `json:"state"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	CertificatePem   *string                  `json:"certificate_pem,omitempty"`
+	CertificatePlan  CertificatePlan          `json:"certificate_plan"`
+	Challenges       *[]CertificateChallenge  `json:"challenges,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	Id               IssuanceID               `json:"id"`
+	NotAfter         *time.Time               `json:"not_after,omitempty"`
+	NotBefore        *time.Time               `json:"not_before,omitempty"`
+	PublicUrlId      PublicURLID              `json:"public_url_id"`
+	PublishRunId     PublishRunID             `json:"publish_run_id"`
+	PublishRunNumber int64                    `json:"publish_run_number"`
+	RetryAt          *time.Time               `json:"retry_at,omitempty"`
+	State            CertificateIssuanceState `json:"state"`
+	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
 // CertificateIssuanceState defines model for CertificateIssuanceState.
@@ -534,8 +534,8 @@ type ControlDiscovery struct {
 
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
 type CreateCertificateIssuanceRequest struct {
-	Csr          []byte `json:"csr"`
-	RouteVersion int64  `json:"route_version"`
+	Csr              []byte `json:"csr"`
+	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
 // CreateDNSAuthorityRequest defines model for CreateDNSAuthorityRequest.
@@ -545,14 +545,14 @@ type CreateDNSAuthorityRequest struct {
 	TeamId          TeamID            `json:"team_id"`
 }
 
-// CreateRouteRequest defines model for CreateRouteRequest.
-type CreateRouteRequest struct {
+// CreatePublicURLRequest defines model for CreatePublicURLRequest.
+type CreatePublicURLRequest struct {
 	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
 	CanonicalHostname CanonicalHostname `json:"canonical_hostname"`
 	DomainId          DomainID          `json:"domain_id"`
 	Ephemeral         *bool             `json:"ephemeral,omitempty"`
 	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
-	RouteScope        RouteScope        `json:"route_scope"`
+	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
 	Target            string            `json:"target"`
 	TeamId            TeamID            `json:"team_id"`
 }
@@ -653,6 +653,85 @@ type Problem struct {
 // ProblemCode defines model for ProblemCode.
 type ProblemCode string
 
+// PublicURL defines model for PublicURL.
+type PublicURL struct {
+	AllowedIpPrefixes    *[]string               `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname    CanonicalHostname       `json:"canonical_hostname"`
+	CreatedAt            time.Time               `json:"created_at"`
+	DomainId             DomainID                `json:"domain_id"`
+	Ephemeral            bool                    `json:"ephemeral"`
+	ExpiresAt            *time.Time              `json:"expires_at,omitempty"`
+	Id                   PublicURLID             `json:"id"`
+	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
+	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
+	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
+	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
+	PolicyRevision       int64                   `json:"policy_revision"`
+	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
+	Target               string                  `json:"target"`
+	TeamId               TeamID                  `json:"team_id"`
+	UpdatedAt            time.Time               `json:"updated_at"`
+}
+
+// PublicURLID defines model for PublicURLID.
+type PublicURLID = ResourceID
+
+// PublicURLLifecycleState defines model for PublicURLLifecycleState.
+type PublicURLLifecycleState string
+
+// PublicURLPage defines model for PublicURLPage.
+type PublicURLPage struct {
+	NextCursor *PublicURLID `json:"next_cursor,omitempty"`
+	PublicUrls []PublicURL  `json:"public_urls"`
+}
+
+// PublicURLScope defines model for PublicURLScope.
+type PublicURLScope string
+
+// PublishRun defines model for PublishRun.
+type PublishRun struct {
+	ClosedAt                  *time.Time      `json:"closed_at,omitempty"`
+	CreatedAt                 time.Time       `json:"created_at"`
+	ExpiresAt                 time.Time       `json:"expires_at"`
+	Id                        PublishRunID    `json:"id"`
+	MembershipId              *MembershipID   `json:"membership_id,omitempty"`
+	PolicyRevision            int64           `json:"policy_revision"`
+	PublicUrlId               PublicURLID     `json:"public_url_id"`
+	PublishRunNumber          int64           `json:"publish_run_number"`
+	ReadyAt                   *time.Time      `json:"ready_at,omitempty"`
+	ReadyPublisherConnections *int            `json:"ready_publisher_connections,omitempty"`
+	State                     PublishRunState `json:"state"`
+	TeamId                    TeamID          `json:"team_id"`
+}
+
+// PublishRunHeartbeat defines model for PublishRunHeartbeat.
+type PublishRunHeartbeat struct {
+	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
+	PolicyDenials        int64                  `json:"policy_denials"`
+	PublishRun           PublishRun             `json:"publish_run"`
+	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+}
+
+// PublishRunID defines model for PublishRunID.
+type PublishRunID = ResourceID
+
+// PublishRunSetup defines model for PublishRunSetup.
+type PublishRunSetup struct {
+	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
+	PublicUrl            PublicURL              `json:"public_url"`
+	PublishRun           PublishRun             `json:"publish_run"`
+	PublishRunToken      string                 `json:"publish_run_token"`
+	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+}
+
+// PublishRunState defines model for PublishRunState.
+type PublishRunState string
+
+// PublishRunVersionRequest defines model for PublishRunVersionRequest.
+type PublishRunVersionRequest struct {
+	PublishRunNumber int64 `json:"publish_run_number"`
+}
+
 // PublisherConnectionID defines model for PublisherConnectionID.
 type PublisherConnectionID = ResourceID
 
@@ -682,85 +761,6 @@ type RelayServiceID = ResourceID
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
-// Route defines model for Route.
-type Route struct {
-	AllowedIpPrefixes  *[]string           `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname  CanonicalHostname   `json:"canonical_hostname"`
-	CreatedAt          time.Time           `json:"created_at"`
-	DomainId           DomainID            `json:"domain_id"`
-	Ephemeral          bool                `json:"ephemeral"`
-	ExpiresAt          *time.Time          `json:"expires_at,omitempty"`
-	Id                 RouteID             `json:"id"`
-	LifecycleState     RouteLifecycleState `json:"lifecycle_state"`
-	MembershipId       *MembershipID       `json:"membership_id,omitempty"`
-	NextRouteVersion   int64               `json:"next_route_version"`
-	OpenRouteSessionId *RouteSessionID     `json:"open_route_session_id,omitempty"`
-	PolicyRevision     int64               `json:"policy_revision"`
-	RouteScope         RouteScope          `json:"route_scope"`
-	Target             string              `json:"target"`
-	TeamId             TeamID              `json:"team_id"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-}
-
-// RouteID defines model for RouteID.
-type RouteID = ResourceID
-
-// RouteLifecycleState defines model for RouteLifecycleState.
-type RouteLifecycleState string
-
-// RoutePage defines model for RoutePage.
-type RoutePage struct {
-	NextCursor *RouteID `json:"next_cursor,omitempty"`
-	Routes     []Route  `json:"routes"`
-}
-
-// RouteScope defines model for RouteScope.
-type RouteScope string
-
-// RouteSession defines model for RouteSession.
-type RouteSession struct {
-	ClosedAt                  *time.Time        `json:"closed_at,omitempty"`
-	CreatedAt                 time.Time         `json:"created_at"`
-	ExpiresAt                 time.Time         `json:"expires_at"`
-	Id                        RouteSessionID    `json:"id"`
-	MembershipId              *MembershipID     `json:"membership_id,omitempty"`
-	PolicyRevision            int64             `json:"policy_revision"`
-	ReadyAt                   *time.Time        `json:"ready_at,omitempty"`
-	ReadyPublisherConnections *int              `json:"ready_publisher_connections,omitempty"`
-	RouteId                   RouteID           `json:"route_id"`
-	RouteVersion              int64             `json:"route_version"`
-	State                     RouteSessionState `json:"state"`
-	TeamId                    TeamID            `json:"team_id"`
-}
-
-// RouteSessionHeartbeat defines model for RouteSessionHeartbeat.
-type RouteSessionHeartbeat struct {
-	// PolicyDenials Total IP policy denials reported so far for this route version. The total may lag.
-	PolicyDenials        int64                  `json:"policy_denials"`
-	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
-	RouteSession         RouteSession           `json:"route_session"`
-}
-
-// RouteSessionID defines model for RouteSessionID.
-type RouteSessionID = ResourceID
-
-// RouteSessionSetup defines model for RouteSessionSetup.
-type RouteSessionSetup struct {
-	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
-	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
-	Route                Route                  `json:"route"`
-	RouteSession         RouteSession           `json:"route_session"`
-	RouteSessionToken    string                 `json:"route_session_token"`
-}
-
-// RouteSessionState defines model for RouteSessionState.
-type RouteSessionState string
-
-// RouteSessionVersionRequest defines model for RouteSessionVersionRequest.
-type RouteSessionVersionRequest struct {
-	RouteVersion int64 `json:"route_version"`
-}
-
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
@@ -769,8 +769,8 @@ type SetMaintenanceControlRequest struct {
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
-// UpdateRouteRequest defines model for UpdateRouteRequest.
-type UpdateRouteRequest struct {
+// UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
+type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
 	Target            string   `json:"target"`
 }
@@ -792,27 +792,27 @@ type ListAdminRelaysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
-type CreateCertificateIssuanceParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// ListRoutesParams defines parameters for ListRoutes.
-type ListRoutesParams struct {
+// ListPublicURLsParams defines parameters for ListPublicURLs.
+type ListPublicURLsParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
 
-	// CanonicalHostname Exact canonical hostname within the selected team. Returns zero or one non-deleted route with no next cursor. Cannot be combined with cursor.
+	// CanonicalHostname Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
 	CanonicalHostname *CanonicalHostnameQuery `form:"canonical_hostname,omitempty" json:"canonical_hostname,omitempty"`
 }
 
-// CreateRouteParams defines parameters for CreateRoute.
-type CreateRouteParams struct {
+// CreatePublicURLParams defines parameters for CreatePublicURL.
+type CreatePublicURLParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// CreateRouteSessionParams defines parameters for CreateRouteSession.
-type CreateRouteSessionParams struct {
+// CreatePublishRunParams defines parameters for CreatePublishRun.
+type CreatePublishRunParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
+type CreateCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -832,23 +832,23 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
-// MarkRouteSessionCertificateInstalledJSONRequestBody defines body for MarkRouteSessionCertificateInstalled for application/json ContentType.
-type MarkRouteSessionCertificateInstalledJSONRequestBody = CertificateInstalledRequest
+// CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
+type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
+
+// UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
+type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
+
+// MarkPublishRunCertificateInstalledJSONRequestBody defines body for MarkPublishRunCertificateInstalled for application/json ContentType.
+type MarkPublishRunCertificateInstalledJSONRequestBody = CertificateInstalledRequest
 
 // CreateCertificateIssuanceJSONRequestBody defines body for CreateCertificateIssuance for application/json ContentType.
 type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
 
-// HeartbeatRouteSessionJSONRequestBody defines body for HeartbeatRouteSession for application/json ContentType.
-type HeartbeatRouteSessionJSONRequestBody = RouteSessionVersionRequest
+// HeartbeatPublishRunJSONRequestBody defines body for HeartbeatPublishRun for application/json ContentType.
+type HeartbeatPublishRunJSONRequestBody = PublishRunVersionRequest
 
-// MarkRouteSessionReadyJSONRequestBody defines body for MarkRouteSessionReady for application/json ContentType.
-type MarkRouteSessionReadyJSONRequestBody = RouteSessionVersionRequest
-
-// CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
-type CreateRouteJSONRequestBody = CreateRouteRequest
-
-// UpdateRouteJSONRequestBody defines body for UpdateRoute for application/json ContentType.
-type UpdateRouteJSONRequestBody = UpdateRouteRequest
+// MarkPublishRunReadyJSONRequestBody defines body for MarkPublishRunReady for application/json ContentType.
+type MarkPublishRunReadyJSONRequestBody = PublishRunVersionRequest
 
 // CreateDNSAuthorityJSONRequestBody defines body for CreateDNSAuthority for application/json ContentType.
 type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
@@ -973,7 +973,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetCertificateIssuance Read one route-session certificate issuance
+	// GetCertificateIssuance Read one publish-run certificate issuance
 	//
 	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 	GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1003,119 +1003,119 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPublicURLs List public URLs for one team
+	//
+	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+	ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublicURLWithBody Create one team public URL
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublicURL Create one team public URL
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePublicURL Delete one public URL and close its publish run
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+	DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublicURL Read one public URL
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+	GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePublicURLWithBody Update a public URL's target and IP policy
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePublicURL Update a public URL's target and IP policy
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublishRun Create a publish run and allocate its publish run number
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosePublishRun Close and drain a publish run without deleting its public URL
+	//
+	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+	ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReadiness Confirm that control and its database are ready
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CloseRouteSession Close and drain a route session without deleting its route
-	//
-	// Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
-	CloseRouteSession(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkRouteSessionCertificateInstalledWithBody Record installation of the current route certificate
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-	MarkRouteSessionCertificateInstalledWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkRouteSessionCertificateInstalled Record installation of the current route certificate
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-	MarkRouteSessionCertificateInstalled(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateCertificateIssuanceWithBody Begin issuance for the route session's certificate plan
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithBody(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateCertificateIssuance Begin issuance for the route session's certificate plan
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuance(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// HeartbeatRouteSessionWithBody Renew a route session and replace missing publisher connections
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-	HeartbeatRouteSessionWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// HeartbeatRouteSession Renew a route session and replace missing publisher connections
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-	HeartbeatRouteSession(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkRouteSessionReadyWithBody Mark a route session ready after its certificate and two publisher connections are ready
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-	MarkRouteSessionReadyWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-	MarkRouteSessionReady(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListRoutes List routes for one team
-	//
-	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
-	ListRoutes(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateRouteWithBody Create one team route
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-	CreateRouteWithBody(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateRoute Create one team route
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-	CreateRoute(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteRoute Delete one route and close its route session
-	//
-	// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
-	DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetRoute Read one route
-	//
-	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
-	GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateRouteWithBody Update a route's target and IP policy
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-	UpdateRouteWithBody(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateRoute Update a route's target and IP policy
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-	UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateRouteSession Create a route session and allocate its route version
-	//
-	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
 	//
@@ -1141,14 +1141,14 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected route sessions
+	// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
+	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1269,7 +1269,7 @@ func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// GetCertificateIssuance Read one route-session certificate issuance
+// GetCertificateIssuance Read one publish-run certificate issuance
 //
 // Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1359,290 +1359,290 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
+// ListPublicURLs List public URLs for one team
+//
+// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublicURLsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublicURLWithBody Create one team public URL
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublicURL Create one team public URL
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePublicURL Delete one public URL and close its publish run
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePublicURLRequest(c.Server, publicUrlId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublicURL Read one public URL
+//
+// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublicURLRequest(c.Server, publicUrlId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublicURLWithBody Update a public URL's target and IP policy
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublicURLRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublicURL Update a public URL's target and IP policy
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublicURLRequest(c.Server, publicUrlId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublishRun Create a publish run and allocate its publish run number
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosePublishRun Close and drain a publish run without deleting its public URL
+//
+// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosePublishRunRequest(c.Server, publishRunId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+func (c *Client) MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkPublishRunCertificateInstalledRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkPublishRunCertificateInstalledRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCertificateIssuanceRequestWithBody(c.Server, publishRunId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCertificateIssuanceRequest(c.Server, publishRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHeartbeatPublishRunRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHeartbeatPublishRunRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkPublishRunReadyRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkPublishRunReadyRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetReadiness Confirm that control and its database are ready
 //
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CloseRouteSession Close and drain a route session without deleting its route
-//
-// Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
-func (c *Client) CloseRouteSession(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseRouteSessionRequest(c.Server, routeSessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkRouteSessionCertificateInstalledWithBody Record installation of the current route certificate
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-func (c *Client) MarkRouteSessionCertificateInstalledWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkRouteSessionCertificateInstalledRequestWithBody(c.Server, routeSessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkRouteSessionCertificateInstalled Record installation of the current route certificate
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-func (c *Client) MarkRouteSessionCertificateInstalled(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkRouteSessionCertificateInstalledRequest(c.Server, routeSessionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateCertificateIssuanceWithBody Begin issuance for the route session's certificate plan
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCertificateIssuanceRequestWithBody(c.Server, routeSessionId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateCertificateIssuance Begin issuance for the route session's certificate plan
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCertificateIssuanceRequest(c.Server, routeSessionId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// HeartbeatRouteSessionWithBody Renew a route session and replace missing publisher connections
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-func (c *Client) HeartbeatRouteSessionWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatRouteSessionRequestWithBody(c.Server, routeSessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// HeartbeatRouteSession Renew a route session and replace missing publisher connections
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-func (c *Client) HeartbeatRouteSession(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatRouteSessionRequest(c.Server, routeSessionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkRouteSessionReadyWithBody Mark a route session ready after its certificate and two publisher connections are ready
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-func (c *Client) MarkRouteSessionReadyWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkRouteSessionReadyRequestWithBody(c.Server, routeSessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-func (c *Client) MarkRouteSessionReady(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkRouteSessionReadyRequest(c.Server, routeSessionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListRoutes List routes for one team
-//
-// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
-func (c *Client) ListRoutes(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListRoutesRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateRouteWithBody Create one team route
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-func (c *Client) CreateRouteWithBody(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRouteRequestWithBody(c.Server, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateRoute Create one team route
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-func (c *Client) CreateRoute(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRouteRequest(c.Server, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DeleteRoute Delete one route and close its route session
-//
-// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
-func (c *Client) DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteRouteRequest(c.Server, routeId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetRoute Read one route
-//
-// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
-func (c *Client) GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetRouteRequest(c.Server, routeId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateRouteWithBody Update a route's target and IP policy
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-func (c *Client) UpdateRouteWithBody(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateRouteRequestWithBody(c.Server, routeId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateRoute Update a route's target and IP policy
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-func (c *Client) UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateRouteRequest(c.Server, routeId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateRouteSession Create a route session and allocate its route version
-//
-// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRouteSessionRequest(c.Server, routeId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1717,7 +1717,7 @@ func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSA
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected route sessions
+// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
 //
 // Takes any type of body and a specified content type.
 //
@@ -1734,7 +1734,7 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
+// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2136,8 +2136,8 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewGetReadinessRequest constructs an http.Request for the GetReadiness method
-func NewGetReadinessRequest(server string) (*http.Request, error) {
+// NewListPublicURLsRequest constructs an http.Request for the ListPublicURLs method
+func NewListPublicURLsRequest(server string, params *ListPublicURLsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -2145,269 +2145,7 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/ready")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCloseRouteSessionRequest constructs an http.Request for the CloseRouteSession method
-func NewCloseRouteSessionRequest(server string, routeSessionId RouteSessionID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_session_id", routeSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/route-sessions/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewMarkRouteSessionCertificateInstalledRequest calls the generic MarkRouteSessionCertificateInstalled builder with application/json body
-func NewMarkRouteSessionCertificateInstalledRequest(server string, routeSessionId RouteSessionID, body MarkRouteSessionCertificateInstalledJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewMarkRouteSessionCertificateInstalledRequestWithBody(server, routeSessionId, "application/json", bodyReader)
-}
-
-// NewMarkRouteSessionCertificateInstalledRequestWithBody constructs an http.Request for the MarkRouteSessionCertificateInstalled method, with any body, and a specified content type
-func NewMarkRouteSessionCertificateInstalledRequestWithBody(server string, routeSessionId RouteSessionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_session_id", routeSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/route-sessions/%s/certificate-installed", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreateCertificateIssuanceRequest calls the generic CreateCertificateIssuance builder with application/json body
-func NewCreateCertificateIssuanceRequest(server string, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateCertificateIssuanceRequestWithBody(server, routeSessionId, params, "application/json", bodyReader)
-}
-
-// NewCreateCertificateIssuanceRequestWithBody constructs an http.Request for the CreateCertificateIssuance method, with any body, and a specified content type
-func NewCreateCertificateIssuanceRequestWithBody(server string, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_session_id", routeSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/route-sessions/%s/certificate-issuances", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewHeartbeatRouteSessionRequest calls the generic HeartbeatRouteSession builder with application/json body
-func NewHeartbeatRouteSessionRequest(server string, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewHeartbeatRouteSessionRequestWithBody(server, routeSessionId, "application/json", bodyReader)
-}
-
-// NewHeartbeatRouteSessionRequestWithBody constructs an http.Request for the HeartbeatRouteSession method, with any body, and a specified content type
-func NewHeartbeatRouteSessionRequestWithBody(server string, routeSessionId RouteSessionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_session_id", routeSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/route-sessions/%s/heartbeat", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewMarkRouteSessionReadyRequest calls the generic MarkRouteSessionReady builder with application/json body
-func NewMarkRouteSessionReadyRequest(server string, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewMarkRouteSessionReadyRequestWithBody(server, routeSessionId, "application/json", bodyReader)
-}
-
-// NewMarkRouteSessionReadyRequestWithBody constructs an http.Request for the MarkRouteSessionReady method, with any body, and a specified content type
-func NewMarkRouteSessionReadyRequestWithBody(server string, routeSessionId RouteSessionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_session_id", routeSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/route-sessions/%s/ready", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListRoutesRequest constructs an http.Request for the ListRoutes method
-func NewListRoutesRequest(server string, params *ListRoutesParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/routes")
+	operationPath := fmt.Sprintf("/v1/public-urls")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2472,19 +2210,19 @@ func NewListRoutesRequest(server string, params *ListRoutesParams) (*http.Reques
 	return req, nil
 }
 
-// NewCreateRouteRequest calls the generic CreateRoute builder with application/json body
-func NewCreateRouteRequest(server string, params *CreateRouteParams, body CreateRouteJSONRequestBody) (*http.Request, error) {
+// NewCreatePublicURLRequest calls the generic CreatePublicURL builder with application/json body
+func NewCreatePublicURLRequest(server string, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateRouteRequestWithBody(server, params, "application/json", bodyReader)
+	return NewCreatePublicURLRequestWithBody(server, params, "application/json", bodyReader)
 }
 
-// NewCreateRouteRequestWithBody constructs an http.Request for the CreateRoute method, with any body, and a specified content type
-func NewCreateRouteRequestWithBody(server string, params *CreateRouteParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewCreatePublicURLRequestWithBody constructs an http.Request for the CreatePublicURL method, with any body, and a specified content type
+func NewCreatePublicURLRequestWithBody(server string, params *CreatePublicURLParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -2492,7 +2230,7 @@ func NewCreateRouteRequestWithBody(server string, params *CreateRouteParams, con
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/routes")
+	operationPath := fmt.Sprintf("/v1/public-urls")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2525,13 +2263,13 @@ func NewCreateRouteRequestWithBody(server string, params *CreateRouteParams, con
 	return req, nil
 }
 
-// NewDeleteRouteRequest constructs an http.Request for the DeleteRoute method
-func NewDeleteRouteRequest(server string, routeId RouteID) (*http.Request, error) {
+// NewDeletePublicURLRequest constructs an http.Request for the DeletePublicURL method
+func NewDeletePublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_id", routeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -2541,7 +2279,7 @@ func NewDeleteRouteRequest(server string, routeId RouteID) (*http.Request, error
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/routes/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2559,13 +2297,13 @@ func NewDeleteRouteRequest(server string, routeId RouteID) (*http.Request, error
 	return req, nil
 }
 
-// NewGetRouteRequest constructs an http.Request for the GetRoute method
-func NewGetRouteRequest(server string, routeId RouteID) (*http.Request, error) {
+// NewGetPublicURLRequest constructs an http.Request for the GetPublicURL method
+func NewGetPublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_id", routeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -2575,7 +2313,7 @@ func NewGetRouteRequest(server string, routeId RouteID) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/routes/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2593,24 +2331,24 @@ func NewGetRouteRequest(server string, routeId RouteID) (*http.Request, error) {
 	return req, nil
 }
 
-// NewUpdateRouteRequest calls the generic UpdateRoute builder with application/json body
-func NewUpdateRouteRequest(server string, routeId RouteID, body UpdateRouteJSONRequestBody) (*http.Request, error) {
+// NewUpdatePublicURLRequest calls the generic UpdatePublicURL builder with application/json body
+func NewUpdatePublicURLRequest(server string, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpdateRouteRequestWithBody(server, routeId, "application/json", bodyReader)
+	return NewUpdatePublicURLRequestWithBody(server, publicUrlId, "application/json", bodyReader)
 }
 
-// NewUpdateRouteRequestWithBody constructs an http.Request for the UpdateRoute method, with any body, and a specified content type
-func NewUpdateRouteRequestWithBody(server string, routeId RouteID, contentType string, body io.Reader) (*http.Request, error) {
+// NewUpdatePublicURLRequestWithBody constructs an http.Request for the UpdatePublicURL method, with any body, and a specified content type
+func NewUpdatePublicURLRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_id", routeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -2620,7 +2358,7 @@ func NewUpdateRouteRequestWithBody(server string, routeId RouteID, contentType s
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/routes/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/public-urls/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2640,13 +2378,13 @@ func NewUpdateRouteRequestWithBody(server string, routeId RouteID, contentType s
 	return req, nil
 }
 
-// NewCreateRouteSessionRequest constructs an http.Request for the CreateRouteSession method
-func NewCreateRouteSessionRequest(server string, routeId RouteID, params *CreateRouteSessionParams) (*http.Request, error) {
+// NewCreatePublishRunRequest constructs an http.Request for the CreatePublishRun method
+func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_id", routeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -2656,7 +2394,7 @@ func NewCreateRouteSessionRequest(server string, routeId RouteID, params *Create
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/routes/%s/sessions", pathParam0)
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/publish-runs", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2682,6 +2420,268 @@ func NewCreateRouteSessionRequest(server string, routeId RouteID, params *Create
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
+	}
+
+	return req, nil
+}
+
+// NewClosePublishRunRequest constructs an http.Request for the ClosePublishRun method
+func NewClosePublishRunRequest(server string, publishRunId PublishRunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMarkPublishRunCertificateInstalledRequest calls the generic MarkPublishRunCertificateInstalled builder with application/json body
+func NewMarkPublishRunCertificateInstalledRequest(server string, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkPublishRunCertificateInstalledRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewMarkPublishRunCertificateInstalledRequestWithBody constructs an http.Request for the MarkPublishRunCertificateInstalled method, with any body, and a specified content type
+func NewMarkPublishRunCertificateInstalledRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/certificate-installed", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateCertificateIssuanceRequest calls the generic CreateCertificateIssuance builder with application/json body
+func NewCreateCertificateIssuanceRequest(server string, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCertificateIssuanceRequestWithBody(server, publishRunId, params, "application/json", bodyReader)
+}
+
+// NewCreateCertificateIssuanceRequestWithBody constructs an http.Request for the CreateCertificateIssuance method, with any body, and a specified content type
+func NewCreateCertificateIssuanceRequestWithBody(server string, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/certificate-issuances", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewHeartbeatPublishRunRequest calls the generic HeartbeatPublishRun builder with application/json body
+func NewHeartbeatPublishRunRequest(server string, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewHeartbeatPublishRunRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewHeartbeatPublishRunRequestWithBody constructs an http.Request for the HeartbeatPublishRun method, with any body, and a specified content type
+func NewHeartbeatPublishRunRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/heartbeat", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMarkPublishRunReadyRequest calls the generic MarkPublishRunReady builder with application/json body
+func NewMarkPublishRunReadyRequest(server string, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkPublishRunReadyRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewMarkPublishRunReadyRequestWithBody constructs an http.Request for the MarkPublishRunReady method, with any body, and a specified content type
+func NewMarkPublishRunReadyRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ready", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetReadinessRequest constructs an http.Request for the GetReadiness method
+func NewGetReadinessRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ready")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -2954,7 +2954,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
-	// GetCertificateIssuanceWithResponse Read one route-session certificate issuance
+	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2996,131 +2996,131 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
+	// ListPublicURLsWithResponse List public URLs for one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+	ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error)
+
+	// CreatePublicURLWithBodyWithResponse Create one team public URL
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
+
+	// CreatePublicURLWithResponse Create one team public URL
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
+
+	// DeletePublicURLWithResponse Delete one public URL and close its publish run
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+	DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error)
+
+	// GetPublicURLWithResponse Read one public URL
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+	GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error)
+
+	// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
+
+	// UpdatePublicURLWithResponse Update a public URL's target and IP policy
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
+
+	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
+
+	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+	ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error)
+
+	// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
+
+	// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
+
+	// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
+
+	// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
+
+	// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
+
+	// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
+
 	// GetReadinessWithResponse Confirm that control and its database are ready
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
-
-	// CloseRouteSessionWithResponse Close and drain a route session without deleting its route
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
-	CloseRouteSessionWithResponse(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*CloseRouteSessionResponse, error)
-
-	// MarkRouteSessionCertificateInstalledWithBodyWithResponse Record installation of the current route certificate
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-	MarkRouteSessionCertificateInstalledWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteSessionCertificateInstalledResponse, error)
-
-	// MarkRouteSessionCertificateInstalledWithResponse Record installation of the current route certificate
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-	MarkRouteSessionCertificateInstalledWithResponse(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteSessionCertificateInstalledResponse, error)
-
-	// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the route session's certificate plan
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
-
-	// CreateCertificateIssuanceWithResponse Begin issuance for the route session's certificate plan
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-	CreateCertificateIssuanceWithResponse(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
-
-	// HeartbeatRouteSessionWithBodyWithResponse Renew a route session and replace missing publisher connections
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-	HeartbeatRouteSessionWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
-
-	// HeartbeatRouteSessionWithResponse Renew a route session and replace missing publisher connections
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-	HeartbeatRouteSessionWithResponse(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
-
-	// MarkRouteSessionReadyWithBodyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-	MarkRouteSessionReadyWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error)
-
-	// MarkRouteSessionReadyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-	MarkRouteSessionReadyWithResponse(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error)
-
-	// ListRoutesWithResponse List routes for one team
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
-	ListRoutesWithResponse(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error)
-
-	// CreateRouteWithBodyWithResponse Create one team route
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-	CreateRouteWithBodyWithResponse(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
-
-	// CreateRouteWithResponse Create one team route
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-	CreateRouteWithResponse(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
-
-	// DeleteRouteWithResponse Delete one route and close its route session
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
-	DeleteRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*DeleteRouteResponse, error)
-
-	// GetRouteWithResponse Read one route
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
-	GetRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*GetRouteResponse, error)
-
-	// UpdateRouteWithBodyWithResponse Update a route's target and IP policy
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-	UpdateRouteWithBodyWithResponse(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
-
-	// UpdateRouteWithResponse Update a route's target and IP policy
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-	UpdateRouteWithResponse(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
-
-	// CreateRouteSessionWithResponse Create a route session and allocate its route version
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
 
 	// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
 	//
@@ -3150,14 +3150,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error)
 
-	// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected route sessions
+	// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 
-	// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected route sessions
+	// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3693,39 +3693,32 @@ func (r GetHealthResponse) ContentType() string {
 	return ""
 }
 
-type GetReadinessResponse struct {
+type ListPublicURLsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ReadinessResponse
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ReadinessResponse
+	JSON200 *PublicURLPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetReadinessResponse) GetJSON200() *ReadinessResponse {
+func (r ListPublicURLsResponse) GetJSON200() *PublicURLPage {
 	return r.JSON200
 }
 
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r GetReadinessResponse) GetJSON503() *ReadinessResponse {
-	return r.JSON503
-}
-
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetReadinessResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ListPublicURLsResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r GetReadinessResponse) GetBody() []byte {
+func (r ListPublicURLsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetReadinessResponse) Status() string {
+func (r ListPublicURLsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3733,7 +3726,7 @@ func (r GetReadinessResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetReadinessResponse) StatusCode() int {
+func (r ListPublicURLsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3741,32 +3734,39 @@ func (r GetReadinessResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetReadinessResponse) ContentType() string {
+func (r ListPublicURLsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type CloseRouteSessionResponse struct {
+type CreatePublicURLResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PublicURL
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePublicURLResponse) GetJSON201() *PublicURL {
+	return r.JSON201
+}
+
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CloseRouteSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r CreatePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r CloseRouteSessionResponse) GetBody() []byte {
+func (r CreatePublicURLResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r CloseRouteSessionResponse) Status() string {
+func (r CreatePublicURLResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3774,7 +3774,7 @@ func (r CloseRouteSessionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CloseRouteSessionResponse) StatusCode() int {
+func (r CreatePublicURLResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3782,39 +3782,32 @@ func (r CloseRouteSessionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CloseRouteSessionResponse) ContentType() string {
+func (r CreatePublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type MarkRouteSessionCertificateInstalledResponse struct {
+type DeletePublicURLResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RouteSession
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r MarkRouteSessionCertificateInstalledResponse) GetJSON200() *RouteSession {
-	return r.JSON200
-}
-
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r MarkRouteSessionCertificateInstalledResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r DeletePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r MarkRouteSessionCertificateInstalledResponse) GetBody() []byte {
+func (r DeletePublicURLResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r MarkRouteSessionCertificateInstalledResponse) Status() string {
+func (r DeletePublicURLResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3822,7 +3815,7 @@ func (r MarkRouteSessionCertificateInstalledResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r MarkRouteSessionCertificateInstalledResponse) StatusCode() int {
+func (r DeletePublicURLResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3830,7 +3823,240 @@ func (r MarkRouteSessionCertificateInstalledResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r MarkRouteSessionCertificateInstalledResponse) ContentType() string {
+func (r DeletePublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPublicURLResponse) GetJSON200() *PublicURL {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdatePublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdatePublicURLResponse) GetJSON200() *PublicURL {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdatePublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdatePublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdatePublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePublishRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PublishRunSetup
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePublishRunResponse) GetJSON201() *PublishRunSetup {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublishRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublishRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublishRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublishRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClosePublishRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClosePublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClosePublishRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClosePublishRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClosePublishRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClosePublishRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type MarkPublishRunCertificateInstalledResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublishRun
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r MarkPublishRunCertificateInstalledResponse) GetJSON200() *PublishRun {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkPublishRunCertificateInstalledResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkPublishRunCertificateInstalledResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkPublishRunCertificateInstalledResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkPublishRunCertificateInstalledResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkPublishRunCertificateInstalledResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3885,32 +4111,32 @@ func (r CreateCertificateIssuanceResponse) ContentType() string {
 	return ""
 }
 
-type HeartbeatRouteSessionResponse struct {
+type HeartbeatPublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RouteSessionHeartbeat
+	JSON200 *PublishRunHeartbeat
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r HeartbeatRouteSessionResponse) GetJSON200() *RouteSessionHeartbeat {
+func (r HeartbeatPublishRunResponse) GetJSON200() *PublishRunHeartbeat {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r HeartbeatRouteSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r HeartbeatPublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r HeartbeatRouteSessionResponse) GetBody() []byte {
+func (r HeartbeatPublishRunResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r HeartbeatRouteSessionResponse) Status() string {
+func (r HeartbeatPublishRunResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3918,7 +4144,7 @@ func (r HeartbeatRouteSessionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r HeartbeatRouteSessionResponse) StatusCode() int {
+func (r HeartbeatPublishRunResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3926,39 +4152,39 @@ func (r HeartbeatRouteSessionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r HeartbeatRouteSessionResponse) ContentType() string {
+func (r HeartbeatPublishRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type MarkRouteSessionReadyResponse struct {
+type MarkPublishRunReadyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RouteSession
+	JSON200 *PublishRun
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r MarkRouteSessionReadyResponse) GetJSON200() *RouteSession {
+func (r MarkPublishRunReadyResponse) GetJSON200() *PublishRun {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r MarkRouteSessionReadyResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r MarkPublishRunReadyResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r MarkRouteSessionReadyResponse) GetBody() []byte {
+func (r MarkPublishRunReadyResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r MarkRouteSessionReadyResponse) Status() string {
+func (r MarkPublishRunReadyResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3966,7 +4192,7 @@ func (r MarkRouteSessionReadyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r MarkRouteSessionReadyResponse) StatusCode() int {
+func (r MarkPublishRunReadyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3974,39 +4200,46 @@ func (r MarkRouteSessionReadyResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r MarkRouteSessionReadyResponse) ContentType() string {
+func (r MarkPublishRunReadyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type ListRoutesResponse struct {
+type GetReadinessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RoutePage
+	JSON200 *ReadinessResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReadinessResponse
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListRoutesResponse) GetJSON200() *RoutePage {
+func (r GetReadinessResponse) GetJSON200() *ReadinessResponse {
 	return r.JSON200
 }
 
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetReadinessResponse) GetJSON503() *ReadinessResponse {
+	return r.JSON503
+}
+
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListRoutesResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r GetReadinessResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ListRoutesResponse) GetBody() []byte {
+func (r GetReadinessResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListRoutesResponse) Status() string {
+func (r GetReadinessResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -4014,7 +4247,7 @@ func (r ListRoutesResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListRoutesResponse) StatusCode() int {
+func (r GetReadinessResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4022,240 +4255,7 @@ func (r ListRoutesResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListRoutesResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateRouteResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *Route
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateRouteResponse) GetJSON201() *Route {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateRouteResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateRouteResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateRouteResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateRouteResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateRouteResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DeleteRouteResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r DeleteRouteResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r DeleteRouteResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteRouteResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteRouteResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeleteRouteResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetRouteResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Route
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetRouteResponse) GetJSON200() *Route {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetRouteResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetRouteResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetRouteResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetRouteResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetRouteResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdateRouteResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Route
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateRouteResponse) GetJSON200() *Route {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r UpdateRouteResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdateRouteResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateRouteResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateRouteResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateRouteResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateRouteSessionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *RouteSessionSetup
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateRouteSessionResponse) GetJSON201() *RouteSessionSetup {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateRouteSessionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateRouteSessionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateRouteSessionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateRouteSessionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateRouteSessionResponse) ContentType() string {
+func (r GetReadinessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4538,7 +4538,7 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 	return ParseGetAdminServerStatusResponse(rsp)
 }
 
-// GetCertificateIssuanceWithResponse Read one route-session certificate issuance
+// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4616,6 +4616,227 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
+// ListPublicURLsWithResponse List public URLs for one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+func (c *ClientWithResponses) ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error) {
+	rsp, err := c.ListPublicURLs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublicURLsResponse(rsp)
+}
+
+// CreatePublicURLWithBodyWithResponse Create one team public URL
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+func (c *ClientWithResponses) CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
+	rsp, err := c.CreatePublicURLWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublicURLResponse(rsp)
+}
+
+// CreatePublicURLWithResponse Create one team public URL
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
+	rsp, err := c.CreatePublicURL(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublicURLResponse(rsp)
+}
+
+// DeletePublicURLWithResponse Delete one public URL and close its publish run
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+func (c *ClientWithResponses) DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error) {
+	rsp, err := c.DeletePublicURL(ctx, publicUrlId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePublicURLResponse(rsp)
+}
+
+// GetPublicURLWithResponse Read one public URL
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error) {
+	rsp, err := c.GetPublicURL(ctx, publicUrlId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublicURLResponse(rsp)
+}
+
+// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
+	rsp, err := c.UpdatePublicURLWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublicURLResponse(rsp)
+}
+
+// UpdatePublicURLWithResponse Update a public URL's target and IP policy
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
+	rsp, err := c.UpdatePublicURL(ctx, publicUrlId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublicURLResponse(rsp)
+}
+
+// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
+	rsp, err := c.CreatePublishRun(ctx, publicUrlId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublishRunResponse(rsp)
+}
+
+// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error) {
+	rsp, err := c.ClosePublishRun(ctx, publishRunId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosePublishRunResponse(rsp)
+}
+
+// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
+	rsp, err := c.MarkPublishRunCertificateInstalledWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
+}
+
+// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
+	rsp, err := c.MarkPublishRunCertificateInstalled(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
+}
+
+// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
+	rsp, err := c.CreateCertificateIssuanceWithBody(ctx, publishRunId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
+	rsp, err := c.CreateCertificateIssuance(ctx, publishRunId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+func (c *ClientWithResponses) HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
+	rsp, err := c.HeartbeatPublishRunWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHeartbeatPublishRunResponse(rsp)
+}
+
+// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
+	rsp, err := c.HeartbeatPublishRun(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHeartbeatPublishRunResponse(rsp)
+}
+
+// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+func (c *ClientWithResponses) MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
+	rsp, err := c.MarkPublishRunReadyWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkPublishRunReadyResponse(rsp)
+}
+
+// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
+	rsp, err := c.MarkPublishRunReady(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkPublishRunReadyResponse(rsp)
+}
+
 // GetReadinessWithResponse Confirm that control and its database are ready
 //
 // Returns a wrapper object for the known response body format(s).
@@ -4627,227 +4848,6 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetReadinessResponse(rsp)
-}
-
-// CloseRouteSessionWithResponse Close and drain a route session without deleting its route
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
-func (c *ClientWithResponses) CloseRouteSessionWithResponse(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*CloseRouteSessionResponse, error) {
-	rsp, err := c.CloseRouteSession(ctx, routeSessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCloseRouteSessionResponse(rsp)
-}
-
-// MarkRouteSessionCertificateInstalledWithBodyWithResponse Record installation of the current route certificate
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-func (c *ClientWithResponses) MarkRouteSessionCertificateInstalledWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteSessionCertificateInstalledResponse, error) {
-	rsp, err := c.MarkRouteSessionCertificateInstalledWithBody(ctx, routeSessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkRouteSessionCertificateInstalledResponse(rsp)
-}
-
-// MarkRouteSessionCertificateInstalledWithResponse Record installation of the current route certificate
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-installed (the `MarkRouteSessionCertificateInstalled` operationId).
-func (c *ClientWithResponses) MarkRouteSessionCertificateInstalledWithResponse(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteSessionCertificateInstalledResponse, error) {
-	rsp, err := c.MarkRouteSessionCertificateInstalled(ctx, routeSessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkRouteSessionCertificateInstalledResponse(rsp)
-}
-
-// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the route session's certificate plan
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
-	rsp, err := c.CreateCertificateIssuanceWithBody(ctx, routeSessionId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateCertificateIssuanceResponse(rsp)
-}
-
-// CreateCertificateIssuanceWithResponse Begin issuance for the route session's certificate plan
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
-func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
-	rsp, err := c.CreateCertificateIssuance(ctx, routeSessionId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateCertificateIssuanceResponse(rsp)
-}
-
-// HeartbeatRouteSessionWithBodyWithResponse Renew a route session and replace missing publisher connections
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-func (c *ClientWithResponses) HeartbeatRouteSessionWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error) {
-	rsp, err := c.HeartbeatRouteSessionWithBody(ctx, routeSessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatRouteSessionResponse(rsp)
-}
-
-// HeartbeatRouteSessionWithResponse Renew a route session and replace missing publisher connections
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
-func (c *ClientWithResponses) HeartbeatRouteSessionWithResponse(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error) {
-	rsp, err := c.HeartbeatRouteSession(ctx, routeSessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatRouteSessionResponse(rsp)
-}
-
-// MarkRouteSessionReadyWithBodyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-func (c *ClientWithResponses) MarkRouteSessionReadyWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error) {
-	rsp, err := c.MarkRouteSessionReadyWithBody(ctx, routeSessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkRouteSessionReadyResponse(rsp)
-}
-
-// MarkRouteSessionReadyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
-func (c *ClientWithResponses) MarkRouteSessionReadyWithResponse(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error) {
-	rsp, err := c.MarkRouteSessionReady(ctx, routeSessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkRouteSessionReadyResponse(rsp)
-}
-
-// ListRoutesWithResponse List routes for one team
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
-func (c *ClientWithResponses) ListRoutesWithResponse(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error) {
-	rsp, err := c.ListRoutes(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListRoutesResponse(rsp)
-}
-
-// CreateRouteWithBodyWithResponse Create one team route
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-func (c *ClientWithResponses) CreateRouteWithBodyWithResponse(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error) {
-	rsp, err := c.CreateRouteWithBody(ctx, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRouteResponse(rsp)
-}
-
-// CreateRouteWithResponse Create one team route
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
-func (c *ClientWithResponses) CreateRouteWithResponse(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error) {
-	rsp, err := c.CreateRoute(ctx, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRouteResponse(rsp)
-}
-
-// DeleteRouteWithResponse Delete one route and close its route session
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
-func (c *ClientWithResponses) DeleteRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*DeleteRouteResponse, error) {
-	rsp, err := c.DeleteRoute(ctx, routeId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteRouteResponse(rsp)
-}
-
-// GetRouteWithResponse Read one route
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
-func (c *ClientWithResponses) GetRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*GetRouteResponse, error) {
-	rsp, err := c.GetRoute(ctx, routeId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetRouteResponse(rsp)
-}
-
-// UpdateRouteWithBodyWithResponse Update a route's target and IP policy
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-func (c *ClientWithResponses) UpdateRouteWithBodyWithResponse(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error) {
-	rsp, err := c.UpdateRouteWithBody(ctx, routeId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateRouteResponse(rsp)
-}
-
-// UpdateRouteWithResponse Update a route's target and IP policy
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
-func (c *ClientWithResponses) UpdateRouteWithResponse(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error) {
-	rsp, err := c.UpdateRoute(ctx, routeId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateRouteResponse(rsp)
-}
-
-// CreateRouteSessionWithResponse Create a route session and allocate its route version
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *ClientWithResponses) CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
-	rsp, err := c.CreateRouteSession(ctx, routeId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRouteSessionResponse(rsp)
 }
 
 // CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
@@ -4902,7 +4902,7 @@ func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, d
 	return ParseGetDNSAuthorityResponse(rsp)
 }
 
-// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected route sessions
+// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4915,7 +4915,7 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context
 	return ParseRevokeHostedPolicyResponse(rsp)
 }
 
-// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected route sessions
+// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -5291,33 +5291,26 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	return response, nil
 }
 
-// ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
-func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
+// ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
+func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetReadinessResponse{
+	response := &ListPublicURLsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ReadinessResponse
+		var dest PublicURLPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ReadinessResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5331,15 +5324,48 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	return response, nil
 }
 
-// ParseCloseRouteSessionResponse parses an HTTP response from a CloseRouteSessionWithResponse call
-func ParseCloseRouteSessionResponse(rsp *http.Response) (*CloseRouteSessionResponse, error) {
+// ParseCreatePublicURLResponse parses an HTTP response from a CreatePublicURLWithResponse call
+func ParseCreatePublicURLResponse(rsp *http.Response) (*CreatePublicURLResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CloseRouteSessionResponse{
+	response := &CreatePublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePublicURLResponse parses an HTTP response from a DeletePublicURLWithResponse call
+func ParseDeletePublicURLResponse(rsp *http.Response) (*DeletePublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePublicURLResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -5360,22 +5386,150 @@ func ParseCloseRouteSessionResponse(rsp *http.Response) (*CloseRouteSessionRespo
 	return response, nil
 }
 
-// ParseMarkRouteSessionCertificateInstalledResponse parses an HTTP response from a MarkRouteSessionCertificateInstalledWithResponse call
-func ParseMarkRouteSessionCertificateInstalledResponse(rsp *http.Response) (*MarkRouteSessionCertificateInstalledResponse, error) {
+// ParseGetPublicURLResponse parses an HTTP response from a GetPublicURLWithResponse call
+func ParseGetPublicURLResponse(rsp *http.Response) (*GetPublicURLResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &MarkRouteSessionCertificateInstalledResponse{
+	response := &GetPublicURLResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RouteSession
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePublicURLResponse parses an HTTP response from a UpdatePublicURLWithResponse call
+func ParseUpdatePublicURLResponse(rsp *http.Response) (*UpdatePublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
+func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublishRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PublishRunSetup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClosePublishRunResponse parses an HTTP response from a ClosePublishRunWithResponse call
+func ParseClosePublishRunResponse(rsp *http.Response) (*ClosePublishRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClosePublishRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMarkPublishRunCertificateInstalledResponse parses an HTTP response from a MarkPublishRunCertificateInstalledWithResponse call
+func ParseMarkPublishRunCertificateInstalledResponse(rsp *http.Response) (*MarkPublishRunCertificateInstalledResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkPublishRunCertificateInstalledResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublishRun
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5426,22 +5580,22 @@ func ParseCreateCertificateIssuanceResponse(rsp *http.Response) (*CreateCertific
 	return response, nil
 }
 
-// ParseHeartbeatRouteSessionResponse parses an HTTP response from a HeartbeatRouteSessionWithResponse call
-func ParseHeartbeatRouteSessionResponse(rsp *http.Response) (*HeartbeatRouteSessionResponse, error) {
+// ParseHeartbeatPublishRunResponse parses an HTTP response from a HeartbeatPublishRunWithResponse call
+func ParseHeartbeatPublishRunResponse(rsp *http.Response) (*HeartbeatPublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &HeartbeatRouteSessionResponse{
+	response := &HeartbeatPublishRunResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RouteSessionHeartbeat
+		var dest PublishRunHeartbeat
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5459,22 +5613,22 @@ func ParseHeartbeatRouteSessionResponse(rsp *http.Response) (*HeartbeatRouteSess
 	return response, nil
 }
 
-// ParseMarkRouteSessionReadyResponse parses an HTTP response from a MarkRouteSessionReadyWithResponse call
-func ParseMarkRouteSessionReadyResponse(rsp *http.Response) (*MarkRouteSessionReadyResponse, error) {
+// ParseMarkPublishRunReadyResponse parses an HTTP response from a MarkPublishRunReadyWithResponse call
+func ParseMarkPublishRunReadyResponse(rsp *http.Response) (*MarkPublishRunReadyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &MarkRouteSessionReadyResponse{
+	response := &MarkPublishRunReadyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RouteSession
+		var dest PublishRun
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5492,187 +5646,33 @@ func ParseMarkRouteSessionReadyResponse(rsp *http.Response) (*MarkRouteSessionRe
 	return response, nil
 }
 
-// ParseListRoutesResponse parses an HTTP response from a ListRoutesWithResponse call
-func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
+// ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
+func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListRoutesResponse{
+	response := &GetReadinessResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RoutePage
+		var dest ReadinessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReadinessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateRouteResponse parses an HTTP response from a CreateRouteWithResponse call
-func ParseCreateRouteResponse(rsp *http.Response) (*CreateRouteResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateRouteResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Route
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteRouteResponse parses an HTTP response from a DeleteRouteWithResponse call
-func ParseDeleteRouteResponse(rsp *http.Response) (*DeleteRouteResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteRouteResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetRouteResponse parses an HTTP response from a GetRouteWithResponse call
-func ParseGetRouteResponse(rsp *http.Response) (*GetRouteResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetRouteResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Route
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdateRouteResponse parses an HTTP response from a UpdateRouteWithResponse call
-func ParseUpdateRouteResponse(rsp *http.Response) (*UpdateRouteResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateRouteResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Route
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateRouteSessionResponse parses an HTTP response from a CreateRouteSessionWithResponse call
-func ParseCreateRouteSessionResponse(rsp *http.Response) (*CreateRouteSessionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateRouteSessionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest RouteSessionSetup
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
+		response.JSON503 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5831,7 +5831,7 @@ type ServerInterface interface {
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
-	// GetCertificateIssuance Read one route-session certificate issuance
+	// GetCertificateIssuance Read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
 	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
 	// MarkCertificateChallengeReady Confirm a TLS-ALPN-01 challenge is installed
@@ -5849,42 +5849,42 @@ type ServerInterface interface {
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListPublicURLs List public URLs for one team
+	// (GET /v1/public-urls)
+	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
+	// CreatePublicURL Create one team public URL
+	// (POST /v1/public-urls)
+	CreatePublicURL(w http.ResponseWriter, r *http.Request, params CreatePublicURLParams)
+	// DeletePublicURL Delete one public URL and close its publish run
+	// (DELETE /v1/public-urls/{public_url_id})
+	DeletePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// GetPublicURL Read one public URL
+	// (GET /v1/public-urls/{public_url_id})
+	GetPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// UpdatePublicURL Update a public URL's target and IP policy
+	// (PATCH /v1/public-urls/{public_url_id})
+	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// CreatePublishRun Create a publish run and allocate its publish run number
+	// (POST /v1/public-urls/{public_url_id}/publish-runs)
+	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
+	// ClosePublishRun Close and drain a publish run without deleting its public URL
+	// (DELETE /v1/publish-runs/{publish_run_id})
+	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+	// (POST /v1/publish-runs/{publish_run_id}/certificate-installed)
+	MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+	// (POST /v1/publish-runs/{publish_run_id}/certificate-issuances)
+	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateCertificateIssuanceParams)
+	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+	// (POST /v1/publish-runs/{publish_run_id}/heartbeat)
+	HeartbeatPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+	// (POST /v1/publish-runs/{publish_run_id}/ready)
+	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// GetReadiness Confirm that control and its database are ready
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-	// CloseRouteSession Close and drain a route session without deleting its route
-	// (DELETE /v1/route-sessions/{route_session_id})
-	CloseRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// MarkRouteSessionCertificateInstalled Record installation of the current route certificate
-	// (POST /v1/route-sessions/{route_session_id}/certificate-installed)
-	MarkRouteSessionCertificateInstalled(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// CreateCertificateIssuance Begin issuance for the route session's certificate plan
-	// (POST /v1/route-sessions/{route_session_id}/certificate-issuances)
-	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID, params CreateCertificateIssuanceParams)
-	// HeartbeatRouteSession Renew a route session and replace missing publisher connections
-	// (POST /v1/route-sessions/{route_session_id}/heartbeat)
-	HeartbeatRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
-	// (POST /v1/route-sessions/{route_session_id}/ready)
-	MarkRouteSessionReady(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// ListRoutes List routes for one team
-	// (GET /v1/routes)
-	ListRoutes(w http.ResponseWriter, r *http.Request, params ListRoutesParams)
-	// CreateRoute Create one team route
-	// (POST /v1/routes)
-	CreateRoute(w http.ResponseWriter, r *http.Request, params CreateRouteParams)
-	// DeleteRoute Delete one route and close its route session
-	// (DELETE /v1/routes/{route_id})
-	DeleteRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// GetRoute Read one route
-	// (GET /v1/routes/{route_id})
-	GetRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// UpdateRoute Update a route's target and IP policy
-	// (PATCH /v1/routes/{route_id})
-	UpdateRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// CreateRouteSession Create a route session and allocate its route version
-	// (POST /v1/routes/{route_id}/sessions)
-	CreateRouteSession(w http.ResponseWriter, r *http.Request, routeId RouteID, params CreateRouteSessionParams)
 	// CreateDNSAuthority Create a DNS authority for one claimed domain
 	// (POST /v1/service/dns-authorities)
 	CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams)
@@ -5894,7 +5894,7 @@ type ServerInterface interface {
 	// GetDNSAuthority Read a claimed domain's DNS authority
 	// (GET /v1/service/dns-authorities/{dns_authority_reference})
 	GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference)
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
+	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
 }
@@ -6141,186 +6141,14 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// GetReadiness operation middleware
-func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetReadiness(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CloseRouteSession operation middleware
-func (siw *ServerInterfaceWrapper) CloseRouteSession(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "route_session_id" -------------
-	var routeSessionId RouteSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "route_session_id", r.PathValue("route_session_id"), &routeSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CloseRouteSession(w, r, routeSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MarkRouteSessionCertificateInstalled operation middleware
-func (siw *ServerInterfaceWrapper) MarkRouteSessionCertificateInstalled(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "route_session_id" -------------
-	var routeSessionId RouteSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "route_session_id", r.PathValue("route_session_id"), &routeSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MarkRouteSessionCertificateInstalled(w, r, routeSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateCertificateIssuance operation middleware
-func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "route_session_id" -------------
-	var routeSessionId RouteSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "route_session_id", r.PathValue("route_session_id"), &routeSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_session_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateCertificateIssuanceParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateCertificateIssuance(w, r, routeSessionId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// HeartbeatRouteSession operation middleware
-func (siw *ServerInterfaceWrapper) HeartbeatRouteSession(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "route_session_id" -------------
-	var routeSessionId RouteSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "route_session_id", r.PathValue("route_session_id"), &routeSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.HeartbeatRouteSession(w, r, routeSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MarkRouteSessionReady operation middleware
-func (siw *ServerInterfaceWrapper) MarkRouteSessionReady(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "route_session_id" -------------
-	var routeSessionId RouteSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "route_session_id", r.PathValue("route_session_id"), &routeSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MarkRouteSessionReady(w, r, routeSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListRoutes operation middleware
-func (siw *ServerInterfaceWrapper) ListRoutes(w http.ResponseWriter, r *http.Request) {
+// ListPublicURLs operation middleware
+func (siw *ServerInterfaceWrapper) ListPublicURLs(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params ListRoutesParams
+	var params ListPublicURLsParams
 
 	// ------------- Required query parameter "team_id" -------------
 
@@ -6362,7 +6190,7 @@ func (siw *ServerInterfaceWrapper) ListRoutes(w http.ResponseWriter, r *http.Req
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListRoutes(w, r, params)
+		siw.Handler.ListPublicURLs(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6372,14 +6200,14 @@ func (siw *ServerInterfaceWrapper) ListRoutes(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// CreateRoute operation middleware
-func (siw *ServerInterfaceWrapper) CreateRoute(w http.ResponseWriter, r *http.Request) {
+// CreatePublicURL operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublicURL(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateRouteParams
+	var params CreatePublicURLParams
 
 	headers := r.Header
 
@@ -6407,7 +6235,7 @@ func (siw *ServerInterfaceWrapper) CreateRoute(w http.ResponseWriter, r *http.Re
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateRoute(w, r, params)
+		siw.Handler.CreatePublicURL(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6417,23 +6245,23 @@ func (siw *ServerInterfaceWrapper) CreateRoute(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteRoute operation middleware
-func (siw *ServerInterfaceWrapper) DeleteRoute(w http.ResponseWriter, r *http.Request) {
+// DeletePublicURL operation middleware
+func (siw *ServerInterfaceWrapper) DeletePublicURL(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "route_id" -------------
-	var routeId RouteID
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "route_id", r.PathValue("route_id"), &routeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteRoute(w, r, routeId)
+		siw.Handler.DeletePublicURL(w, r, publicUrlId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6443,23 +6271,23 @@ func (siw *ServerInterfaceWrapper) DeleteRoute(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// GetRoute operation middleware
-func (siw *ServerInterfaceWrapper) GetRoute(w http.ResponseWriter, r *http.Request) {
+// GetPublicURL operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicURL(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "route_id" -------------
-	var routeId RouteID
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "route_id", r.PathValue("route_id"), &routeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetRoute(w, r, routeId)
+		siw.Handler.GetPublicURL(w, r, publicUrlId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6469,23 +6297,23 @@ func (siw *ServerInterfaceWrapper) GetRoute(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
-// UpdateRoute operation middleware
-func (siw *ServerInterfaceWrapper) UpdateRoute(w http.ResponseWriter, r *http.Request) {
+// UpdatePublicURL operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePublicURL(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "route_id" -------------
-	var routeId RouteID
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "route_id", r.PathValue("route_id"), &routeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateRoute(w, r, routeId)
+		siw.Handler.UpdatePublicURL(w, r, publicUrlId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6495,23 +6323,23 @@ func (siw *ServerInterfaceWrapper) UpdateRoute(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// CreateRouteSession operation middleware
-func (siw *ServerInterfaceWrapper) CreateRouteSession(w http.ResponseWriter, r *http.Request) {
+// CreatePublishRun operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "route_id" -------------
-	var routeId RouteID
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "route_id", r.PathValue("route_id"), &routeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
 		return
 	}
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateRouteSessionParams
+	var params CreatePublishRunParams
 
 	headers := r.Header
 
@@ -6539,7 +6367,179 @@ func (siw *ServerInterfaceWrapper) CreateRouteSession(w http.ResponseWriter, r *
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateRouteSession(w, r, routeId, params)
+		siw.Handler.CreatePublishRun(w, r, publicUrlId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClosePublishRun operation middleware
+func (siw *ServerInterfaceWrapper) ClosePublishRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClosePublishRun(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkPublishRunCertificateInstalled operation middleware
+func (siw *ServerInterfaceWrapper) MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkPublishRunCertificateInstalled(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCertificateIssuance operation middleware
+func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateCertificateIssuanceParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCertificateIssuance(w, r, publishRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HeartbeatPublishRun operation middleware
+func (siw *ServerInterfaceWrapper) HeartbeatPublishRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HeartbeatPublishRun(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkPublishRunReady operation middleware
+func (siw *ServerInterfaceWrapper) MarkPublishRunReady(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkPublishRunReady(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReadiness operation middleware
+func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReadiness(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6812,17 +6812,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/client-ip", wrapper.GetClientIP)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/routes", wrapper.ListRoutes)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes", wrapper.CreateRoute)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.DeleteRoute)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.GetRoute)
-	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.UpdateRoute)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes/{route_id}/sessions", wrapper.CreateRouteSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/heartbeat", wrapper.HeartbeatRouteSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/ready", wrapper.MarkRouteSessionReady)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/certificate-installed", wrapper.MarkRouteSessionCertificateInstalled)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}", wrapper.CloseRouteSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/certificate-issuances", wrapper.CreateCertificateIssuance)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.GetPublicURL)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-runs", wrapper.CreatePublishRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ready", wrapper.MarkPublishRunReady)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-installed", wrapper.MarkPublishRunCertificateInstalled)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}", wrapper.ClosePublishRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-issuances", wrapper.CreateCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/certificate-issuances/{issuance_id}", wrapper.GetCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/certificate-issuances/{issuance_id}/challenge-ready", wrapper.MarkCertificateChallengeReady)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/certificate-issuances/{issuance_id}/challenge-removed", wrapper.MarkCertificateChallengeRemoved)

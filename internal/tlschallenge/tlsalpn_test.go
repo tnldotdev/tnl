@@ -218,7 +218,7 @@ func TestTLSALPNChallengesConcurrentAccess(t *testing.T) {
 func TestTLSALPNChallengeRejectsInvalidInput(t *testing.T) {
 	tests := []TLSALPNChallenge{
 		{Hostname: "route.example", ExpiresAt: time.Now().Add(time.Hour)},
-		{ID: "id", Hostname: "Route.Example", ExpiresAt: time.Now().Add(time.Hour)},
+		{ID: "id", Hostname: "PublicURL.Example", ExpiresAt: time.Now().Add(time.Hour)},
 		{ID: "id", Hostname: "route.example", ExpiresAt: time.Now().Add(-time.Second)},
 	}
 	for _, challenge := range tests {

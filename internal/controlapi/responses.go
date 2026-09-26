@@ -9,12 +9,12 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func routeResponse(route controlstate.Route) controlv1.Route {
-	result := controlv1.Route{
+func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
+	result := controlv1.PublicURL{
 		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
-		RouteScope: controlv1.RouteScope(route.RouteScope), PolicyRevision: route.PolicyRevision,
-		LifecycleState: controlv1.RouteLifecycleState(route.LifecycleState), NextRouteVersion: route.NextRouteVersion,
+		PublicUrlScope: controlv1.PublicURLScope(route.PublicURLScope), PolicyRevision: route.PolicyRevision,
+		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
 		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}
 	if route.MembershipID != "" {
@@ -27,35 +27,35 @@ func routeResponse(route controlstate.Route) controlv1.Route {
 		}
 		result.AllowedIpPrefixes = &prefixes
 	}
-	if route.OpenRouteSessionID != "" {
-		result.OpenRouteSessionId = &route.OpenRouteSessionID
+	if route.OpenPublishRunID != "" {
+		result.OpenPublishRunId = &route.OpenPublishRunID
 	}
 	return result
 }
 
-func routeSessionSetupResponse(
-	route controlstate.Route,
-	setup controlstate.RouteSessionSetup,
+func publishRunSetupResponse(
+	route controlstate.PublicURL,
+	setup controlstate.PublishRunSetup,
 	certificatePlan controlv1.CertificatePlan,
-) controlv1.RouteSessionSetup {
-	return controlv1.RouteSessionSetup{
-		Route: routeResponse(route), RouteSession: routeSessionResponse(setup),
-		RouteSessionToken: setup.RouteSessionToken.String(), CertificatePlan: certificatePlan,
+) controlv1.PublishRunSetup {
+	return controlv1.PublishRunSetup{
+		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
+		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 	}
 }
 
-func routeSessionResponse(setup controlstate.RouteSessionSetup) controlv1.RouteSession {
+func publishRunResponse(setup controlstate.PublishRunSetup) controlv1.PublishRun {
 	readyPublisherConnections := 0
 	for _, connection := range setup.PublisherConnections {
 		if connection.State == "ready" {
 			readyPublisherConnections++
 		}
 	}
-	result := controlv1.RouteSession{
-		Id: setup.RouteSessionID, RouteId: setup.RouteID, TeamId: setup.TeamID,
-		RouteVersion: int64(setup.RouteVersion), PolicyRevision: int64(setup.PolicyRevision),
-		State: controlv1.RouteSessionState(setup.State), CreatedAt: setup.CreatedAt, ExpiresAt: setup.ExpiresAt,
+	result := controlv1.PublishRun{
+		Id: setup.PublishRunID, PublicUrlId: setup.PublicURLID, TeamId: setup.TeamID,
+		PublishRunNumber: int64(setup.PublishRunNumber), PolicyRevision: int64(setup.PolicyRevision),
+		State: controlv1.PublishRunState(setup.State), CreatedAt: setup.CreatedAt, ExpiresAt: setup.ExpiresAt,
 		ReadyPublisherConnections: &readyPublisherConnections, ReadyAt: setup.ReadyAt, ClosedAt: setup.ClosedAt,
 	}
 	if setup.MembershipID != "" {
@@ -64,12 +64,12 @@ func routeSessionResponse(setup controlstate.RouteSessionSetup) controlv1.RouteS
 	return result
 }
 
-func routeSessionLifecycleResponse(lifecycle controlstate.RouteSessionLifecycle) controlv1.RouteSession {
+func publishRunLifecycleResponse(lifecycle controlstate.PublishRunLifecycle) controlv1.PublishRun {
 	readyPublisherConnections := lifecycle.ReadyPublisherConnectionCount
-	result := controlv1.RouteSession{
-		Id: lifecycle.RouteSessionID, RouteId: lifecycle.RouteID, TeamId: lifecycle.TeamID,
-		RouteVersion: int64(lifecycle.RouteVersion), PolicyRevision: int64(lifecycle.PolicyRevision),
-		State: controlv1.RouteSessionState(lifecycle.State), CreatedAt: lifecycle.CreatedAt, ExpiresAt: lifecycle.ExpiresAt,
+	result := controlv1.PublishRun{
+		Id: lifecycle.PublishRunID, PublicUrlId: lifecycle.PublicURLID, TeamId: lifecycle.TeamID,
+		PublishRunNumber: int64(lifecycle.PublishRunNumber), PolicyRevision: int64(lifecycle.PolicyRevision),
+		State: controlv1.PublishRunState(lifecycle.State), CreatedAt: lifecycle.CreatedAt, ExpiresAt: lifecycle.ExpiresAt,
 		ReadyPublisherConnections: &readyPublisherConnections, ReadyAt: lifecycle.ReadyAt, ClosedAt: lifecycle.ClosedAt,
 	}
 	if lifecycle.MembershipID != "" {
@@ -97,10 +97,10 @@ func connectionAssignmentResponses(assignments [2]controlstate.ConnectionAssignm
 	return result
 }
 
-func certificateIssuanceRequestDigest(routeVersion uint64, csrDER []byte) [32]byte {
+func certificateIssuanceRequestDigest(publishRunNumber uint64, csrDER []byte) [32]byte {
 	hash := sha256.New()
 	var encodedVersion [8]byte
-	binary.BigEndian.PutUint64(encodedVersion[:], routeVersion)
+	binary.BigEndian.PutUint64(encodedVersion[:], publishRunNumber)
 	_, _ = hash.Write(encodedVersion[:])
 	_, _ = hash.Write(csrDER)
 	var result [32]byte
@@ -112,8 +112,8 @@ func certificateIssuanceResponse(issuance controlstate.CertificateIssuance) cont
 	identifiers := make([]controlv1.CanonicalHostname, len(issuance.CertificatePlan.Identifiers))
 	copy(identifiers, issuance.CertificatePlan.Identifiers)
 	result := controlv1.CertificateIssuance{
-		Id: issuance.ID, RouteSessionId: issuance.RouteSessionID, RouteId: issuance.RouteID,
-		RouteVersion: int64(issuance.RouteVersion), State: controlv1.CertificateIssuanceState(issuance.State),
+		Id: issuance.ID, PublishRunId: issuance.PublishRunID, PublicUrlId: issuance.PublicURLID,
+		PublishRunNumber: int64(issuance.PublishRunNumber), State: controlv1.CertificateIssuanceState(issuance.State),
 		CertificatePlan: controlv1.CertificatePlan{
 			CacheKey: issuance.CertificatePlan.CacheKey, Scope: issuance.CertificatePlan.Scope,
 			Identifiers: identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(issuance.CertificatePlan.ChallengeMethod),

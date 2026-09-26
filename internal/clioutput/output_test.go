@@ -35,7 +35,7 @@ func TestRenderFrame(t *testing.T) {
 		"|  https://chase.tnl.dev                                       |\n" +
 		"|     |                                                        |\n" +
 		"|     v                                                        |\n" +
-		"|  tnl                                                         |\n" +
+		"|    tnl                                                       |\n" +
 		"|     |                                                        |\n" +
 		"|     v                                                        |\n" +
 		"|  http://127.0.0.1:5173                                       |\n" +
@@ -78,7 +78,7 @@ func TestRenderSectionsTreeAndFailure(t *testing.T) {
 
 func TestRenderWrapsAndEscapesWithoutExceedingLimit(t *testing.T) {
 	got, err := Render(Frame{
-		Command: "tnl route list",
+		Command: "tnl url list",
 		State:   "routes",
 		Blocks: []Block{Fields(
 			Field{Label: "hostname", Value: strings.Repeat("a", 100) + ".example"},

@@ -79,7 +79,7 @@ func TestIntegrationACMEChallengeAcknowledgementDuringWork(t *testing.T) {
 	if !gatedWorker.Load() || acknowledgementStatus.Load() != http.StatusOK {
 		t.Fatalf("acknowledgement did not overlap claimed work: gated %t, status %d", gatedWorker.Load(), acknowledgementStatus.Load())
 	}
-	if newOrders.Load() != 1 || integrationRouteOrderCount(t, fixture.inspect, ready.RouteID) != 1 {
+	if newOrders.Load() != 1 || integrationRouteOrderCount(t, fixture.inspect, ready.PublicURLID) != 1 {
 		t.Fatalf("issuance restarted instead of resuming its original order: ACME new orders %d", newOrders.Load())
 	}
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-acknowledgement", nil)
@@ -89,5 +89,5 @@ func TestIntegrationACMEChallengeAcknowledgementDuringWork(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "acknowledged certificate" {
 		t.Fatalf("visitor after acknowledgement race: %s, %q", response.Status, body)
 	}
-	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
 }

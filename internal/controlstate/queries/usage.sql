@@ -1,5 +1,5 @@
--- name: EnsureRouteUsageConfiguration :one
-INSERT INTO control.route_usage_configuration (
+-- name: EnsurePublicURLUsageConfiguration :one
+INSERT INTO control.public_url_usage_configuration (
     singleton,
     visitor_network_hash_master_key,
     created_at
@@ -37,11 +37,11 @@ RETURNING *;
 -- The ingress/run guards serialize this source's append-only history. Fetch only
 -- bounded metadata, not histogram blobs; exact replays still load their payload.
 WITH requested AS (
-    SELECT DISTINCT unnest(sqlc.arg(route_ids)::text[]) AS route_id,
-                    unnest(sqlc.arg(route_versions)::bigint[]) AS route_version,
+    SELECT DISTINCT unnest(sqlc.arg(public_url_ids)::text[]) AS public_url_id,
+                    unnest(sqlc.arg(publish_run_numbers)::bigint[]) AS publish_run_number,
                     unnest(sqlc.arg(bucket_starts)::timestamptz[]) AS bucket_start
 )
-SELECT reports.route_id, reports.route_version, reports.bucket_start, reports.bucket_end,
+SELECT reports.public_url_id, reports.publish_run_number, reports.bucket_start, reports.bucket_end,
        reports.observed_through, reports.report_revision, reports.connection_attempts,
        reports.policy_denials, reports.capacity_denials, reports.visitor_stream_open_failures,
        reports.successful_streams, reports.connection_nanoseconds, reports.ingress_bytes,
@@ -51,8 +51,8 @@ CROSS JOIN LATERAL (
     SELECT history.* FROM control.ingress_usage_reports AS history
     WHERE history.ingress_id = sqlc.arg(ingress_id)
       AND history.ingress_run_id = sqlc.arg(ingress_run_id)
-      AND history.route_id = requested.route_id
-      AND history.route_version = requested.route_version
+      AND history.public_url_id = requested.public_url_id
+      AND history.publish_run_number = requested.publish_run_number
       AND history.bucket_start = requested.bucket_start
     ORDER BY history.report_revision DESC
     LIMIT 1
@@ -63,37 +63,37 @@ SELECT *
 FROM control.ingress_usage_reports
 WHERE ingress_id = sqlc.arg(ingress_id)
   AND ingress_run_id = sqlc.arg(ingress_run_id)
-  AND route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
+  AND public_url_id = sqlc.arg(public_url_id)
+  AND publish_run_number = sqlc.arg(publish_run_number)
   AND bucket_start = sqlc.arg(bucket_start)
   AND report_revision = sqlc.arg(report_revision);
 
--- name: LockRouteSessionForUsage :one
+-- name: LockPublishRunForUsage :one
 -- Acquire the immutable route reference before the session, in one round trip.
 -- Read the bucket in a LATER statement: a competing ingress may create it while
 -- this statement waits for the session lock, after this statement's snapshot.
-WITH route_guard AS MATERIALIZED (
-    SELECT routes.id FROM control.routes AS routes
-    WHERE routes.id = sqlc.arg(route_id)
+WITH public_url_guard AS MATERIALIZED (
+    SELECT routes.id FROM control.public_urls AS routes
+    WHERE routes.id = sqlc.arg(public_url_id)
     FOR KEY SHARE
 )
 SELECT sessions.*
-FROM control.route_sessions AS sessions
-JOIN route_guard ON route_guard.id = sessions.route_id
-WHERE sessions.route_version = sqlc.arg(route_version)
+FROM control.publish_runs AS sessions
+JOIN public_url_guard ON public_url_guard.id = sessions.public_url_id
+WHERE sessions.publish_run_number = sqlc.arg(publish_run_number)
 FOR UPDATE OF sessions;
 
--- name: LockRouteForUsage :one
+-- name: LockPublicURLForUsage :one
 SELECT id
-FROM control.routes
-WHERE id = sqlc.arg(route_id)
+FROM control.public_urls
+WHERE id = sqlc.arg(public_url_id)
 FOR KEY SHARE;
 
--- name: GetRouteUsageBucketForUpdate :one
+-- name: GetPublicURLUsageBucketForUpdate :one
 SELECT *
-FROM control.route_usage_buckets
-WHERE route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
+FROM control.public_url_usage_buckets
+WHERE public_url_id = sqlc.arg(public_url_id)
+  AND publish_run_number = sqlc.arg(publish_run_number)
   AND bucket_start = sqlc.arg(bucket_start)
 FOR UPDATE;
 
@@ -106,8 +106,8 @@ WITH report AS (
 INSERT INTO control.ingress_usage_reports (
     ingress_id,
     ingress_run_id,
-    route_id,
-    route_version,
+    public_url_id,
+    publish_run_number,
     bucket_start,
     bucket_end,
     observed_through,
@@ -126,8 +126,8 @@ INSERT INTO control.ingress_usage_reports (
 ) VALUES (
     sqlc.arg(ingress_id),
     sqlc.arg(ingress_run_id),
-    sqlc.arg(route_id),
-    sqlc.arg(route_version),
+    sqlc.arg(public_url_id),
+    sqlc.arg(publish_run_number),
     sqlc.arg(bucket_start),
     sqlc.arg(bucket_end),
     sqlc.arg(observed_through),
@@ -144,13 +144,13 @@ INSERT INTO control.ingress_usage_reports (
     sqlc.arg(final),
     sqlc.arg(received_at)
 )
-ON CONFLICT (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision)
+ON CONFLICT (ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, report_revision)
 DO NOTHING
-RETURNING route_id, route_version
+RETURNING public_url_id, publish_run_number
 ), bucket AS (
-INSERT INTO control.route_usage_buckets (
-    route_id,
-    route_version,
+INSERT INTO control.public_url_usage_buckets (
+    public_url_id,
+    publish_run_number,
     team_id,
     acting_identity_id,
     bucket_start,
@@ -171,8 +171,8 @@ INSERT INTO control.route_usage_buckets (
     updated_at
 )
 SELECT
-    sessions.route_id,
-    sessions.route_version,
+    sessions.public_url_id,
+    sessions.publish_run_number,
     sessions.team_id,
     sessions.acting_identity_id,
     sqlc.arg(bucket_start),
@@ -191,30 +191,30 @@ SELECT
     false,
     NULL,
     sqlc.arg(received_at)
-FROM control.route_sessions AS sessions
-JOIN report ON report.route_id = sessions.route_id AND report.route_version = sessions.route_version
-ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
-    bucket_end = GREATEST(control.route_usage_buckets.bucket_end, EXCLUDED.bucket_end),
-    bucket_revision = control.route_usage_buckets.bucket_revision + 1,
-    observed_through = GREATEST(control.route_usage_buckets.observed_through, EXCLUDED.observed_through),
-    connection_attempts = control.route_usage_buckets.connection_attempts + EXCLUDED.connection_attempts,
-    policy_denials = control.route_usage_buckets.policy_denials + EXCLUDED.policy_denials,
-    capacity_denials = control.route_usage_buckets.capacity_denials + EXCLUDED.capacity_denials,
-    visitor_stream_open_failures = control.route_usage_buckets.visitor_stream_open_failures + EXCLUDED.visitor_stream_open_failures,
-    successful_streams = control.route_usage_buckets.successful_streams + EXCLUDED.successful_streams,
-    connection_nanoseconds = control.route_usage_buckets.connection_nanoseconds + EXCLUDED.connection_nanoseconds,
-    ingress_bytes = control.route_usage_buckets.ingress_bytes + EXCLUDED.ingress_bytes,
-    egress_bytes = control.route_usage_buckets.egress_bytes + EXCLUDED.egress_bytes,
+FROM control.publish_runs AS sessions
+JOIN report ON report.public_url_id = sessions.public_url_id AND report.publish_run_number = sessions.publish_run_number
+ON CONFLICT (public_url_id, publish_run_number, bucket_start) DO UPDATE SET
+    bucket_end = GREATEST(control.public_url_usage_buckets.bucket_end, EXCLUDED.bucket_end),
+    bucket_revision = control.public_url_usage_buckets.bucket_revision + 1,
+    observed_through = GREATEST(control.public_url_usage_buckets.observed_through, EXCLUDED.observed_through),
+    connection_attempts = control.public_url_usage_buckets.connection_attempts + EXCLUDED.connection_attempts,
+    policy_denials = control.public_url_usage_buckets.policy_denials + EXCLUDED.policy_denials,
+    capacity_denials = control.public_url_usage_buckets.capacity_denials + EXCLUDED.capacity_denials,
+    visitor_stream_open_failures = control.public_url_usage_buckets.visitor_stream_open_failures + EXCLUDED.visitor_stream_open_failures,
+    successful_streams = control.public_url_usage_buckets.successful_streams + EXCLUDED.successful_streams,
+    connection_nanoseconds = control.public_url_usage_buckets.connection_nanoseconds + EXCLUDED.connection_nanoseconds,
+    ingress_bytes = control.public_url_usage_buckets.ingress_bytes + EXCLUDED.ingress_bytes,
+    egress_bytes = control.public_url_usage_buckets.egress_bytes + EXCLUDED.egress_bytes,
     histogram_data = EXCLUDED.histogram_data,
     updated_at = EXCLUDED.updated_at
-WHERE NOT control.route_usage_buckets.finalized
-RETURNING route_id, route_version
+WHERE NOT control.public_url_usage_buckets.finalized
+RETURNING public_url_id, publish_run_number
 ), denials AS (
-UPDATE control.route_sessions AS sessions
+UPDATE control.publish_runs AS sessions
 SET policy_denials = sessions.policy_denials + sqlc.arg(delta_policy_denials)::bigint
 FROM bucket
-WHERE sessions.route_id = bucket.route_id
-  AND sessions.route_version = bucket.route_version
+WHERE sessions.public_url_id = bucket.public_url_id
+  AND sessions.publish_run_number = bucket.publish_run_number
   AND sqlc.arg(delta_policy_denials)::bigint > 0
   AND sessions.policy_denials <= 9223372036854775807 - sqlc.arg(delta_policy_denials)::bigint
 RETURNING sessions.id
@@ -260,7 +260,7 @@ WHERE ended_at IS NULL
   AND lease_expires_at <= sqlc.arg(now)
 RETURNING *;
 
--- name: FinalizeRouteUsageBuckets :many
+-- name: FinalizePublicURLUsageBuckets :many
 WITH finalizable AS (
     SELECT
         buckets.bucket_id,
@@ -270,7 +270,7 @@ WITH finalizable AS (
             WHERE incomplete.incomplete_from < buckets.bucket_end
               AND incomplete.incomplete_until > buckets.bucket_start
         ) AS complete
-    FROM control.route_usage_buckets AS buckets
+    FROM control.public_url_usage_buckets AS buckets
     WHERE NOT buckets.finalized
       AND buckets.bucket_end <= sqlc.arg(through)
       AND NOT EXISTS (
@@ -282,7 +282,7 @@ WITH finalizable AS (
       )
     FOR UPDATE OF buckets
 )
-UPDATE control.route_usage_buckets AS buckets
+UPDATE control.public_url_usage_buckets AS buckets
 SET finalized = true,
     complete = finalizable.complete,
     observed_through = CASE
@@ -295,8 +295,8 @@ FROM finalizable
 WHERE buckets.bucket_id = finalizable.bucket_id
 RETURNING buckets.*;
 
--- name: InsertRouteUsageDelivery :one
-INSERT INTO control.route_usage_deliveries (
+-- name: InsertPublicURLUsageDelivery :one
+INSERT INTO control.public_url_usage_deliveries (
     bucket_id,
     source_revision,
     delivery_key,
@@ -312,13 +312,13 @@ INSERT INTO control.route_usage_deliveries (
     sqlc.arg(created_at)
 )
 ON CONFLICT (bucket_id, source_revision) DO UPDATE SET
-    delivery_key = control.route_usage_deliveries.delivery_key
+    delivery_key = control.public_url_usage_deliveries.delivery_key
 RETURNING *;
 
--- name: ClaimRouteUsageDeliveries :many
+-- name: ClaimPublicURLUsageDeliveries :many
 WITH candidates AS (
     SELECT delivery_id
-    FROM control.route_usage_deliveries
+    FROM control.public_url_usage_deliveries
     WHERE (
         state IN ('pending', 'failed')
         AND available_at <= sqlc.arg(claimed_at)
@@ -330,7 +330,7 @@ WITH candidates AS (
     LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 )
-UPDATE control.route_usage_deliveries AS deliveries
+UPDATE control.public_url_usage_deliveries AS deliveries
 SET state = 'delivering',
     work_owner = sqlc.arg(work_owner),
     work_epoch = deliveries.work_epoch + 1,
@@ -342,14 +342,14 @@ FROM candidates
 WHERE deliveries.delivery_id = candidates.delivery_id
 RETURNING deliveries.*;
 
--- name: GetRouteUsageBucketByID :one
+-- name: GetPublicURLUsageBucketByID :one
 SELECT *
-FROM control.route_usage_buckets
+FROM control.public_url_usage_buckets
 WHERE bucket_id = sqlc.arg(bucket_id)
   AND finalized;
 
--- name: CompleteRouteUsageDelivery :one
-UPDATE control.route_usage_deliveries
+-- name: CompletePublicURLUsageDelivery :one
+UPDATE control.public_url_usage_deliveries
 SET state = 'delivered',
     work_owner = NULL,
     work_expires_at = NULL,
@@ -362,8 +362,8 @@ WHERE delivery_id = sqlc.arg(delivery_id)
   AND work_expires_at > sqlc.arg(completed_at)
 RETURNING *;
 
--- name: RetryRouteUsageDelivery :one
-UPDATE control.route_usage_deliveries
+-- name: RetryPublicURLUsageDelivery :one
+UPDATE control.public_url_usage_deliveries
 SET state = 'failed',
     work_owner = NULL,
     work_expires_at = NULL,

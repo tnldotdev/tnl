@@ -36,7 +36,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	fixture := newSplitPublishFixtureWithOptions(t, "automatic", splitPublishOptions{dns: dnsFixture})
 	namespace, found := strings.CutPrefix(fixture.identity.hostname, "automatic.")
 	if !found {
-		t.Fatalf("route hostname %q is outside the expected member namespace", fixture.identity.hostname)
+		t.Fatalf("route hostname %q is outside the expected namespace", fixture.identity.hostname)
 	}
 	fixture.identity.certificatePlan = controlv1.CertificatePlan{
 		CacheKey: namespace, Scope: namespace,
@@ -68,7 +68,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	finalizing := make(chan controlv1.CertificateIssuance, 1)
 	config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 	config.Control = &certificateObservingControlClient{
-		RouteControlClient: config.Control,
+		PublicURLControlClient: config.Control,
 		observe: func(issuance controlv1.CertificateIssuance) {
 			if issuance.State == controlv1.CertificateIssuanceStateFinalizing {
 				select {
@@ -84,7 +84,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	select {
 	case <-cleanupStarted:
 	case <-time.After(30 * time.Second):
-		t.Fatal("public route DNS challenge cleanup did not start")
+		t.Fatal("public URL DNS challenge cleanup did not start")
 	}
 	select {
 	case issuance := <-finalizing:
@@ -92,14 +92,14 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 			t.Fatalf("finalizing issuance exposed certificate material: %#v", issuance)
 		}
 	case <-handle.done:
-		t.Fatalf("publisher stopped during public route DNS challenge cleanup: %v", handle.result())
+		t.Fatalf("publisher stopped during public URL DNS challenge cleanup: %v", handle.result())
 	case <-time.After(10 * time.Second):
 		t.Fatal("publisher did not observe the finalizing certificate issuance")
 	}
 	release()
 	ready := fixture.waitReady(t, handle)
-	assertIntegrationPublishedRoute(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
-	assertSplitRoutePlacement(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
+	assertIntegrationPublishedPublicURL(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
+	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, false)
 	assertIntegrationDNSChanges(t, dnsFixture, namespace, true)
 
@@ -134,20 +134,20 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 }
 
 type certificateObservingControlClient struct {
-	publisher.RouteControlClient
+	publisher.PublicURLControlClient
 	observe func(controlv1.CertificateIssuance)
 }
 
 func (c *certificateObservingControlClient) CreateCertificateIssuance(
 	ctx context.Context,
-	routeSessionID string,
-	routeVersion uint64,
-	token credentials.RouteSessionToken,
+	publishRunID string,
+	publishRunNumber uint64,
+	token credentials.PublishRunToken,
 	csr []byte,
 	idempotencyKey string,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.RouteControlClient.CreateCertificateIssuance(
-		ctx, routeSessionID, routeVersion, token, csr, idempotencyKey,
+	issuance, err := c.PublicURLControlClient.CreateCertificateIssuance(
+		ctx, publishRunID, publishRunNumber, token, csr, idempotencyKey,
 	)
 	c.observeResponse(issuance, err)
 	return issuance, err
@@ -156,9 +156,9 @@ func (c *certificateObservingControlClient) CreateCertificateIssuance(
 func (c *certificateObservingControlClient) GetCertificateIssuance(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.RouteControlClient.GetCertificateIssuance(ctx, issuanceID, token)
+	issuance, err := c.PublicURLControlClient.GetCertificateIssuance(ctx, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
 }
@@ -166,9 +166,9 @@ func (c *certificateObservingControlClient) GetCertificateIssuance(
 func (c *certificateObservingControlClient) MarkCertificateChallengeReady(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.RouteSessionToken,
+	token credentials.PublishRunToken,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.RouteControlClient.MarkCertificateChallengeReady(ctx, issuanceID, token)
+	issuance, err := c.PublicURLControlClient.MarkCertificateChallengeReady(ctx, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
 }
@@ -179,7 +179,7 @@ func (c *certificateObservingControlClient) observeResponse(issuance controlv1.C
 	}
 }
 
-func assertIntegrationPublishedRoute(t *testing.T, database *sql.DB, visitor *integrationVisitor,
+func assertIntegrationPublishedPublicURL(t *testing.T, database *sql.DB, visitor *integrationVisitor,
 	identity *integrationPublishingIdentity, ready publisher.Event,
 ) {
 	t.Helper()
@@ -189,17 +189,17 @@ func assertIntegrationPublishedRoute(t *testing.T, database *sql.DB, visitor *in
 	var teamID, domainID, membershipID, scope string
 	var planJSON []byte
 	if err := database.QueryRowContext(integrationOperationContext(t), `
-		SELECT r.team_id, r.domain_id, coalesce(r.membership_id, ''), r.route_scope,
+		SELECT r.team_id, r.domain_id, coalesce(r.membership_id, ''), r.public_url_scope,
 			json_build_object('cache_key', s.certificate_cache_key, 'scope', s.certificate_scope,
 				'identifiers', s.certificate_identifiers, 'challenge_method', s.certificate_challenge)
-		FROM control.routes r JOIN control.route_sessions s ON s.route_id = r.id
-		WHERE r.id = $1 AND s.route_version = $2
-	`, ready.RouteID, ready.RouteVersion).Scan(&teamID, &domainID, &membershipID, &scope, &planJSON); err != nil {
+		FROM control.public_urls r JOIN control.publish_runs s ON s.public_url_id = r.id
+		WHERE r.id = $1 AND s.publish_run_number = $2
+	`, ready.PublicURLID, ready.PublishRunNumber).Scan(&teamID, &domainID, &membershipID, &scope, &planJSON); err != nil {
 		t.Fatal(err)
 	}
-	if teamID != identity.teamID || domainID != identity.domainID || membershipID != identity.membershipID || scope != string(identity.routeScope) {
+	if teamID != identity.teamID || domainID != identity.domainID || membershipID != identity.membershipID || scope != string(identity.publicURLScope) {
 		t.Errorf("persisted route ownership = %s/%s/%s/%s, want %s/%s/%s/%s", teamID, domainID, membershipID, scope,
-			identity.teamID, identity.domainID, identity.membershipID, identity.routeScope)
+			identity.teamID, identity.domainID, identity.membershipID, identity.publicURLScope)
 	}
 	var plan controlv1.CertificatePlan
 	if err := json.Unmarshal(planJSON, &plan); err != nil {
@@ -215,7 +215,7 @@ func assertIntegrationPublishedRoute(t *testing.T, database *sql.DB, visitor *in
 	if response.StatusCode != http.StatusOK || string(body) != "real DNS publish" {
 		t.Fatalf("visitor response = %s, %q", response.Status, body)
 	}
-	assertIntegrationRouteCertificate(t, response, identity.hostname)
+	assertIntegrationPublicURLCertificate(t, response, identity.hostname)
 	actual := slices.Clone(response.TLS.PeerCertificates[0].DNSNames)
 	want := slices.Clone(identity.certificatePlan.Identifiers)
 	slices.Sort(actual)

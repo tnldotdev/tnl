@@ -14,17 +14,17 @@ import (
 )
 
 var (
-	loadDelay     = flag.Duration("tnl-load-delay", 0, "delay after successful database commands")
-	loadRoutes    = flag.Int("tnl-load-routes", 1000, "number of routes in the database load test")
-	loadHistory   = flag.Int("tnl-load-history", 1, "initial routing events per route")
-	loadDuration  = flag.Duration("tnl-load-duration", 0, "paced database load duration")
-	loadRetention = flag.Duration("tnl-load-retention", 0, "routing history retention window")
+	loadDelay      = flag.Duration("tnl-load-delay", 0, "delay after successful database commands")
+	loadPublicURLs = flag.Int("tnl-load-public-urls", 1000, "number of public URLs in the database load test")
+	loadHistory    = flag.Int("tnl-load-history", 1, "initial routing events per route")
+	loadDuration   = flag.Duration("tnl-load-duration", 0, "paced database load duration")
+	loadRetention  = flag.Duration("tnl-load-retention", 0, "routing history retention window")
 )
 
 type controlLoadFixture struct {
 	database *Database
 	now      time.Time
-	base     RouteSessionRequest
+	base     PublishRunRequest
 	routes   int
 	history  int
 	leases   map[string][]RelayLease
@@ -40,26 +40,26 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 	if *loadDelay < 0 || *loadDelay > 50*time.Millisecond {
 		t.Fatal("query delay must be between 0 and 50ms")
 	}
-	if *loadRoutes <= 0 || int64(*loadRoutes) > 2147483647 {
+	if *loadPublicURLs <= 0 || int64(*loadPublicURLs) > 2147483647 {
 		t.Fatal("route count must be a positive PostgreSQL integer")
 	}
 	if *loadHistory < 1 || int64(*loadHistory) > 2147483647 {
 		t.Fatal("history events per route must be a positive PostgreSQL integer")
 	}
-	database, now, request, originalLeases := newRouteSessionPrerequisites(t)
-	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadRoutes, history: *loadHistory, leases: make(map[string][]RelayLease)}
+	database, now, request, originalLeases := newPublishRunPrerequisites(t)
+	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadPublicURLs, history: *loadHistory, leases: make(map[string][]RelayLease)}
 	_, err := database.pool.Exec(t.Context(), `
-		INSERT INTO control.routes (id, team_id, domain_id, created_by_identity_id, idempotency_key,
-			request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy,
+		INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
+			request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy,
 			lifecycle_state, dns_state, created_at, updated_at)
-		SELECT 'route_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
-			request_digest, 'load-' || n || '.example.test', target, route_scope, policy_revision,
+		SELECT 'public_url_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
+			request_digest, 'load-' || n || '.example.test', target, public_url_scope, policy_revision,
 			ip_policy, lifecycle_state, dns_state, created_at, updated_at
-		FROM control.routes CROSS JOIN generate_series(0, $1::integer - 1) AS n WHERE id = $2`, *loadRoutes, request.RouteID)
+		FROM control.public_urls CROSS JOIN generate_series(0, $1::integer - 1) AS n WHERE id = $2`, *loadPublicURLs, request.PublicURLID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	capacity := max(4096, *loadRoutes)
+	capacity := max(4096, *loadPublicURLs)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity = $1`, capacity); err != nil {
 		t.Fatal(err)
 	}
@@ -108,9 +108,9 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 	return f
 }
 
-func (f *controlLoadFixture) request(index int) RouteSessionRequest {
+func (f *controlLoadFixture) request(index int) PublishRunRequest {
 	request := f.base
-	request.RouteID = fmt.Sprintf("route_load_%d", index)
+	request.PublicURLID = fmt.Sprintf("public_url_load_%d", index)
 	request.CertificateIdentifiers = []string{fmt.Sprintf("load-%d.example.test", index)}
 	request.CertificateCacheKey = request.CertificateIdentifiers[0]
 	return request

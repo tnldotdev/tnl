@@ -261,19 +261,19 @@ func (d *Database) ReleaseTeamDomain(
 	if updated != 1 {
 		return ErrAuthorityConflict
 	}
-	routes, err := queries.LockDomainRoutes(ctx, controlstatedb.LockDomainRoutesParams{TeamID: teamID, DomainID: domainID})
+	routes, err := queries.LockDomainPublicURLs(ctx, controlstatedb.LockDomainPublicURLsParams{TeamID: teamID, DomainID: domainID})
 	if err != nil {
-		return fmt.Errorf("controlstate: release team domain: lock routes: %w", err)
+		return fmt.Errorf("controlstate: release team domain: lock public_urls: %w", err)
 	}
 	for _, route := range routes {
-		if err := closeOpenRouteSession(ctx, queries, &pendingEvents, route, now, "domain_releasing"); err != nil {
+		if err := closeOpenPublishRun(ctx, queries, &pendingEvents, route, now, "domain_releasing"); err != nil {
 			return err
 		}
-		updated, err := queries.SuspendAuthorityRoute(ctx, controlstatedb.SuspendAuthorityRouteParams{
-			SuspensionReason: text("domain_releasing"), SuspendedAt: timestamptz(now), RouteID: route.ID,
+		updated, err := queries.SuspendAuthorityPublicURL(ctx, controlstatedb.SuspendAuthorityPublicURLParams{
+			SuspensionReason: text("domain_releasing"), SuspendedAt: timestamptz(now), PublicURLID: route.ID,
 		})
 		if err != nil {
-			return fmt.Errorf("controlstate: release team domain: suspend route: %w", err)
+			return fmt.Errorf("controlstate: release team domain: suspend public_url: %w", err)
 		}
 		if updated != 1 {
 			return ErrAuthorityConflict

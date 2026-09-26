@@ -18,13 +18,13 @@ type Code string
 const (
 	TargetUnavailable            Code = "TNL_TARGET_UNAVAILABLE"
 	TargetInvalid                Code = "TNL_TARGET_INVALID"
-	RouteInvalid                 Code = "TNL_ROUTE_INVALID"
+	PublicURLInvalid             Code = "TNL_PUBLIC_URL_INVALID"
 	RequestRejected              Code = "TNL_REQUEST_REJECTED"
 	FrameworkRegistrationTimeout Code = "TNL_FRAMEWORK_REGISTRATION_TIMEOUT"
 	TargetMismatch               Code = "TNL_TARGET_MISMATCH"
 	AuthenticationTimeout        Code = "TNL_AUTHENTICATION_TIMEOUT"
 	ServiceAmbiguous             Code = "TNL_SERVICE_AMBIGUOUS"
-	RouteConflict                Code = "TNL_ROUTE_CONFLICT"
+	PublicURLConflict            Code = "TNL_PUBLIC_URL_CONFLICT"
 	ProvisioningStalled          Code = "TNL_PROVISIONING_STALLED"
 )
 
@@ -63,10 +63,10 @@ var definitions = []definition{
 		},
 	},
 	{
-		code:    RouteInvalid,
-		title:   "invalid route",
-		summary: "the publisher could not use the hostname assigned to the route.",
-		path:    "/e/route",
+		code:    PublicURLInvalid,
+		title:   "invalid public url",
+		summary: "tnl could not use the hostname assigned to the public url.",
+		path:    "/e/public-url",
 		flow: []clioutput.FlowNode{
 			{Label: "tnl server", Detail: "invalid hostname", Failure: true},
 			{Label: "publisher (not started)"},
@@ -129,25 +129,25 @@ var definitions = []definition{
 		},
 	},
 	{
-		code:    RouteConflict,
-		title:   "route conflict",
-		summary: "tnl could not create or reconcile the route because its hostname, identity, or lifecycle conflicts with the requested route.",
-		path:    "/e/route-conflict",
+		code:    PublicURLConflict,
+		title:   "public url conflict",
+		summary: "tnl could not create or reconcile the public url because its hostname, identity, or lifecycle conflicts with the requested public url.",
+		path:    "/e/public-url-conflict",
 		flow: []clioutput.FlowNode{
-			{Label: "requested route"},
-			{Label: "control API", Detail: "route conflict", Failure: true},
+			{Label: "requested public url"},
+			{Label: "control API", Detail: "public url conflict", Failure: true},
 			{Label: "publisher (not started)"},
 		},
 	},
 	{
 		code:    ProvisioningStalled,
 		title:   "provisioning stalled",
-		summary: "route provisioning has not completed. tnl is still retrying certificate or publisher connection work.",
+		summary: "public url provisioning has not completed. tnl is still retrying certificate or publisher connection work.",
 		path:    "/e/provisioning-stalled",
 		flow: []clioutput.FlowNode{
 			{Label: "publisher"},
-			{Label: "route provisioning", Detail: "still waiting", Failure: true},
-			{Label: "route (not yet routable)"},
+			{Label: "public url provisioning", Detail: "still waiting", Failure: true},
+			{Label: "public url (not yet routable)"},
 		},
 	},
 }

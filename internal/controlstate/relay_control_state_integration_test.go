@@ -42,7 +42,7 @@ func TestIntegrationRelayControlState(t *testing.T) {
 }
 
 func TestIntegrationPublisherConnectionClaims(t *testing.T) {
-	f := newRouteSessionFixture(t)
+	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	plan := f.setup.PublisherConnections[0]
 	digest, err := credentials.ParsePublisherConnectionCredential(plan.PublisherConnectionCredential)

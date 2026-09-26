@@ -54,7 +54,7 @@ func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
 		failure := errors.New("close failed")
 		for i := range 6 {
 			ctx, cancel := context.WithCancel(t.Context())
-			p := &routeProcess{index: i, cancel: cancel, done: make(chan struct{})}
+			p := &publicURLProcess{index: i, cancel: cancel, done: make(chan struct{})}
 			group.processes = append(group.processes, p)
 			go func() {
 				<-ctx.Done()
@@ -85,14 +85,14 @@ func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
 	})
 }
 
-func TestStopDeadlineStillCancelsQueuedRoutes(t *testing.T) {
+func TestStopDeadlineStillCancelsQueuedPublicURLs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		var canceled atomic.Int64
 		group := &Publishers{config: PublisherConfig{Parallel: 2, StopTimeout: 10 * time.Second}}
 		for i := range 6 {
-			group.processes = append(group.processes, &routeProcess{index: i, cancel: func() { canceled.Add(1) }, done: make(chan struct{})})
+			group.processes = append(group.processes, &publicURLProcess{index: i, cancel: func() { canceled.Add(1) }, done: make(chan struct{})})
 		}
 		at := time.Now()
 		_, err := group.Stop(ctx, []int{0, 1, 2, 3, 4, 5})

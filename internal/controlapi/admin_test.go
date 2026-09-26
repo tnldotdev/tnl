@@ -20,8 +20,8 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 	store := &adminStoreStub{
 		principal: controlstate.ControlPrincipal{IdentityID: "identity_admin", Administrator: true},
 		counts: controlstate.AdminRuntimeCounts{
-			EnabledRoutes: 1, SuspendedRoutes: 2, StartingRouteSessions: 3,
-			ReadyRouteSessions: 4, IngressLeases: 5, RelayLeases: 6,
+			EnabledPublicURLs: 1, SuspendedPublicURLs: 2, StartingPublishRuns: 3,
+			ReadyPublishRuns: 4, IngressLeases: 5, RelayLeases: 6,
 		},
 		relayPage: controlstate.AdminRelayPage{
 			Relays: []controlstate.RelayLease{{
@@ -35,7 +35,7 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 			NextCursor: "relay_1",
 		},
 		controls: []controlstate.MaintenanceControl{{
-			Name: controlstate.MaintenanceControlRouteCreation, Allowed: true, Revision: 1,
+			Name: controlstate.MaintenanceControlPublicURLCreation, Allowed: true, Revision: 1,
 			UpdatedAt: now, UpdatedBy: "identity_admin",
 		}},
 	}
@@ -66,11 +66,11 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 	}
 
 	controls := serveAdminRequest(handler, http.MethodGet, "/v1/admin/maintenance-controls", "")
-	if controls.Code != http.StatusOK || !strings.Contains(controls.Body.String(), `"name":"route_creation"`) {
+	if controls.Code != http.StatusOK || !strings.Contains(controls.Body.String(), `"name":"public_url_creation"`) {
 		t.Fatalf("maintenance controls = %d: %s", controls.Code, controls.Body.String())
 	}
-	set := serveAdminRequest(handler, http.MethodPut, "/v1/admin/maintenance-controls/route_creation", `{"allowed":false}`)
-	if set.Code != http.StatusOK || store.setName != controlstate.MaintenanceControlRouteCreation ||
+	set := serveAdminRequest(handler, http.MethodPut, "/v1/admin/maintenance-controls/public_url_creation", `{"allowed":false}`)
+	if set.Code != http.StatusOK || store.setName != controlstate.MaintenanceControlPublicURLCreation ||
 		store.setAllowed || store.setActor != "identity_admin" || store.setRequestID == "" {
 		t.Fatalf("set maintenance control = %d, %q, %t: %s", set.Code, store.setName, store.setAllowed, set.Body.String())
 	}

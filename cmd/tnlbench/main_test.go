@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadValidationProtectsSourceLimiter(t *testing.T) {
-	c := loadCommand{workerCommand: workerCommand{CellID: "target", CoordinatorURL: "http://coordinator.internal:8080", CoordinatorToken: "token", WorkerCount: 1, Timeout: time.Minute}, Routes: 4, FreshRate: 30, HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768}
+	c := loadCommand{workerCommand: workerCommand{CellID: "target", CoordinatorURL: "http://coordinator.internal:8080", CoordinatorToken: "token", WorkerCount: 1, Timeout: time.Minute}, PublicURLs: 4, FreshRate: 30, HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}

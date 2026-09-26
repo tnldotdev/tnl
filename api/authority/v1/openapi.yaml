@@ -449,7 +449,7 @@ components:
       $ref: "#/components/schemas/ResourceID"
     DomainID:
       $ref: "#/components/schemas/ResourceID"
-    RouteID:
+    PublicURLID:
       $ref: "#/components/schemas/ResourceID"
     CanonicalHostname:
       type: string
@@ -824,7 +824,7 @@ components:
         make_default:
           type: boolean
           default: false
-    RouteScope:
+    PublicURLScope:
       type: string
       enum: [member, shared]
     CertificateChallengeMethod:
@@ -857,7 +857,7 @@ components:
           $ref: "#/components/schemas/CertificateChallengeMethod"
     AuthorizationOperation:
       type: string
-      enum: [route.create, route.update, route_session.create, route.delete]
+      enum: [public_url.create, public_url.update, publish_run.create, public_url.delete]
     ServiceAuthorizationRequest:
       type: object
       additionalProperties: false
@@ -868,7 +868,7 @@ components:
           team_id,
           domain_id,
           canonical_hostname,
-          route_scope,
+          public_url_scope,
           target,
           allowed_ip_prefixes,
           ephemeral,
@@ -884,21 +884,21 @@ components:
           $ref: "#/components/schemas/TeamID"
         acting_membership_id:
           $ref: "#/components/schemas/MembershipID"
-        route_membership_id:
+        public_url_membership_id:
           $ref: "#/components/schemas/MembershipID"
         domain_id:
           $ref: "#/components/schemas/DomainID"
         canonical_hostname:
           $ref: "#/components/schemas/CanonicalHostname"
-        route_scope:
-          $ref: "#/components/schemas/RouteScope"
-        route_id:
-          $ref: "#/components/schemas/RouteID"
-        route_version:
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        publish_run_number:
           type: integer
           format: int64
           minimum: 1
-        route_mutation_revision:
+        public_url_mutation_revision:
           type: integer
           format: int64
           minimum: 1
@@ -929,7 +929,7 @@ components:
           policy_revision,
           domain_id,
           canonical_hostname,
-          route_scope,
+          public_url_scope,
           dns_authority_reference,
         ]
       properties:
@@ -941,7 +941,7 @@ components:
           $ref: "#/components/schemas/MembershipID"
         acting_role:
           $ref: "#/components/schemas/TeamRole"
-        route_membership_id:
+        public_url_membership_id:
           $ref: "#/components/schemas/MembershipID"
         policy_revision:
           type: integer
@@ -951,8 +951,8 @@ components:
           $ref: "#/components/schemas/DomainID"
         canonical_hostname:
           $ref: "#/components/schemas/CanonicalHostname"
-        route_scope:
-          $ref: "#/components/schemas/RouteScope"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
         dns_authority_reference:
           type: string
           minLength: 1

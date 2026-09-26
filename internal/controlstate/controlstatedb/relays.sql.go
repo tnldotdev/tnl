@@ -109,31 +109,31 @@ func (q *Queries) BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams
 	return i, err
 }
 
-const countOpenRouteSessionAssignmentsByRelayService = `-- name: CountOpenRouteSessionAssignmentsByRelayService :many
+const countOpenPublishRunAssignmentsByRelayService = `-- name: CountOpenPublishRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
-FROM control.route_session_connections AS connections
-JOIN control.route_sessions AS sessions ON sessions.id = connections.route_session_id
+FROM control.publish_run_connections AS connections
+JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
 WHERE sessions.closed_at IS NULL
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id
 `
 
-type CountOpenRouteSessionAssignmentsByRelayServiceRow struct {
+type CountOpenPublishRunAssignmentsByRelayServiceRow struct {
 	RelayServiceID  string
 	AssignmentCount int64
 }
 
 // Diagnostic/test oracle only; placement reads the trigger-maintained totals.
-func (q *Queries) CountOpenRouteSessionAssignmentsByRelayService(ctx context.Context) ([]CountOpenRouteSessionAssignmentsByRelayServiceRow, error) {
-	rows, err := q.db.Query(ctx, countOpenRouteSessionAssignmentsByRelayService)
+func (q *Queries) CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error) {
+	rows, err := q.db.Query(ctx, countOpenPublishRunAssignmentsByRelayService)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CountOpenRouteSessionAssignmentsByRelayServiceRow
+	var items []CountOpenPublishRunAssignmentsByRelayServiceRow
 	for rows.Next() {
-		var i CountOpenRouteSessionAssignmentsByRelayServiceRow
+		var i CountOpenPublishRunAssignmentsByRelayServiceRow
 		if err := rows.Scan(&i.RelayServiceID, &i.AssignmentCount); err != nil {
 			return nil, err
 		}
@@ -147,7 +147,7 @@ func (q *Queries) CountOpenRouteSessionAssignmentsByRelayService(ctx context.Con
 
 const countRelayActiveConnections = `-- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.route_session_connections
+FROM control.publish_run_connections
 WHERE connected_relay_id = $1
   AND connected_relay_run_id = $2
   AND connected_relay_lease_revision = $3

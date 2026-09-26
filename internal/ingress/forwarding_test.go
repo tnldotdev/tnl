@@ -187,11 +187,11 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 	entry.IpPolicy = ingressv1.Allowlist
 	entry.AllowedIpPrefixes = []string{"192.0.2.0/24"}
 
-	route, err := forwarder.Route(entry)
+	route, err := forwarder.PublicURL(entry)
 	if err != nil {
-		t.Fatalf("Route: %v", err)
+		t.Fatalf("PublicURL: %v", err)
 	}
-	if route.ID != entry.RouteId || route.RouteVersion != uint64(entry.RouteVersion) ||
+	if route.ID != entry.PublicUrlId || route.PublishRunNumber != uint64(entry.PublishRunNumber) ||
 		len(route.Backends) != 1 || len(route.AllowedIPPrefixes) != 1 || route.AllowedIPPrefixes[0].String() != "192.0.2.0/24" {
 		t.Fatalf("route = %#v", route)
 	}
@@ -201,7 +201,7 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 	}
 
 	entry.IpPolicy = ingressv1.AllowAll
-	if _, err := forwarder.Route(entry); err == nil {
+	if _, err := forwarder.PublicURL(entry); err == nil {
 		t.Fatal("allow-all route with allowlist prefixes was accepted")
 	}
 }
@@ -316,8 +316,8 @@ func mustOnlyBackend(
 func forwardingTestEntry(now time.Time, address string) ingressv1.IngressRoutingTableEntry {
 	now = now.UTC()
 	return ingressv1.IngressRoutingTableEntry{
-		RouteId: "route_1", RouteSessionId: "route_session_1", RouteVersion: 2,
-		RouteExpiresAt: now.Add(time.Hour),
+		PublicUrlId: "public_url_1", PublishRunId: "publish_run_1", PublishRunNumber: 2,
+		PublicUrlExpiresAt: now.Add(time.Hour),
 		PublisherConnections: []ingressv1.IngressRoutingPublisherConnection{{
 			ConnectionSlot: 0, PublisherConnectionId: "publisher_connection_1",
 			ConnectionAssignmentRevision: 3, RelayServiceId: "relay_service_1",
@@ -334,13 +334,13 @@ func forwardingTestHeader(
 	connection := entry.PublisherConnections[0]
 	return tunnelv1.InternalForwardingHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-		VisitorConnectionID: visitorConnectionID, RouteID: entry.RouteId,
-		RouteSessionID: entry.RouteSessionId, RouteVersion: uint64(entry.RouteVersion),
+		VisitorConnectionID: visitorConnectionID, PublicURLID: entry.PublicUrlId,
+		PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		PublisherConnectionID: connection.PublisherConnectionId, ConnectionSlot: uint8(connection.ConnectionSlot),
 		ConnectionAssignmentRevision: uint64(connection.ConnectionAssignmentRevision),
 		RelayServiceID:               connection.RelayServiceId, RelayID: connection.RelayId,
 		RelayRunID: connection.RelayRunId, RelayLeaseRevision: uint64(connection.RelayLeaseRevision),
-		RouteExpiresAt: entry.RouteExpiresAt, LeaseExpiresAt: connection.LeaseExpiresAt,
+		PublicUrlExpiresAt: entry.PublicUrlExpiresAt, LeaseExpiresAt: connection.LeaseExpiresAt,
 	}
 }
 

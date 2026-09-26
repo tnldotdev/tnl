@@ -27,27 +27,27 @@ type Querier interface {
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
-	CancelOpenRouteRecoveryEpisode(ctx context.Context, arg CancelOpenRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
-	CancelRouteSessionACMEAuthorizations(ctx context.Context, arg CancelRouteSessionACMEAuthorizationsParams) error
-	CancelRouteSessionACMEOrders(ctx context.Context, arg CancelRouteSessionACMEOrdersParams) error
+	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
+	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
+	CancelPublishRunACMEOrders(ctx context.Context, arg CancelPublishRunACMEOrdersParams) error
 	// Claim-time checks can precede a publisher's challenge-ready transition.
 	// Recheck the current projection and every live ingress immediately before
 	// asking the CA to validate, while the authorization is still presented.
 	CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error)
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
-	ClaimDNSRouteWork(ctx context.Context, arg ClaimDNSRouteWorkParams) (ControlRoute, error)
-	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlRouteSessionConnection, error)
+	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
+	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
+	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnection, error)
 	ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error)
-	ClaimRouteUsageDeliveries(ctx context.Context, arg ClaimRouteUsageDeliveriesParams) ([]ControlRouteUsageDelivery, error)
-	CloseRouteSession(ctx context.Context, arg CloseRouteSessionParams) (ControlRouteSession, error)
-	CloseRouteSessionConnections(ctx context.Context, arg CloseRouteSessionConnectionsParams) error
+	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
+	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
-	CompleteRouteUsageDelivery(ctx context.Context, arg CompleteRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
+	CompletePublicURLUsageDelivery(ctx context.Context, arg CompletePublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
 	// Diagnostic/test oracle only; placement reads the trigger-maintained totals.
-	CountOpenRouteSessionAssignmentsByRelayService(ctx context.Context) ([]CountOpenRouteSessionAssignmentsByRelayServiceRow, error)
+	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	CreateActiveSlugReservation(ctx context.Context, arg CreateActiveSlugReservationParams) error
@@ -66,16 +66,16 @@ type Querier interface {
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
-	DeleteRoute(ctx context.Context, arg DeleteRouteParams) (int64, error)
-	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlRouteSessionConnection, error)
+	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
+	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnection, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureExternalAuthorityPrincipal(ctx context.Context, arg EnsureExternalAuthorityPrincipalParams) (ControlIdentity, error)
 	EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) (EnsureExternalRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
-	EnsureRouteUsageConfiguration(ctx context.Context, arg EnsureRouteUsageConfigurationParams) (ControlRouteUsageConfiguration, error)
-	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlRouteSessionConnection, error)
+	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error)
+	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnection, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
-	FinalizeRouteUsageBuckets(ctx context.Context, arg FinalizeRouteUsageBucketsParams) ([]ControlRouteUsageBucket, error)
+	FinalizePublicURLUsageBuckets(ctx context.Context, arg FinalizePublicURLUsageBucketsParams) ([]ControlPublicUrlUsageBucket, error)
 	FindBuiltinIdentity(ctx context.Context) (ControlIdentity, error)
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
@@ -83,27 +83,34 @@ type Querier interface {
 	GetACMEAccountByDirectory(ctx context.Context, directoryUrl string) (ControlAcmeAccount, error)
 	GetACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrderByIdempotencyParams) (ControlAcmeOrder, error)
-	GetActiveRouteSessionChallengeExpiry(ctx context.Context, arg GetActiveRouteSessionChallengeExpiryParams) (pgtype.Timestamptz, error)
-	GetActiveRouteSessionMembership(ctx context.Context, arg GetActiveRouteSessionMembershipParams) (GetActiveRouteSessionMembershipRow, error)
+	GetActivePublishRunChallengeExpiry(ctx context.Context, arg GetActivePublishRunChallengeExpiryParams) (pgtype.Timestamptz, error)
+	GetActivePublishRunMembership(ctx context.Context, arg GetActivePublishRunMembershipParams) (GetActivePublishRunMembershipRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
-	GetAuthorizedRouteByHostname(ctx context.Context, arg GetAuthorizedRouteByHostnameParams) (GetAuthorizedRouteByHostnameRow, error)
+	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)
 	GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
-	GetExternalAuthorityRoute(ctx context.Context, arg GetExternalAuthorityRouteParams) (GetExternalAuthorityRouteRow, error)
+	GetExternalAuthorityPublicURL(ctx context.Context, arg GetExternalAuthorityPublicURLParams) (GetExternalAuthorityPublicURLRow, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
-	GetIdentityRoute(ctx context.Context, arg GetIdentityRouteParams) (GetIdentityRouteRow, error)
+	GetIdentityPublicURL(ctx context.Context, arg GetIdentityPublicURLParams) (GetIdentityPublicURLRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
 	GetIngressLease(ctx context.Context, arg GetIngressLeaseParams) (ControlIngressLease, error)
 	GetIngressUsageReport(ctx context.Context, arg GetIngressUsageReportParams) (ControlIngressUsageReport, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
-	GetOpenRouteRecoveryEpisode(ctx context.Context, arg GetOpenRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
-	GetOpenRouteSession(ctx context.Context, routeID string) (ControlRouteSession, error)
+	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
+	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
-	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlRouteSessionConnection, error)
+	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
+	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
+	GetPublicURLUsageBucketByID(ctx context.Context, bucketID int64) (ControlPublicUrlUsageBucket, error)
+	GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetPublicURLUsageBucketForUpdateParams) (ControlPublicUrlUsageBucket, error)
+	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
+	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
+	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
+	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnection, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// Claims and readiness read service configuration without changing it. Share
 	// that guard across processes. Claims exclusively lock the selected lease's
@@ -119,42 +126,35 @@ type Querier interface {
 	// projection reads independently exclude a lease that has since drained.
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
-	GetRouteByCreatorIdempotency(ctx context.Context, arg GetRouteByCreatorIdempotencyParams) (GetRouteByCreatorIdempotencyRow, error)
-	GetRouteCreationContext(ctx context.Context, arg GetRouteCreationContextParams) (GetRouteCreationContextRow, error)
-	GetRouteSession(ctx context.Context, routeSessionID string) (ControlRouteSession, error)
-	GetRouteSessionByIdempotency(ctx context.Context, arg GetRouteSessionByIdempotencyParams) (ControlRouteSession, error)
-	GetRouteSessionByTokenID(ctx context.Context, sessionTokenID string) (ControlRouteSession, error)
-	GetRouteUsageBucketByID(ctx context.Context, bucketID int64) (ControlRouteUsageBucket, error)
-	GetRouteUsageBucketForUpdate(ctx context.Context, arg GetRouteUsageBucketForUpdateParams) (ControlRouteUsageBucket, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
-	HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteSessionParams) (ControlRouteSession, error)
+	HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishRunParams) (ControlPublishRun, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
-	InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error
+	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
 	// Acquire the clock before identity allocation in this same command. Single-event
 	// publishers avoid a separate round trip while holding the global clock; callers
 	// with earlier events already hold it. Keep the lock through transaction commit.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
+	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
+	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
+	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
+	InsertPublicURLUpdateAuditEvent(ctx context.Context, arg InsertPublicURLUpdateAuditEventParams) error
+	InsertPublicURLUsageDelivery(ctx context.Context, arg InsertPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
+	InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error)
+	InsertPublishRunAuditEvent(ctx context.Context, arg InsertPublishRunAuditEventParams) error
+	InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnection, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
-	InsertRoute(ctx context.Context, arg InsertRouteParams) (ControlRoute, error)
-	InsertRouteCreateAuditEvent(ctx context.Context, arg InsertRouteCreateAuditEventParams) error
-	InsertRouteDeleteAuditEvent(ctx context.Context, arg InsertRouteDeleteAuditEventParams) error
-	InsertRouteSession(ctx context.Context, arg InsertRouteSessionParams) (ControlRouteSession, error)
-	InsertRouteSessionAuditEvent(ctx context.Context, arg InsertRouteSessionAuditEventParams) error
-	InsertRouteSessionConnections(ctx context.Context, arg InsertRouteSessionConnectionsParams) ([]ControlRouteSessionConnection, error)
-	InsertRouteUpdateAuditEvent(ctx context.Context, arg InsertRouteUpdateAuditEventParams) error
-	InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
-	ListExternalAuthorityRoutes(ctx context.Context, arg ListExternalAuthorityRoutesParams) ([]ListExternalAuthorityRoutesRow, error)
+	ListExternalAuthorityPublicURLs(ctx context.Context, arg ListExternalAuthorityPublicURLsParams) ([]ListExternalAuthorityPublicURLsRow, error)
 	ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error)
-	ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutesParams) ([]ListIdentityRoutesRow, error)
+	ListIdentityPublicURLs(ctx context.Context, arg ListIdentityPublicURLsParams) ([]ListIdentityPublicURLsRow, error)
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
 	ListIngressRoutingTableEvents(ctx context.Context, arg ListIngressRoutingTableEventsParams) ([]ControlIngressRoutingTableEvent, error)
@@ -165,12 +165,12 @@ type Querier interface {
 	// bounded metadata, not histogram blobs; exact replays still load their payload.
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
+	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnection, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ControlRelayServiceAssignmentTotal, error)
-	ListRouteSessionConnections(ctx context.Context, routeSessionID string) ([]ControlRouteSessionConnection, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
-	ListTeamMemberNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamMemberNamespaceLabelsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, teamID string) ([]ListTeamMembershipContextsRow, error)
+	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
@@ -179,18 +179,18 @@ type Querier interface {
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
 	LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error
-	LockDomainRoutes(ctx context.Context, arg LockDomainRoutesParams) ([]ControlRoute, error)
+	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
-	LockExpiredEphemeralRoutes(ctx context.Context, arg LockExpiredEphemeralRoutesParams) ([]ControlRoute, error)
-	LockHostedTeamRoutes(ctx context.Context, teamID string) ([]ControlRoute, error)
+	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
+	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error)
-	LockIdentityRouteForDelete(ctx context.Context, arg LockIdentityRouteForDeleteParams) (LockIdentityRouteForDeleteRow, error)
+	LockIdentityPublicURLForDelete(ctx context.Context, arg LockIdentityPublicURLForDeleteParams) (LockIdentityPublicURLForDeleteRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
 	LockIngressRoutingTableClock(ctx context.Context) (int64, error)
-	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlRouteSessionConnection, error)
+	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlPublishRunConnection, error)
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
-	LockLocalRouteTeamForMutation(ctx context.Context, routeID string) (string, error)
+	LockLocalPublicURLTeamForMutation(ctx context.Context, publicUrlID string) (string, error)
 	// Local authority mutations lock the team before identities, memberships,
 	// domains, DNS authorities, and routes. Authorization is rechecked under this
 	// transaction-held guard; hosted teams never require fabricated local rows.
@@ -202,26 +202,26 @@ type Querier interface {
 	// Callers must not upgrade this guard by writing the team later in the transaction.
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
-	LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error)
+	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
+	LockPublicURLCreationControl(ctx context.Context) (bool, error)
+	// Serialize creators without blocking session and audit foreign-key checks.
+	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
+	// Session operations serialize route mutations but never change the route's
+	// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
+	// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
+	LockPublicURLForRun(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
+	LockPublicURLForUsage(ctx context.Context, publicUrlID string) (string, error)
+	LockPublicURLRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlPublicUrlRecoveryEpisode, error)
+	LockPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
+	LockPublishRunCreationControl(ctx context.Context) (bool, error)
+	// Acquire the immutable route reference before the session, in one round trip.
+	// Read the bucket in a LATER statement: a competing ingress may create it while
+	// this statement waits for the session lock, after this statement's snapshot.
+	LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
 	// Acquire the reservation guard before service guards and rows, in one command.
 	// Callers finish locking all services before locking leases or checking capacity.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
-	LockRouteCreationControl(ctx context.Context) (bool, error)
-	// Serialize creators without blocking session and audit foreign-key checks.
-	LockRouteCreator(ctx context.Context, identityID string) (string, error)
-	// Session operations serialize route mutations but never change the route's
-	// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
-	// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
-	LockRouteForSession(ctx context.Context, routeID string) (ControlRoute, error)
-	LockRouteForUsage(ctx context.Context, routeID string) (string, error)
-	LockRouteRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlRouteRecoveryEpisode, error)
-	LockRouteSession(ctx context.Context, routeSessionID string) (ControlRouteSession, error)
-	LockRouteSessionCreationControl(ctx context.Context) (bool, error)
-	// Acquire the immutable route reference before the session, in one round trip.
-	// Read the bucket in a LATER statement: a competing ingress may create it while
-	// this statement waits for the session lock, after this statement's snapshot.
-	LockRouteSessionForUsage(ctx context.Context, arg LockRouteSessionForUsageParams) (ControlRouteSession, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
 	LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error)
@@ -235,15 +235,15 @@ type Querier interface {
 	MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, now pgtype.Timestamptz) ([]ControlIngressUsageRun, error)
 	MarkIngressUsageRunReported(ctx context.Context, arg MarkIngressUsageRunReportedParams) (ControlIngressUsageRun, error)
 	MarkInvitationExpired(ctx context.Context, invitationID string) (int64, error)
-	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlRouteSessionConnection, error)
-	MarkRouteSessionCertificateInstalled(ctx context.Context, arg MarkRouteSessionCertificateInstalledParams) (ControlRouteSession, error)
-	MarkRouteSessionReady(ctx context.Context, arg MarkRouteSessionReadyParams) (ControlRouteSession, error)
+	MarkPublishRunCertificateInstalled(ctx context.Context, arg MarkPublishRunCertificateInstalledParams) (ControlPublishRun, error)
+	MarkPublishRunReady(ctx context.Context, arg MarkPublishRunReadyParams) (ControlPublishRun, error)
+	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnection, error)
 	ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error)
-	ObserveRouteRecoveryEpisode(ctx context.Context, arg ObserveRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
-	OpenRouteRecoveryEpisode(ctx context.Context, arg OpenRouteRecoveryEpisodeParams) error
+	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
+	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	// Bound candidates visited as well as rows deleted. Advance past anchors even
 	// when no row can be removed. Keep the newest hostname/category projection
-	// (including tombstones/expired entries) AND each route-version's latest revision.
+	// (including tombstones/expired entries) AND each publish run number's latest revision.
 	// All checks use this statement's snapshot. Concurrent publications can only
 	// make an old anchor redundant; they cannot make a superseded event current.
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
@@ -260,7 +260,7 @@ type Querier interface {
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
-	RenewEphemeralRouteExpiry(ctx context.Context, arg RenewEphemeralRouteExpiryParams) (pgtype.Timestamptz, error)
+	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	// A failed ready connection can keep its existing service reservation. This
@@ -271,10 +271,10 @@ type Querier interface {
 	// just as one immediately after commit can; claim checks the exact current lease
 	// and process capacity under its exclusive lease guard. No capacity is added here.
 	// Closed/expired slots have no reservation and require guarded placement first.
-	ReplaceRouteSessionConnection(ctx context.Context, arg ReplaceRouteSessionConnectionParams) (ControlRouteSessionConnection, error)
+	ReplacePublishRunConnection(ctx context.Context, arg ReplacePublishRunConnectionParams) (ControlPublishRunConnection, error)
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
-	RetryRouteUsageDelivery(ctx context.Context, arg RetryRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
+	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
@@ -287,7 +287,7 @@ type Querier interface {
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)
-	SaveDNSRouteWork(ctx context.Context, arg SaveDNSRouteWorkParams) (ControlRoute, error)
+	SaveDNSPublicURLWork(ctx context.Context, arg SaveDNSPublicURLWorkParams) (ControlPublicUrl, error)
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	// Find an old committed PREFIX, not the largest old timestamp. Request-start
 	// timestamps can be out of revision order; preserve every still-recent event.
@@ -299,7 +299,7 @@ type Querier interface {
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
-	SuspendAuthorityRoute(ctx context.Context, arg SuspendAuthorityRouteParams) (int64, error)
+	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
 	// Cleanup-only coordination; no route, reservation, service, lease, or clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
@@ -307,8 +307,8 @@ type Querier interface {
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)
-	UpdateRoute(ctx context.Context, arg UpdateRouteParams) (ControlRoute, error)
-	UpdateRouteRecoveryHistogram(ctx context.Context, arg UpdateRouteRecoveryHistogramParams) (ControlRouteRecoveryHistogram, error)
+	UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error)
+	UpdatePublicURLRecoveryHistogram(ctx context.Context, arg UpdatePublicURLRecoveryHistogramParams) (ControlPublicUrlRecoveryHistogram, error)
 	// A publisher transition invalidates the worker's authorization snapshot.
 	// Call only after changing authorizations while holding the order lock.
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error

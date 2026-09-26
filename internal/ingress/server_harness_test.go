@@ -61,11 +61,11 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 8
 	}
-	if config.MaxRouteConnections == 0 {
-		config.MaxRouteConnections = 2
+	if config.MaxPublicURLConnections == 0 {
+		config.MaxPublicURLConnections = 2
 	}
 	if config.Lookup == nil {
-		config.Lookup = func(string) (Route, bool) { return Route{}, false }
+		config.Lookup = func(string) (PublicURL, bool) { return PublicURL{}, false }
 	}
 	server, err := New(listener, config)
 	if err != nil {
@@ -127,9 +127,9 @@ func exchangePing(t *testing.T, c *tls.Conn) {
 	_ = c.Close()
 }
 
-func routeConfig(backends ...routebackend.Backend) Config {
-	return Config{Lookup: func(host string) (Route, bool) {
-		return Route{ID: "route_test", RouteVersion: 1, RecoveryEpisodeID: 7, Backends: backends}, host == "route.example"
+func publicURLConfig(backends ...routebackend.Backend) Config {
+	return Config{Lookup: func(host string) (PublicURL, bool) {
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends}, host == "route.example"
 	}}
 }
 
@@ -201,8 +201,8 @@ func testCertificate(t *testing.T, hostname string) tls.Certificate {
 
 type testUsageConnection struct {
 	mu                                                         sync.Mutex
-	routeID                                                    string
-	routeVersion                                               uint64
+	publicURLID                                                string
+	publishRunNumber                                           uint64
 	source                                                     netip.Addr
 	openedAt, closedAt, publisherOpeningAt, publisherOpenedAt  time.Time
 	policyDenials, capacityDenials, publisherFailures, streams int
@@ -215,7 +215,7 @@ func newUsageRecorder() *testUsageRecorder {
 	return &testUsageRecorder{opened: make(chan *testUsageConnection, 8)}
 }
 func (r *testUsageRecorder) Open(id string, version uint64, source netip.Addr, at time.Time) UsageConnection {
-	u := &testUsageConnection{routeID: id, routeVersion: version, source: source, openedAt: at, closed: make(chan struct{})}
+	u := &testUsageConnection{publicURLID: id, publishRunNumber: version, source: source, openedAt: at, closed: make(chan struct{})}
 	r.opened <- u
 	return u
 }

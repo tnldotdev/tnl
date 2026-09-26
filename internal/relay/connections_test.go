@@ -12,7 +12,7 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	connection := &PublisherConnection{
 		ref: tunnelv1.PublisherConnectionRef{
-			RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
+			PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 			PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0,
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
@@ -25,13 +25,13 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 	}}
 	header := tunnelv1.InternalForwardingHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-		VisitorConnectionID: "visitor_connection_1", RouteID: "route_1",
-		RouteSessionID: "route_session_1", RouteVersion: 2,
+		VisitorConnectionID: "visitor_connection_1", PublicURLID: "public_url_1",
+		PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0,
 		ConnectionAssignmentRevision: 3,
 		RelayServiceID:               "relay_service_1", RelayID: "relay_1",
 		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
-		RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
+		PublicUrlExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 	}
 	lease := relayv1.RelayLease{
 		RelayServiceId: "relay_service_1", RelayId: "relay_1", RelayRunId: "relay_run_1",
@@ -47,9 +47,9 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 	}
 
 	tests := map[string]func(*tunnelv1.InternalForwardingHeader){
-		"route ID":                       func(value *tunnelv1.InternalForwardingHeader) { value.RouteID = "route_2" },
-		"route session ID":               func(value *tunnelv1.InternalForwardingHeader) { value.RouteSessionID = "route_session_2" },
-		"route version":                  func(value *tunnelv1.InternalForwardingHeader) { value.RouteVersion++ },
+		"route ID":                       func(value *tunnelv1.InternalForwardingHeader) { value.PublicURLID = "public_url_2" },
+		"publish run ID":                 func(value *tunnelv1.InternalForwardingHeader) { value.PublishRunID = "publish_run_2" },
+		"publish run number":             func(value *tunnelv1.InternalForwardingHeader) { value.PublishRunNumber++ },
 		"publisher connection ID":        func(value *tunnelv1.InternalForwardingHeader) { value.PublisherConnectionID = "publisher_connection_2" },
 		"connection slot":                func(value *tunnelv1.InternalForwardingHeader) { value.ConnectionSlot = 1 },
 		"connection assignment revision": func(value *tunnelv1.InternalForwardingHeader) { value.ConnectionAssignmentRevision++ },
@@ -57,7 +57,7 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 		"relay ID":                       func(value *tunnelv1.InternalForwardingHeader) { value.RelayID = "relay_2" },
 		"relay process run ID":           func(value *tunnelv1.InternalForwardingHeader) { value.RelayRunID = "relay_run_2" },
 		"relay lease revision":           func(value *tunnelv1.InternalForwardingHeader) { value.RelayLeaseRevision++ },
-		"expired route":                  func(value *tunnelv1.InternalForwardingHeader) { value.RouteExpiresAt = now },
+		"expired route":                  func(value *tunnelv1.InternalForwardingHeader) { value.PublicUrlExpiresAt = now },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

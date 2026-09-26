@@ -30,10 +30,10 @@ type separatedSnapshot struct {
 }
 
 var (
-	runtimeLoadRoutes             = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
+	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
 	runtimeLoadReadyTimeout       = flag.Duration("tnl-runtime-load-ready-timeout", 30*time.Second, "publisher readiness timeout (30s-5m)")
-	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-route-certificate-workers", 4, "route certificate workers per control process (1-8)")
+	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-public-url-certificate-workers", 4, "public URL certificate workers per control process (1-8)")
 	runtimeLoadRPS                = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
 	runtimeLoadDuration           = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
@@ -88,8 +88,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('sessions',
-			(SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'version', route_version, 'expires_at', publisher_expires_at)) FROM control.route_sessions),
-			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
+			(SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'version', publish_run_number, 'expires_at', publisher_expires_at)) FROM control.publish_runs),
+			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
 	for _, name := range append(append(separatedServerRoles(), separatedAppComponents()...), "pebble") {
@@ -150,12 +150,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWait(t, "udp.cleaned", 15*time.Second, nil)
 	}
 	for _, ready := range publishers.Ready {
-		waitForReadyPublisherConnections(t, database, ready.RouteID, ready.RouteVersion, 2)
+		waitForReadyPublisherConnections(t, database, ready.PublicURLID, ready.PublishRunNumber, 2)
 	}
 	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
-	var orders, installed, distinctRoutes int
+	var orders, installed, distinctPublicURLs int
 	var workerAttempts int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT route_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctRoutes, &workerAttempts); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {
 		t.Fatal(err)
 	}
 	caOrders := separatedCAOrders(t)
@@ -169,8 +169,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	separatedArtifact(t, "activation", map[string]any{"parallel": parallel, "certificate_workers": *runtimeLoadCertificateWorkers, "launch_to_ready": durations,
 		"publishers_ready": publishers.ActivationDuration, "verified": activationElapsed, "ca_orders": caOrders, "certificate_work_attempts": workerAttempts})
 	separatedReportResources(t, "activation", activationBefore, separatedCapture(t, database, "activation-after"))
-	if orders != routes || installed != routes || distinctRoutes != routes || caOrders != int64(routes) {
-		t.Fatalf("duplicate/incomplete issuance: routes=%d orders=%d installed=%d distinct=%d CA=%d", routes, orders, installed, distinctRoutes, caOrders)
+	if orders != routes || installed != routes || distinctPublicURLs != routes || caOrders != int64(routes) {
+		t.Fatalf("duplicate/incomplete issuance: routes=%d orders=%d installed=%d distinct=%d CA=%d", routes, orders, installed, distinctPublicURLs, caOrders)
 	}
 	t.Logf("separated_activation_verified routes=%d installed=%d CA_new_orders=%d elapsed=%s", routes, installed, caOrders, activationElapsed)
 	separatedWrite(t, "visitors.start", time.Now())
@@ -307,7 +307,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if phase == "publisher-blackhole" {
 			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.route_session_connections WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
+				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connections WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
 				return count == 0, err
 			})
 			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
@@ -415,8 +415,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var active int
 		err := database.QueryRowContext(ctx, `SELECT
-			(SELECT count(*) FROM control.route_sessions WHERE closed_at IS NULL OR assignments_open) +
-			(SELECT count(*) FROM control.route_session_connections WHERE state <> 'closed') +
+			(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open) +
+			(SELECT count(*) FROM control.publish_run_connections WHERE state <> 'closed') +
 			(SELECT coalesce(sum(assignment_count), 0) FROM control.relay_service_assignment_totals)`).Scan(&active)
 		return active == 0, err
 	})
@@ -443,12 +443,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	ingressStopElapsed := time.Since(stoppingIngress)
 	t.Logf("separated_ingress_shutdown elapsed=%s", ingressStopElapsed)
 	separatedResult(t, "ingress-shutdown", map[string]any{"elapsed": ingressStopElapsed.String()})
-	var buckets, coveredRoutes, attempts, successes, ingressBytes, egressBytes int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(DISTINCT route_id), coalesce(sum(connection_attempts),0),
-		coalesce(sum(successful_streams),0), coalesce(sum(ingress_bytes),0), coalesce(sum(egress_bytes),0) FROM control.route_usage_buckets`).Scan(&buckets, &coveredRoutes, &attempts, &successes, &ingressBytes, &egressBytes); err != nil {
+	var buckets, coveredPublicURLs, attempts, successes, ingressBytes, egressBytes int64
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(DISTINCT public_url_id), coalesce(sum(connection_attempts),0),
+		coalesce(sum(successful_streams),0), coalesce(sum(ingress_bytes),0), coalesce(sum(egress_bytes),0) FROM control.public_url_usage_buckets`).Scan(&buckets, &coveredPublicURLs, &attempts, &successes, &ingressBytes, &egressBytes); err != nil {
 		t.Fatal(err)
 	}
-	if coveredRoutes != int64(routes) || successes == 0 || egressBytes == 0 {
+	if coveredPublicURLs != int64(routes) || successes == 0 || egressBytes == 0 {
 		t.Error("real visitor usage was not persisted")
 	}
 	var incomplete, mismatches int
@@ -456,13 +456,13 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		t.Fatalf("ingress usage completion: incomplete=%d error=%v", incomplete, err)
 	}
 	if err := database.QueryRowContext(integrationOperationContext(t), `WITH latest AS (
-		SELECT DISTINCT ON (ingress_id, ingress_run_id, route_id, route_version, bucket_start) *
-		FROM control.ingress_usage_reports ORDER BY ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision DESC
+		SELECT DISTINCT ON (ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start) *
+		FROM control.ingress_usage_reports ORDER BY ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, report_revision DESC
 	), totals AS (
-		SELECT route_id, route_version, bucket_start, sum(connection_attempts) AS attempts,
+		SELECT public_url_id, publish_run_number, bucket_start, sum(connection_attempts) AS attempts,
 		sum(successful_streams) AS successes, sum(ingress_bytes) AS ingress_bytes, sum(egress_bytes) AS egress_bytes
-		FROM latest GROUP BY route_id, route_version, bucket_start
-	) SELECT count(*) FROM totals t FULL JOIN control.route_usage_buckets b USING (route_id, route_version, bucket_start)
+		FROM latest GROUP BY public_url_id, publish_run_number, bucket_start
+	) SELECT count(*) FROM totals t FULL JOIN control.public_url_usage_buckets b USING (public_url_id, publish_run_number, bucket_start)
 	WHERE t.attempts IS DISTINCT FROM b.connection_attempts OR t.successes IS DISTINCT FROM b.successful_streams
 	OR t.ingress_bytes IS DISTINCT FROM b.ingress_bytes OR t.egress_bytes IS DISTINCT FROM b.egress_bytes`).Scan(&mismatches); err != nil || mismatches != 0 {
 		t.Fatalf("final usage accounting: mismatches=%d error=%v", mismatches, err)
@@ -475,7 +475,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	// Validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress-a")
-	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
+	routes, rate, duration := *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration
 	if routes < 4 || routes > 10000 {
 		t.Fatal("separated runtime load routes must be between 4 and 10000")
 	}
@@ -486,7 +486,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		t.Fatal("publisher readiness timeout must be between 30s and 5m")
 	}
 	if *runtimeLoadCertificateWorkers < 1 || *runtimeLoadCertificateWorkers > 8 {
-		t.Fatal("route certificate workers must be between 1 and 8")
+		t.Fatal("public URL certificate workers must be between 1 and 8")
 	}
 	if rate < 4 || rate > 2000 {
 		t.Fatal("separated runtime load requests per second must be between 4 and 2000")

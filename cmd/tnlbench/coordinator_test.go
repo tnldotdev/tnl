@@ -21,8 +21,8 @@ func TestCoordinatorOwnsRepeatedWindowsAndWaitsForAllParticipants(t *testing.T) 
 	server := httptest.NewServer(benchworkload.NewCoordinator().Handler("token"))
 	defer server.Close()
 	client, _ := benchworkload.NewCoordination(server.URL, "token")
-	c := coordinatorCommand{PublisherWorkers: 1, LoadWorkers: 2, Routes: 1, Repetitions: 2, Duration: time.Millisecond}
-	if err := client.Put(ctx, "publisher-0.ready", []benchworkload.PublishedRoute{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}}); err != nil {
+	c := coordinatorCommand{PublisherWorkers: 1, LoadWorkers: 2, PublicURLs: 1, Repetitions: 2, Duration: time.Millisecond}
+	if err := client.Put(ctx, "publisher-0.ready", []benchworkload.PublishedPublicURL{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}}); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 3)
@@ -35,7 +35,7 @@ func TestCoordinatorOwnsRepeatedWindowsAndWaitsForAllParticipants(t *testing.T) 
 	}()
 	for index := range 2 {
 		go func() {
-			if err := client.Wait(ctx, "routes", nil); err != nil {
+			if err := client.Wait(ctx, "public_urls", nil); err != nil {
 				finished <- err
 				return
 			}
@@ -82,11 +82,11 @@ func TestCoordinatorRejectsConflictingRoutesAndCollectsPartialFailure(t *testing
 	defer server.Close()
 	client, _ := benchworkload.NewCoordination(server.URL, "token")
 	for i := range 2 {
-		_ = client.Put(ctx, fmt.Sprintf("publisher-%d.ready", i), []benchworkload.PublishedRoute{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}})
+		_ = client.Put(ctx, fmt.Sprintf("publisher-%d.ready", i), []benchworkload.PublishedPublicURL{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}})
 		_ = client.Put(ctx, fmt.Sprintf("result.publisher-%d", i), passedTestResult(resultWorker{Kind: "publisher", Index: i, Count: 2}))
 	}
 	_ = client.Put(ctx, "result.load-0", passedTestResult(resultWorker{Kind: "load", Count: 1}))
-	rows, err := (coordinatorCommand{PublisherWorkers: 2, LoadWorkers: 1, Routes: 2}).execute(ctx, client)
+	rows, err := (coordinatorCommand{PublisherWorkers: 2, LoadWorkers: 1, PublicURLs: 2}).execute(ctx, client)
 	if err == nil || len(rows) != 3 {
 		t.Fatalf("conflict not rejected/partial results lost: %v rows=%d", err, len(rows))
 	}

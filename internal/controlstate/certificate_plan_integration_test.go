@@ -50,8 +50,8 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 			}
 			plan := CertificatePlan{CacheKey: "member." + domain, Scope: "member." + domain,
 				Identifiers: []string{"member." + domain, "*.member." + domain}, ChallengeMethod: "dns-01"}
-			var route Route
-			var authentication RouteSessionAuthentication
+			var route PublicURL
+			var authentication PublishRunAuthentication
 			if kind == "builtin_control" {
 				local, err := database.CreateBuiltinControlSession(t.Context(), domain, 1, time.Hour, 24*time.Hour, now)
 				if err != nil {
@@ -66,11 +66,11 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				namespace := membership.ManagedLabel + "." + domain
 				plan.CacheKey, plan.Scope, plan.Identifiers = namespace, namespace, []string{namespace, "*." + namespace}
 				slices.Sort(plan.Identifiers)
-				route, err = database.CreateRoute(t.Context(), CreateRouteRequest{
+				route, err = database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
 					TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 					ActingIdentityID: local.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
-					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", RouteScope: RouteScopeMember,
-					DNSState: RouteDNSPending, DNSAuthorityReference: reference,
+					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember,
+					DNSState: PublicURLDNSPending, DNSAuthorityReference: reference,
 				}, now)
 				if err != nil {
 					t.Fatal(err)
@@ -79,8 +79,8 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				setup, err := database.CreateRouteSession(t.Context(), RouteSessionRequest{
-					RouteID: route.ID, TeamID: route.TeamID, MembershipID: membership.ID, ActingIdentityID: principal.IdentityID,
+				setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
+					PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: membership.ID, ActingIdentityID: principal.IdentityID,
 					RequireLocalAuthority: true, RetrySecret: principal.RetrySecret[:], PolicyRevision: uint64(membership.PolicyRevision),
 					IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), ExpectedMutationRevision: route.MutationRevision,
 					CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod,
@@ -88,7 +88,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				authentication = RouteSessionAuthentication{RouteSessionID: setup.RouteSessionID, RouteID: route.ID, RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken}
+				authentication = PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 			} else {
 				route, authentication = newExternalPlanSession(t, database, now, "team_external", "api.member."+domain, reference, plan)
 				assertNoBuiltinAuthority(t, database)
@@ -120,7 +120,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 	}
 }
 
-func TestIntegrationCertificatePlanReuseAcrossRoutes(t *testing.T) {
+func TestIntegrationCertificatePlanReuseAcrossPublicURLs(t *testing.T) {
 	for _, test := range []struct {
 		name, team, hostname string
 		wantError            bool
@@ -135,22 +135,22 @@ func TestIntegrationCertificatePlanReuseAcrossRoutes(t *testing.T) {
 				Identifiers: []string{"member.routes.example.test", "*.member.routes.example.test"}, ChallengeMethod: "dns-01"}
 			_, first := newExternalPlanSession(t, database, now, "team_external", "first.member.routes.example.test", "managed:routes.example.test", plan)
 			work := createPlanIssuanceWork(t, database, now, first, plan, true, nil)
-			if _, err := database.MarkRouteCertificateInstalled(t.Context(), first, work.ID, *work.NotAfter, now); err != nil {
+			if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), first, work.ID, *work.NotAfter, now); err != nil {
 				t.Fatalf("originating-route install control: %v", err)
 			}
-			if err := database.CloseRouteSession(t.Context(), first.RouteSessionID, first.RouteSessionToken, now); err != nil {
+			if err := database.ClosePublishRun(t.Context(), first.PublishRunID, first.PublishRunToken, now); err != nil {
 				t.Fatal(err)
 			}
 			_, second := newExternalPlanSession(t, database, now, test.team, test.hostname, "managed:routes.example.test", plan)
-			lifecycle, err := database.MarkRouteCertificateInstalled(t.Context(), second, work.ID, *work.NotAfter, now)
+			lifecycle, err := database.MarkPublicURLCertificateInstalled(t.Context(), second, work.ID, *work.NotAfter, now)
 			if test.wantError {
-				if !errors.Is(err, ErrRouteCertificate) {
-					t.Fatalf("certificate acknowledgement = %v; want ErrRouteCertificate", err)
+				if !errors.Is(err, ErrPublicURLCertificate) {
+					t.Fatalf("certificate acknowledgement = %v; want ErrPublicURLCertificate", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("same-team same-plan certificate acknowledgement for second route: %v", err)
+				t.Fatalf("same-team same-plan certificate acknowledgement for second public_url: %v", err)
 			}
 			if lifecycle.CertificateAt == nil || lifecycle.Routable {
 				t.Fatalf("certificate acknowledgement must not bypass connection readiness: %#v", lifecycle)
@@ -167,10 +167,10 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
 			route, first := newExternalPlanSession(t, database, now, "team_external", hostname, "managed:routes.example.test", plan)
 			work := createPlanIssuanceWork(t, database, now, first, plan, true, nil)
-			if _, err := database.MarkRouteCertificateInstalled(t.Context(), first, work.ID, *work.NotAfter, now); err != nil {
+			if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), first, work.ID, *work.NotAfter, now); err != nil {
 				t.Fatalf("valid issuance precondition: %v", err)
 			}
-			if err := database.CloseRouteSession(t.Context(), first.RouteSessionID, first.RouteSessionToken, now); err != nil {
+			if err := database.ClosePublishRun(t.Context(), first.PublishRunID, first.PublishRunToken, now); err != nil {
 				t.Fatal(err)
 			}
 			switch name {
@@ -186,7 +186,7 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			// A fresh session on the SAME route prevents the cross-route bug from masking plan checks.
 			authentication := startExternalPlanSession(t, database, now, route, plan, "replacement")
 			notAfter, installedAt := *work.NotAfter, now
-			wantErr := ErrRouteCertificate
+			wantErr := ErrPublicURLCertificate
 			if name == "not_after" {
 				notAfter = notAfter.Add(time.Second)
 			}
@@ -194,27 +194,27 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 				installedAt = notAfter
 			}
 			if name == "stale_session" {
-				authentication, wantErr = first, ErrRouteSessionStale
+				authentication, wantErr = first, ErrPublishRunStale
 			}
 			if name == "wrong_token" {
-				token, _, _, err := credentials.NewRouteSessionToken()
+				token, _, _, err := credentials.NewPublishRunToken()
 				if err != nil {
 					t.Fatal(err)
 				}
-				authentication.RouteSessionToken, wantErr = token, ErrRouteSessionCredential
+				authentication.PublishRunToken, wantErr = token, ErrPublishRunCredential
 			}
 			if name == "wrong_version" {
-				authentication.RouteVersion++
-				wantErr = ErrRouteSessionStale
+				authentication.PublishRunNumber++
+				wantErr = ErrPublishRunStale
 			}
 			if name == "revoked" {
 				applied, closed, err := database.ApplyHostedPolicyRevocation(t.Context(), "https://authority.example.test", route.TeamID, 2, true, nil, nil, now)
 				if err != nil || !applied || closed != 1 {
 					t.Fatalf("revoke current session = %v, applied %v, closed %d", err, applied, closed)
 				}
-				wantErr = ErrRouteSessionStale
+				wantErr = ErrPublishRunStale
 			}
-			lifecycle, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, work.ID, notAfter, installedAt)
+			lifecycle, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, notAfter, installedAt)
 			if name == "same_plan_control" {
 				if err != nil || lifecycle.CertificateAt == nil {
 					t.Fatalf("same-route same-plan renewal = %#v, %v", lifecycle, err)
@@ -247,16 +247,16 @@ func registerCertificatePlanRelays(t *testing.T, database *Database, now time.Ti
 	}
 }
 
-func newExternalPlanSession(t *testing.T, database *Database, now time.Time, team, hostname, reference string, plan CertificatePlan) (Route, RouteSessionAuthentication) {
+func newExternalPlanSession(t *testing.T, database *Database, now time.Time, team, hostname, reference string, plan CertificatePlan) (PublicURL, PublishRunAuthentication) {
 	t.Helper()
 	identity := "identity_" + team
 	if _, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identity, now); err != nil {
 		t.Fatal(err)
 	}
-	route, err := database.CreateRoute(t.Context(), CreateRouteRequest{
+	route, err := database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
 		TeamID: team, DomainID: "domain_external", MembershipID: "membership_" + team, ActingIdentityID: identity,
 		IdempotencyKey: hostname, RequestDigest: sha256.Sum256([]byte(hostname)), CanonicalHostname: hostname,
-		Target: "http://127.0.0.1:3000", RouteScope: RouteScopeMember, DNSState: RouteDNSPending,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSPending,
 		DNSAuthorityReference: reference, AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
 	}, now)
 	if err != nil {
@@ -265,7 +265,7 @@ func newExternalPlanSession(t *testing.T, database *Database, now time.Time, tea
 	return route, startExternalPlanSession(t, database, now, route, plan, "session")
 }
 
-func startExternalPlanSession(t *testing.T, database *Database, now time.Time, route Route, plan CertificatePlan, key string) RouteSessionAuthentication {
+func startExternalPlanSession(t *testing.T, database *Database, now time.Time, route PublicURL, plan CertificatePlan, key string) PublishRunAuthentication {
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
@@ -277,8 +277,8 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	if err != nil {
 		t.Fatal(err)
 	}
-	setup, err := database.CreateRouteSession(t.Context(), RouteSessionRequest{
-		RouteID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_" + route.TeamID,
+	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
+		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_" + route.TeamID,
 		RetrySecret: secret[:], IdempotencyKey: key, RequestDigest: sha256.Sum256([]byte(key)), PolicyRevision: 1,
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: slices.Clone(plan.Identifiers),
 		CertificateChallenge: plan.ChallengeMethod, AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: current.MutationRevision,
@@ -286,10 +286,10 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	if err != nil {
 		t.Fatal(err)
 	}
-	return RouteSessionAuthentication{RouteSessionID: setup.RouteSessionID, RouteID: route.ID, RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken}
+	return PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 }
 
-func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication RouteSessionAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork)) ACMEOrderWork {
+func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork)) ACMEOrderWork {
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
@@ -456,13 +456,13 @@ func TestIntegrationCertificateInstallMaterial(t *testing.T) {
 					work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
 				}
 			})
-			_, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now)
+			_, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now)
 			if name == "valid" || name == "valid_blank_lines" {
 				if err != nil {
 					t.Fatalf("valid certificate acknowledgement: %v", err)
 				}
-			} else if !errors.Is(err, ErrRouteCertificate) {
-				t.Fatalf("%s certificate acknowledgement = %v; want ErrRouteCertificate", name, err)
+			} else if !errors.Is(err, ErrPublicURLCertificate) {
+				t.Fatalf("%s certificate acknowledgement = %v; want ErrPublicURLCertificate", name, err)
 			}
 		})
 	}

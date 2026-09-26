@@ -58,7 +58,7 @@ describe("development context", () => {
     ["33-byte name", { ["a".repeat(33)]: testProjectDocument().services.api }, false],
     [
       "different namespace",
-      { api: { ...testProjectDocument().services.api, memberNamespace: "other.example" } },
+      { api: { ...testProjectDocument().services.api, namespace: "other.example" } },
       true,
     ],
     ...[32, 33].map(
@@ -69,7 +69,7 @@ describe("development context", () => {
             Array.from({ length: count }, (_, index) => [
               `s${index}`,
               {
-                memberNamespace: "member.example",
+                namespace: "member.example",
                 hostname: `s${index}.member.example`,
                 url: `https://s${index}.member.example`,
               },
@@ -81,7 +81,7 @@ describe("development context", () => {
   ] as const)("uses the same metadata contract for %s", async (_name, services, valid) => {
     const root = await temporaryDirectory("tnl-metadata-contract-");
     await mkdir(path.join(root, ".tnl"));
-    const project = { memberNamespace: "member.example", services, runningUnderTnlDev: false };
+    const project = { namespace: "member.example", services, runningUnderTnlDev: false };
     await writeFile(
       path.join(root, ".tnl", "project.json"),
       JSON.stringify({
@@ -98,7 +98,7 @@ describe("development context", () => {
     const runtime = parseRuntimePayload(JSON.stringify(project));
     const discovery = discoverProject(root);
     expect(discovery?.project.services).toEqual(runtime?.services);
-    expect(Object.keys(discovery?.project ?? {}).sort()).toEqual(["memberNamespace", "services"]);
+    expect(Object.keys(discovery?.project ?? {}).sort()).toEqual(["namespace", "services"]);
     expect(Object.isFrozen(discovery?.project)).toBe(true);
     expect(Object.isFrozen(discovery?.project.services)).toBe(true);
     expect(Object.values(discovery?.project.services ?? {}).every(Object.isFrozen)).toBe(true);
@@ -145,16 +145,16 @@ describe("development context", () => {
     const context = readDevelopmentContext({ XDG_RUNTIME_DIR: runtimeRoot }, serviceDirectory);
     expect(context.bootstrap).toEqual({ socket });
     expect(context.localProject).toEqual({
-      memberNamespace: "member.example",
+      namespace: "member.example",
       services: {
         api: {
           hostname: "api.member.example",
-          memberNamespace: "member.example",
+          namespace: "member.example",
           url: "https://api.member.example",
         },
         web: {
           hostname: "web.member.example",
-          memberNamespace: "member.example",
+          namespace: "member.example",
           url: "https://web.member.example",
         },
       },
@@ -223,23 +223,23 @@ describe("protocol v1", () => {
     expect(assignment).toMatchObject({
       framework: "vite",
       hostname: "override.example",
-      memberNamespace: "member.example",
+      namespace: "member.example",
       publicURL: "https://override.example",
       service: "api",
       tunnelID: `tunnel_${"b".repeat(32)}`,
     });
     expect(JSON.parse(runtimePayload(assignment.project, true))).toEqual({
-      memberNamespace: "member.example",
+      namespace: "member.example",
       runningUnderTnlDev: true,
       services: {
         api: {
           hostname: "override.example",
-          memberNamespace: "member.example",
+          namespace: "member.example",
           url: "https://override.example",
         },
         web: {
           hostname: "web.member.example",
-          memberNamespace: "member.example",
+          namespace: "member.example",
           url: "https://web.member.example",
         },
       },
@@ -320,12 +320,12 @@ describe("protocol v1", () => {
     ["tunnel ID", { tunnelID: "invalid" }, /invalid tunnel ID/],
     ["service", { service: "API" }, /invalid service/],
     ["unknown project service", { service: "worker" }, /inconsistent project metadata/],
-    ["member namespace", { memberNamespace: "Member.example" }, /member namespace is invalid/],
+    ["namespace", { namespace: "Member.example" }, /namespace is invalid/],
     ["hostname", { hostname: "API.member.example" }, /public hostname is invalid/],
     ["public URL", { publicURL: "http://api.member.example" }, /invalid public URL/],
     ["project", { project: { ...testPublicProject(true), unexpected: true } }, /invalid shape/],
     [
-      "project member namespace",
+      "project namespace",
       {
         project: {
           ...testPublicProject(true),
@@ -333,7 +333,7 @@ describe("protocol v1", () => {
             ...testPublicProject(true).services,
             api: {
               ...testPublicProject(true).services.api,
-              memberNamespace: "other.example",
+              namespace: "other.example",
             },
           },
         },
@@ -393,7 +393,7 @@ test("socket identity matches the shared Go fixture", async () => {
 function validAssignmentResponse() {
   return {
     hostname: "api.member.example",
-    memberNamespace: "member.example",
+    namespace: "member.example",
     project: testPublicProject(true),
     protocol: 1,
     publicURL: "https://api.member.example",

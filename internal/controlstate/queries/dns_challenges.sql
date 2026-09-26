@@ -1,6 +1,6 @@
 -- name: GetDNSChallengeContext :one
 SELECT
-    routes.id AS route_id,
+    routes.id AS public_url_id,
     routes.team_id,
     routes.domain_id,
     routes.dns_authority_reference,
@@ -13,12 +13,12 @@ SELECT
     authorizations.state
 FROM control.acme_authorizations AS authorizations
 JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-JOIN control.routes AS routes ON routes.id = orders.route_id
+JOIN control.public_urls AS routes ON routes.id = orders.public_url_id
 LEFT JOIN control.dns_authorities AS authorities
     ON authorities.authority_reference = routes.dns_authority_reference
     AND authorities.team_id = routes.team_id
     AND authorities.domain_id = routes.domain_id
-WHERE routes.id = sqlc.arg(route_id)
+WHERE routes.id = sqlc.arg(public_url_id)
   AND authorizations.id = sqlc.arg(authorization_id)
   AND authorizations.challenge_type = 'dns-01';
 

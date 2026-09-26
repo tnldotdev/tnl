@@ -14,11 +14,11 @@ export interface TnlConfig {
    */
   tunnel?: {
     /**
-     * Complete route hostname to publish.
+     * Complete public URL hostname to publish.
      */
     host?: string;
     /**
-     * One DNS label beneath the current member namespace.
+     * One DNS label beneath the current namespace.
      */
     subdomain?: string;
     /**
@@ -61,15 +61,15 @@ export interface TnlConfig {
            */
           team?: string;
           /**
-           * Route and tunnel overrides for this service.
+           * PublicURL and tunnel overrides for this service.
            */
           tunnel?: {
             /**
-             * Complete route hostname to publish.
+             * Complete public URL hostname to publish.
              */
             host?: string;
             /**
-             * One DNS label beneath the current member namespace.
+             * One DNS label beneath the current namespace.
              */
             subdomain?: string;
             /**

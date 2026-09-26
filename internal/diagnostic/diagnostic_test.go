@@ -51,7 +51,7 @@ func TestActionableDiagnosticHelpURLsAreStable(t *testing.T) {
 		TargetMismatch:               "https://tnl.dev/e/target-mismatch",
 		AuthenticationTimeout:        "https://tnl.dev/e/authentication-timeout",
 		ServiceAmbiguous:             "https://tnl.dev/e/ambiguous-service",
-		RouteConflict:                "https://tnl.dev/e/route-conflict",
+		PublicURLConflict:            "https://tnl.dev/e/public-url-conflict",
 		ProvisioningStalled:          "https://tnl.dev/e/provisioning-stalled",
 	} {
 		if got := HelpURL(code); got != want {

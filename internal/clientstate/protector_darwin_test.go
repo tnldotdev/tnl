@@ -41,7 +41,7 @@ func TestKeychainProtectorPersistsAndAuthenticatesContext(t *testing.T) {
 	if string(opened) != "secret" {
 		t.Fatalf("opened value = %q", opened)
 	}
-	if _, err := second.Open(t.Context(), "route-private-key:route_other", sealed); err == nil {
+	if _, err := second.Open(t.Context(), "route-private-key:public_url_other", sealed); err == nil {
 		t.Fatal("sealed value opened under a different context")
 	}
 	corrupted := bytes.Clone(sealed)

@@ -45,7 +45,7 @@ type ErrorCode string
 const (
 	InvalidMessage               ErrorCode = "invalid_message"
 	Unauthenticated              ErrorCode = "unauthenticated"
-	StaleRouteVersion            ErrorCode = "stale_route_version"
+	StalePublishRunNumber        ErrorCode = "stale_publish_run_number"
 	StaleConnectionAssignment    ErrorCode = "stale_connection_assignment"
 	DuplicatePublisherConnection ErrorCode = "duplicate_publisher_connection"
 	DrainingPublisherConnection  ErrorCode = "draining"
@@ -56,9 +56,9 @@ const (
 
 // PublisherConnectionRef identifies one assigned publisher connection.
 type PublisherConnectionRef struct {
-	RouteSessionID               string `json:"route_session_id"`
-	RouteID                      string `json:"route_id"`
-	RouteVersion                 uint64 `json:"route_version"`
+	PublishRunID                 string `json:"publish_run_id"`
+	PublicURLID                  string `json:"public_url_id"`
+	PublishRunNumber             uint64 `json:"publish_run_number"`
 	PublisherConnectionID        string `json:"publisher_connection_id"`
 	ConnectionSlot               uint8  `json:"connection_slot"`
 	ConnectionAssignmentRevision uint64 `json:"connection_assignment_revision"`
@@ -88,9 +88,9 @@ type VisitorStreamHeader struct {
 	ProtocolVersion              uint32     `json:"protocol_version"`
 	Kind                         StreamKind `json:"kind"`
 	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	RouteID                      string     `json:"route_id"`
-	RouteSessionID               string     `json:"route_session_id"`
-	RouteVersion                 uint64     `json:"route_version"`
+	PublicURLID                  string     `json:"public_url_id"`
+	PublishRunID                 string     `json:"publish_run_id"`
+	PublishRunNumber             uint64     `json:"publish_run_number"`
 	PublisherConnectionID        string     `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
 }
@@ -100,9 +100,9 @@ type InternalForwardingHeader struct {
 	ProtocolVersion              uint32     `json:"protocol_version"`
 	Kind                         StreamKind `json:"kind"`
 	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	RouteID                      string     `json:"route_id"`
-	RouteSessionID               string     `json:"route_session_id"`
-	RouteVersion                 uint64     `json:"route_version"`
+	PublicURLID                  string     `json:"public_url_id"`
+	PublishRunID                 string     `json:"publish_run_id"`
+	PublishRunNumber             uint64     `json:"publish_run_number"`
 	PublisherConnectionID        string     `json:"publisher_connection_id"`
 	ConnectionSlot               uint8      `json:"connection_slot"`
 	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
@@ -110,7 +110,7 @@ type InternalForwardingHeader struct {
 	RelayID                      string     `json:"relay_id"`
 	RelayRunID                   string     `json:"relay_run_id"`
 	RelayLeaseRevision           uint64     `json:"relay_lease_revision"`
-	RouteExpiresAt               time.Time  `json:"route_expires_at"`
+	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
 }
 
@@ -241,7 +241,7 @@ func (m Message) Validate() error {
 }
 
 func (r PublisherConnectionRef) Validate() error {
-	if !validIdentifier(r.RouteSessionID) || !validIdentifier(r.RouteID) || r.RouteVersion == 0 ||
+	if !validIdentifier(r.PublishRunID) || !validIdentifier(r.PublicURLID) || r.PublishRunNumber == 0 ||
 		!validIdentifier(r.PublisherConnectionID) || r.ConnectionSlot > 1 ||
 		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
 		return errors.New("tunnelv1: invalid publisher connection reference")
@@ -251,7 +251,7 @@ func (r PublisherConnectionRef) Validate() error {
 
 func (h VisitorStreamHeader) Validate() error {
 	if h.ProtocolVersion != Version || h.Kind != VisitorStream || !validIdentifier(h.VisitorConnectionID) ||
-		!validIdentifier(h.RouteID) || !validIdentifier(h.RouteSessionID) || h.RouteVersion == 0 ||
+		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 {
 		return errors.New("tunnelv1: invalid visitor stream header")
 	}
@@ -260,10 +260,10 @@ func (h VisitorStreamHeader) Validate() error {
 
 func (h InternalForwardingHeader) Validate() error {
 	if h.ProtocolVersion != Version || h.Kind != InternalForwardingStream || !validIdentifier(h.VisitorConnectionID) ||
-		!validIdentifier(h.RouteID) || !validIdentifier(h.RouteSessionID) || h.RouteVersion == 0 ||
+		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionSlot > 1 || h.ConnectionAssignmentRevision == 0 ||
 		!validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) || !validIdentifier(h.RelayRunID) ||
-		h.RelayLeaseRevision == 0 || h.RouteExpiresAt.IsZero() || h.LeaseExpiresAt.IsZero() {
+		h.RelayLeaseRevision == 0 || h.PublicUrlExpiresAt.IsZero() || h.LeaseExpiresAt.IsZero() {
 		return errors.New("tunnelv1: invalid internal forwarding header")
 	}
 	return nil
@@ -295,7 +295,7 @@ func validIdentifier(value string) bool {
 
 func validErrorCode(code ErrorCode) bool {
 	switch code {
-	case InvalidMessage, Unauthenticated, StaleRouteVersion, StaleConnectionAssignment,
+	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment,
 		DuplicatePublisherConnection, DrainingPublisherConnection, CapacityExceeded, Unavailable, Internal:
 		return true
 	default:
