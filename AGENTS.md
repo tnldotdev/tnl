@@ -253,6 +253,11 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 - In prose, always write the product and binaries as lowercase `tnl` and `tnld`. Use uppercase only where required by case-sensitive identifiers such as `TNLD_*` environment variables.
 - Reserve `generation` for internal mutation counters; public route counters are route versions.
 
+# Brand Identity
+
+Brand identity: lowercase, spare, concrete, practical, and understated.
+Developer-to-developer language with little hype or ornament.
+
 # CLI Human Output
 
 In user-facing CLI diagrams and introductory documentation, label the local
