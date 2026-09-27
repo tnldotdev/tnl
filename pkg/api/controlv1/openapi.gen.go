@@ -380,6 +380,24 @@ func (e ReadinessResponseChecksDatabase) Valid() bool {
 	}
 }
 
+// Defines values for ReadinessResponseChecksRoute53Credentials.
+const (
+	ReadinessResponseChecksRoute53CredentialsFailed ReadinessResponseChecksRoute53Credentials = "failed"
+	ReadinessResponseChecksRoute53CredentialsOk     ReadinessResponseChecksRoute53Credentials = "ok"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseChecksRoute53Credentials enum.
+func (e ReadinessResponseChecksRoute53Credentials) Valid() bool {
+	switch e {
+	case ReadinessResponseChecksRoute53CredentialsFailed:
+		return true
+	case ReadinessResponseChecksRoute53CredentialsOk:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessResponseStatus.
 const (
 	ReadinessResponseStatusNotReady ReadinessResponseStatus = "not_ready"
@@ -742,12 +760,18 @@ type PublisherConnectionState string
 type ReadinessResponse struct {
 	Checks struct {
 		Database ReadinessResponseChecksDatabase `json:"database"`
+
+		// Route53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
+		Route53Credentials *ReadinessResponseChecksRoute53Credentials `json:"route53_credentials,omitempty"`
 	} `json:"checks"`
 	Status ReadinessResponseStatus `json:"status"`
 }
 
 // ReadinessResponseChecksDatabase defines model for ReadinessResponse.Checks.Database.
 type ReadinessResponseChecksDatabase string
+
+// ReadinessResponseChecksRoute53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
+type ReadinessResponseChecksRoute53Credentials string
 
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string

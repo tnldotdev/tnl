@@ -1,12 +1,35 @@
 package tnldruntime
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 )
+
+func TestRoute53CredentialReadiness(t *testing.T) {
+	if err := (&daemon{}).checkRoute53Credentials(t.Context()); err != nil {
+		t.Fatalf("control without Route 53 needs no credentials: %v", err)
+	}
+	failure := errors.New("STS unavailable")
+	d := &daemon{route53Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		if failure != nil {
+			return aws.Credentials{}, failure
+		}
+		return aws.Credentials{AccessKeyID: "temporary"}, nil
+	})}
+	if err := d.checkRoute53Credentials(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("unavailable Route 53 credentials = %v", err)
+	}
+	failure = nil
+	if err := d.checkRoute53Credentials(t.Context()); err != nil {
+		t.Fatalf("recovered Route 53 credentials = %v", err)
+	}
+}
 
 func TestConnectionListenerTransfersOwnership(t *testing.T) {
 	listener := newConnectionListener(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 443})

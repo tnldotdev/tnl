@@ -59,6 +59,42 @@ func TestHealthAndReadiness(t *testing.T) {
 	if readiness.Code != http.StatusOK {
 		t.Fatalf("ready status = %d", readiness.Code)
 	}
+	var readyBody controlv1.ReadinessResponse
+	if err := json.Unmarshal(readiness.Body.Bytes(), &readyBody); err != nil || readyBody.Checks.Route53Credentials != nil {
+		t.Fatalf("readiness without Route 53 = %#v, %v", readyBody, err)
+	}
+}
+
+func TestReadinessReportsRoute53CredentialFailure(t *testing.T) {
+	credentialsReady := false
+	cfg := Config{
+		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		Route53CredentialsReadiness: func(context.Context) error {
+			if !credentialsReady {
+				return errors.New("web identity credentials unavailable")
+			}
+			return nil
+		},
+	}
+	handler := testHandler(t, cfg, nil, nil, func(context.Context) error { return nil })
+	for _, test := range []struct {
+		ready  bool
+		code   int
+		dns    controlv1.ReadinessResponseChecksRoute53Credentials
+		status controlv1.ReadinessResponseStatus
+	}{
+		{code: http.StatusServiceUnavailable, dns: controlv1.ReadinessResponseChecksRoute53CredentialsFailed, status: controlv1.ReadinessResponseStatusNotReady},
+		{ready: true, code: http.StatusOK, dns: controlv1.ReadinessResponseChecksRoute53CredentialsOk, status: controlv1.ReadinessResponseStatusReady},
+	} {
+		credentialsReady = test.ready
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+		var body controlv1.ReadinessResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != test.code || body.Status != test.status ||
+			body.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk || body.Checks.Route53Credentials == nil || *body.Checks.Route53Credentials != test.dns {
+			t.Fatalf("Route 53 readiness: status=%d body=%#v decode=%v", response.Code, body, err)
+		}
+	}
 }
 
 func TestUnknownOperationsReturnNotFound(t *testing.T) {

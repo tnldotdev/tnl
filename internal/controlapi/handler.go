@@ -24,23 +24,24 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
-	Role                    string
-	StartedAt               time.Time
-	ManagedDeploymentDomain string
-	AuthorityEndpoint       string
-	LoginToken              string
-	OIDCIssuer              string
-	OIDCClientID            string
-	OIDCLoginFlow           string
-	OIDCScopes              []string
-	CertificateIssuance     bool
-	ACMEDirectoryURL        string
-	ServerDomain            string
-	HostedSecret            string
-	HostedSecretPrevious    string
-	HTTPClient              *http.Client
-	DNSAutomation           bool
-	Metrics                 *observability.Metrics
+	Role                        string
+	StartedAt                   time.Time
+	ManagedDeploymentDomain     string
+	AuthorityEndpoint           string
+	LoginToken                  string
+	OIDCIssuer                  string
+	OIDCClientID                string
+	OIDCLoginFlow               string
+	OIDCScopes                  []string
+	CertificateIssuance         bool
+	ACMEDirectoryURL            string
+	ServerDomain                string
+	HostedSecret                string
+	HostedSecretPrevious        string
+	HTTPClient                  *http.Client
+	DNSAutomation               bool
+	Metrics                     *observability.Metrics
+	Route53CredentialsReadiness func(context.Context) error
 }
 
 // Store is the stored state used by the control API.
@@ -160,6 +161,15 @@ func (h *handler) GetReadiness(response http.ResponseWriter, request *http.Reque
 	}
 	readiness := controlv1.ReadinessResponse{Status: result}
 	readiness.Checks.Database = database
+	if h.config.Route53CredentialsReadiness != nil {
+		credentials := controlv1.ReadinessResponseChecksRoute53CredentialsOk
+		if h.config.Route53CredentialsReadiness(request.Context()) != nil {
+			credentials = controlv1.ReadinessResponseChecksRoute53CredentialsFailed
+			readiness.Status = controlv1.ReadinessResponseStatusNotReady
+			code = http.StatusServiceUnavailable
+		}
+		readiness.Checks.Route53Credentials = &credentials
+	}
 	writeJSON(response, code, readiness)
 }
 

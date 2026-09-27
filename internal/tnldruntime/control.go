@@ -63,10 +63,12 @@ func newPublicAPIHandler(
 	httpClient *http.Client,
 	database *controlstate.Database,
 	metrics *observability.Metrics,
+	route53Readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
+	controlConfig.Route53CredentialsReadiness = route53Readiness
 	mux, err := controlapi.NewHandler(
 		controlConfig, database, database, database.Readiness,
 	)

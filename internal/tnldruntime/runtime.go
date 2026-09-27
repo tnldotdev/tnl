@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -37,6 +39,7 @@ type daemon struct {
 	relays                 []*relayRuntime
 	controlTLS             *tls.Config
 	controlTLSManager      *controltls.Source
+	route53Credentials     aws.CredentialsProvider
 	serviceHTTP            *http.Client
 	clusterSecret          string
 	clusterSecrets         serviceapi.BearerSecrets
@@ -137,10 +140,11 @@ func serveWithRelayClientTLS(
 			IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
 		}
 		if cfg.DNSProviderEnabled() {
-			awsConfig, err := route53AWSConfig(ctx, cfg.Route53Region)
+			awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
 			if err != nil {
 				return fmt.Errorf("load Route 53 configuration: %w", err)
 			}
+			d.route53Credentials = awsConfig.Credentials
 			dnsProvider, err = dnscontroller.NewRoute53Provider(route53.NewFromConfig(awsConfig))
 			if err != nil {
 				return err
@@ -237,7 +241,11 @@ func serveWithRelayClientTLS(
 
 	controlHandler := http.Handler(nil)
 	if d.database != nil {
-		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics)
+		var route53Readiness func(context.Context) error
+		if d.route53Credentials != nil {
+			route53Readiness = d.checkRoute53Credentials
+		}
+		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, route53Readiness)
 		if err != nil {
 			return err
 		}
@@ -331,6 +339,9 @@ func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time)
 		if d.controlTLSManager != nil && !d.controlTLSManager.Ready(now) {
 			return errors.New("public control certificate is not ready")
 		}
+		if err := d.checkRoute53Credentials(ctx); err != nil {
+			return err
+		}
 	}
 	if role.RunsIngress() {
 		if len(d.ingresses) != 1 {
@@ -358,6 +369,18 @@ func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time)
 		if physical.tcpListener == nil || physical.udpListener == nil {
 			return errors.New("relay publisher listeners are not ready")
 		}
+	}
+	return nil
+}
+
+func (d *daemon) checkRoute53Credentials(ctx context.Context) error {
+	if d.route53Credentials == nil {
+		return nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := d.route53Credentials.Retrieve(checkCtx); err != nil {
+		return fmt.Errorf("retrieve Route 53 credentials: %w", err)
 	}
 	return nil
 }

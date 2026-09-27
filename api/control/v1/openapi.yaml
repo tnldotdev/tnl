@@ -653,6 +653,10 @@ components:
             database:
               type: string
               enum: [ok, failed]
+            route53_credentials:
+              type: string
+              description: Present when control uses Route 53; checks that its AWS credentials can be obtained.
+              enum: [ok, failed]
     ClientIPResponse:
       type: object
       additionalProperties: false
