@@ -252,10 +252,11 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"
 		cfg.InternalRelayListen, cfg.InternalRelayAddress = "0.0.0.0:8443", component+":8443"
 	}
-	if err := cfg.Validate(); err != nil {
+	resolved, err := tnldconfig.Resolve(cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return cfg
+	return resolved
 }
 
 type separatedResources struct {

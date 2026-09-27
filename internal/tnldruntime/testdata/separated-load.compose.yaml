@@ -44,17 +44,14 @@ x-runtime: &runtime
         -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
         -tnl-runtime-load-bandwidth-streams='${BANDWIDTH_STREAMS:-64}' \
         -tnl-runtime-load-bandwidth-measure='${BANDWIDTH_MEASURE:-0s}' \
-        -tnl-runtime-load-source-connection-rate='${SOURCE_CONNECTION_RATE:-50}' \
-        -tnl-runtime-load-source-connection-burst='${SOURCE_CONNECTION_BURST:-200}' \
-        -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:-1024}' \
-        -tnl-runtime-load-challenge-connection-limit='${CHALLENGE_CONNECTION_LIMIT:-1024}' \
+        -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:--1}' \
+        -tnl-runtime-load-challenge-connection-limit='${CHALLENGE_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-challenge-hostname-connection-limit='${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}' \
-        -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:-20000}' \
-        -tnl-runtime-load-public-url-connection-limit='${PUBLIC_URL_CONNECTION_LIMIT:-500}' \
-        -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:-4000}' \
+        -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:--1}' \
+        -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-publisher-request-limit='${PUBLISHER_REQUEST_LIMIT:-500}' \
-        -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:-4096}' \
-        -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:-4096}' \
+        -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:--1}' \
+        -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
         -tnl-runtime-load-network-path='${NETWORK_PATH:-forwarding}' \
         -tnl-runtime-load-rtt='${RTT:-20ms}' \
@@ -289,8 +286,8 @@ services:
     <<: *runtime
     network_mode: service:publishers
     cpus: "${APP_CPUS:-1}"
-    mem_limit: "${APP_MEMORY:-128m}"
-    memswap_limit: "${APP_MEMORY:-128m}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: app
@@ -299,8 +296,8 @@ services:
     <<: *runtime
     network_mode: service:publishers-2
     cpus: "${APP_CPUS:-1}"
-    mem_limit: "${APP_MEMORY:-128m}"
-    memswap_limit: "${APP_MEMORY:-128m}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: app-2
@@ -309,8 +306,8 @@ services:
     <<: *runtime
     network_mode: service:publishers-3
     cpus: "${APP_CPUS:-1}"
-    mem_limit: "${APP_MEMORY:-128m}"
-    memswap_limit: "${APP_MEMORY:-128m}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: app-3
@@ -319,8 +316,8 @@ services:
     <<: *runtime
     network_mode: service:publishers-4
     cpus: "${APP_CPUS:-1}"
-    mem_limit: "${APP_MEMORY:-128m}"
-    memswap_limit: "${APP_MEMORY:-128m}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
     environment:
       <<: *environment
       SEPARATED_COMPONENT: app-4
@@ -372,17 +369,14 @@ services:
       - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"
       - "-tnl-runtime-load-bandwidth-streams=${BANDWIDTH_STREAMS:-64}"
       - "-tnl-runtime-load-bandwidth-measure=${BANDWIDTH_MEASURE:-0s}"
-      - "-tnl-runtime-load-source-connection-rate=${SOURCE_CONNECTION_RATE:-50}"
-      - "-tnl-runtime-load-source-connection-burst=${SOURCE_CONNECTION_BURST:-200}"
-      - "-tnl-runtime-load-client-hello-connection-limit=${CLIENT_HELLO_CONNECTION_LIMIT:-1024}"
-      - "-tnl-runtime-load-challenge-connection-limit=${CHALLENGE_CONNECTION_LIMIT:-1024}"
+      - "-tnl-runtime-load-client-hello-connection-limit=${CLIENT_HELLO_CONNECTION_LIMIT:--1}"
+      - "-tnl-runtime-load-challenge-connection-limit=${CHALLENGE_CONNECTION_LIMIT:--1}"
       - "-tnl-runtime-load-challenge-hostname-connection-limit=${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}"
-      - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:-20000}"
-      - "-tnl-runtime-load-public-url-connection-limit=${PUBLIC_URL_CONNECTION_LIMIT:-500}"
-      - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:-4000}"
+      - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:--1}"
+      - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:--1}"
       - "-tnl-runtime-load-publisher-request-limit=${PUBLISHER_REQUEST_LIMIT:-500}"
-      - "-tnl-runtime-load-relay-stream-capacity=${RELAY_STREAM_CAPACITY:-4096}"
-      - "-tnl-runtime-load-quic-max-incoming-streams=${QUIC_MAX_INCOMING_STREAMS:-4096}"
+      - "-tnl-runtime-load-relay-stream-capacity=${RELAY_STREAM_CAPACITY:--1}"
+      - "-tnl-runtime-load-quic-max-incoming-streams=${QUIC_MAX_INCOMING_STREAMS:--1}"
       - "-tnl-runtime-load-scenario=${SCENARIO:-relay-restart}"
       - "-tnl-runtime-load-network-path=${NETWORK_PATH:-forwarding}"
       - "-tnl-runtime-load-rtt=${RTT:-20ms}"

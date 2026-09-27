@@ -80,34 +80,29 @@ tnld:
 
 func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.json")
-	contents := `{"version":1,"tnld":{"role":"relay","metrics_listen":"file:1","relay_stream_capacity":12,"source_connection_rate":75.5,"source_connection_burst":300}}`
+	contents := `{"version":1,"tnld":{"role":"relay","metrics_listen":"file:1","relay_stream_capacity":12}}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
-	t.Setenv("TNLD_SOURCE_CONNECTION_RATE", "100.5")
 	base := tnldconfig.Config{
 		Role: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, PublicURLCertificateWorkers: 4,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
-		VisitorConnectionLimit: 1, PublicURLConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
-		SourceConnectionRate: 100.5, SourceConnectionBurst: 7,
+		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
 		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
 	}
-	resolved, err := resolveConfigFile(path, base, map[string]bool{"relay_stream_capacity": true, "source_connection_burst": true})
+	resolved, err := resolveConfigFile(path, base, map[string]bool{"relay_stream_capacity": true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.MetricsListen != "env:2" || resolved.RelayStreamCapacity != 99 {
 		t.Fatalf("resolved config = %#v", resolved)
-	}
-	if resolved.SourceConnectionRate != 100.5 || resolved.SourceConnectionBurst != 7 {
-		t.Fatalf("resolved source limits = %g/%d", resolved.SourceConnectionRate, resolved.SourceConnectionBurst)
 	}
 }
 

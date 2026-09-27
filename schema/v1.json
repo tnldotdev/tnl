@@ -450,25 +450,15 @@
           "type": "string",
           "description": "Internal hostname and port advertised by this relay process."
         },
-        "source_connection_rate": {
-          "type": "number",
-          "description": "New visitor connections per second per source IPv4 address or IPv6 /64, per ingress process.",
-          "default": 50
-        },
-        "source_connection_burst": {
-          "type": "integer",
-          "description": "Visitor connection burst allowance per source IPv4 address or IPv6 /64, per ingress process.",
-          "default": 200
-        },
         "client_hello_connection_limit": {
           "type": "integer",
-          "description": "Maximum simultaneous public connection metadata and TLS ClientHello inspections.",
-          "default": 1024
+          "description": "Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic).",
+          "default": -1
         },
         "challenge_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent public URL certificate validation connections per ingress process.",
-          "default": 1024
+          "description": "Maximum concurrent public URL certificate validation connections per ingress process (default: automatic).",
+          "default": -1
         },
         "challenge_hostname_connection_limit": {
           "type": "integer",
@@ -477,33 +467,28 @@
         },
         "standalone_control_connection_limit": {
           "type": "integer",
-          "description": "Maximum control connections handed off by standalone, held until close.",
-          "default": 1024
+          "description": "Maximum control connections handed off by standalone, held until close (default: automatic).",
+          "default": -1
         },
         "standalone_relay_connection_limit": {
           "type": "integer",
-          "description": "Maximum relay TCP connections handed off by standalone, held until close.",
-          "default": 4096
+          "description": "Maximum relay TCP connections handed off by standalone, held until close (default: automatic).",
+          "default": -1
         },
         "visitor_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent visitor connections.",
-          "default": 20000
-        },
-        "public_url_connection_limit": {
-          "type": "integer",
-          "description": "Maximum concurrent visitor connections per public URL.",
-          "default": 500
+          "description": "Maximum concurrent visitor connections (default: automatic).",
+          "default": -1
         },
         "publisher_connection_limit": {
           "type": "integer",
-          "description": "Maximum publisher connections held by one relay process.",
-          "default": 4000
+          "description": "Maximum publisher connections held by one relay process (default: automatic).",
+          "default": -1
         },
         "relay_stream_capacity": {
           "type": "integer",
-          "description": "Maximum concurrent visitor streams held by one relay process.",
-          "default": 4096
+          "description": "Maximum concurrent visitor streams held by one relay process (default: automatic).",
+          "default": -1
         },
         "require_proxy_header": {
           "type": "boolean",
@@ -511,8 +496,8 @@
         },
         "quic_max_incoming_streams": {
           "type": "integer",
-          "description": "Maximum incoming QUIC streams per publisher connection.",
-          "default": 4096
+          "description": "Maximum incoming QUIC streams per publisher connection (default: relay stream capacity).",
+          "default": -1
         },
         "quic_idle_timeout": {
           "type": "string",

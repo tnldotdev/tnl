@@ -104,8 +104,6 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.IncCapacityRejection("public_url_connections")
 	metrics.IncInspectionFailure("client_hello")
 	metrics.IncChallengeRejection("unavailable")
-	metrics.IncSourceLimiterRejection()
-	metrics.SetSourceLimiterEntries(5)
 	metrics.IncIPAllowlistDenial()
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
 	metrics.ObserveControlRequest("routes.create", "success", 10*time.Millisecond)
@@ -132,8 +130,6 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_capacity_rejections_total":          {"COUNTER", map[string]string{"resource": "public_url_connections"}, 1},
 		"tnl_ingress_inspection_failures_total":  {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
 		"tnl_ingress_challenge_rejections_total": {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
-		"tnl_source_limiter_rejections_total":    {kind: "COUNTER", value: 1},
-		"tnl_source_limiter_entries":             {kind: "GAUGE", value: 5},
 		"tnl_ip_allowlist_denials_total":         {kind: "COUNTER", value: 1},
 		"tnl_forwarded_bytes_total":              {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
 		"tnl_control_requests_total":             {"COUNTER", map[string]string{"operation": "routes.create", "outcome": "success"}, 1},
@@ -221,6 +217,18 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	}
 }
 
+func TestMetricsExposeEffectiveCapacityLimits(t *testing.T) {
+	metrics := New("ingress")
+	metrics.SetCapacityLimit("public_connections", 101)
+	metrics.SetCapacityLimit("public_url_connections", 50)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `tnl_capacity_limit{resource="public_connections"} 101`) ||
+		!strings.Contains(response.Body.String(), `tnl_capacity_limit{resource="public_url_connections"} 50`) {
+		t.Fatalf("effective limits missing: %s", response.Body.String())
+	}
+}
+
 func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 	for _, test := range []struct {
 		role string
@@ -232,7 +240,6 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 		}},
 		{role: "ingress", want: []string{
 			"tnl_info", "tnl_streams_active", "tnl_capacity_rejections_total",
-			"tnl_source_limiter_rejections_total", "tnl_source_limiter_entries",
 			"tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
 		}},
 		{role: "relay", want: []string{
@@ -243,8 +250,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			"tnl_routing_history_cleanup_rows_total", "tnl_routing_history_cleanup_skipped_total", "tnl_routing_history_retained_after_revision",
 			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
 			"tnl_relay_leases", "tnl_publisher_connections", "tnl_streams_active",
-			"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total",
-			"tnl_source_limiter_entries", "tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
+			"tnl_capacity_rejections_total", "tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
 		}},
 	} {
 		t.Run(test.role, func(t *testing.T) {
@@ -254,8 +260,6 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			metrics.SetIngressStreams(1)
 			metrics.AddRelayStreams(1)
 			metrics.IncCapacityRejection("test")
-			metrics.IncSourceLimiterRejection()
-			metrics.SetSourceLimiterEntries(1)
 			metrics.IncIPAllowlistDenial()
 			metrics.AddForwardedBytes("visitor_to_publisher", 1)
 			metrics.ObserveControlRequest("test", "success", time.Millisecond)

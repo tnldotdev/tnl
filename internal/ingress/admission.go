@@ -48,7 +48,7 @@ func admissionDefaults(config *Config) error {
 }
 
 // Admission classes share the short ClientHello inspection stage, not their
-// long-lived capacity or source-rate budget. Map keys exist only while admitted.
+// long-lived capacity. Map keys exist only while admitted.
 func (s *Server) admitClass(kind connectionKind, key string) (release func(), rejected string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -60,7 +60,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-		if s.byPublicURL[key] >= s.config.MaxPublicURLConnections {
+		if s.byPublicURL[key] >= max(1, s.config.MaxConnections/2) {
 			return nil, "public_url_connections"
 		}
 	case challengeConnection:

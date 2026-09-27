@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -114,47 +113,7 @@ func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
 	}
 }
 
-func TestIngressConfiguredSourceRefill(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	synctest.Test(t, func(t *testing.T) {
-		server, err := New(listener, Config{
-			Lookup:         func(string) (PublicURL, bool) { return PublicURL{}, false },
-			MaxConnections: 8, MaxPublicURLConnections: 2,
-			SourceConnectionRate: 2.5, SourceConnectionBurst: 2,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer server.cancelOpens()
-		source := netip.MustParseAddr("198.51.100.1")
-		if !server.limiter.Allow(source) {
-			t.Fatal("configured burst rejected the first connection")
-		}
-		if !server.limiter.Allow(source) {
-			t.Fatal("configured burst rejected the second connection")
-		}
-		if server.limiter.Allow(source) {
-			t.Fatal("configured burst accepted a third connection")
-		}
-		time.Sleep(399 * time.Millisecond)
-		if server.limiter.Allow(source) {
-			t.Fatal("source refilled before the configured interval")
-		}
-		time.Sleep(time.Millisecond)
-		if !server.limiter.Allow(source) {
-			t.Fatal("configured rate did not refill one token")
-		}
-		if server.limiter.Allow(source) {
-			t.Fatal("configured rate refilled more than one token")
-		}
-	})
-}
-
-func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) {
+func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
@@ -162,7 +121,6 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		lookups.Add(1)
 		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
 	}}
-	config.SourceConnectionRate, config.SourceConnectionBurst = 0.000001, 1
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
 	// Write malformed bytes on the underlying connection, before TLS.
@@ -174,7 +132,7 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 	if result.err != nil || result.header.Source != netip.MustParseAddrPort("198.51.100.2:40002") {
 		t.Fatalf("allowed = %+v", result)
 	}
-	for _, source := range []string{"198.51.100.2:40003", "203.0.113.3:40004"} {
+	for _, source := range []string{"203.0.113.3:40004"} {
 		client := ingressClient(t, address, "route.example", source)
 		if err := client.Handshake(); err == nil {
 			t.Fatalf("denied source %s completed TLS", source)
@@ -187,8 +145,8 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		policies += u.policyDenials
 		streams += u.streams
 	}
-	if policies != 1 || streams != 1 || metrics.sourceLimiterRejections.Load() != 1 || metrics.sourceLimiterEntries.Load() != 2 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
-		t.Fatalf("policy=%d streams=%d limiter=%d entries=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.sourceLimiterRejections.Load(), metrics.sourceLimiterEntries.Load(), metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
+	if policies != 1 || streams != 1 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
+		t.Fatalf("policy=%d streams=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -222,7 +180,7 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	usage := newUsageRecorder()
 	config := publicURLConfig(backend)
 	config.OpenUsage = usage.Open
-	config.MaxPublicURLConnections = 1
+	config.MaxConnections = 2 // One public URL receives half of this ingress budget.
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)

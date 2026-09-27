@@ -77,10 +77,7 @@ type ingressSettings struct {
 	challengeHostnameConnectionLimit int
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
-	sourceConnectionRate             float64
-	sourceConnectionBurst            int
 	visitorConnectionLimit           int64
-	publicURLConnectionLimit         int64
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
@@ -94,10 +91,7 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		challengeHostnameConnectionLimit: cfg.ChallengeHostnameConnectionLimit,
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
-		sourceConnectionRate:             cfg.SourceConnectionRate,
-		sourceConnectionBurst:            cfg.SourceConnectionBurst,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
-		publicURLConnectionLimit:         cfg.PublicURLConnectionLimit,
 		requireProxyHeader:               cfg.RequireProxyHeader,
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
@@ -172,10 +166,6 @@ func (d *daemon) startIngressRuntime(
 	if err != nil {
 		return err
 	}
-	publicURLCapacity, err := runtimeCapacity("route connection", settings.publicURLConnectionLimit)
-	if err != nil {
-		return err
-	}
 	ingressConfig := ingress.Config{
 		Lookup: func(hostname string) (ingress.PublicURL, bool) {
 			entry, ok := controller.Lookup(hostname, time.Now())
@@ -207,8 +197,7 @@ func (d *daemon) startIngressRuntime(
 		MaxHostnameChallengeConnections: settings.challengeHostnameConnectionLimit,
 		MaxControlConnections:           settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:             settings.standaloneRelayConnectionLimit,
-		SourceConnectionRate:            settings.sourceConnectionRate, SourceConnectionBurst: settings.sourceConnectionBurst,
-		MaxPublicURLConnections: publicURLCapacity, Metrics: metrics, Observer: metrics,
+		Metrics:                         metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
 		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },

@@ -474,7 +474,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			progress[i] = stream.BytesReceived()
 		}
 		if phase.Duration == 0 {
-			interval := max(time.Duration(float64(time.Second)/runtimeLoadAdmission.SourceConnectionRate), time.Nanosecond)
+			interval := time.Second / time.Duration(max(1, localRate))
 			pacer := time.NewTicker(interval)
 			for i := index - 1; i < len(phase.URLs); i += 4 {
 				select {
@@ -627,7 +627,7 @@ func runSeparatedVisitorFresh(ctx context.Context, visitor benchworkload.Visitor
 func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, total, index int) []*benchworkload.HeldStream {
 	t.Helper()
 	var streams []*benchworkload.HeldStream
-	interval := max(time.Duration(float64(time.Second)/runtimeLoadAdmission.SourceConnectionRate), time.Nanosecond)
+	interval := time.Second / 500 // Offered held-stream opening workload per visitor.
 	pacer := time.NewTicker(interval)
 	defer pacer.Stop()
 	for i := index; i < total; i += 4 {

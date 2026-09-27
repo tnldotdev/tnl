@@ -3,7 +3,6 @@ package tnldconfig
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -108,19 +107,16 @@ type Config struct {
 	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
-	SourceConnectionRate             float64       `name:"source-connection-rate" env:"TNLD_SOURCE_CONNECTION_RATE" default:"50" help:"New visitor connections per second per source IPv4 address or IPv6 /64, per ingress process."`
-	SourceConnectionBurst            int           `name:"source-connection-burst" env:"TNLD_SOURCE_CONNECTION_BURST" default:"200" help:"Visitor connection burst allowance per source IPv4 address or IPv6 /64, per ingress process."`
-	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"1024" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections."`
-	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"1024" help:"Maximum concurrent public URL certificate validation connections per ingress process."`
+	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
+	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent public URL certificate validation connections per ingress process (default: automatic)."`
 	ChallengeHostnameConnectionLimit int           `name:"challenge-hostname-connection-limit" env:"TNLD_CHALLENGE_HOSTNAME_CONNECTION_LIMIT" default:"8" help:"Maximum concurrent public URL certificate validation connections per hostname on each ingress process."`
-	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"1024" help:"Maximum control connections handed off by standalone, held until close."`
-	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"4096" help:"Maximum relay TCP connections handed off by standalone, held until close."`
-	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
-	PublicURLConnectionLimit         int64         `name:"public-url-connection-limit" env:"TNLD_PUBLIC_URL_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per public URL."`
-	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"4000" help:"Maximum publisher connections held by one relay process."`
-	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
+	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
+	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
+	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
+	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
+	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
 	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress traffic or the control API."`
-	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
+	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Maximum incoming QUIC streams per publisher connection (default: relay stream capacity)."`
 	QUICIdleTimeout                  time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
 	IngressLeaseDuration             time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
 	RelayLeaseDuration               time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
@@ -192,9 +188,6 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s listen address: %w", listener.name, err)
 		}
 	}
-	if c.SourceConnectionRate <= 0 || math.IsNaN(c.SourceConnectionRate) || math.IsInf(c.SourceConnectionRate, 0) || c.SourceConnectionBurst <= 0 {
-		return errors.New("source connection rate and burst must be positive and finite")
-	}
 	if c.ClientHelloConnectionLimit <= 0 || c.ChallengeConnectionLimit <= 0 || c.ChallengeHostnameConnectionLimit <= 0 ||
 		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
 		return errors.New("ingress admission capacities must be positive")
@@ -202,7 +195,7 @@ func (c Config) Validate() error {
 	if c.PublicURLCertificateWorkers < 1 || c.PublicURLCertificateWorkers > 8 {
 		return errors.New("public URL certificate workers must be between 1 and 8")
 	}
-	if c.VisitorConnectionLimit <= 0 || c.PublicURLConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
+	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
 		return errors.New("connection and stream capacities must be positive")
 	}
@@ -513,6 +506,7 @@ func Parse(args []string) (Config, error) {
 }
 
 func Resolve(config Config) (Config, error) {
+	config.resolveCapacities(processResources())
 	switch config.Role {
 	case RoleStandalone:
 		setControlDefaults(&config)

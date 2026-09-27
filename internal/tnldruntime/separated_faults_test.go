@@ -33,7 +33,7 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 	if phase.OpenHeld {
 		heldTotal = min(8, len(phase.URLs))
 	}
-	heldTimeout := time.Duration(float64(benchworkload.Assignment(heldTotal, 4, 0))/runtimeLoadAdmission.SourceConnectionRate*float64(time.Second)) + 10*time.Second
+	heldTimeout := time.Duration(benchworkload.Assignment(heldTotal, 4, 0))*time.Second/500 + 10*time.Second
 	timeout = max(timeout, heldTimeout+time.Duration(benchworkload.Assignment(heldTotal, 4, 0))*100*time.Millisecond)
 	for i := 1; i <= 4; i++ {
 		var result separatedVisitorResult

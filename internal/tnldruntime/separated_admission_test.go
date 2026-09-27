@@ -9,34 +9,27 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 // Only admission settings belong in this evidence; never serialize the full
 // process configuration, which includes credentials and database URLs.
 type separatedAdmissionLimits struct {
-	ClientHelloConnectionLimit       int     `json:"client_hello_connection_limit"`
-	ChallengeConnectionLimit         int     `json:"challenge_connection_limit"`
-	ChallengeHostnameConnectionLimit int     `json:"challenge_hostname_connection_limit"`
-	SourceConnectionRate             float64 `json:"source_connection_rate"`
-	SourceConnectionBurst            int     `json:"source_connection_burst"`
-	VisitorConnectionLimit           int64   `json:"visitor_connection_limit"`
-	PublicURLConnectionLimit         int64   `json:"public_url_connection_limit"`
-	PublisherConnectionLimit         int64   `json:"publisher_connection_limit"`
-	RelayStreamCapacity              int64   `json:"relay_stream_capacity"`
-	QUICMaxIncomingStreams           int64   `json:"quic_max_incoming_streams"`
-	PublisherRequestLimit            int     `json:"publisher_request_limit"`
+	ClientHelloConnectionLimit       int   `json:"client_hello_connection_limit"`
+	ChallengeConnectionLimit         int   `json:"challenge_connection_limit"`
+	ChallengeHostnameConnectionLimit int   `json:"challenge_hostname_connection_limit"`
+	VisitorConnectionLimit           int64 `json:"visitor_connection_limit"`
+	PublisherConnectionLimit         int64 `json:"publisher_connection_limit"`
+	RelayStreamCapacity              int64 `json:"relay_stream_capacity"`
+	QUICMaxIncomingStreams           int64 `json:"quic_max_incoming_streams"`
+	PublisherRequestLimit            int   `json:"publisher_request_limit"`
 }
 
 type separatedIngressAdmissionLimits struct {
-	ClientHelloConnectionLimit       int     `json:"client_hello_connection_limit"`
-	ChallengeConnectionLimit         int     `json:"challenge_connection_limit"`
-	ChallengeHostnameConnectionLimit int     `json:"challenge_hostname_connection_limit"`
-	SourceConnectionRate             float64 `json:"source_connection_rate"`
-	SourceConnectionBurst            int     `json:"source_connection_burst"`
-	VisitorConnectionLimit           int64   `json:"visitor_connection_limit"`
-	PublicURLConnectionLimit         int64   `json:"public_url_connection_limit"`
+	ClientHelloConnectionLimit       int   `json:"client_hello_connection_limit"`
+	ChallengeConnectionLimit         int   `json:"challenge_connection_limit"`
+	ChallengeHostnameConnectionLimit int   `json:"challenge_hostname_connection_limit"`
+	VisitorConnectionLimit           int64 `json:"visitor_connection_limit"`
 }
 
 type separatedRelayAdmissionLimits struct {
@@ -48,24 +41,20 @@ type separatedRelayAdmissionLimits struct {
 var runtimeLoadAdmission separatedAdmissionLimits
 
 func init() {
-	flag.IntVar(&runtimeLoadAdmission.ClientHelloConnectionLimit, "tnl-runtime-load-client-hello-connection-limit", ingress.DefaultClientHelloConnectionLimit, "maximum simultaneous ClientHello inspections")
-	flag.IntVar(&runtimeLoadAdmission.ChallengeConnectionLimit, "tnl-runtime-load-challenge-connection-limit", ingress.DefaultChallengeConnectionLimit, "maximum concurrent public URL certificate checks")
+	flag.IntVar(&runtimeLoadAdmission.ClientHelloConnectionLimit, "tnl-runtime-load-client-hello-connection-limit", -1, "maximum simultaneous ClientHello inspections (-1: automatic)")
+	flag.IntVar(&runtimeLoadAdmission.ChallengeConnectionLimit, "tnl-runtime-load-challenge-connection-limit", -1, "maximum concurrent public URL certificate checks (-1: automatic)")
 	flag.IntVar(&runtimeLoadAdmission.ChallengeHostnameConnectionLimit, "tnl-runtime-load-challenge-hostname-connection-limit", ingress.DefaultChallengeHostnameConnectionLimit, "maximum concurrent certificate checks per hostname")
-	flag.Float64Var(&runtimeLoadAdmission.SourceConnectionRate, "tnl-runtime-load-source-connection-rate", sourcelimiter.DefaultRate, "new connections/second per source on each ingress process")
-	flag.IntVar(&runtimeLoadAdmission.SourceConnectionBurst, "tnl-runtime-load-source-connection-burst", sourcelimiter.DefaultBurst, "new connection burst per source on each ingress process")
-	flag.Int64Var(&runtimeLoadAdmission.VisitorConnectionLimit, "tnl-runtime-load-visitor-connection-limit", 20000, "maximum visitor connections per ingress process")
-	flag.Int64Var(&runtimeLoadAdmission.PublicURLConnectionLimit, "tnl-runtime-load-public-url-connection-limit", 500, "maximum visitor connections per public URL on each ingress process")
-	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", 4000, "maximum publisher connections per relay process")
-	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", 4096, "maximum visitor streams per relay process")
-	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", 4096, "maximum incoming QUIC streams per publisher connection")
+	flag.Int64Var(&runtimeLoadAdmission.VisitorConnectionLimit, "tnl-runtime-load-visitor-connection-limit", -1, "maximum visitor connections per ingress process (-1: automatic)")
+	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", -1, "maximum publisher connections per relay process (-1: automatic)")
+	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", -1, "maximum visitor streams per relay process (-1: automatic)")
+	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", -1, "maximum incoming QUIC streams per publisher connection (-1: automatic)")
 	flag.IntVar(&runtimeLoadAdmission.PublisherRequestLimit, "tnl-runtime-load-publisher-request-limit", 500, "maximum concurrent requests handled by each publisher route")
 }
 
 func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
 	cfg.ClientHelloConnectionLimit = limits.ClientHelloConnectionLimit
 	cfg.ChallengeConnectionLimit, cfg.ChallengeHostnameConnectionLimit = limits.ChallengeConnectionLimit, limits.ChallengeHostnameConnectionLimit
-	cfg.SourceConnectionRate, cfg.SourceConnectionBurst = limits.SourceConnectionRate, limits.SourceConnectionBurst
-	cfg.VisitorConnectionLimit, cfg.PublicURLConnectionLimit = limits.VisitorConnectionLimit, limits.PublicURLConnectionLimit
+	cfg.VisitorConnectionLimit = limits.VisitorConnectionLimit
 	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = limits.PublisherConnectionLimit, limits.RelayStreamCapacity
 	cfg.QUICMaxIncomingStreams = limits.QUICMaxIncomingStreams
 }
@@ -74,8 +63,7 @@ func separatedAdmissionFrom(cfg tnldconfig.Config) separatedAdmissionLimits {
 	return separatedAdmissionLimits{
 		ClientHelloConnectionLimit: cfg.ClientHelloConnectionLimit,
 		ChallengeConnectionLimit:   cfg.ChallengeConnectionLimit, ChallengeHostnameConnectionLimit: cfg.ChallengeHostnameConnectionLimit,
-		SourceConnectionRate: cfg.SourceConnectionRate, SourceConnectionBurst: cfg.SourceConnectionBurst,
-		VisitorConnectionLimit: cfg.VisitorConnectionLimit, PublicURLConnectionLimit: cfg.PublicURLConnectionLimit,
+		VisitorConnectionLimit:   cfg.VisitorConnectionLimit,
 		PublisherConnectionLimit: cfg.PublisherConnectionLimit, RelayStreamCapacity: cfg.RelayStreamCapacity,
 		QUICMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
 	}
@@ -85,8 +73,7 @@ func (limits separatedAdmissionLimits) ingress() separatedIngressAdmissionLimits
 	return separatedIngressAdmissionLimits{
 		ClientHelloConnectionLimit: limits.ClientHelloConnectionLimit,
 		ChallengeConnectionLimit:   limits.ChallengeConnectionLimit, ChallengeHostnameConnectionLimit: limits.ChallengeHostnameConnectionLimit,
-		SourceConnectionRate: limits.SourceConnectionRate, SourceConnectionBurst: limits.SourceConnectionBurst,
-		VisitorConnectionLimit: limits.VisitorConnectionLimit, PublicURLConnectionLimit: limits.PublicURLConnectionLimit,
+		VisitorConnectionLimit: limits.VisitorConnectionLimit,
 	}
 }
 
@@ -128,10 +115,17 @@ func verifySeparatedAdmission(t *testing.T) {
 		var matches bool
 		if component == "ingress-a" || component == "ingress-b" {
 			components[component] = applied.ingress()
-			matches = applied.ingress() == runtimeLoadAdmission.ingress()
+			matches = (runtimeLoadAdmission.ClientHelloConnectionLimit == -1 || applied.ClientHelloConnectionLimit == runtimeLoadAdmission.ClientHelloConnectionLimit) &&
+				(runtimeLoadAdmission.ChallengeConnectionLimit == -1 || applied.ChallengeConnectionLimit == runtimeLoadAdmission.ChallengeConnectionLimit) &&
+				applied.ChallengeHostnameConnectionLimit == runtimeLoadAdmission.ChallengeHostnameConnectionLimit &&
+				(runtimeLoadAdmission.VisitorConnectionLimit == -1 || applied.VisitorConnectionLimit == runtimeLoadAdmission.VisitorConnectionLimit) &&
+				applied.VisitorConnectionLimit > 0 && applied.ClientHelloConnectionLimit > 0 && applied.ChallengeConnectionLimit > 0
 		} else {
 			components[component] = applied.relay()
-			matches = applied.relay() == runtimeLoadAdmission.relay()
+			matches = (runtimeLoadAdmission.PublisherConnectionLimit == -1 || applied.PublisherConnectionLimit == runtimeLoadAdmission.PublisherConnectionLimit) &&
+				(runtimeLoadAdmission.RelayStreamCapacity == -1 || applied.RelayStreamCapacity == runtimeLoadAdmission.RelayStreamCapacity) &&
+				(runtimeLoadAdmission.QUICMaxIncomingStreams == -1 || applied.QUICMaxIncomingStreams == runtimeLoadAdmission.QUICMaxIncomingStreams) &&
+				applied.PublisherConnectionLimit > 0 && applied.RelayStreamCapacity > 0 && applied.QUICMaxIncomingStreams > 0
 		}
 		recordSeparatedAdmission(t, components)
 		if !matches {

@@ -243,7 +243,7 @@ Its five-second budget includes queue waiting; requests are never retried.
 ```console
 mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
 mise exec -- task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
-mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime PUBLIC_URLS=1000 START_PARALLEL=1000 PUBLIC_URL_CERTIFICATE_WORKERS=8 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
+mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime PUBLIC_URLS=1000 START_PARALLEL=1000 PUBLIC_URL_CERTIFICATE_WORKERS=8 RPS=4 RESULTS=bench-results/runtime-cold-1000
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime PUBLIC_URLS=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=control-restart RPS=4 HELD_STREAMS=0 RESULTS=bench-results/runtime-control-restart
@@ -304,21 +304,21 @@ bench-results/<run>/steady-relay-a-cpu.pb.gz`.
 For example, a longer stream measurement with generator memory held fixed:
 
 ```console
-mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-held-1200
+mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 RESULTS=bench-results/capacity-held-1200
 ```
 
 For isolated stream capacity on the 1 CPU / 2 GiB server-role profile, give
 generators separate headroom and use a fresh results directory at each step:
 
 ```console
-mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-streams-4000
+mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 PUBLIC_URLS=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 RESULTS=bench-results/capacity-streams-4000
 ```
 
-The default relay stream capacity is 4,096 and the publisher's local proxy
-accepts 500 concurrent requests per route, including held streams. Above
+The relay stream capacity is resolved from process resources and the publisher's local proxy
+accepts 500 concurrent requests per public URL, including held streams. Above
 those limits, pass explicit `RELAY_STREAM_CAPACITY` and
-`PUBLISHER_REQUEST_LIMIT` values; also adjust `PUBLIC_URL_CONNECTION_LIMIT` above
-the per-route ingress limit. Record applied settings from
+`PUBLISHER_REQUEST_LIMIT` values; ensure the ingress visitor limit is at least
+twice the intended concurrent streams on one public URL. Record applied settings from
 `admission-limits.json`. These are distinct configured-capacity profiles even
 when CPU and memory stay fixed.
 
@@ -357,42 +357,39 @@ include all visitor containers, so the direct phase shows whether generators hav
 headroom before interpreting the tunneled result. This local topology validates the
 harness and provides a local profile; it is not a production sizing result.
 
-One coordinator supplies the phase sequence. Every route receives correctness
+One coordinator supplies the phase sequence. Every public URL receives correctness
 probes after each traffic window. Held streams must survive steady traffic;
 restart windows retain all disruptions and require successful post-recovery traffic.
-Missed offers fail every window. Four real source IPs use the default
-50-new-connections/sec source limit unless explicitly overridden; concurrency
+Missed offers fail every window. Four real source IPs are used; concurrency
 does not create more source IPs.
 
 Admission limits are independent Task inputs, passed as `-tnl-runtime-load-*`
 flags into the same production configuration used by `tnld`:
 
-`CLIENT_HELLO_CONNECTION_LIMIT` (1,024), `CHALLENGE_CONNECTION_LIMIT` (1,024),
-and `CHALLENGE_HOSTNAME_CONNECTION_LIMIT` (eight) bound initial inspection and
-active route validation separately. They also appear in `admission-limits.json`.
-Source rate/burst apply to ordinary visitors after classification; Pebble's
-active TLS-ALPN checks do not consume visitor tokens.
+`CLIENT_HELLO_CONNECTION_LIMIT` and `CHALLENGE_CONNECTION_LIMIT` default to
+resource-derived values; `CHALLENGE_HOSTNAME_CONNECTION_LIMIT` defaults to eight.
+They bound initial inspection and active public URL certificate validation
+separately. They also appear in `admission-limits.json`.
+Pebble's active TLS-ALPN checks use a separate challenge capacity.
 
-| Task input                    | Default | Scope                                                                        |
-| ----------------------------- | ------: | ---------------------------------------------------------------------------- |
-| `SOURCE_CONNECTION_RATE`      |      50 | New connections/sec per source IPv4 address or IPv6 /64, per ingress process |
-| `SOURCE_CONNECTION_BURST`     |     200 | Source token-bucket size on each ingress process                             |
-| `VISITOR_CONNECTION_LIMIT`    |   20000 | Concurrent visitor connections per ingress process                           |
-| `PUBLIC_URL_CONNECTION_LIMIT` |     500 | Concurrent visitor connections per route on each ingress process             |
-| `PUBLISHER_CONNECTION_LIMIT`  |    4000 | Publisher connections per relay process                                      |
-| `PUBLISHER_REQUEST_LIMIT`     |     500 | Concurrent requests forwarded by each publisher route                        |
-| `RELAY_STREAM_CAPACITY`       |    4096 | Concurrent visitor streams per relay process                                 |
-| `QUIC_MAX_INCOMING_STREAMS`   |    4096 | Incoming QUIC streams per publisher connection                               |
+| Task input                   | Default   | Scope                                                      |
+| ---------------------------- | --------- | ---------------------------------------------------------- |
+| `VISITOR_CONNECTION_LIMIT`   | automatic | Concurrent visitor connections per ingress process         |
+| `PUBLISHER_CONNECTION_LIMIT` | automatic | Publisher connections per relay process                    |
+| `PUBLISHER_REQUEST_LIMIT`    | 500       | Concurrent requests forwarded by each publisher public URL |
+| `RELAY_STREAM_CAPACITY`      | automatic | Concurrent visitor streams per relay process               |
+| `QUIC_MAX_INCOMING_STREAMS`  | automatic | Incoming QUIC streams per publisher connection             |
 
-For a small configuration check above the default sustained source rate:
+One public URL may use half an ingress process's visitor connection budget.
+For a small configuration check at a higher offered visitor rate:
 
 ```console
-mise exec -- task go:test:load:runtime RPS=240 DURATION=30s SOURCE_CONNECTION_RATE=400 RESULTS=bench-results/runtime-source-override
+mise exec -- task go:test:load:runtime RPS=240 DURATION=30s RESULTS=bench-results/runtime-high-offer
 ```
 
-`admission-limits.json` retains requested values before component startup and
-the role-applicable process configuration reported by ingress and both relays.
-A mismatch fails the run. This proves configuration propagation; individual
+`admission-limits.json` retains requested values (`-1` means automatic) and
+the resolved role-applicable process configuration reported by ingress and
+both relays. A mismatch in an explicit override fails the run. This proves configuration propagation; individual
 capacity-boundary experiments prove enforcement. Resource snapshots record
 effective CPU/memory allocations separately.
 Declare overrides before each experiment and keep them fixed across its healthy
@@ -401,7 +398,7 @@ The runtime workload bounds are 4–10,000 routes and 4–2,000 requests/sec.
 Large runs require separately declared database, generator, and certificate
 worker resources; the routine smoke defaults are four routes and 16 requests/sec.
 Local Pebble validates from one source address; challenge concurrency and
-deadlines apply independently of visitor source rate.
+deadlines apply independently of ordinary visitor traffic.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
@@ -498,7 +495,7 @@ time without necessarily reducing an individual publisher's activation latency.
 | Each relay               |         1 |         2GiB | `RELAY_A_*`, `RELAY_B_*`                 |
 | Each publisher generator |         4 |         4GiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY`     |
 | Each visitor             |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`         |
-| Local service            |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`                 |
+| Local service            |         1 |       512MiB | `APP_CPUS`, `APP_MEMORY`                 |
 | Pebble/DNS               |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`           |
 | PostgreSQL               |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`       |
 | Coordinator              |       0.5 |       128MiB | `COORDINATOR_CPUS`, `COORDINATOR_MEMORY` |

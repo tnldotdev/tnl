@@ -19,7 +19,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 )
 
@@ -59,8 +58,6 @@ type Metrics interface {
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
 	IncChallengeRejection(string)
-	IncSourceLimiterRejection()
-	SetSourceLimiterEntries(int)
 	IncIPAllowlistDenial()
 	AddForwardedBytes(string, int64)
 	SetIngressStreams(int)
@@ -76,10 +73,7 @@ type Config struct {
 	HandleRelay                     func(net.Conn) bool
 	HandleRelayChallenge            func(net.Conn) bool
 	RequireProxyHeader              bool
-	SourceConnectionRate            float64
-	SourceConnectionBurst           int
 	MaxConnections                  int
-	MaxPublicURLConnections         int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
@@ -97,7 +91,6 @@ type Config struct {
 type Server struct {
 	listener    net.Listener
 	config      Config
-	limiter     *sourcelimiter.Limiter
 	openContext context.Context
 	cancelOpens context.CancelFunc
 
@@ -119,7 +112,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if listener == nil || config.Lookup == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
-	if config.MaxConnections <= 0 || config.MaxPublicURLConnections <= 0 {
+	if config.MaxConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
 	if err := admissionDefaults(&config); err != nil {
@@ -140,22 +133,10 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
-	limiter, err := sourcelimiter.New(sourcelimiter.Config{
-		Rate: config.SourceConnectionRate, Burst: config.SourceConnectionBurst,
-		OnEntriesChanged: func(entries int) {
-			if config.Metrics != nil {
-				config.Metrics.SetSourceLimiterEntries(entries)
-			}
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
 	return &Server{
 		listener:    listener,
 		config:      config,
-		limiter:     limiter,
 		openContext: openContext,
 		cancelOpens: cancelOpens,
 		connections: make(map[net.Conn]struct{}),
@@ -307,12 +288,6 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
 	} else {
-		if !s.limiter.Allow(source.Addr()) {
-			if s.config.Metrics != nil {
-				s.config.Metrics.IncSourceLimiterRejection()
-			}
-			return nil
-		}
 		route, ok = s.config.Lookup(hello.ServerName)
 		backends = route.Backends
 	}

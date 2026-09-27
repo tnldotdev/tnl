@@ -123,23 +123,13 @@ func TestIngressHandoffsHaveIndependentCapacityHeldUntilClose(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			handled := make(chan net.Conn, 2)
 			metrics := new(testMetrics)
-			config := Config{SourceConnectionRate: 0.000001, SourceConnectionBurst: 1, Metrics: metrics,
+			config := Config{Metrics: metrics,
 				MaxControlConnections: 1, MaxRelayConnections: 1}
 			test.configure(&config, func(connection net.Conn) bool {
 				handled <- connection
 				return true
 			})
 			server, address := startIngress(t, config)
-			// Exhaust the same visitor source bucket first.
-			ordinary := ingressClient(t, address, "route.example", "")
-			_ = ordinary.Handshake()
-			_ = ordinary.Close()
-			ordinary = ingressClient(t, address, "route.example", "")
-			_ = ordinary.Handshake()
-			_ = ordinary.Close()
-			if metrics.sourceLimiterRejections.Load() != 1 {
-				t.Fatal("ordinary source bucket was not exhausted")
-			}
 			client := ingressClient(t, address, test.hostname, "")
 			handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
 			owned := ingressAwait(t, handled)
@@ -162,8 +152,8 @@ func TestIngressHandoffsHaveIndependentCapacityHeldUntilClose(t *testing.T) {
 			nextOwned := ingressAwait(t, handled)
 			_ = nextOwned.Close()
 			_ = ingressAwait(t, nextHandshake)
-			if server.limiter.Entries() != 1 || metrics.sourceLimiterRejections.Load() != 1 {
-				t.Fatalf("source limiter entries=%d rejections=%d", server.limiter.Entries(), metrics.sourceLimiterRejections.Load())
+			if server.Load() != 0 {
+				t.Fatal("handoff retained visitor capacity")
 			}
 		})
 	}

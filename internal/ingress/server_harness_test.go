@@ -61,9 +61,6 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 8
 	}
-	if config.MaxPublicURLConnections == 0 {
-		config.MaxPublicURLConnections = 2
-	}
 	if config.Lookup == nil {
 		config.Lookup = func(string) (PublicURL, bool) { return PublicURL{}, false }
 	}
@@ -263,10 +260,9 @@ func (u *testUsageConnection) Close(at time.Time) {
 }
 
 type testMetrics struct {
-	sourceLimiterRejections, sourceLimiterEntries, ipAllowlistDenials, challengeUnavailable, challengeMissing atomic.Int32
-	forwardedMu                                                                                               sync.Mutex
-	forwardedBytes                                                                                            map[string]int64
-	entriesChanged                                                                                            chan int
+	ipAllowlistDenials, challengeUnavailable, challengeMissing atomic.Int32
+	forwardedMu                                                sync.Mutex
+	forwardedBytes                                             map[string]int64
 }
 
 func (*testMetrics) IncCapacityRejection(string) {}
@@ -277,13 +273,6 @@ func (m *testMetrics) IncChallengeRejection(reason string) {
 	}
 	if reason == "missing" {
 		m.challengeMissing.Add(1)
-	}
-}
-func (m *testMetrics) IncSourceLimiterRejection() { m.sourceLimiterRejections.Add(1) }
-func (m *testMetrics) SetSourceLimiterEntries(n int) {
-	m.sourceLimiterEntries.Store(int32(n))
-	if m.entriesChanged != nil {
-		m.entriesChanged <- n
 	}
 }
 func (m *testMetrics) IncIPAllowlistDenial() { m.ipAllowlistDenials.Add(1) }

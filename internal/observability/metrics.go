@@ -18,10 +18,9 @@ type Metrics struct {
 	publisherConnections  *prometheus.GaugeVec
 	streams               *prometheus.GaugeVec
 	capacityRejections    *prometheus.CounterVec
+	capacityLimits        *prometheus.GaugeVec
 	inspectionFailures    *prometheus.CounterVec
 	challengeRejections   *prometheus.CounterVec
-	sourceLimiterRejects  prometheus.Counter
-	sourceLimiterEntries  prometheus.Gauge
 	ipAllowlistDenials    prometheus.Counter
 	forwardedBytes        *prometheus.CounterVec
 	relayAttempts         *prometheus.CounterVec
@@ -64,18 +63,15 @@ func New(role string) *Metrics {
 		capacityRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_capacity_rejections_total", Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
+		capacityLimits: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_capacity_limit", Help: "Resolved process-local admission limit by fixed resource.",
+		}, []string{"resource"}),
 		inspectionFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_inspection_failures_total", Help: "Ingress connections rejected before classification by fixed failure stage.",
 		}, []string{"stage"}),
 		challengeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_challenge_rejections_total", Help: "ACME TLS-ALPN connections rejected before relay forwarding by fixed reason.",
 		}, []string{"reason"}),
-		sourceLimiterRejects: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "tnl_source_limiter_rejections_total", Help: "Ordinary visitor starts rejected by per-source limiting.",
-		}),
-		sourceLimiterEntries: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_source_limiter_entries", Help: "Current bounded ordinary visitor source limiter entries.",
-		}),
 		ipAllowlistDenials: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tnl_ip_allowlist_denials_total", Help: "Ingress connections denied by route IP policy.",
 		}),
@@ -131,12 +127,12 @@ func New(role string) *Metrics {
 			metrics.databaseQueryDuration, metrics.databaseGuardDuration)
 	}
 	if role == "control" || role == "ingress" || role == "relay" || role == "standalone" {
-		registered = append(registered, metrics.operationDuration)
+		registered = append(registered, metrics.operationDuration, metrics.capacityLimits)
 	}
 	if role == "ingress" || role == "standalone" {
 		registered = append(registered,
-			metrics.streams, metrics.capacityRejections, metrics.sourceLimiterRejects,
-			metrics.sourceLimiterEntries, metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.relayAttempts,
+			metrics.streams, metrics.capacityRejections,
+			metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.relayAttempts,
 			metrics.inspectionFailures, metrics.challengeRejections,
 		)
 		metrics.streams.WithLabelValues("ingress").Set(0)
@@ -189,6 +185,10 @@ func (m *Metrics) IncCapacityRejection(resource string) {
 	m.capacityRejections.WithLabelValues(resource).Inc()
 }
 
+func (m *Metrics) SetCapacityLimit(resource string, limit int64) {
+	m.capacityLimits.WithLabelValues(resource).Set(float64(limit))
+}
+
 func (m *Metrics) IncInspectionFailure(stage string) {
 	switch stage {
 	case "deadline", "metadata", "client_hello", "hostname":
@@ -203,10 +203,6 @@ func (m *Metrics) IncChallengeRejection(reason string) {
 		m.challengeRejections.WithLabelValues(reason).Inc()
 	}
 }
-
-func (m *Metrics) IncSourceLimiterRejection() { m.sourceLimiterRejects.Inc() }
-
-func (m *Metrics) SetSourceLimiterEntries(count int) { m.sourceLimiterEntries.Set(float64(count)) }
 
 func (m *Metrics) IncIPAllowlistDenial() { m.ipAllowlistDenials.Inc() }
 

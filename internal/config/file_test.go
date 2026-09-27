@@ -76,8 +76,8 @@ tnl:
 
 func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 	for extension, contents := range map[string]string{
-		"json": `{"version":1,"tnld":{"role":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s","source_connection_rate":75.5,"source_connection_burst":300}}`,
-		"yml":  "version: 1\ntnld:\n  role: relay\n  metrics_listen: \"\"\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n  source_connection_rate: 75.5\n  source_connection_burst: 300\n",
+		"json": `{"version":1,"tnld":{"role":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
+		"yml":  "version: 1\ntnld:\n  role: relay\n  metrics_listen: \"\"\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -92,9 +92,6 @@ func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 			document.TNLD.Apply(&value)
 			if value.Role != tnldconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
 				t.Fatalf("tnld = %#v", value)
-			}
-			if value.SourceConnectionRate != 75.5 || value.SourceConnectionBurst != 300 {
-				t.Fatalf("source limits = %g/%d", value.SourceConnectionRate, value.SourceConnectionBurst)
 			}
 		})
 	}

@@ -92,6 +92,21 @@ func serveWithRelayClientTLS(
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
 
 	metrics := observability.New(string(cfg.Role))
+	if cfg.Role.RunsIngress() {
+		metrics.SetCapacityLimit("client_hello_connections", int64(cfg.ClientHelloConnectionLimit))
+		metrics.SetCapacityLimit("challenge_connections", int64(cfg.ChallengeConnectionLimit))
+		metrics.SetCapacityLimit("challenge_hostname_connections", int64(cfg.ChallengeHostnameConnectionLimit))
+		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)
+		metrics.SetCapacityLimit("public_url_connections", max(1, cfg.VisitorConnectionLimit/2))
+	}
+	if cfg.Role.RunsRelay() {
+		metrics.SetCapacityLimit("publisher_connections", cfg.PublisherConnectionLimit)
+		metrics.SetCapacityLimit("relay_streams", cfg.RelayStreamCapacity)
+	}
+	if cfg.Role == tnldconfig.RoleStandalone {
+		metrics.SetCapacityLimit("control_connections", int64(cfg.StandaloneControlConnectionLimit))
+		metrics.SetCapacityLimit("relay_tcp_connections", int64(cfg.StandaloneRelayConnectionLimit))
+	}
 
 	if cfg.Role.RunsControl() {
 		database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious)

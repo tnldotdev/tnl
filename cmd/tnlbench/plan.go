@@ -105,6 +105,8 @@ type planCell struct {
 	TimeoutSeconds            int    `json:"timeout_seconds"`
 }
 
+const maxBenchmarkFreshRate = 10_000
+
 func (c planCommand) run(stdout io.Writer) error {
 	plan, err := c.workloadOptions.build()
 	if err != nil {
@@ -129,7 +131,7 @@ func (c workloadOptions) build() (benchmarkPlan, error) {
 	if c.Suite != "smoke" && c.Suite != "target" {
 		return benchmarkPlan{}, errors.New("suite must be smoke or target")
 	}
-	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > 10*time.Minute || c.Duration%time.Second != 0 || c.Warmup%time.Second != 0 {
+	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > maxBenchmarkFreshRate || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Warmup%time.Second != 0 || c.Duration%time.Second != 0 {
 		return benchmarkPlan{}, errors.New("invalid workload shape or duration")
 	}
 	if c.Suite == "smoke" && (c.PublicURLs > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
@@ -169,8 +171,8 @@ func validateBenchmarkProfile(p benchmarkProfile) error {
 	if p.Topology.ControlProcesses < 1 || p.Topology.ControlProcesses > 10 || p.Topology.IngressProcesses < 1 || p.Topology.IngressProcesses > 10 || p.Topology.RelayServices < 2 || p.Topology.RelayServices > 26 || p.Topology.RelayProcessesPerService < 1 || p.Topology.RelayProcessesPerService > 10 {
 		return errors.New("invalid topology")
 	}
-	if p.WorkerLimits.PublisherMachines < 1 || p.WorkerLimits.PublisherMachines > 16 || p.WorkerLimits.PublicURLsPerPublisher < 1 || p.WorkerLimits.PublicURLsPerPublisher > 10_000 || p.WorkerLimits.FreshConnectionsPerLoadSecond < 1 || p.WorkerLimits.FreshConnectionsPerLoadSecond >= 40 || p.WorkerLimits.HeldStreamsPerLoad < 1 {
-		return errors.New("invalid generator limits or unsafe per-source rate")
+	if p.WorkerLimits.PublisherMachines < 1 || p.WorkerLimits.PublisherMachines > 16 || p.WorkerLimits.PublicURLsPerPublisher < 1 || p.WorkerLimits.PublicURLsPerPublisher > 10_000 || p.WorkerLimits.FreshConnectionsPerLoadSecond < 1 || p.WorkerLimits.FreshConnectionsPerLoadSecond > maxBenchmarkFreshRate || p.WorkerLimits.HeldStreamsPerLoad < 1 {
+		return errors.New("invalid generator limits")
 	}
 	db := p.ManagedPostgres
 	if !validFlySlug(db.Plan) || (db.PostgresMajorVersion != 16 && db.PostgresMajorVersion != 17) || db.StorageGB < 10 || db.StorageGB > 500 || db.ProvisionExpectedSeconds <= 0 || db.ProvisionTimeoutSeconds < db.ProvisionExpectedSeconds {

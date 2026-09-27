@@ -24,8 +24,7 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	active.Store(true)
 	var ordinaryLookups atomic.Int32
 	config := Config{
-		SourceConnectionRate: 0.000001, SourceConnectionBurst: 1,
-		MaxConnections: 1, MaxPublicURLConnections: 1,
+		MaxConnections: 1,
 		Lookup: func(string) (PublicURL, bool) {
 			ordinaryLookups.Add(1)
 			return PublicURL{}, false
@@ -39,7 +38,7 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	}
 	server, address := startIngress(t, config)
 	ordinary := ingressClient(t, address, "route.example", "")
-	_ = ordinary.Handshake() // Consume the single ordinary visitor token.
+	_ = ordinary.Handshake()
 	_ = ordinary.Close()
 	release, rejected := server.admitClass(visitorConnection, "busy-route")
 	if release == nil {
@@ -66,16 +65,16 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	_ = stale.Close()
 	mixed := ingressClient(t, address, "route.example", "", "h2", "acme-tls/1")
 	if err := mixed.Handshake(); err == nil {
-		t.Fatal("mixed ALPN bypassed visitor rate limiting")
+		t.Fatal("mixed ALPN reached a backend")
 	}
 	_ = mixed.Close()
-	if backend.opens.Load() != 1 || ordinaryLookups.Load() != 1 || server.Load() != 1 {
+	if backend.opens.Load() != 1 || ordinaryLookups.Load() != 2 || server.Load() != 1 {
 		t.Fatalf("opens=%d lookups=%d visitor load=%d", backend.opens.Load(), ordinaryLookups.Load(), server.Load())
 	}
 }
 
 func TestChallengeCapacityIsBoundedAndIndependent(t *testing.T) {
-	server, _ := startIngress(t, Config{MaxConnections: 1, MaxPublicURLConnections: 1,
+	server, _ := startIngress(t, Config{MaxConnections: 1,
 		MaxChallengeConnections: 2, MaxHostnameChallengeConnections: 1,
 		MaxControlConnections: 1, MaxRelayConnections: 1})
 	first, rejected := server.admitClass(challengeConnection, "one.example")
@@ -113,6 +112,36 @@ func TestChallengeCapacityIsBoundedAndIndependent(t *testing.T) {
 	defer server.mu.Unlock()
 	if len(server.byChallenge) != 0 || server.admitted[challengeConnection] != 0 {
 		t.Fatal("challenge counters/hostname entries leaked")
+	}
+}
+
+func TestPublicURLConnectionLimitTracksHalfOfIngressCapacity(t *testing.T) {
+	for _, test := range []struct{ ingressLimit, perURL int }{{1, 1}, {4, 2}, {5, 2}} {
+		server, _ := startIngress(t, Config{MaxConnections: test.ingressLimit})
+		var releases []func()
+		for range test.perURL {
+			release, rejected := server.admitClass(visitorConnection, "url_one")
+			if release == nil {
+				t.Fatalf("ingress %d: first public URL rejected: %s", test.ingressLimit, rejected)
+			}
+			releases = append(releases, release)
+		}
+		if release, rejected := server.admitClass(visitorConnection, "url_one"); release != nil || rejected != "public_url_connections" {
+			t.Fatalf("ingress %d: exceeded public URL limit: %s", test.ingressLimit, rejected)
+		}
+		if test.ingressLimit > test.perURL {
+			release, rejected := server.admitClass(visitorConnection, "url_two")
+			if release == nil {
+				t.Fatalf("ingress %d: another public URL rejected: %s", test.ingressLimit, rejected)
+			}
+			release()
+		}
+		for _, release := range releases {
+			release()
+		}
+		if len(server.byPublicURL) != 0 || server.Load() != 0 {
+			t.Fatal("public URL accounting retained closed connections")
+		}
 	}
 }
 
@@ -230,7 +259,7 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 		defer clientSocket.Close()
 		defer upstream.Close()
 		defer origin.Close()
-		server, err := New(listener, Config{MaxConnections: 1, MaxPublicURLConnections: 1,
+		server, err := New(listener, Config{MaxConnections: 1,
 			Lookup: func(string) (PublicURL, bool) { return PublicURL{}, false },
 			LookupChallenge: func(string) ([]routebackend.Backend, string) {
 				return []routebackend.Backend{singleBackend{upstream}}, ""

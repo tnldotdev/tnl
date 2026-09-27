@@ -703,7 +703,7 @@ func separatedReportHeld(t *testing.T, phase string, results []separatedVisitorR
 func assertSeparatedNoRejections(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
 	for _, role := range append(separatedIngresses(), "relay-a", "relay-b") {
-		for _, name := range []string{"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total"} {
+		for _, name := range []string{"tnl_capacity_rejections_total"} {
 			count := func(snapshot separatedSnapshot) float64 {
 				var total float64
 				for _, family := range snapshot.Metrics[role] {

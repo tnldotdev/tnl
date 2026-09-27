@@ -319,13 +319,6 @@ func serverDurationReports(samples []resourceSample) []processDurationReport {
 		default:
 			var err error
 			r.Durations, err = observability.DurationSummaries(g.before.Metrics, g.after.Metrics)
-			if err == nil && k.role == "ingress" && strings.HasPrefix(k.phase, "steady-") {
-				a, aok := scalarMetric(g.before.Metrics, "tnl_source_limiter_rejections_total")
-				b, bok := scalarMetric(g.after.Metrics, "tnl_source_limiter_rejections_total")
-				if !aok || !bok || b != a {
-					err = errors.New("source limiter rejected requests or its counter is missing/reset")
-				}
-			}
 			if err != nil {
 				r.Error = err.Error()
 			} else {

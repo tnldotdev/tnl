@@ -666,3 +666,33 @@ screens exposed a generator headroom limit and a nonrepeatable session loss;
 they have not established a server-role, degraded-state, or production
 operating limit.
 Further isolated short screens alone would not close those gaps.
+
+### automatic limits on 512 MiB processes
+
+A short, separated local topology with one CPU and 512 MiB for each ingress
+and relay process exercised the automatic admission limits. The resolved
+per-ingress visitor budget was 2,150 connections, with 1,075 per public URL;
+each relay resolved 1,290 publisher connections and 967 visitor streams.
+The matching control processes had one CPU / 1 GiB each. Generator resources
+were separate, including 512 MiB for each local service; leaving the old
+128 MiB local-service default in place killed a generator during direct held
+traffic and did not test a server-role limit.
+
+The repeated run with sufficient generator memory completed at 1,024 public
+URLs: 6,400/6,400 fresh visitors succeeded during the 40-second tunneled
+combined window, 1,536/1,536 held streams survived and progressed, and 500 MB
+transferred in each direction at the exact 100 Mbit/sec target. During that
+window the highest sampled memory was 191 MB on ingress and 270 MB on a relay,
+with no server-role OOM events or CPU throttling. The ignored local artifact is
+`bench-results/plan2-auto-1cpu-512m-combined-app512/` in the Plan 2 worktree.
+This is a short correctness and headroom check for the new defaults, not a
+maximum-capacity or degraded-service operating point.
+
+A separate 128-public-URL local fault check stopped relay A's only process
+for about 31 seconds, so the entire logical relay service was unavailable.
+At the same one-CPU / 512-MiB ingress and relay profile, the run completed
+12,800/12,800 visitors offered at 160/sec over its 80-second fault window;
+all 128 held streams survived. Its ignored result is
+`bench-results/plan2-auto-1cpu-512m-relay-service-loss/` in the Plan 2
+worktree. The passing local fallback check does not establish how much
+traffic an already-connected surviving relay service can carry in production.

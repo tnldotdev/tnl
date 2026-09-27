@@ -29,8 +29,8 @@ func (c loadCommand) Validate() error {
 	if err := c.workerCommand.validate(); err != nil {
 		return err
 	}
-	if c.PublicURLs <= 0 || c.FreshRate < 0 || c.FreshRate >= 40 || c.HeldStreams < 0 || c.Concurrency < 1 || c.QueueSlots < 0 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 {
-		return errors.New("invalid visitor limits or unsafe source rate")
+	if c.PublicURLs <= 0 || c.FreshRate < 0 || c.FreshRate > maxBenchmarkFreshRate || c.HeldStreams < 0 || c.Concurrency < 1 || c.QueueSlots < 0 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 {
+		return errors.New("invalid visitor workload limits")
 	}
 	for _, address := range []string{c.PublicAddress, c.ResolverAddress} {
 		if address != "" {
