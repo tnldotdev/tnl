@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -32,7 +33,7 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 	f := newIntegrationViteFixture(t, server, "visitor_and_cancellation")
 	f.start(t, 0)
 	f.waitRegistration(t, true)
-	tunnel := f.waitTunnel(t, clientstate.TunnelStateReady)
+	tunnel := f.waitTunnel(t, clientstate.TunnelStateReady, 1)
 	names := f.assertCertificatePlan(t, tunnel)
 	var csrDER []byte
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -117,6 +118,14 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 	if err == nil && response.StatusCode == http.StatusOK {
 		t.Error("visitor route remained reachable after tnl dev exited")
 	}
+	f.start(t, 0)
+	f.waitRegistration(t, true)
+	restarted := f.waitTunnel(t, clientstate.TunnelStateReady, 2)
+	if restarted.PublicURLID != tunnel.PublicURLID || restarted.Hostname != tunnel.Hostname {
+		t.Fatalf("restarted Vite tunnel = %#v, want public URL %s", restarted, tunnel.PublicURLID)
+	}
+	f.stopTunnel(t, restarted)
+	f.assertCleanup(t)
 }
 
 func testIntegrationViteCancelProvisioning(t *testing.T, server *integrationBinaryStandalone) {
@@ -124,7 +133,7 @@ func testIntegrationViteCancelProvisioning(t *testing.T, server *integrationBina
 	f.disableMaintenance(t, "certificate_issuance")
 	f.start(t, 0)
 	f.waitRegistration(t, true)
-	tunnel := f.waitTunnel(t, clientstate.TunnelStateProvisioning)
+	tunnel := f.waitTunnel(t, clientstate.TunnelStateProvisioning, 1)
 	f.assertCertificatePlan(t, tunnel)
 	f.stopTunnel(t, tunnel)
 	f.assertCleanup(t)
@@ -206,4 +215,40 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 		return bytes.Contains(body, []byte("Next.js fixture refreshed")), nil
 	})
 	stopIntegrationBinaryProcess(t, dev)
+	database := inspectStandaloneTestDatabase(t, fixture.databaseURL)
+	waitForReadyPublisherConnections(t, database, tunnel.PublicURLID, tunnel.PublishRunNumber, 0)
+	assertNextDevStopped := func(tunnel clientstate.TunnelInfo) {
+		t.Helper()
+		connection, err := net.DialTimeout("tcp", strings.TrimPrefix(tunnel.Target, "http://"), time.Second)
+		if err == nil {
+			_ = connection.Close()
+			t.Fatalf("Next.js listener remained reachable on %s after tnl dev exited", tunnel.Target)
+		}
+		var open int
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM control.publish_runs WHERE public_url_id = $1 AND closed_at IS NULL`, tunnel.PublicURLID).Scan(&open); err != nil || open != 0 {
+			t.Fatalf("open Next.js publish runs after exit = %d, %v", open, err)
+		}
+	}
+	assertNextDevStopped(tunnel)
+	restarted := startIntegrationBinaryProcess(t, project.root, environment, fixture.tnlPath, "dev", "api", "--allow-all-ips")
+	waitForIntegrationCondition(t, 60*time.Second, func(ctx context.Context) (bool, error) {
+		snapshot, err := state.SnapshotProject(ctx, project.root)
+		if err != nil {
+			return false, err
+		}
+		if len(snapshot.Tunnels) == 1 && snapshot.Tunnels[0].State == clientstate.TunnelStateReady {
+			if got := snapshot.Tunnels[0]; got.PublicURLID != tunnel.PublicURLID || got.PublishRunNumber != 2 || got.Target != tunnel.Target {
+				t.Fatalf("restarted Next.js tunnel = %#v, want same public URL and target with publish run 2", got)
+			}
+			return true, nil
+		}
+		select {
+		case <-restarted.done:
+			t.Fatalf("Next.js restart failed: %v\n%s", restarted.result(), restarted.output.String())
+		default:
+		}
+		return false, nil
+	})
+	stopIntegrationBinaryProcess(t, restarted)
+	assertNextDevStopped(tunnel)
 }

@@ -95,20 +95,22 @@ func (f *integrationViteFixture) start(t *testing.T, exitCode int) {
 		}
 	})
 	f.dev = startIntegrationBinaryProcess(t, f.project.root, environment, f.server.tnlPath, "dev", "api", "--allow-all-ips")
-	f.dev.wantExitCode = exitCode
+	dev := f.dev
+	dev.wantExitCode = exitCode
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("tnl dev output:\n%s\ntnld output:\n%s", f.dev.output.String(), f.server.server.output.String())
+			t.Logf("tnl dev output:\n%s\ntnld output:\n%s", dev.output.String(), f.server.server.output.String())
 		}
 	})
 }
 
 func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bool) {
 	t.Helper()
+	previousPID := f.report.PID
 	waitForIntegrationCondition(t, 30*time.Second, func(context.Context) (bool, error) {
 		var err error
 		f.report, err = readIntegrationBinaryDevReport(f.project.reportPath)
-		if err == nil && f.report.Runtime != nil && (!requireTarget || f.report.Target != "") {
+		if err == nil && f.report.PID != previousPID && f.report.Runtime != nil && (!requireTarget || f.report.Target != "") {
 			return true, nil
 		}
 		select {
@@ -141,7 +143,7 @@ func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bo
 	}
 }
 
-func (f *integrationViteFixture) waitTunnel(t *testing.T, wantState clientstate.TunnelState) clientstate.TunnelInfo {
+func (f *integrationViteFixture) waitTunnel(t *testing.T, wantState clientstate.TunnelState, wantNumber uint64) clientstate.TunnelInfo {
 	t.Helper()
 	var tunnel clientstate.TunnelInfo
 	waitForIntegrationCondition(t, 45*time.Second, func(ctx context.Context) (bool, error) {
@@ -162,7 +164,7 @@ func (f *integrationViteFixture) waitTunnel(t *testing.T, wantState clientstate.
 		}
 		return false, nil
 	})
-	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.ProcessID != f.dev.command.Process.Pid || tunnel.Framework != "vite" || tunnel.Target != f.report.Target || tunnel.Hostname != f.hostname || tunnel.PublicURL != f.publicURL || tunnel.PublicURLID == "" || tunnel.PublishRunNumber != 1 {
+	if tunnel.Command != clientstate.TunnelCommandDev || tunnel.Service != "api" || tunnel.ProcessID != f.dev.command.Process.Pid || tunnel.Framework != "vite" || tunnel.Target != f.report.Target || tunnel.Hostname != f.hostname || tunnel.PublicURL != f.publicURL || tunnel.PublicURLID == "" || tunnel.PublishRunNumber != wantNumber {
 		t.Fatalf("configured Vite tunnel = %#v, child = %#v", tunnel, f.report)
 	}
 	return tunnel
