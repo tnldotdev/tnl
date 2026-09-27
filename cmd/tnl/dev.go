@@ -982,40 +982,38 @@ func (p *devProcess) Err() error {
 }
 
 func (p *devProcess) run(processGroupID int, leaderExited <-chan error, watcherSetupErr error) {
+	var watcherFailure, signalFailure error
 	if watcherSetupErr != nil {
-		p.cleanupErr = errors.Join(
-			fmt.Errorf("watch development server command: %w", watcherSetupErr),
-			signalDevProcessGroup(processGroupID, syscall.SIGKILL),
-		)
+		watcherFailure = fmt.Errorf("watch development server command: %w", watcherSetupErr)
+		signalFailure = signalDevProcessGroup(processGroupID, syscall.SIGKILL)
 	} else {
 		select {
 		case watcherErr := <-leaderExited:
-			p.cleanupErr = errors.Join(
-				devProcessWatcherError(watcherErr),
-				signalDevProcessGroup(processGroupID, syscall.SIGKILL),
-			)
+			watcherFailure = devProcessWatcherError(watcherErr)
+			signalFailure = signalDevProcessGroup(processGroupID, syscall.SIGKILL)
 		case timeout := <-p.stop:
-			p.cleanupErr = signalDevProcessGroup(processGroupID, syscall.SIGTERM)
+			signalFailure = signalDevProcessGroup(processGroupID, syscall.SIGTERM)
 			timer := time.NewTimer(timeout)
 			select {
 			case watcherErr := <-leaderExited:
 				if !timer.Stop() {
 					<-timer.C
 				}
-				p.cleanupErr = errors.Join(
-					p.cleanupErr,
-					devProcessWatcherError(watcherErr),
-					signalDevProcessGroup(processGroupID, syscall.SIGKILL),
-				)
+				watcherFailure = devProcessWatcherError(watcherErr)
+				signalFailure = errors.Join(signalFailure, signalDevProcessGroup(processGroupID, syscall.SIGKILL))
 			case <-timer.C:
-				p.cleanupErr = errors.Join(
-					p.cleanupErr,
-					signalDevProcessGroup(processGroupID, syscall.SIGKILL),
-				)
+				signalFailure = errors.Join(signalFailure, signalDevProcessGroup(processGroupID, syscall.SIGKILL))
 			}
 		}
 	}
 	p.err = p.command.Wait()
+	// On macOS a group containing only its unreaped leader can report EPERM
+	// instead of ESRCH. Retry after Wait reaps the leader; a persistent EPERM
+	// still reports a real failure to stop the remaining group members.
+	if errors.Is(signalFailure, syscall.EPERM) {
+		signalFailure = signalDevProcessGroup(processGroupID, syscall.SIGKILL)
+	}
+	p.cleanupErr = errors.Join(watcherFailure, signalFailure)
 	close(p.done)
 }
 

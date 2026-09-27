@@ -4,9 +4,13 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -114,6 +118,65 @@ func TestDevProcessRepeatedStop(t *testing.T) {
 	}
 	assertDevProcessExitStatus(t, process, 23)
 	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func TestDevProcessStopsPnpmServer(t *testing.T) {
+	if _, err := exec.LookPath("pnpm"); err != nil {
+		t.Skip("pnpm is not installed")
+	}
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		"package.json": `{"private":true,"scripts":{"dev":"node server.cjs"}}`,
+		"server.cjs": `const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => console.log('port=' + server.address().port));
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = output.Close(); _ = writer.Close() })
+	process, err := startDevProcess([]string{"pnpm", "dev"}, os.Environ(), nil, writer, writer, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupDevProcess(t, process)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(output)
+	var address string
+	for address == "" {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("pnpm did not start its server: %v, line %q", err, line)
+		}
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "port="); ok {
+			if _, err := strconv.Atoi(value); err != nil {
+				t.Fatalf("invalid server port %q: %v", value, err)
+			}
+			address = net.JoinHostPort("127.0.0.1", value)
+		}
+	}
+	if err := process.Stop(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatalf("pnpm descendants kept stdout open: %v", err)
+	}
+	connection, err := net.DialTimeout("tcp", address, time.Second)
+	if err == nil {
+		_ = connection.Close()
+		t.Fatalf("pnpm server remained listening on %s after Stop", address)
+	}
 }
 
 func cleanupDevProcess(t *testing.T, process *devProcess) {
