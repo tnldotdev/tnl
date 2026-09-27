@@ -152,7 +152,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, ready := range publishers.Ready {
 		waitForReadyPublisherConnections(t, database, ready.PublicURLID, ready.PublishRunNumber, 2)
 	}
-	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), separatedRoutingAcknowledgmentTimeout)
 	var orders, installed, distinctPublicURLs int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {
@@ -420,7 +420,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			(SELECT coalesce(sum(assignment_count), 0) FROM control.relay_service_assignment_totals)`).Scan(&active)
 		return active == 0, err
 	})
-	routingTimeout := 10 * time.Second
+	routingTimeout := separatedRoutingAcknowledgmentTimeout
 	if *runtimeLoadCapacityOnly {
 		routingTimeout = 30 * time.Second
 	}

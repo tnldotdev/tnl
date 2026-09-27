@@ -29,6 +29,8 @@ import (
 
 const separatedDirectory = "/load"
 const separatedDomain = "split.integration.test"
+const separatedLeaseRenewalInterval = 10 * time.Second
+const separatedRoutingAcknowledgmentTimeout = 2 * separatedLeaseRenewalInterval
 
 var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
@@ -219,7 +221,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	}
 	cfg := splitTestConfig(role, "0.0.0.0:9090")
 	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
-	cfg.LeaseRenewalInterval, cfg.DrainTimeout = 10*time.Second, 5*time.Second
+	cfg.LeaseRenewalInterval, cfg.DrainTimeout = separatedLeaseRenewalInterval, 5*time.Second
 	if role == tnldconfig.RoleIngress && *runtimeLoadCapacityOnly {
 		cfg.DrainTimeout = 30 * time.Second
 	}

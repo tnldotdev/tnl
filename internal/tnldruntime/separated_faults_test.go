@@ -80,7 +80,7 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	}
 	// Ordinary public URL updates are acknowledged at the 10-second ingress
 	// lease-renewal cadence; allow the next renewal plus scheduling headroom.
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), 20*time.Second)
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), separatedRoutingAcknowledgmentTimeout)
 	for _, ready := range publishers.Ready {
 		assertPublishRunNumber(t, database, ready.PublicURLID, ready.PublishRunNumber)
 	}
