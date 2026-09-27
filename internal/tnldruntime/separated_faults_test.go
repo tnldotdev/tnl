@@ -78,7 +78,9 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	}); err != nil {
 		t.Fatalf("publisher connections did not recover within %s: %v; current assignments=%s", timeout, err, separatedConnectionAssignments(t, database))
 	}
-	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
+	// Ordinary public URL updates are acknowledged at the 10-second ingress
+	// lease-renewal cadence; allow the next renewal plus scheduling headroom.
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), 20*time.Second)
 	for _, ready := range publishers.Ready {
 		assertPublishRunNumber(t, database, ready.PublicURLID, ready.PublishRunNumber)
 	}
