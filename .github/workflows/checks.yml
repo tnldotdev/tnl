@@ -92,8 +92,8 @@ jobs:
           FRAMEWORK: ${{ matrix.framework }}
         run: pnpm exec vitest run "packages/tnl/$FRAMEWORK.test.ts"
 
-  go:
-    name: Go
+  go-linux:
+    name: Go (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -156,6 +156,39 @@ jobs:
 
       - name: Build commands
         run: task go:build
+
+  go-macos:
+    name: Go (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.23.2
+          cache: true
+          require-lockfile: true
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
+      - name: Run Go tests
+        run: task go:test
 
   go-race:
     name: Go race
