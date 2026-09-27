@@ -62,6 +62,11 @@ func Listen(address string, handler http.Handler) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Serve(listener, handler), nil
+}
+
+// Serve starts serving metrics on a listener reserved during process startup.
+func Serve(listener net.Listener, handler http.Handler) *Server {
 	server := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -75,7 +80,7 @@ func Listen(address string, handler http.Handler) (*Server, error) {
 		running.done <- err
 		close(running.done)
 	}()
-	return running, nil
+	return running
 }
 
 // Addr returns the bound listener address.

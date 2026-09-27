@@ -242,6 +242,21 @@ func serveWithRelayClientTLS(
 			return err
 		}
 	}
+	// Reserve the configured observability address before standalone or split
+	// roles allocate listeners on port 0. Do not serve it until startup finishes:
+	// readiness inspects the role's listeners while they are being assigned.
+	var metricsListener net.Listener
+	if cfg.MetricsListen != "" {
+		metricsListener, err = net.Listen("tcp", cfg.MetricsListen)
+		if err != nil {
+			return fmt.Errorf("listen for observability: %w", err)
+		}
+		defer func() {
+			if metricsListener != nil {
+				_ = metricsListener.Close()
+			}
+		}()
+	}
 
 	switch cfg.Role {
 	case tnldconfig.RoleRelay:
@@ -283,20 +298,17 @@ func serveWithRelayClientTLS(
 			return d.controlTLSManager.Run(lifetime)
 		}))
 	}
-	if cfg.MetricsListen != "" {
+	if metricsListener != nil {
 		handler := observability.ProcessHandler(metrics.Handler(), func() bool {
 			readyCtx, cancel := context.WithTimeout(lifetime, 2*time.Second)
 			defer cancel()
 			return d.ready(readyCtx, cfg.Role, time.Now()) == nil
 		})
-		server, err := observability.Listen(cfg.MetricsListen, withDatabaseDiagnostics(handler, d.database))
-		if err != nil {
-			return fmt.Errorf("listen for observability: %w", err)
-		}
+		server := observability.Serve(metricsListener, withDatabaseDiagnostics(handler, d.database))
+		metricsListener = nil
 		d.metricsServer = server
 		d.forward("serve observability", server.Done())
 	}
-
 	select {
 	case <-ctx.Done():
 		return nil
