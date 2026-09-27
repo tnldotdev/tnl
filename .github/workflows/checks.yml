@@ -185,7 +185,7 @@ jobs:
         with:
           version: 3.53.1
           repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+          checksum: 85d2d96c2380b33d7855b07b3f7a20dc7ca0eda999a26efa0fb5f6f32b366cd7
 
       - name: Run Go tests
         run: task go:test
