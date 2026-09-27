@@ -26,13 +26,13 @@ The arrows show responsibility, not one permanent network connection. Control
 coordinates the system. Visitor bytes travel through ingress and one connected
 relay to the publisher.
 
-| Component                  | Responsibility                                                                                  |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `tnl` client and publisher | Local tunnel lifecycle, publisher connections, route TLS termination, and local HTTP forwarding |
-| Control                    | Durable state, authorization, placement, certificates, administration, and coordination         |
-| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding                  |
-| Relay                      | Publisher connections and visitor streams for locally connected publishers                      |
-| PostgreSQL                 | Authoritative durable server state                                                              |
+| Component                  | Responsibility                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `tnl` client and publisher | Local tunnel lifecycle, publisher connections, visitor TLS termination, and local HTTP forwarding |
+| Control                    | Durable state, authorization, placement, certificates, administration, and coordination           |
+| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding                    |
+| Relay                      | Publisher connections and visitor streams for locally connected publishers                        |
+| PostgreSQL                 | Authoritative durable server state                                                                |
 
 Only control connects to PostgreSQL. Ingress receives a short-lived routing
 table. Each relay knows its own lease and the publishers connected to it.
@@ -44,22 +44,22 @@ Standalone composes control, ingress, and two logical relay services in one
 
 ```text
 visitor
-   | route TLS ClientHello
+   | visitor TLS ClientHello
    v
 ingress: inspect hostname and apply IP policy
    | authenticated internal forwarding
    v
 relay: open a stream on a ready publisher connection
-   | unchanged route TLS bytes
+   | unchanged visitor TLS bytes
    v
-publisher: terminate route TLS
+publisher: terminate visitor TLS
    | validated HTTP over localhost
    v
 local service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
-destination. Relay preserves that header and the route TLS bytes. The publisher
+destination. Relay preserves that header and the visitor TLS bytes. The publisher
 removes untrusted forwarding headers before proxying the HTTP request.
 
 The ingress routing table retains the relay process identity and the last

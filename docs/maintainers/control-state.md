@@ -82,7 +82,7 @@ Both retain the clock through commit. Revision visibility therefore follows
 commit order without another round trip in the common single-event path.
 
 Session operations use `NO KEY UPDATE` route guards. Route identity is
-immutable, and usage's `KEY SHARE` references can coexist with heartbeats. PublicURL
+immutable, and usage's `KEY SHARE` references can coexist with heartbeats. Public URL
 mutations still conflict.
 
 ## retain routing history safely
