@@ -312,6 +312,28 @@ func TestRunRequiresAuthoritativeSessionCertificatePlan(t *testing.T) {
 	}
 }
 
+func TestRunClosesPublishRunWhenCanceledDuringProvisioningObservation(t *testing.T) {
+	control, _, _ := newCertificateTransactionTest(t)
+	config := startCertificateTLSYamuxHarness(t, control)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	config.Observe = func(event Event) error {
+		if event.Type == EventProvisioning {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	if err := Run(ctx, config); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled publisher = %v", err)
+	}
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	if !slices.Equal(control.closedSessions, []string{control.setup.PublishRun.Id}) {
+		t.Fatalf("closed publish runs = %v", control.closedSessions)
+	}
+}
+
 func TestRunRejectsNegativeOptionalDurations(t *testing.T) {
 	t.Parallel()
 	for _, config := range []Config{

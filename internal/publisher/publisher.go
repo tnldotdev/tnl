@@ -151,24 +151,12 @@ func Run(ctx context.Context, config Config) (result error) {
 		if err != nil {
 			return err
 		}
-		if err := observe(config, Event{
-			Type: EventProvisioning, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
-			PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
-		}); err != nil {
-			return err
-		}
-		err = runSession(ctx, config, setup, func() error {
+		err = runPublishRun(ctx, config, setup, func() error {
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
 				PublicURL: "https://" + setup.PublicUrl.CanonicalHostname, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
 			})
 		})
-		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		closeErr := config.Control.ClosePublishRun(closeCtx, setup.PublishRun.Id, credentials.PublishRunToken(setup.PublishRunToken))
-		cancel()
-		if closeErr != nil && !errors.Is(closeErr, controlclient.ErrNotFound) && !errors.Is(closeErr, controlclient.ErrUnauthenticated) {
-			err = errors.Join(err, fmt.Errorf("publisher: close publish run: %w", closeErr))
-		}
 		if ctx.Err() != nil {
 			return err
 		}
@@ -177,6 +165,24 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		route.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
+}
+
+func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		closeErr := config.Control.ClosePublishRun(closeCtx, setup.PublishRun.Id, credentials.PublishRunToken(setup.PublishRunToken))
+		if closeErr != nil && !errors.Is(closeErr, controlclient.ErrNotFound) && !errors.Is(closeErr, controlclient.ErrUnauthenticated) {
+			result = errors.Join(result, fmt.Errorf("publisher: close publish run: %w", closeErr))
+		}
+	}()
+	if err := observe(config, Event{
+		Type: EventProvisioning, PublicURLID: setup.PublicUrl.Id, Hostname: setup.PublicUrl.CanonicalHostname,
+		PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
+	}); err != nil {
+		return err
+	}
+	return runSession(ctx, config, setup, ready)
 }
 
 func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
