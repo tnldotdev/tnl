@@ -6,7 +6,7 @@ local coordinator, not the shared publisher or visitor implementation.
 
 | Assertion                                                                               | Owner after migration                       |
 | --------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Verified route TLS, observed hostname, complete deterministic response                  | Shared visitor                              |
+| Verified visitor TLS, observed hostname, complete deterministic response                | Shared visitor                              |
 | Direct and tunneled bandwidth transfer exact bytes within the phase budget              | Shared bandwidth visitor / origin           |
 | Direct TLS baseline uses the same visitor and origin behavior as the tnl path           | Local coordinator / shared workload         |
 | Every elapsed offer counted; bounded queue and request deadline                         | Shared visitor scheduler                    |
@@ -19,7 +19,7 @@ local coordinator, not the shared publisher or visitor implementation.
 | Targeted latency/loss reaches both directions of an exercised path                      | Deployment runner qdisc/filter evidence     |
 | Local scheduling uses monotonic time; negative durations are rejected                   | Shared visitor / timing regressions         |
 | Every route serves after recovery, including unsampled routes                           | Visitor correctness phase                   |
-| Route versions unchanged after recovery                                                 | Local coordinator SQL assertion             |
+| Publish run numbers unchanged after recovery                                            | Local coordinator SQL assertion             |
 | One CA order and installed issuance per route                                           | Local coordinator and control counter       |
 | Two current publisher connections per route after repair                                | Local coordinator SQL assertion             |
 | Healthy routes serve during partial publisher shutdown                                  | Shared visitor / shutdown phase             |

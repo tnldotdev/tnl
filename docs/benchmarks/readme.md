@@ -4,25 +4,19 @@ Local and deployed benchmarks use `internal/benchworkload` for publishers,
 visitors, origin responses, scheduling, measurements, and coordination. Each
 runner owns setup, fault injection, resource collection, and cleanup.
 
-The [capacity testing plan](capacity-plan.md) defines the campaign method, the
-[local capacity checkpoints](local-capacity.md) record qualifying local results,
-and the [assertion inventory](assertions.md) lists the behavior each workload
-checks.
+The [capacity plan](capacity-plan.md) defines the campaign method. The
+[local capacity results](local-capacity.md) show measured comparisons, and the
+[assertion inventory](assertions.md) lists the behavior each workload checks.
 
 ## local workloads
 
-See [Contributing](../../contributing.md#runtime-load) for the canonical
-`go:test:load:runtime` task and its smoke, reference, and fault workloads.
+See [local workloads](local-workloads.md) for database and runtime commands.
 
 Routine tests need no external infrastructure. Large load and fault tests are
 explicit opt-in runs.
 
-The smoke workload uses four routes, 16 fresh visitor connections per second,
-128 request workers, eight waiting slots, eight held streams, both publisher
-transports, and a 32KiB response. Optional local capacity phases use the same
-visitor and origin code for a direct TLS baseline and paced upstream, downstream,
-or bidirectional transfers. The reference workload uses 64 routes and 160 fresh
-visitor connections per second with the same worker and queue limits.
+The smoke uses four public URLs and both publisher transports. Capacity runs
+can add a direct TLS baseline, held streams, and paced bandwidth.
 
 ## deployed workloads
 

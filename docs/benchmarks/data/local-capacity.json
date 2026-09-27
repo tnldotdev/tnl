@@ -1,0 +1,147 @@
+{
+  "bandwidth": [
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2200-bidi-1",
+      "target_mbps": 2200,
+      "elapsed_seconds": 30.092,
+      "passed": true
+    },
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2200-bidi-2",
+      "target_mbps": 2200,
+      "elapsed_seconds": 30.066,
+      "passed": true
+    },
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2200-bidi-3",
+      "target_mbps": 2200,
+      "elapsed_seconds": 30.086,
+      "passed": true
+    },
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2400-bidi",
+      "target_mbps": 2400,
+      "elapsed_seconds": 30.963,
+      "passed": true
+    },
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2400-bidi-repeat-2",
+      "target_mbps": 2400,
+      "elapsed_seconds": 31.012,
+      "passed": false
+    },
+    {
+      "run": "capacity-profile-1cpu-2g-bandwidth-2600-bidi",
+      "target_mbps": 2600,
+      "elapsed_seconds": 34.193,
+      "passed": false
+    }
+  ],
+  "publisher_cpu": [
+    {
+      "run": "capacity-profile-balanced-relays-1875-main-matched-1",
+      "public_urls": 1875,
+      "cpus": 2,
+      "p95_ms": 46.726,
+      "offered": 131400,
+      "successful": 131400
+    },
+    {
+      "run": "capacity-profile-balanced-relays-1875-publisher4-1",
+      "public_urls": 1875,
+      "cpus": 4,
+      "p95_ms": 5.326,
+      "offered": 131400,
+      "successful": 131400
+    },
+    {
+      "run": "capacity-profile-balanced-relays-2000-main-session-diagnostic-1",
+      "public_urls": 2000,
+      "cpus": 2,
+      "p95_ms": 52.74,
+      "offered": 131400,
+      "successful": 131400
+    },
+    {
+      "run": "capacity-profile-balanced-relays-2000-main-session-diagnostic-2",
+      "public_urls": 2000,
+      "cpus": 2,
+      "p95_ms": 34.813,
+      "offered": 131400,
+      "successful": 131400
+    },
+    {
+      "run": "capacity-profile-balanced-relays-2000-publisher4-1",
+      "public_urls": 2000,
+      "cpus": 4,
+      "p95_ms": 5.198,
+      "offered": 131400,
+      "successful": 131400
+    }
+  ],
+  "combined": [
+    {
+      "run": "capacity-combined-sharded-4000-striped-vm16-2",
+      "public_urls": 4000,
+      "p95_ms": 161.633,
+      "offered": 52560,
+      "successful": 52560,
+      "missed": 0,
+      "publisher_connection_limit": 4000
+    },
+    {
+      "run": "capacity-combined-sharded-4000-striped-vm16-3",
+      "public_urls": 4000,
+      "p95_ms": 468.997,
+      "offered": 52560,
+      "successful": 52560,
+      "missed": 0,
+      "publisher_connection_limit": 4000
+    },
+    {
+      "run": "capacity-combined-sharded-4500-ceiling8000-vm16-1",
+      "public_urls": 4500,
+      "p95_ms": 647.239,
+      "offered": 59160,
+      "successful": 59054,
+      "missed": 49,
+      "publisher_connection_limit": 8000
+    },
+    {
+      "run": "capacity-combined-sharded-5000-ceiling8000-vm16-1",
+      "public_urls": 5000,
+      "p95_ms": 1453.537,
+      "offered": 65700,
+      "successful": 60063,
+      "missed": 5636,
+      "publisher_connection_limit": 8000
+    },
+    {
+      "run": "capacity-combined-sharded-5000-ceiling8000-vm16-2",
+      "public_urls": 5000,
+      "p95_ms": 1900.738,
+      "offered": 65700,
+      "successful": 53828,
+      "missed": 11780,
+      "publisher_connection_limit": 8000
+    }
+  ],
+  "relay_cpu": [
+    {
+      "run": "capacity-combined-sharded-3000-5ktraffic-1cpu-vm16-1",
+      "cpus": 1,
+      "p95_ms": 903.838,
+      "offered": 65700,
+      "successful": 65570,
+      "missed": 130
+    },
+    {
+      "run": "capacity-combined-sharded-3000-5ktraffic-2cpu-vm16-1",
+      "cpus": 2,
+      "p95_ms": 256.703,
+      "offered": 65700,
+      "successful": 65700,
+      "missed": 0
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 
 Find four safe limits for the smallest highly available tnl server deployment:
 
-1. Active route sessions.
+1. Active publish runs.
 2. Fresh visitor connections per second.
 3. Open visitor streams.
 4. Bandwidth in each direction.
@@ -29,12 +29,12 @@ enough resources to exceed the load offered to the tnl server.
 
 ## first tests
 
-| Test              | Keep steady                              | Increase                                      |
-| ----------------- | ---------------------------------------- | --------------------------------------------- |
-| Route sessions    | 10 connections/sec with 4KiB responses   | Start at 100 active route sessions and double |
-| Fresh connections | A modest route count with 4KiB responses | Start at 100 connections/sec and double       |
-| Open streams      | Low connection churn and a low byte rate | Start at 100 streams and double               |
-| Bandwidth         | About 64 long-lived visitor streams      | Start at 100Mbit/sec and double               |
+| Test              | Keep steady                                   | Increase                                    |
+| ----------------- | --------------------------------------------- | ------------------------------------------- |
+| Publish runs      | 10 connections/sec with 4KiB responses        | Start at 100 active publish runs and double |
+| Fresh connections | A modest public URL count with 4KiB responses | Start at 100 connections/sec and double     |
+| Open streams      | Low connection churn and a low byte rate      | Start at 100 streams and double             |
+| Bandwidth         | About 64 long-lived visitor streams           | Start at 100Mbit/sec and double             |
 
 Test downstream and upstream bandwidth separately. Test both directions together
 after their separate limits are clear.
@@ -68,7 +68,7 @@ A step fails when:
 - CPU, network, file descriptors, PostgreSQL, or another bounded resource fills.
 - A limit rejects traffic outside a test that is meant to check that limit.
 - Latency rises sharply and stays high.
-- PublicURL, publisher connection, visitor stream, byte, or usage totals do not match.
+- Public URL, publisher connection, visitor stream, byte, or usage totals do not match.
 
 Record queue, connection, TLS, first-body-byte, and total time for every step. Use
 the resulting curves to find the latency knee instead of choosing a latency target
@@ -92,7 +92,7 @@ without profiling enabled.
 After the first tests:
 
 1. Start at 25% of each measured limit.
-2. Run route sessions, fresh connections, streams, and bandwidth together.
+2. Run publish runs, fresh connections, streams, and bandwidth together.
 3. Raise the combined load in small steps.
 4. Stop at the first shared resource or latency limit.
 5. Repeat the highest clean step three times.
@@ -131,7 +131,7 @@ Start with a conservative rule:
 operating limit = 50% of the lowest repeated degraded-state knee
 ```
 
-Test the proposed route, connection, stream, and bandwidth limits together before
+Test the proposed publish-run, connection, stream, and bandwidth limits together before
 using them in production. If that test fails, lower the value that caused the
 failure and test again.
 
@@ -145,7 +145,7 @@ Publish:
 - Direct-path and unloaded tnl baselines.
 - Healthy and degraded curves for all four limits.
 - The first limiting resource in each test.
-- Per-route memory, file descriptor, goroutine, and PostgreSQL usage.
+- Per-public-URL memory, file descriptor, goroutine, and PostgreSQL usage.
 - Latency and queue curves.
 - Recovery timing and results for every failure.
 - Generator measurements that prove the generators did not limit the test.
