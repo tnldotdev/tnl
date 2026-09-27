@@ -590,7 +590,7 @@ by the CLI, not repository code generation. Their user workflow belongs in the
 ## local stack
 
 The local stack builds this checkout and runs PostgreSQL, Pebble, and standalone
-`tnld`. It uses `127.0.0.1.nip.io` for public route namespaces and publishes ports
+`tnld`. It uses `127.0.0.1.nip.io` for public URL hostnames and publishes ports
 only on localhost. With Docker running:
 
 ```console
@@ -600,8 +600,19 @@ mise exec -- task local:login
 mise exec -- task local:tnl -- team current
 ```
 
-`local:trust` modifies the macOS login keychain to trust the local certificate
-roots. `mise exec -- task local:down` preserves PostgreSQL state;
+`local:trust` asks macOS to approve the local certificate roots in the login
+keychain. `local:login` saves its session in this repo's `.local/client-state`,
+separate from your usual tnl client state. To use that session from another
+project, set these values while still in the tnl repo:
+
+```console
+export TNL_SERVER=https://control.127.0.0.1.nip.io
+export TNL_STATE_DIR="$(pwd)/.local/client-state"
+```
+
+Then run `tnl dev` from the other project's directory. The absolute state path
+lets it reuse the local login after changing directories.
+`mise exec -- task local:down` preserves PostgreSQL state;
 `mise exec -- task local:reset` removes trust, containers, volumes, and `.local`.
 
 Deployed benchmarks are separate from local validation. Execution requires

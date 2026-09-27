@@ -81,7 +81,7 @@ describe("development context", () => {
   ] as const)("uses the same metadata contract for %s", async (_name, services, valid) => {
     const root = await temporaryDirectory("tnl-metadata-contract-");
     await mkdir(path.join(root, ".tnl"));
-    const project = { namespace: "member.example", services, runningUnderTnlDev: false };
+    const project = { namespace: "member.example", services, dev: false };
     await writeFile(
       path.join(root, ".tnl", "project.json"),
       JSON.stringify({
@@ -187,7 +187,7 @@ describe("development context", () => {
     await writeFile(file, JSON.stringify({ ...document, services }));
     expect(() => discoverProject(root)).toThrow(/at most 32 services/);
 
-    await writeFile(file, JSON.stringify({ ...testProjectDocument(), runningUnderTnlDev: true }));
+    await writeFile(file, JSON.stringify({ ...testProjectDocument(), dev: true }));
     expect(() => discoverProject(root)).toThrow(/cannot be marked as running under tnl dev/);
   });
 });
@@ -230,7 +230,7 @@ describe("protocol v1", () => {
     });
     expect(JSON.parse(runtimePayload(assignment.project, true))).toEqual({
       namespace: "member.example",
-      runningUnderTnlDev: true,
+      dev: true,
       services: {
         api: {
           hostname: "override.example",

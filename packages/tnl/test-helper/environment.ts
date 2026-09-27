@@ -9,6 +9,8 @@ export const environmentBaseline = {
   TNL_PUBLIC_HOSTNAME: undefined,
   TNL_PUBLIC_URL: undefined,
   TNL_TUNNEL_ID: undefined,
+  BUN_PORT: undefined,
+  NODE_PORT: undefined,
   TNL_FIXTURE_HOST: undefined,
   TNL_FIXTURE_PORT: undefined,
   XDG_RUNTIME_DIR: undefined,

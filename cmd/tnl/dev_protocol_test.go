@@ -34,7 +34,7 @@ func TestDevProtocolUsesExplicitNullForAdHocService(t *testing.T) {
 	data, err := json.Marshal(devConfigurationResponse{
 		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
 		Namespace: "member.example", Hostname: "route.member.example", PublicURL: "https://route.member.example",
-		Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{}, RunningUnderTnlDev: true},
+		Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{}, Dev: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestDevProtocolUsesExplicitNullForAdHocService(t *testing.T) {
 	want := map[string]any{
 		"protocol": float64(1), "tunnelID": "tunnel_0123456789abcdef0123456789abcdef", "service": nil,
 		"namespace": "member.example", "hostname": "route.member.example", "publicURL": "https://route.member.example",
-		"project": map[string]any{"namespace": "member.example", "services": map[string]any{}, "runningUnderTnlDev": true},
+		"project": map[string]any{"namespace": "member.example", "services": map[string]any{}, "dev": true},
 	}
 	if !reflect.DeepEqual(wire, want) {
 		t.Fatalf("wire response = %s, want %#v", data, want)

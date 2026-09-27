@@ -53,7 +53,7 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 		t.Fatalf("JSON does not expose the project and service namespaces:\n%s", jsonData)
 	}
 	public := metadata.Public(true)
-	if !public.RunningUnderTnlDev || public.Services["api"].Namespace != "ecstatic-penguin.tnl.dev" {
+	if !public.Dev || public.Services["api"].Namespace != "ecstatic-penguin.tnl.dev" {
 		t.Fatalf("public metadata = %#v", public)
 	}
 	for _, forbidden := range []string{"target", "accessToken", "tunnelID", "teamID", "projectRoot"} {

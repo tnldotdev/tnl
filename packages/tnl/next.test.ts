@@ -46,7 +46,7 @@ describe("withTnl", () => {
       expect(local).toMatchObject({ reactStrictMode: true });
       expect(JSON.parse(local.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
         namespace: "member.example",
-        runningUnderTnlDev: false,
+        dev: false,
         services: {
           api: {
             hostname: "api.member.example",

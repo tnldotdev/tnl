@@ -44,8 +44,10 @@ export default defineConfig(({ mode }) => ({
     hookTimeout: 10_000,
     include: [
       "packages/tnl/test-helper.test.ts",
+      "packages/tnl/bun.test.ts",
       "packages/tnl/internal-dev.test.ts",
       "packages/tnl/next.test.ts",
+      "packages/tnl/register.test.ts",
       "packages/tnl/runtime.test.ts",
       "packages/tnl/vite.test.ts",
     ],

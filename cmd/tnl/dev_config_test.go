@@ -105,7 +105,7 @@ func TestRuntimeProjectMetadataUsesTheSelectedTunnelAssignment(t *testing.T) {
 		ServiceDirectories: map[string]string{"api": "."},
 	}
 	project := runtimeProjectMetadata(metadata, "api", "runtime.example", "override.runtime.example")
-	if project.Namespace != "root.example" || !project.RunningUnderTnlDev || project.Services["api"].Namespace != "runtime.example" ||
+	if project.Namespace != "root.example" || !project.Dev || project.Services["api"].Namespace != "runtime.example" ||
 		project.Services["api"].Hostname != "override.runtime.example" || project.Services["api"].URL != "https://override.runtime.example" ||
 		metadata.Services["api"].Hostname != "api.configured.example" {
 		t.Fatalf("runtime project = %#v, metadata = %#v", project, metadata)
@@ -122,11 +122,15 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("TNL_PUBLIC_URL", "https://stale.example")
 	t.Setenv("TNL_PROJECT_RUNTIME", `{"namespace":"stale.example"}`)
 	bootstrap := &devBootstrap{socket: "/private/control.sock"}
-	environment := environmentMap(devEnvironment(bootstrap, 3000))
+	projectPayload := `{"namespace":"member.example","services":{},"dev":true}`
+	environment := environmentMap(devEnvironment(bootstrap, 3000, projectPayload))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" || environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_DEV_SOCKET"] != bootstrap.socket {
 		t.Fatal("development protocol environment was not replaced")
 	}
-	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_LOGIN_TOKEN", "TNL_PROJECT_RUNTIME", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
+	if environment["TNL_PROJECT_RUNTIME"] != projectPayload {
+		t.Fatal("development project metadata was not replaced")
+	}
+	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_LOGIN_TOKEN", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
 		if _, found := environment[name]; found {
 			t.Fatalf("%s was passed to the development server", name)
 		}

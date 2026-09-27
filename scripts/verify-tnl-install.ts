@@ -110,7 +110,7 @@ assert.equal(defineConfig(config), config);
   import("@tnldotdev/tnl/next"),
   import("@tnldotdev/tnl/vite"),
 ]);
-if (runtime !== undefined) throw new Error("runtime must be absent outside development");
+if (runtime.port !== 3000 || runtime.services !== undefined || runtime.dev !== false || typeof runtime.register !== "function") throw new Error("invalid root runtime outside development");
 if (typeof withTnl !== "function") throw new Error("missing Next.js integration");
 if (typeof tnl !== "function") throw new Error("missing Vite integration");
 `,

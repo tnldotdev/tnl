@@ -24,7 +24,7 @@ type Service struct {
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
 	Namespace          string             `json:"namespace"`
-	RunningUnderTnlDev bool               `json:"runningUnderTnlDev"`
+	Dev                bool               `json:"dev"`
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
 	Services           map[string]Service `json:"services"`
 	Version            int                `json:"version"`
@@ -32,19 +32,19 @@ type Metadata struct {
 
 // PublicMetadata is the value exposed by @tnldotdev/tnl.
 type PublicMetadata struct {
-	Namespace          string             `json:"namespace"`
-	Services           map[string]Service `json:"services"`
-	RunningUnderTnlDev bool               `json:"runningUnderTnlDev"`
+	Namespace string             `json:"namespace"`
+	Services  map[string]Service `json:"services"`
+	Dev       bool               `json:"dev"`
 }
 
-func (m Metadata) Public(runningUnderTnlDev bool) PublicMetadata {
+func (m Metadata) Public(dev bool) PublicMetadata {
 	services := make(map[string]Service, len(m.Services))
 	for name, service := range m.Services {
 		services[name] = service
 	}
 	return PublicMetadata{
 		Namespace: m.Namespace, Services: services,
-		RunningUnderTnlDev: runningUnderTnlDev,
+		Dev: dev,
 	}
 }
 
@@ -52,7 +52,7 @@ func (m Metadata) Validate() error {
 	if m.Version != Version {
 		return fmt.Errorf("project metadata version must be %d", Version)
 	}
-	if m.RunningUnderTnlDev {
+	if m.Dev {
 		return errors.New("generated project metadata cannot be marked as running under tnl dev")
 	}
 	if err := canonicalHostname("namespace", m.Namespace); err != nil {

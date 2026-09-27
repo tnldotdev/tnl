@@ -100,12 +100,12 @@ services. The integrations expose browser-safe, read-only runtime metadata:
 ```ts
 import { tnl } from "@tnldotdev/tnl";
 
-const apiURL = tnl?.services.api.url;
+const apiURL = tnl.services?.api?.url;
 ```
 
 This is already a foundation for same-worktree service discovery. It is a
 snapshot of addresses, not evidence that those services are running or healthy.
-`runningUnderTnlDev` describes the integration context, not readiness.
+`tnl.dev` describes the integration context, not readiness.
 
 The integrations preserve normal development without a tunnel, can inject
 generated metadata without contacting tnl, and remain inactive during production

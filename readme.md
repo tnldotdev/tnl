@@ -105,7 +105,7 @@ export default defineConfig({
     },
     api: {
       directory: "apps/api",
-      dev: { command: ["pnpm", "dev"], port: 3000 },
+      dev: { command: ["pnpm", "dev"] },
     },
   },
 });
@@ -132,12 +132,14 @@ Use the API URL assigned to this project in the frontend:
 ```ts
 import { tnl } from "@tnldotdev/tnl";
 
-const apiURL = tnl?.services.api.url;
+const apiURL = tnl.services?.api?.url;
 // https://api-example-abcd1234.ecstatic-penguin.tnl.dev
 ```
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
 [framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
+For a Node or Bun API, use `tnl.port` and `tnl.register(server)` so worktrees
+can listen on different ports. See [API server setup](https://tnl.dev/docs/frameworks#api-servers).
 
 ## open changes side by side
 

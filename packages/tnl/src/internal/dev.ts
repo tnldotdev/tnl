@@ -31,7 +31,7 @@ export interface TnlDevBootstrap {
 
 export interface ProjectDocument extends ProjectMetadata {
   readonly projectRoot: string;
-  readonly runningUnderTnlDev: boolean;
+  readonly dev: boolean;
   readonly serviceDirectories: Readonly<Record<string, string>>;
   readonly version: 1;
 }
@@ -148,8 +148,8 @@ export async function registerLocalTarget(
   );
 }
 
-export function runtimePayload(project: ProjectMetadata, runningUnderTnlDev: boolean): string {
-  return serializeRuntimePayload(project, runningUnderTnlDev);
+export function runtimePayload(project: ProjectMetadata, dev: boolean): string {
+  return serializeRuntimePayload(project, dev);
 }
 
 export function discoverProject(cwd: string): ProjectDiscovery | null {
@@ -267,7 +267,7 @@ function parseAssignment(
     throw new Error("tnl dev returned an invalid public URL");
   }
   const project = parseProjectRuntime(object.project, "tnl dev project metadata");
-  if (!project.runningUnderTnlDev) {
+  if (!project.dev) {
     throw new Error("tnl dev returned project metadata outside tnl dev");
   }
   const projectNamespace =
@@ -314,18 +314,14 @@ function parseProjectDocumentValue(
   projectRoot: string,
 ): ProjectDocument {
   const object = record(value, description);
-  exactKeys(
-    object,
-    ["namespace", "runningUnderTnlDev", "serviceDirectories", "services", "version"],
-    description,
-  );
+  exactKeys(object, ["dev", "namespace", "serviceDirectories", "services", "version"], description);
   if (object.version !== 1) {
     throw new Error(`${description} has an unsupported version`);
   }
-  if (typeof object.runningUnderTnlDev !== "boolean") {
-    throw new Error(`${description} has an invalid runningUnderTnlDev value`);
+  if (typeof object.dev !== "boolean") {
+    throw new Error(`${description} has an invalid dev value`);
   }
-  if (object.runningUnderTnlDev) {
+  if (object.dev) {
     throw new Error(`${description} cannot be marked as running under tnl dev`);
   }
   const project = parseProjectMetadata(
@@ -350,7 +346,7 @@ function parseProjectDocumentValue(
   return Object.freeze({
     ...project,
     projectRoot,
-    runningUnderTnlDev: object.runningUnderTnlDev,
+    dev: object.dev,
     serviceDirectories: Object.freeze(serviceDirectories),
     version: 1,
   });

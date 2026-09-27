@@ -14,11 +14,14 @@ export function startTestProcess(
   command: string,
   arguments_: readonly string[],
   options: SpawnOptions = {},
+  projectRuntime?: string,
 ): TestProcess {
   const grouped = process.platform !== "win32";
+  const environment = subprocessEnvironment(options.env);
+  if (projectRuntime !== undefined) environment.TNL_PROJECT_RUNTIME = projectRuntime;
   const child = spawn(command, arguments_, {
     ...options,
-    env: subprocessEnvironment(options.env),
+    env: environment,
     detached: grouped,
     stdio: ["ignore", "pipe", "pipe"],
   });

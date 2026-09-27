@@ -37,11 +37,15 @@ type initPlan struct {
 	framework        string
 	frameworkPath    string
 	frameworkAfter   []byte
+	serverPath       string
+	serverBefore     []byte
+	serverAfter      []byte
 	actions          []string
 	installBlocked   bool
 	generatedService bool
 	generatedConfig  []byte
 	genericDev       bool
+	apiDev           bool
 	devCommand       []string
 	devPort          int
 	devAction        string
@@ -49,6 +53,7 @@ type initPlan struct {
 
 type packageDocument struct {
 	PackageManager       string            `json:"packageManager"`
+	Type                 string            `json:"type"`
 	Workspaces           json.RawMessage   `json:"workspaces"`
 	Scripts              map[string]string `json:"scripts"`
 	Dependencies         map[string]string `json:"dependencies"`
@@ -94,7 +99,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		created = true
 	}
 	configUpdated := false
-	if len(plan.generatedConfig) != 0 && plan.genericDev {
+	if len(plan.generatedConfig) != 0 && (plan.genericDev || plan.apiDev) {
 		updated := initConfigSourceWithPort("app", plan.devCommand, plan.devPort)
 		if !bytes.Equal(updated, plan.generatedConfig) {
 			if err := replaceRecognizedInitFile(plan.configPath, plan.generatedConfig, updated); err != nil {
@@ -109,6 +114,13 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 			return err
 		}
 		frameworkUpdated = true
+	}
+	serverUpdated := false
+	if len(plan.serverAfter) != 0 {
+		if err := replaceRecognizedInitFile(plan.serverPath, plan.serverBefore, plan.serverAfter); err != nil {
+			return err
+		}
+		serverUpdated = true
 	}
 	gitignoreUpdated, err := ensureTnlGitignore(plan.root)
 	if err != nil {
@@ -128,7 +140,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		plan.actions = append(plan.actions, typeActions...)
 	}
 	state := "already configured"
-	if created || configUpdated || installed || frameworkUpdated || gitignoreUpdated {
+	if created || configUpdated || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -147,6 +159,9 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	}
 	if frameworkUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: plan.frameworkPath})
+	}
+	if serverUpdated {
+		fields = append(fields, clioutput.Field{Label: "updated", Value: plan.serverPath})
 	}
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
@@ -189,6 +204,10 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	if frameworkUnclear {
 		plan.actions = append(plan.actions, err.Error())
 	}
+	apiKind := detectAPIServer(packageConfig)
+	if apiKind != "" && plan.framework == "vite" && startsAPIServer(packageConfig.Scripts["dev"]) {
+		plan.framework = ""
+	}
 
 	existingConfigs := existingInitConfigs(root)
 	if len(existingConfigs) > 1 {
@@ -213,9 +232,12 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 		plan.configData = initConfigSource("app", command)
 		plan.generatedService = true
 	}
-	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && plan.generatedService
+	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
+	plan.apiDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind != "" && plan.generatedService
 	if plan.genericDev {
 		updateInitDevAction(&plan)
+	} else if plan.apiDev {
+		plan.devPort = 0
 	}
 
 	if packageFound {
@@ -229,6 +251,10 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	}
 	if plan.framework != "" {
 		if err := planFrameworkConfig(&plan, root); err != nil {
+			return initPlan{}, err
+		}
+	} else if apiKind != "" && !frameworkUnclear {
+		if err := planAPIServer(&plan, root, apiKind, packageConfig); err != nil {
 			return initPlan{}, err
 		}
 	}

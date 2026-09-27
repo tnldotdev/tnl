@@ -121,7 +121,7 @@ func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bo
 		return false, err
 	})
 	r := f.report
-	if r.PID <= 0 || r.CWD != f.project.root || r.Protocol != "1" || !strings.HasPrefix(r.Socket, f.project.runtimeDirectory+string(filepath.Separator)) || r.HasAccessToken || r.HasLoginToken || r.HasRuntimeEnvironment {
+	if r.PID <= 0 || r.CWD != f.project.root || r.Protocol != "1" || !strings.HasPrefix(r.Socket, f.project.runtimeDirectory+string(filepath.Separator)) || r.HasAccessToken || r.HasLoginToken || !r.HasRuntimeEnvironment {
 		t.Fatalf("Vite child environment = %#v", r)
 	}
 	encoded, err := os.ReadFile(filepath.Join(f.project.root, ".tnl", "project.json"))
@@ -138,7 +138,7 @@ func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bo
 	f.publicURL = "https://" + f.hostname
 	wantService := projectmeta.Service{Namespace: f.metadata.Namespace, Hostname: f.hostname, URL: f.publicURL}
 	if !strings.HasSuffix(f.metadata.Namespace, ".routes.127.0.0.1.nip.io") || len(f.metadata.Services) != 1 ||
-		f.metadata.Services["api"] != wantService || f.metadata.ServiceDirectories["api"] != "." || !reflect.DeepEqual(*r.Runtime, f.metadata.Public(true)) {
+		f.metadata.Services["api"] != wantService || f.metadata.ServiceDirectories["api"] != "." || !reflect.DeepEqual(*r.Runtime, f.metadata.Public(true)) || !reflect.DeepEqual(r.EnvironmentMetadata, f.metadata.Public(true)) {
 		t.Fatalf("generated metadata = %#v, Vite runtime = %#v", f.metadata, r.Runtime)
 	}
 }
@@ -442,6 +442,7 @@ type integrationBinaryDevReport struct {
 	HasAccessToken        bool                        `json:"hasAccessToken"`
 	HasLoginToken         bool                        `json:"hasLoginToken"`
 	HasRuntimeEnvironment bool                        `json:"hasRuntimeEnvironment"`
+	EnvironmentMetadata   projectmeta.PublicMetadata  `json:"environmentMetadata"`
 	Target                string                      `json:"target"`
 	Runtime               *projectmeta.PublicMetadata `json:"runtime"`
 }

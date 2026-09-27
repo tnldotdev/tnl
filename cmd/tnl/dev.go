@@ -35,6 +35,7 @@ const (
 	devRegistrationWait      = 30 * time.Second
 	devShutdownWait          = 5 * time.Second
 	maxDevRequestBytes       = 16 << 10
+	maxDevRuntimeBytes       = 64 << 10
 	defaultDevStartupTimeout = 2 * time.Minute
 )
 
@@ -172,18 +173,25 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer func() { result = errors.Join(result, bootstrap.Close()) }()
 
-	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port), stdin, stdout, stderr, flags.commandDir)
-	if err != nil {
-		return err
-	}
-	defer func() { result = errors.Join(result, child.Stop(devShutdownWait)) }()
-
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
 		Namespace: services.namespace, Hostname: services.hostname,
 		PublicURL: "https://" + services.hostname,
 		Project:   runtimeProjectMetadata(metadata, flags.Service, services.namespace, services.hostname),
 	}
+	projectPayload, err := json.Marshal(assignment.Project)
+	if err != nil {
+		return fmt.Errorf("serialize development project metadata: %w", err)
+	}
+	if len(projectPayload) > maxDevRuntimeBytes {
+		return fmt.Errorf("development project metadata exceeds %d bytes", maxDevRuntimeBytes)
+	}
+	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port, string(projectPayload)), stdin, stdout, stderr, flags.commandDir)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, child.Stop(devShutdownWait)) }()
+
 	var configuration *devConfigurationRequest
 	target := forcedTarget
 	targetIsReady := false
@@ -208,7 +216,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 				if errors.Is(configuredResult.err, context.DeadlineExceeded) {
 					return diagnostic.WrapMessage(
 						diagnostic.FrameworkRegistrationTimeout,
-						"development server did not connect to tnl; configure @tnldotdev/tnl/next or @tnldotdev/tnl/vite, or use --port",
+						"development server did not connect to tnl; configure the Next.js or Vite integration, call tnl.register(server) for Node or Bun, or use --port",
 						configuredResult.err,
 					)
 				}
@@ -908,10 +916,11 @@ func validFrameworkName(value string) bool {
 	return true
 }
 
-func devEnvironment(bootstrap *devBootstrap, port int) []string {
+func devEnvironment(bootstrap *devBootstrap, port int, projectPayload string) []string {
 	replacements := map[string]string{
-		"TNL_DEV_PROTOCOL": devProtocolVersion,
-		"TNL_DEV_SOCKET":   bootstrap.socket,
+		"TNL_DEV_PROTOCOL":    devProtocolVersion,
+		"TNL_DEV_SOCKET":      bootstrap.socket,
+		"TNL_PROJECT_RUNTIME": projectPayload,
 	}
 	if port != 0 {
 		replacements["TNL_DEV_PORT"] = strconv.Itoa(port)

@@ -15,28 +15,28 @@ const project = {
 
 afterEach(() => {
   vi.resetModules();
+  vi.unstubAllEnvs();
 });
 
 describe("root runtime", () => {
-  test("is undefined without injected metadata", async () => {
+  test("exposes a normal port and optional metadata outside tnl dev", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
+    vi.stubEnv("TNL_DEV_PROTOCOL", undefined);
+    vi.stubEnv("PORT", undefined);
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
-    expect(runtime.tnl).toBeUndefined();
+    expect(runtime.tnl).toMatchObject({ port: 3000, dev: false });
+    expect(runtime.tnl.services).toBeUndefined();
+    expect(runtime.tnl.namespace).toBeUndefined();
   });
 
-  test.each([false, true])(
-    "exposes validated metadata with runningUnderTnlDev=%s",
-    async (running) => {
-      vi.stubEnv(
-        "TNL_PROJECT_RUNTIME",
-        JSON.stringify({ ...project, runningUnderTnlDev: running }),
-      );
-      vi.resetModules();
-      const runtime = await import("@tnldotdev/tnl");
-      expect(runtime.tnl).toEqual({ ...project, runningUnderTnlDev: running });
-    },
-  );
+  test.each([false, true])("exposes validated metadata with dev=%s", async (running) => {
+    vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: running }));
+    vi.resetModules();
+    const runtime = await import("@tnldotdev/tnl");
+    expect(runtime.tnl).toMatchObject({ ...project, dev: running });
+    expect(runtime.tnl.register).toBeTypeOf("function");
+  });
 
   test("imports the built root runtime with no process global", async () => {
     const child = startTestProcess(process.execPath, [
@@ -45,7 +45,7 @@ describe("root runtime", () => {
       `const host = process;
        delete globalThis.process;
        const { tnl } = await import(${JSON.stringify(new URL("./dist/index.js", import.meta.url).href)});
-       host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent: tnl === undefined }));`,
+       host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent: tnl.services === undefined }));`,
     ]);
     await child.ready();
     await expect.poll(() => child.child.exitCode).toBe(0);
@@ -53,20 +53,41 @@ describe("root runtime", () => {
   });
 
   test("deep-freezes the complete runtime value", () => {
-    const runtime = parseRuntimePayload(JSON.stringify({ ...project, runningUnderTnlDev: true }));
+    const runtime = parseRuntimePayload(JSON.stringify({ ...project, dev: true }));
     expect(Object.isFrozen(runtime)).toBe(true);
     expect(Object.isFrozen(runtime?.services)).toBe(true);
     expect(Object.isFrozen(runtime?.services.api)).toBe(true);
   });
 
+  test("uses an ephemeral listener under tnl dev and honors a forced port", async () => {
+    vi.stubEnv("TNL_DEV_PROTOCOL", "1");
+    vi.stubEnv("TNL_DEV_PORT", undefined);
+    vi.resetModules();
+    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(0);
+    vi.stubEnv("TNL_DEV_PORT", "5173");
+    vi.resetModules();
+    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(5173);
+  });
+
+  test("respects normal Node and Bun port settings outside tnl dev", async () => {
+    vi.stubEnv("TNL_DEV_PROTOCOL", undefined);
+    vi.stubEnv("PORT", "4300");
+    vi.resetModules();
+    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(4300);
+    vi.stubEnv("BUN_PORT", "4400");
+    vi.stubGlobal("Bun", {});
+    vi.resetModules();
+    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(4400);
+  });
+
   test.each([
     ["invalid JSON", "{"],
-    ["unknown fields", JSON.stringify({ ...project, runningUnderTnlDev: false, extra: true })],
+    ["unknown fields", JSON.stringify({ ...project, dev: false, extra: true })],
     [
       "invalid service URL",
       JSON.stringify({
         ...project,
-        runningUnderTnlDev: false,
+        dev: false,
         services: { api: { ...project.services.api, url: "http://api.member.example" } },
       }),
     ],
@@ -74,7 +95,7 @@ describe("root runtime", () => {
       "too many services",
       JSON.stringify({
         namespace: "member.example",
-        runningUnderTnlDev: false,
+        dev: false,
         services: Object.fromEntries(
           Array.from({ length: 33 }, (_, index) => [
             `s${index}`,

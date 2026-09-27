@@ -14,7 +14,7 @@ export interface ProjectMetadata {
 }
 
 export interface ProjectRuntime extends ProjectMetadata {
-  readonly runningUnderTnlDev: boolean;
+  readonly dev: boolean;
 }
 
 /** Checks browser-safe project metadata and makes it read-only. */
@@ -93,9 +93,9 @@ export function parseRuntimePayload(serialized: string | undefined): ProjectRunt
 
 export function parseProjectRuntime(value: unknown, description: string): ProjectRuntime {
   const object = record(value, description);
-  exactKeys(object, ["namespace", "runningUnderTnlDev", "services"], description);
-  if (typeof object.runningUnderTnlDev !== "boolean") {
-    throw new Error(`${description} has an invalid runningUnderTnlDev value`);
+  exactKeys(object, ["dev", "namespace", "services"], description);
+  if (typeof object.dev !== "boolean") {
+    throw new Error(`${description} has an invalid dev value`);
   }
   const project = parseProjectMetadata(
     { namespace: object.namespace, services: object.services },
@@ -103,17 +103,14 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
   );
   return Object.freeze({
     ...project,
-    runningUnderTnlDev: object.runningUnderTnlDev,
+    dev: object.dev,
   });
 }
 
-export function serializeRuntimePayload(
-  project: ProjectMetadata,
-  runningUnderTnlDev: boolean,
-): string {
+export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean): string {
   const serialized = JSON.stringify({
     namespace: project.namespace,
-    runningUnderTnlDev,
+    dev,
     services: project.services,
   });
   if (byteLength(serialized) > maximumRuntimeBytes) {

@@ -1,16 +1,18 @@
 import { tnl } from "@tnldotdev/tnl";
 
+tnl.port satisfies number;
+tnl.dev satisfies boolean;
 // @ts-expect-error Metadata may be absent until narrowed.
-void tnl.namespace;
-// @ts-expect-error Service metadata also requires narrowing the root value.
+tnl.namespace satisfies string;
+// @ts-expect-error Service metadata also requires narrowing.
 void tnl.services.anyService;
 
-if (tnl) {
+if (tnl.namespace && tnl.services) {
   tnl.namespace satisfies string;
   tnl.services.anyService satisfies
     | import("./dist/internal/runtime.js").ProjectServiceMetadata
     | undefined;
-  tnl.runningUnderTnlDev satisfies boolean;
+  tnl.dev satisfies boolean;
 
   const service = tnl.services.anyService;
   // @ts-expect-error Arbitrary services may be absent even when metadata exists.
@@ -31,7 +33,7 @@ if (tnl) {
   // @ts-expect-error Service entries are readonly.
   tnl.services.anyService = service;
   // @ts-expect-error Runtime lifecycle metadata is readonly.
-  tnl.runningUnderTnlDev = false;
+  tnl.dev = false;
 
   // @ts-expect-error Project metadata is exposed directly.
   void tnl.project;

@@ -41,7 +41,7 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		Service: nullableService("web"), Namespace: "member.example",
 		Hostname: "agent-feature.example", PublicURL: "https://agent-feature.example",
 		Project: projectmeta.PublicMetadata{
-			Namespace: "member.example", RunningUnderTnlDev: true,
+			Namespace: "member.example", Dev: true,
 			Services: map[string]projectmeta.Service{
 				"web": {Namespace: "member.example", Hostname: "agent-feature.example", URL: "https://agent-feature.example"},
 			},

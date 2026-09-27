@@ -24,7 +24,7 @@ export async function createProjectFixture(prefix: string) {
 export function testProjectDocument() {
   return {
     namespace: "member.example",
-    runningUnderTnlDev: false,
+    dev: false,
     serviceDirectories: { api: "apps/api", web: "apps/web" },
     services: {
       api: {
@@ -42,9 +42,9 @@ export function testProjectDocument() {
   };
 }
 
-export function testPublicProject(runningUnderTnlDev: boolean) {
+export function testPublicProject(dev: boolean) {
   const project = testProjectDocument();
-  return { namespace: project.namespace, runningUnderTnlDev, services: project.services };
+  return { namespace: project.namespace, dev, services: project.services };
 }
 
 export async function withCurrentDirectory<T>(

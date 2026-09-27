@@ -50,7 +50,7 @@ try {
       "--input-type=module",
       "--eval",
       `const modules = await Promise.all(${JSON.stringify(entrypoints)}.map((name) => import(name)));
-if (!("tnl" in modules[0])) throw new Error("missing root runtime export");
+if (modules[0].tnl?.port !== 3000 || typeof modules[0].tnl?.register !== "function") throw new Error("missing root server integration");
 if (typeof modules[1].defineConfig !== "function") throw new Error("missing config export");
 if (typeof modules[2].withTnl !== "function") throw new Error("missing Next.js export");
 if (typeof modules[3].default !== "function") throw new Error("missing Vite export");`,

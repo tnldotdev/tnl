@@ -11,6 +11,7 @@ interface FixtureReport {
   readonly hasAccessToken: boolean;
   readonly hasLoginToken: boolean;
   readonly hasRuntimeEnvironment: boolean;
+  readonly environmentMetadata?: unknown;
   readonly pid: number;
   readonly protocol: string | undefined;
   readonly socket: string | undefined;
@@ -26,6 +27,10 @@ const report: FixtureReport = {
   hasAccessToken: Object.hasOwn(process.env, "TNL_ACCESS_TOKEN"),
   hasLoginToken: Object.hasOwn(process.env, "TNL_LOGIN_TOKEN"),
   hasRuntimeEnvironment: Object.hasOwn(process.env, "TNL_PROJECT_RUNTIME"),
+  environmentMetadata:
+    process.env.TNL_PROJECT_RUNTIME === undefined
+      ? undefined
+      : (JSON.parse(process.env.TNL_PROJECT_RUNTIME) as unknown),
 };
 const writeReport = () => {
   writeFileSync(`${reportPath}.tmp`, JSON.stringify(report), { mode: 0o600 });

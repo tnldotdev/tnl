@@ -6,10 +6,10 @@ export default function Page() {
   return (
     <main>
       <h1>Next.js fixture</h1>
-      <p>{`url:${tnl?.services.api?.url}`}</p>
-      <p>{`hostname:${tnl?.services.api?.hostname}`}</p>
+      <p>{`url:${tnl.services?.api?.url}`}</p>
+      <p>{`hostname:${tnl.services?.api?.hostname}`}</p>
       <p>{`namespace:${tnl?.namespace}`}</p>
-      <p>{`under-dev:${tnl?.runningUnderTnlDev}`}</p>
+      <p>{`under-dev:${tnl.dev}`}</p>
     </main>
   );
 }

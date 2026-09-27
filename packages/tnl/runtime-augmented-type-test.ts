@@ -19,16 +19,16 @@ declare module "@tnldotdev/tnl" {
 }
 
 // @ts-expect-error Augmentation does not make metadata always present.
-void tnl.namespace;
+tnl.namespace satisfies "member.example";
 // @ts-expect-error Known services still require narrowing the root value.
 void tnl.services.api;
 
-if (tnl) {
+if (tnl.namespace && tnl.services) {
   tnl.namespace satisfies "member.example";
   tnl.services.api.hostname satisfies "api.member.example";
   tnl.services.api.namespace satisfies "member.example";
   tnl.services.api.url satisfies "https://api.member.example";
-  tnl.runningUnderTnlDev satisfies boolean;
+  tnl.dev satisfies boolean;
 
   // Assign valid literal values so these errors specifically check readonly ownership.
   // @ts-expect-error Project metadata is readonly after augmentation.
@@ -42,7 +42,7 @@ if (tnl) {
   // @ts-expect-error Generated service URLs are readonly.
   tnl.services.api.url = "https://api.member.example";
   // @ts-expect-error Runtime lifecycle metadata is readonly.
-  tnl.runningUnderTnlDev = false;
+  tnl.dev = false;
 
   // @ts-expect-error Generated project declarations reject unknown services.
   void tnl.services.worker;

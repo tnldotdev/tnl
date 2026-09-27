@@ -279,10 +279,10 @@ test("registers and serves an IPv6 localhost target", async () => {
   });
 });
 
-function runtimeDefine(runningUnderTnlDev: boolean, apiHostname = "api.member.example") {
+function runtimeDefine(dev: boolean, apiHostname = "api.member.example") {
   const payload = JSON.stringify({
     namespace: "member.example",
-    runningUnderTnlDev,
+    dev,
     services: {
       api: {
         namespace: "member.example",

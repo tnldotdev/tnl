@@ -93,6 +93,7 @@ services:
     volumes:
       - ../../.local/certs/local.crt:/etc/tnl/local.crt:ro
       - ../../.local/certs/local.key:/etc/tnl/local.key:ro
+      - ../../.local/certs/local-root.pem:/etc/ssl/certs/tnl-local-root.pem:ro
       - ./pebble.minica.crt:/etc/ssl/certs/pebble.minica.crt:ro
 
 volumes:
