@@ -44,6 +44,12 @@ const dataSchema = z.object({
 });
 
 const data = dataSchema.parse(JSON.parse(await readFile(dataURL, "utf8")) as unknown);
+for (const row of data.bandwidth) {
+  const meetsDeadline = row.elapsed_seconds <= 31;
+  if (row.elapsed_seconds < 30 || row.passed !== meetsDeadline) {
+    throw new Error(`Invalid bandwidth result: ${row.run}`);
+  }
+}
 for (const row of [...data.publisher_cpu, ...data.combined, ...data.relay_cpu]) {
   if (row.successful > row.offered) throw new Error(`Invalid counts: ${row.run}`);
 }
