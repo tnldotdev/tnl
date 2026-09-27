@@ -71,10 +71,10 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 		return true, nil
 	})
 	response, body, err := visitor.requestURL(http.MethodGet, f.publicURL+"/src/main.ts", nil)
-	if err != nil || response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("/dist/index.js")) {
+	if err != nil || response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("/dist/index.browser.js")) {
 		t.Fatalf("Vite app module: %v, body %q", err, body)
 	}
-	runtimePath := "/@fs" + filepath.ToSlash(filepath.Join(server.repositoryRoot, "packages", "tnl", "dist", "index.js"))
+	runtimePath := "/@fs" + filepath.ToSlash(filepath.Join(server.repositoryRoot, "packages", "tnl", "dist", "index.browser.js"))
 	response, body, err = visitor.requestURL(http.MethodGet, f.publicURL+runtimePath, nil)
 	if err != nil || response.StatusCode != http.StatusOK || bytes.Contains(body, []byte(f.accessToken)) {
 		t.Fatalf("Vite browser runtime module: %v", err)
