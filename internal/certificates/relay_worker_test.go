@@ -110,7 +110,9 @@ func TestRelayWorkerCleansTerminalChallengeFailure(t *testing.T) {
 	now := time.Now().UTC()
 	worker := &RelayWorker{config: RelayConfig{FailedRetryInterval: time.Hour, DNSChallenges: &relayDNSChallengesStub{}}}
 	work := controlstate.RelayCertificateOrderWork{State: "validating", ChallengeURL: "https://acme.example.test/challenge/1"}
-	worker.applyFailure(&work, terminalf("authorization expired"), now)
+	worker.applyFailure(&work, &acmeclient.Error{
+		Status: 404, Type: "urn:ietf:params:acme:error:malformed", Detail: "Expired authorization",
+	}, now)
 	if work.State != "failed_cleaning" || !work.AvailableAt.Equal(now) || work.LastError == "" {
 		t.Fatalf("terminal work = %#v", work)
 	}

@@ -390,6 +390,24 @@ func TestPublicURLWorkerTerminalFailureFailsAuthorizations(t *testing.T) {
 	}
 }
 
+func TestPublicURLWorkerCleansExpiredACMEAuthorization(t *testing.T) {
+	now := time.Now().UTC()
+	worker := &PublicURLWorker{}
+	work := controlstate.ACMEOrderWork{
+		State: "authorizing",
+		Authorizations: []controlstate.ACMEAuthorizationWork{{
+			State: "presented", ChallengeType: "dns-01",
+		}},
+	}
+	worker.applyFailure(&work, &acmeclient.Error{
+		Status: 404, Type: "urn:ietf:params:acme:error:malformed", Detail: "Expired authorization",
+	}, now)
+	if work.State != "failed" || work.Authorizations[0].State != "cleaning" ||
+		work.Authorizations[0].LastError == "" || !work.AvailableAt.Equal(now) {
+		t.Fatalf("expired authorization work = %#v", work)
+	}
+}
+
 func TestPublicURLWorkerRateLimitHonorsRetryAfter(t *testing.T) {
 	now := time.Now().UTC()
 	worker := &PublicURLWorker{}

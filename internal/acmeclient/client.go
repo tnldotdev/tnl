@@ -98,6 +98,11 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Terminal() bool {
+	// An ACME resource that no longer exists cannot become valid on retry.
+	// In particular, Let's Encrypt returns 404 for expired authorizations.
+	if e.Status == http.StatusNotFound || e.Status == http.StatusGone {
+		return true
+	}
 	switch pathBase(e.Type) {
 	case "badCSR", "rejectedIdentifier", "unauthorized", "unsupportedIdentifier", "userActionRequired":
 		return true
