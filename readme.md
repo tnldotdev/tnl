@@ -1,8 +1,8 @@
 # tnl
 
 `tnl` gives your local app an end-to-end encrypted HTTPS URL. By default, every
-Git worktree gets its own unique URL, so you can easily work on multiple development
-tracks in parallel.
+Git worktree gets its own unique URL, so you can easily preview multiple
+development tracks in parallel.
 
 ```text
                            browser
