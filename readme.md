@@ -28,7 +28,7 @@ tracks in parallel.
 First, install the NPM package:
 
 ```bash
-npm install -D @tnldotdev/tnl
+npm install -D @tnldotdev/tnl@next
 ```
 
 Then, initialize with the helper:
