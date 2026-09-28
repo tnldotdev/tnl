@@ -260,10 +260,23 @@ func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlsta
 }
 
 func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlstate.DNSAuthorityWork) error {
-	if work.ProviderZoneID == "" {
-		return nil
-	}
 	zoneID := canonicalZoneID(work.ProviderZoneID)
+	recovered := zoneID == ""
+	if recovered {
+		// Creation can succeed before the worker saves the zone ID. Release
+		// must still find that zone after a crash or a failed persistence step.
+		zone, err := p.findClaimedZone(ctx, work)
+		if err != nil {
+			return err
+		}
+		if zone == nil {
+			return nil
+		}
+		zoneID, err = validateHostedZone(zone, work)
+		if err != nil {
+			return err
+		}
+	}
 	output, err := p.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
 	if isRoute53Error(err, "NoSuchHostedZone") {
 		return nil
@@ -280,7 +293,11 @@ func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlst
 	if err != nil {
 		return fmt.Errorf("dnscontroller: read Route 53 hosted-zone tags: %w", err)
 	}
-	if !ownedTags(tags, work) {
+	// A crash immediately after CreateHostedZone leaves no tags yet. Its
+	// caller reference and domain still identify the zone exactly. Never
+	// accept partial or conflicting tags as proof of ownership.
+	untagged := tags != nil && tags.ResourceTagSet != nil && len(tags.ResourceTagSet.Tags) == 0
+	if !ownedTags(tags, work) && !(recovered && untagged) {
 		return terminalf("Route 53 hosted zone ownership tags do not match")
 	}
 	if _, err := p.client.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)}); err != nil &&

@@ -451,6 +451,79 @@ func (q *Queries) ListPublishRunConnections(ctx context.Context, publishRunID st
 	return items, nil
 }
 
+const lockExpiredPublishRunPublicURLs = `-- name: LockExpiredPublishRunPublicURLs :many
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+FROM control.publish_runs AS sessions
+JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
+WHERE sessions.closed_at IS NULL
+  AND sessions.publisher_expires_at <= $1
+ORDER BY sessions.publisher_expires_at, sessions.id
+LIMIT $2
+FOR NO KEY UPDATE OF routes SKIP LOCKED
+`
+
+type LockExpiredPublishRunPublicURLsParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+// Lock only public URLs, never publish runs first: heartbeat and closure take
+// the public URL before the run. The partial expiration index finds candidates;
+// SKIP LOCKED lets other controls and active publishers keep their route locks.
+func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error) {
+	rows, err := q.db.Query(ctx, lockExpiredPublishRunPublicURLs, arg.Now, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlPublicUrl
+	for rows.Next() {
+		var i ControlPublicUrl
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.PublicURLScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.AllowedIpPrefixes,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextPublishRunNumber,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPublicURLForRun = `-- name: LockPublicURLForRun :one
 SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.public_urls

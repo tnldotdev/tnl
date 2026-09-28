@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -73,8 +74,15 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 		for {
 			if _, err := r.control.ObserveRecovery(r.ctx, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt); err == nil {
 				return
-			} else if r.ctx.Err() == nil {
-				r.report(err)
+			} else {
+				var problem *ControlProblemError
+				if errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem != nil &&
+					problem.Problem.Type == "https://tnl.dev/problems/recovery_episode_stale" {
+					return
+				}
+				if r.ctx.Err() == nil {
+					r.report(err)
+				}
 			}
 			timer := time.NewTimer(r.retry)
 			select {

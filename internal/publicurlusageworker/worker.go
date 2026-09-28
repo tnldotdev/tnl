@@ -29,6 +29,8 @@ const (
 	defaultRetryInterval    = time.Second
 )
 
+var errBatchTooLarge = errors.New("publicurlusageworker: request exceeds size limit")
+
 // Store is the stored public URL usage state used by a Worker.
 type Store interface {
 	MarkExpiredIngressUsageRunsIncomplete(context.Context, time.Time) (int, error)
@@ -148,10 +150,21 @@ func (w *Worker) process(ctx context.Context) (bool, error) {
 	if err != nil || len(work) == 0 {
 		return false, err
 	}
+	return true, w.deliver(ctx, work)
+}
+
+func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsageDeliveryWork) error {
 	results, err := w.send(ctx, work)
 	completedAt := w.now()
+	if errors.Is(err, errBatchTooLarge) {
+		if len(work) > 1 {
+			middle := len(work) / 2
+			return errors.Join(w.deliver(ctx, work[:middle]), w.deliver(ctx, work[middle:]))
+		}
+		return errors.Join(err, w.store.RejectPublicURLUsageDelivery(ctx, work[0], err.Error(), completedAt))
+	}
 	if err != nil {
-		return true, errors.Join(err, w.retry(ctx, work, completedAt, err.Error()))
+		return errors.Join(err, w.retry(ctx, work, completedAt, err.Error()))
 	}
 	var result error
 	for index, item := range work {
@@ -167,7 +180,7 @@ func (w *Worker) process(ctx context.Context) (bool, error) {
 			result = errors.Join(result, rejection, w.retry(ctx, work[index:index+1], completedAt, string(*response.Code)))
 		}
 	}
-	return true, result
+	return result
 }
 
 func (w *Worker) send(
@@ -185,7 +198,7 @@ func (w *Worker) send(
 		return nil, fmt.Errorf("publicurlusageworker: encode batch: %w", err)
 	}
 	if len(body) > maximumRequestBytes {
-		return nil, errors.New("publicurlusageworker: request exceeds size limit")
+		return nil, errBatchTooLarge
 	}
 	response, err := w.api.IngestPublicURLUsageBucketReportsWithBody(ctx, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -193,6 +206,9 @@ func (w *Worker) send(
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusRequestEntityTooLarge {
+			return nil, fmt.Errorf("%w: receiver returned HTTP %d", errBatchTooLarge, response.StatusCode)
+		}
 		return nil, fmt.Errorf("publicurlusageworker: receiver returned HTTP %d", response.StatusCode)
 	}
 	reader := io.LimitReader(response.Body, maximumResponseBytes+1)

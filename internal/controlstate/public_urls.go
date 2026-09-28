@@ -276,7 +276,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if route.PolicyRevision > policyRevision {
 		return PublicURL{}, ErrPublicURLAuthority
 	}
-	hasOpenSession, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
+	hasOpenSession, _, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
 	if err != nil {
 		return PublicURL{}, err
 	}
@@ -350,7 +350,7 @@ func (d *Database) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now tim
 		return 0, fmt.Errorf("controlstate: delete expired ephemeral public_urls: lock public_urls: %w", err)
 	}
 	for _, route := range routes {
-		hasOpenSession, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
+		hasOpenSession, _, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
 		if err != nil {
 			return 0, err
 		}
@@ -663,30 +663,34 @@ func closeOpenPublishRun(
 	return closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason)
 }
 
-// expireStaleOpenPublishRun returns whether a live session remains. The caller
-// holds the route row through commit, so that answer stays valid in its transaction.
+// The caller holds the public URL row through commit, so the live/expired
+// result stays valid in its transaction. Closed is false if another control
+// already closed the run before the caller acquired the public URL lock.
 func expireStaleOpenPublishRun(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	pendingEvents *pendingIngressRoutingTableEvents,
 	route controlstatedb.ControlPublicUrl,
 	now time.Time,
-) (bool, error) {
+) (live, closed bool, retErr error) {
 	session, err := queries.GetOpenPublishRun(ctx, route.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("controlstate: expire publish run: read open session: %w", err)
+		return false, false, fmt.Errorf("controlstate: expire publish run: read open session: %w", err)
 	}
 	closedAt := now
 	if session.PublisherExpiresAt.Valid {
 		if session.PublisherExpiresAt.Time.After(now) {
-			return true, nil
+			return true, false, nil
 		}
 		closedAt = session.PublisherExpiresAt.Time
 	}
-	return false, closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunExpired, closedAt, "publisher_expired")
+	if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunExpired, closedAt, "publisher_expired"); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
 }
 
 func closePublishRun(

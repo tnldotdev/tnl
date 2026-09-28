@@ -182,6 +182,10 @@ type Querier interface {
 	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
+	// Lock only public URLs, never publish runs first: heartbeat and closure take
+	// the public URL before the run. The partial expiration index finds candidates;
+	// SKIP LOCKED lets other controls and active publishers keep their route locks.
+	LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error)
 	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error)

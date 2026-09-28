@@ -119,6 +119,9 @@ func serveWithRelayClientTLS(
 		d.database = database
 		database.Instrument(metrics)
 		metrics.RegisterDatabase(database.PrometheusMetrics)
+		d.forward("expire saved publish runs", runAsync(func() error {
+			return runExpiredPublishRunCleanup(lifetime, database)
+		}))
 		d.forward("clean up ephemeral routes", runAsync(func() error {
 			return runEphemeralRouteCleanup(lifetime, database)
 		}))

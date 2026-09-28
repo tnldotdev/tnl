@@ -19,6 +19,19 @@ FROM control.publish_runs
 WHERE public_url_id = sqlc.arg(public_url_id)
   AND closed_at IS NULL;
 
+-- Lock only public URLs, never publish runs first: heartbeat and closure take
+-- the public URL before the run. The partial expiration index finds candidates;
+-- SKIP LOCKED lets other controls and active publishers keep their route locks.
+-- name: LockExpiredPublishRunPublicURLs :many
+SELECT routes.*
+FROM control.publish_runs AS sessions
+JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
+WHERE sessions.closed_at IS NULL
+  AND sessions.publisher_expires_at <= sqlc.arg(now)
+ORDER BY sessions.publisher_expires_at, sessions.id
+LIMIT sqlc.arg(batch_size)
+FOR NO KEY UPDATE OF routes SKIP LOCKED;
+
 -- name: GetActivePublishRunMembership :one
 SELECT m.id, m.role, t.policy_revision
 FROM control.team_memberships AS m

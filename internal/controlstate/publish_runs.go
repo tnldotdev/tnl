@@ -22,6 +22,8 @@ import (
 
 const publishRunConnectionCount = 2
 
+const maximumExpiredPublishRunBatch = 100
+
 var (
 	ErrPublicURLNotFound         = errors.New("controlstate: public URL not found")
 	ErrRouteNotEnabled           = errors.New("controlstate: public URL is not enabled")
@@ -99,6 +101,29 @@ func (d *Database) CreatePublishRun(
 	if err := d.requireOpen(); err != nil {
 		return PublishRunSetup{}, err
 	}
+	result, retErr = d.createPublishRun(ctx, request, now, publisherLeaseDuration, connectionCredentialDuration)
+	if !errors.Is(retErr, ErrInsufficientRelayServices) {
+		return result, retErr
+	}
+	// Placement holds the relay reservation guard after the public URL lock.
+	// Roll back before closing expired runs on unrelated URLs, then retry once.
+	closed, err := d.ExpireSavedPublishRuns(ctx, now)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	if closed == 0 {
+		return PublishRunSetup{}, retErr
+	}
+	return d.createPublishRun(ctx, request, now, publisherLeaseDuration, connectionCredentialDuration)
+}
+
+func (d *Database) createPublishRun(
+	ctx context.Context,
+	request PublishRunRequest,
+	now time.Time,
+	publisherLeaseDuration time.Duration,
+	connectionCredentialDuration time.Duration,
+) (result PublishRunSetup, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: begin transaction: %w", err)
@@ -150,7 +175,7 @@ func (d *Database) CreatePublishRun(
 			return PublishRunSetup{}, ErrPublicURLAuthority
 		}
 	}
-	hasOpenSession, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
+	hasOpenSession, _, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
