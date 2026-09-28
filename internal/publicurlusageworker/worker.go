@@ -36,6 +36,7 @@ type Store interface {
 	ClaimPublicURLUsageDeliveries(context.Context, string, int, time.Time, time.Duration) ([]controlstate.PublicURLUsageDeliveryWork, error)
 	CompletePublicURLUsageDelivery(context.Context, controlstate.PublicURLUsageDeliveryWork, time.Time) error
 	RetryPublicURLUsageDelivery(context.Context, controlstate.PublicURLUsageDeliveryWork, time.Time, string, time.Time) error
+	RejectPublicURLUsageDelivery(context.Context, controlstate.PublicURLUsageDeliveryWork, string, time.Time) error
 }
 
 type publicURLUsageAPI interface {
@@ -160,7 +161,11 @@ func (w *Worker) process(ctx context.Context) (bool, error) {
 			continue
 		}
 		rejection := fmt.Errorf("publicurlusageworker: receiver rejected %s with %s", item.DeliveryKey, *response.Code)
-		result = errors.Join(result, rejection, w.retry(ctx, work[index:index+1], completedAt, string(*response.Code)))
+		if *response.Code == publicurlusagev1.BatchProblemCodeInvalidArgument {
+			result = errors.Join(result, rejection, w.store.RejectPublicURLUsageDelivery(ctx, item, string(*response.Code), completedAt))
+		} else {
+			result = errors.Join(result, rejection, w.retry(ctx, work[index:index+1], completedAt, string(*response.Code)))
+		}
 	}
 	return true, result
 }

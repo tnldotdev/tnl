@@ -375,3 +375,16 @@ WHERE delivery_id = sqlc.arg(delivery_id)
   AND work_epoch = sqlc.arg(work_epoch)
   AND work_expires_at > sqlc.arg(completed_at)
 RETURNING *;
+
+-- name: RejectPublicURLUsageDelivery :one
+UPDATE control.public_url_usage_deliveries
+SET state = 'rejected',
+    work_owner = NULL,
+    work_expires_at = NULL,
+    last_error = sqlc.arg(last_error)
+WHERE delivery_id = sqlc.arg(delivery_id)
+  AND state = 'delivering'
+  AND work_owner = sqlc.arg(work_owner)
+  AND work_epoch = sqlc.arg(work_epoch)
+  AND work_expires_at > sqlc.arg(completed_at)
+RETURNING *;

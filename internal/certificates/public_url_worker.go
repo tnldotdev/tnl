@@ -209,6 +209,13 @@ func (w *PublicURLWorker) createOrder(ctx context.Context, client acmeAPI, work 
 }
 
 func (w *PublicURLWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
+	// A known deadline must still retire the order when the CA cannot be
+	// reached; DNS cleanup does not require a fresh response from the CA.
+	for _, authorization := range work.Authorizations {
+		if authorization.ExpiresAt != nil && !authorization.ExpiresAt.After(now) && authorization.State != "canceled" {
+			return terminalf("authorization for %q expired in state %q", authorization.Identifier, authorization.State)
+		}
+	}
 	order, err := client.GetOrder(ctx, work.OrderURL)
 	if err != nil {
 		return err
@@ -478,7 +485,7 @@ func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI
 		return w.invalidOrder(ctx, client, work)
 	case "valid":
 		if order.Certificate == "" {
-			return errors.New("certificates: valid public URL order has no certificate URL")
+			return terminalf("valid public URL order has no certificate URL")
 		}
 		certificatePEM, err := client.DownloadCertificate(ctx, order.Certificate)
 		if err != nil {

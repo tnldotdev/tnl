@@ -31,10 +31,10 @@ func testDeliveryWork(id uint64, key string, now time.Time) controlstate.PublicU
 }
 
 type publicURLUsageStoreStub struct {
-	work                                                    []controlstate.PublicURLUsageDeliveryWork
-	expireErr, finalizeErr, claimErr, completeErr, retryErr error
+	work                                                               []controlstate.PublicURLUsageDeliveryWork
+	expireErr, finalizeErr, claimErr, completeErr, retryErr, rejectErr error
 
-	completed, retried, calls               []string
+	completed, retried, rejected, calls     []string
 	expiredAt, finalizedBefore, finalizedAt time.Time
 	claimWorker                             string
 	claimLimit                              int
@@ -86,4 +86,9 @@ func (s *publicURLUsageStoreStub) RetryPublicURLUsageDelivery(_ context.Context,
 	s.retried = append(s.retried, work.DeliveryKey)
 	s.retryCalls = append(s.retryCalls, retryCall{work, retryAt, message, now})
 	return s.retryErr
+}
+
+func (s *publicURLUsageStoreStub) RejectPublicURLUsageDelivery(_ context.Context, work controlstate.PublicURLUsageDeliveryWork, _ string, _ time.Time) error {
+	s.rejected = append(s.rejected, work.DeliveryKey)
+	return s.rejectErr
 }

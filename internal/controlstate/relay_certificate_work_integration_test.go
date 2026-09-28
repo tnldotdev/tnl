@@ -71,8 +71,10 @@ func TestIntegrationRelayCertificateOrderWork(t *testing.T) {
 	recovered.AuthorizationURL, recovered.ChallengeURL = "https://relay-acme.example.test/authz/1", "https://relay-acme.example.test/challenge/1"
 	recovered.ChallengeToken, recovered.ChallengeDigest = "token", sha256.Sum256([]byte("token"))
 	recovered.PresentationReference, recovered.AvailableAt = "relay_acme_presentation_integration", now
+	expiresAt := now.Add(time.Hour)
+	recovered.AuthorizationExpiresAt = &expiresAt
 	saved, err := database.SaveRelayCertificateOrderWork(t.Context(), recovered, now.Add(11*time.Millisecond))
-	if err != nil || saved.OrderRevision != recovered.OrderRevision+1 {
+	if err != nil || saved.OrderRevision != recovered.OrderRevision+1 || saved.AuthorizationExpiresAt == nil || !saved.AuthorizationExpiresAt.Equal(expiresAt) {
 		t.Fatalf("saved relay order = %#v, %v", saved, err)
 	}
 	challenge, err := database.GetRelayDNSChallengeContext(t.Context(), saved.ID)
@@ -80,7 +82,7 @@ func TestIntegrationRelayCertificateOrderWork(t *testing.T) {
 		t.Fatalf("relay challenge = %#v, %v", challenge, err)
 	}
 	issued, found, err := database.ClaimRelayCertificateOrderWork(t.Context(), "issuance", now.Add(12*time.Millisecond), time.Minute)
-	if err != nil || !found || issued.ID != work.ID {
+	if err != nil || !found || issued.ID != work.ID || issued.AuthorizationExpiresAt == nil || !issued.AuthorizationExpiresAt.Equal(expiresAt) {
 		t.Fatalf("claim issuance = %#v, %t, %v", issued, found, err)
 	}
 	certificate, notBefore, notAfter := issueRelayOrderCertificate(t, issued, now)

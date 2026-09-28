@@ -4,11 +4,51 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
+
+func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
+	url := newDisposableControlStateDatabaseURL(t, "schema_upgrade")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = db.Close() })
+	if err := createMigrationLock(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := migrationFiles.ReadFile("migrations/00001_baseline.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db,
+		fstest.MapFS{"00001_baseline.sql": &fstest.MapFile{Data: baseline}},
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(t.Context(), url); err != nil {
+		t.Fatalf("upgrade existing control schema: %v", err)
+	}
+	upgraded, err := Open(t.Context(), url, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upgraded.Close()
+	if err := upgraded.Readiness(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")

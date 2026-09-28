@@ -490,6 +490,7 @@ type ControlRelayCertificateOrder struct {
 	LastError              pgtype.Text
 	CreatedAt              pgtype.Timestamptz
 	UpdatedAt              pgtype.Timestamptz
+	AuthorizationExpiresAt pgtype.Timestamptz
 }
 
 type ControlRelayLease struct {

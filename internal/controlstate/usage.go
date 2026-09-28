@@ -662,6 +662,29 @@ func (d *Database) RetryPublicURLUsageDelivery(
 	return nil
 }
 
+func (d *Database) RejectPublicURLUsageDelivery(
+	ctx context.Context,
+	work PublicURLUsageDeliveryWork,
+	reason string,
+	now time.Time,
+) error {
+	if err := validatePublicURLUsageDeliveryWork(work); err != nil || reason == "" || len(reason) > 2048 || now.IsZero() {
+		return ErrPublicURLUsageDeliveryInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	if _, err := controlstatedb.New(d.pool).RejectPublicURLUsageDelivery(ctx, controlstatedb.RejectPublicURLUsageDeliveryParams{
+		LastError: text(reason), DeliveryID: int64(work.DeliveryID),
+		WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch), CompletedAt: timestamptz(now),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return ErrPublicURLUsageDeliveryWorkStale
+	} else if err != nil {
+		return fmt.Errorf("controlstate: reject public URL usage delivery: %w", err)
+	}
+	return nil
+}
+
 func publicURLUsageDeliveryWork(
 	delivery controlstatedb.ControlPublicUrlUsageDelivery,
 	bucket controlstatedb.ControlPublicUrlUsageBucket,

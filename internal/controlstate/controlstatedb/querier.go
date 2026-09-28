@@ -258,6 +258,7 @@ type Querier interface {
 	// row-only writers: they never wait for a service row or acquire this guard after
 	// holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
+	RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)

@@ -30,7 +30,7 @@ SET work_owner = $1,
     updated_at = GREATEST(orders.updated_at, $3)
 FROM candidate
 WHERE orders.id = candidate.id
-RETURNING orders.id, orders.account_id, orders.relay_service_id, orders.tls_server_name, orders.private_key_ciphertext, orders.private_key_storage_key_id, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.certificate_url, orders.authorization_url, orders.challenge_url, orders.challenge_token, orders.challenge_digest, orders.presentation_reference, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.last_error, orders.created_at, orders.updated_at
+RETURNING orders.id, orders.account_id, orders.relay_service_id, orders.tls_server_name, orders.private_key_ciphertext, orders.private_key_storage_key_id, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.certificate_url, orders.authorization_url, orders.challenge_url, orders.challenge_token, orders.challenge_digest, orders.presentation_reference, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.last_error, orders.created_at, orders.updated_at, orders.authorization_expires_at
 `
 
 type ClaimRelayCertificateOrderWorkParams struct {
@@ -73,6 +73,7 @@ func (q *Queries) ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimR
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthorizationExpiresAt,
 	)
 	return i, err
 }
@@ -192,7 +193,7 @@ INSERT INTO control.relay_certificate_orders (
     $9,
     $9
 )
-RETURNING id, account_id, relay_service_id, tls_server_name, private_key_ciphertext, private_key_storage_key_id, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, authorization_url, challenge_url, challenge_token, challenge_digest, presentation_reference, certificate_pem, not_before, not_after, renew_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+RETURNING id, account_id, relay_service_id, tls_server_name, private_key_ciphertext, private_key_storage_key_id, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, authorization_url, challenge_url, challenge_token, challenge_digest, presentation_reference, certificate_pem, not_before, not_after, renew_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at, authorization_expires_at
 `
 
 type InsertRelayCertificateOrderParams struct {
@@ -251,6 +252,7 @@ func (q *Queries) InsertRelayCertificateOrder(ctx context.Context, arg InsertRel
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthorizationExpiresAt,
 	)
 	return i, err
 }
@@ -327,48 +329,50 @@ SET state = $1,
     finalize_url = $3,
     certificate_url = $4,
     authorization_url = $5,
-    challenge_url = $6,
-    challenge_token = $7,
-    challenge_digest = $8,
-    presentation_reference = $9,
-    certificate_pem = $10,
-    not_before = $11,
-    not_after = $12,
-    renew_at = $13,
-    available_at = $14,
-    last_error = $15,
+    authorization_expires_at = $6,
+    challenge_url = $7,
+    challenge_token = $8,
+    challenge_digest = $9,
+    presentation_reference = $10,
+    certificate_pem = $11,
+    not_before = $12,
+    not_after = $13,
+    renew_at = $14,
+    available_at = $15,
+    last_error = $16,
     work_owner = NULL,
     work_expires_at = NULL,
-    updated_at = $16
-WHERE id = $17
-  AND work_owner = $18
-  AND work_epoch = $19
-  AND work_expires_at > $16
-  AND order_revision = $20
-RETURNING id, account_id, relay_service_id, tls_server_name, private_key_ciphertext, private_key_storage_key_id, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, authorization_url, challenge_url, challenge_token, challenge_digest, presentation_reference, certificate_pem, not_before, not_after, renew_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+    updated_at = $17
+WHERE id = $18
+  AND work_owner = $19
+  AND work_epoch = $20
+  AND work_expires_at > $17
+  AND order_revision = $21
+RETURNING id, account_id, relay_service_id, tls_server_name, private_key_ciphertext, private_key_storage_key_id, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, authorization_url, challenge_url, challenge_token, challenge_digest, presentation_reference, certificate_pem, not_before, not_after, renew_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at, authorization_expires_at
 `
 
 type SaveRelayCertificateOrderWorkParams struct {
-	State                 string
-	OrderUrl              pgtype.Text
-	FinalizeUrl           pgtype.Text
-	CertificateUrl        pgtype.Text
-	AuthorizationUrl      pgtype.Text
-	ChallengeUrl          pgtype.Text
-	ChallengeToken        pgtype.Text
-	ChallengeDigest       []byte
-	PresentationReference pgtype.Text
-	CertificatePem        []byte
-	NotBefore             pgtype.Timestamptz
-	NotAfter              pgtype.Timestamptz
-	RenewAt               pgtype.Timestamptz
-	AvailableAt           pgtype.Timestamptz
-	LastError             pgtype.Text
-	CompletedAt           pgtype.Timestamptz
-	OrderID               string
-	WorkOwner             pgtype.Text
-	WorkEpoch             int64
-	ExpectedOrderRevision int64
+	State                  string
+	OrderUrl               pgtype.Text
+	FinalizeUrl            pgtype.Text
+	CertificateUrl         pgtype.Text
+	AuthorizationUrl       pgtype.Text
+	AuthorizationExpiresAt pgtype.Timestamptz
+	ChallengeUrl           pgtype.Text
+	ChallengeToken         pgtype.Text
+	ChallengeDigest        []byte
+	PresentationReference  pgtype.Text
+	CertificatePem         []byte
+	NotBefore              pgtype.Timestamptz
+	NotAfter               pgtype.Timestamptz
+	RenewAt                pgtype.Timestamptz
+	AvailableAt            pgtype.Timestamptz
+	LastError              pgtype.Text
+	CompletedAt            pgtype.Timestamptz
+	OrderID                string
+	WorkOwner              pgtype.Text
+	WorkEpoch              int64
+	ExpectedOrderRevision  int64
 }
 
 func (q *Queries) SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error) {
@@ -378,6 +382,7 @@ func (q *Queries) SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRel
 		arg.FinalizeUrl,
 		arg.CertificateUrl,
 		arg.AuthorizationUrl,
+		arg.AuthorizationExpiresAt,
 		arg.ChallengeUrl,
 		arg.ChallengeToken,
 		arg.ChallengeDigest,
@@ -426,6 +431,7 @@ func (q *Queries) SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRel
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthorizationExpiresAt,
 	)
 	return i, err
 }

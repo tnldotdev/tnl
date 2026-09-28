@@ -979,6 +979,56 @@ func (q *Queries) MarkIngressUsageRunReported(ctx context.Context, arg MarkIngre
 	return i, err
 }
 
+const rejectPublicURLUsageDelivery = `-- name: RejectPublicURLUsageDelivery :one
+UPDATE control.public_url_usage_deliveries
+SET state = 'rejected',
+    work_owner = NULL,
+    work_expires_at = NULL,
+    last_error = $1
+WHERE delivery_id = $2
+  AND state = 'delivering'
+  AND work_owner = $3
+  AND work_epoch = $4
+  AND work_expires_at > $5
+RETURNING delivery_id, bucket_id, source_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
+`
+
+type RejectPublicURLUsageDeliveryParams struct {
+	LastError   pgtype.Text
+	DeliveryID  int64
+	WorkOwner   pgtype.Text
+	WorkEpoch   int64
+	CompletedAt pgtype.Timestamptz
+}
+
+func (q *Queries) RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error) {
+	row := q.db.QueryRow(ctx, rejectPublicURLUsageDelivery,
+		arg.LastError,
+		arg.DeliveryID,
+		arg.WorkOwner,
+		arg.WorkEpoch,
+		arg.CompletedAt,
+	)
+	var i ControlPublicUrlUsageDelivery
+	err := row.Scan(
+		&i.DeliveryID,
+		&i.BucketID,
+		&i.SourceRevision,
+		&i.DeliveryKey,
+		&i.State,
+		&i.WorkOwner,
+		&i.WorkEpoch,
+		&i.WorkExpiresAt,
+		&i.Attempts,
+		&i.AvailableAt,
+		&i.LastAttemptedAt,
+		&i.DeliveredAt,
+		&i.LastError,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const retryPublicURLUsageDelivery = `-- name: RetryPublicURLUsageDelivery :one
 UPDATE control.public_url_usage_deliveries
 SET state = 'failed',

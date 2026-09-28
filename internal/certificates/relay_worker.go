@@ -124,6 +124,24 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 
 func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.RelayCertificateOrderWork, now time.Time) error {
 	work.LastError = ""
+	if work.State == "authorizing" || work.State == "presenting" || work.State == "presented" || work.State == "validating" {
+		// Orders made before the deadline was persisted can still be recovered
+		// after an upgrade, without depending on DNS propagation.
+		if work.AuthorizationURL != "" && work.AuthorizationExpiresAt == nil {
+			authorization, err := client.GetAuthorization(ctx, work.AuthorizationURL)
+			if err != nil {
+				return err
+			}
+			if authorization.URL != work.AuthorizationURL || authorization.Identifier.Type != "dns" ||
+				authorization.Identifier.Value != work.TLSServerName || authorization.Wildcard {
+				return terminalf("ACME authorization identity changed")
+			}
+			work.AuthorizationExpiresAt = relayAuthorizationExpiry(authorization.Expires, nil, now)
+		}
+		if work.AuthorizationExpiresAt != nil && !work.AuthorizationExpiresAt.After(now) {
+			return terminalf("relay authorization expired")
+		}
+	}
 	switch work.State {
 	case "pending":
 		order, err := client.NewOrder(ctx, []string{work.TLSServerName}, w.config.Profile)
@@ -204,6 +222,11 @@ func (w *RelayWorker) authorize(ctx context.Context, client acmeAPI, work *contr
 		authorization.Identifier.Value != work.TLSServerName || authorization.Wildcard {
 		return terminalf("ACME authorization identity does not match the relay service")
 	}
+	expiresAt := relayAuthorizationExpiry(authorization.Expires, order.Expires, now)
+	if !expiresAt.After(now) {
+		return terminalf("relay authorization expired")
+	}
+	work.AuthorizationExpiresAt = expiresAt
 	if authorization.Status == "valid" {
 		work.AuthorizationURL = authorization.URL
 		work.AvailableAt = now.Add(w.config.PollInterval)
@@ -215,6 +238,9 @@ func (w *RelayWorker) authorize(ctx context.Context, client acmeAPI, work *contr
 	for _, challenge := range authorization.Challenges {
 		if challenge.Type != "dns-01" {
 			continue
+		}
+		if challenge.URL == "" || challenge.Token == "" {
+			return terminalf("ACME authorization has an incomplete DNS-01 challenge")
 		}
 		keyAuthorization, err := client.KeyAuthorization(challenge.Token)
 		if err != nil {
@@ -233,6 +259,17 @@ func (w *RelayWorker) authorize(ctx context.Context, client acmeAPI, work *contr
 		return nil
 	}
 	return terminalf("ACME authorization has no DNS-01 challenge")
+}
+
+func relayAuthorizationExpiry(authorizationExpires, orderExpires *time.Time, now time.Time) *time.Time {
+	if authorizationExpires != nil {
+		return authorizationExpires
+	}
+	if orderExpires != nil {
+		return orderExpires
+	}
+	fallback := now.Add(5 * time.Minute)
+	return &fallback
 }
 
 func (w *RelayWorker) validateAuthorization(
@@ -310,7 +347,7 @@ func (w *RelayWorker) collect(ctx context.Context, client acmeAPI, work *control
 		return terminalf("ACME order became invalid")
 	case "valid":
 		if order.Certificate == "" {
-			return errors.New("certificates: valid relay order has no certificate URL")
+			return terminalf("valid relay order has no certificate URL")
 		}
 		certificatePEM, err := client.DownloadCertificate(ctx, order.Certificate)
 		if err != nil {

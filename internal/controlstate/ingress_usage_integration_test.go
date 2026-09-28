@@ -154,6 +154,45 @@ func TestIntegrationPublicURLUsageDeliveryRecovery(t *testing.T) {
 	}
 }
 
+func TestIntegrationPublicURLUsageTerminalRejection(t *testing.T) {
+	database, base, lease, report := newIngressUsageFixture(t)
+	seedCompletedUsageReport(t, database, base, lease, report)
+	if _, err := database.FinalizePublicURLUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(62*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	claimedAt := base.Add(63 * time.Second)
+	claimed, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "first", 1, claimedAt, time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim delivery = %#v, %v", claimed, err)
+	}
+	work := claimed[0]
+	if err := database.RejectPublicURLUsageDelivery(t.Context(), work, "invalid_argument", claimedAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RetryPublicURLUsageDelivery(t.Context(), work, claimedAt.Add(2*time.Minute), "retry", claimedAt.Add(2*time.Second)); !errors.Is(err, ErrPublicURLUsageDeliveryWorkStale) {
+		t.Fatalf("stale rejected work was retried: %v", err)
+	}
+	var state, lastError string
+	if err := database.pool.QueryRow(t.Context(), `SELECT state, last_error FROM control.public_url_usage_deliveries WHERE delivery_key = $1`, work.DeliveryKey).Scan(&state, &lastError); err != nil || state != "rejected" || lastError != "invalid_argument" {
+		t.Fatalf("rejection = %q, %q, %v", state, lastError, err)
+	}
+	if remaining, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "next", 1, claimedAt.Add(24*time.Hour), time.Minute); err != nil || len(remaining) != 0 {
+		t.Fatalf("rejected delivery reclaimed = %#v, %v", remaining, err)
+	}
+	// A newer report revision for the same bucket is a distinct delivery.
+	var bucketID, revision int64
+	if err := database.pool.QueryRow(t.Context(), `UPDATE control.public_url_usage_buckets SET bucket_revision = bucket_revision + 1 WHERE public_url_id = $1 RETURNING bucket_id, bucket_revision`, work.PublicURLID).Scan(&bucketID, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_deliveries (bucket_id, source_revision, delivery_key, state, available_at, created_at) VALUES ($1, $2, 'usage_report_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'pending', $3, $3)`, bucketID, revision, claimedAt.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "newer", 1, claimedAt.Add(24*time.Hour), time.Minute)
+	if err != nil || len(newer) != 1 || newer[0].SourceRevision != work.SourceRevision+1 || newer[0].DeliveryKey == work.DeliveryKey {
+		t.Fatalf("new report revision = %#v, %v", newer, err)
+	}
+}
+
 func newIngressUsageFixture(t *testing.T) (*Database, time.Time, IngressLease, IngressUsageReport) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "usage")

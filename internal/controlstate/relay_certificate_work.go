@@ -27,35 +27,36 @@ var (
 )
 
 type RelayCertificateOrderWork struct {
-	ID                    string
-	Account               ACMEAccount
-	RelayServiceID        string
-	TLSServerName         string
-	PrivateKeyPEM         []byte
-	CSRDER                []byte
-	CSRDigest             [32]byte
-	State                 string
-	OrderRevision         uint64
-	OrderURL              string
-	FinalizeURL           string
-	CertificateURL        string
-	AuthorizationURL      string
-	ChallengeURL          string
-	ChallengeToken        string
-	ChallengeDigest       [32]byte
-	PresentationReference string
-	CertificatePEM        []byte
-	NotBefore             *time.Time
-	NotAfter              *time.Time
-	RenewAt               *time.Time
-	Attempts              uint64
-	AvailableAt           time.Time
-	LastError             string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	WorkerID              string
-	WorkEpoch             uint64
-	WorkExpiresAt         time.Time
+	ID                     string
+	Account                ACMEAccount
+	RelayServiceID         string
+	TLSServerName          string
+	PrivateKeyPEM          []byte
+	CSRDER                 []byte
+	CSRDigest              [32]byte
+	State                  string
+	OrderRevision          uint64
+	OrderURL               string
+	FinalizeURL            string
+	CertificateURL         string
+	AuthorizationURL       string
+	AuthorizationExpiresAt *time.Time
+	ChallengeURL           string
+	ChallengeToken         string
+	ChallengeDigest        [32]byte
+	PresentationReference  string
+	CertificatePEM         []byte
+	NotBefore              *time.Time
+	NotAfter               *time.Time
+	RenewAt                *time.Time
+	Attempts               uint64
+	AvailableAt            time.Time
+	LastError              string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	WorkerID               string
+	WorkEpoch              uint64
+	WorkExpiresAt          time.Time
 }
 
 type RelayDNSChallengeContext struct {
@@ -206,7 +207,8 @@ func (d *Database) SaveRelayCertificateOrderWork(
 	row, err := queries.SaveRelayCertificateOrderWork(ctx, controlstatedb.SaveRelayCertificateOrderWorkParams{
 		State: work.State, OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
 		CertificateUrl: nullableText(work.CertificateURL), AuthorizationUrl: nullableText(work.AuthorizationURL),
-		ChallengeUrl: nullableText(work.ChallengeURL), ChallengeToken: nullableText(work.ChallengeToken),
+		AuthorizationExpiresAt: nullableTime(work.AuthorizationExpiresAt),
+		ChallengeUrl:           nullableText(work.ChallengeURL), ChallengeToken: nullableText(work.ChallengeToken),
 		ChallengeDigest:       nullableBytes(work.ChallengeDigest[:], work.AuthorizationURL != ""),
 		PresentationReference: nullableText(work.PresentationReference), CertificatePem: nullableBytes(work.CertificatePEM, len(work.CertificatePEM) != 0),
 		NotBefore: nullableTime(work.NotBefore), NotAfter: nullableTime(work.NotAfter), RenewAt: nullableTime(work.RenewAt),
@@ -327,7 +329,8 @@ func (d *Database) relayCertificateOrderWork(
 		PrivateKeyPEM: privateKey, CSRDER: slices.Clone(row.CsrDer), State: row.State,
 		OrderRevision: uint64(row.OrderRevision), OrderURL: row.OrderUrl.String, FinalizeURL: row.FinalizeUrl.String,
 		CertificateURL: row.CertificateUrl.String, AuthorizationURL: row.AuthorizationUrl.String,
-		ChallengeURL: row.ChallengeUrl.String, ChallengeToken: row.ChallengeToken.String,
+		AuthorizationExpiresAt: optionalTime(row.AuthorizationExpiresAt),
+		ChallengeURL:           row.ChallengeUrl.String, ChallengeToken: row.ChallengeToken.String,
 		PresentationReference: row.PresentationReference.String, CertificatePEM: slices.Clone(row.CertificatePem),
 		NotBefore: optionalTime(row.NotBefore), NotAfter: optionalTime(row.NotAfter), RenewAt: optionalTime(row.RenewAt),
 		Attempts: uint64(row.Attempts), AvailableAt: row.AvailableAt.Time, LastError: row.LastError.String,
@@ -355,6 +358,7 @@ func validateRelayCertificateOrderWork(work RelayCertificateOrderWork) error {
 		work.OrderRevision == 0 || work.OrderRevision > math.MaxInt64 || work.Attempts == 0 || work.Attempts > math.MaxInt64 ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 || !validStateText(work.WorkerID) ||
 		work.WorkEpoch == 0 || work.WorkEpoch > math.MaxInt64 || work.WorkExpiresAt.IsZero() ||
+		work.AuthorizationExpiresAt != nil && work.AuthorizationExpiresAt.IsZero() ||
 		hasChallenge && !challengeComplete {
 		return ErrRelayCertificateWorkInvalid
 	}

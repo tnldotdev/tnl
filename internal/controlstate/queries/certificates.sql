@@ -277,6 +277,14 @@ WITH candidate AS (
           )
           OR EXISTS (
               SELECT 1
+              FROM control.acme_authorizations AS expired
+              WHERE expired.order_id = orders.id
+                AND expired.challenge_type = 'tls-alpn-01'
+                AND expired.state = 'presented'
+                AND expired.expires_at <= sqlc.arg(claimed_at)
+          )
+          OR EXISTS (
+              SELECT 1
               FROM (
                   SELECT events.routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
                   FROM control.ingress_routing_table_events AS events
