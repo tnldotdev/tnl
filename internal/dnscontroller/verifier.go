@@ -171,7 +171,26 @@ func (v *AuthoritativeVerifier) VerifyChallenge(
 			return false, nil
 		}
 	}
-	return true, nil
+	// After Route 53 reports INSYNC and its nameservers agree, also require
+	// the configured recursive resolver to see this value. It may still have
+	// cached an earlier NXDOMAIN answer from before the record existed.
+	return v.verifyRecursiveChallenge(ctx, recordName, expected)
+}
+
+func (v *AuthoritativeVerifier) verifyRecursiveChallenge(ctx context.Context, recordName, expected string) (bool, error) {
+	resolver := v.resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	values, err := resolver.LookupTXT(ctx, recordName)
+	if err != nil {
+		var dnsError *net.DNSError
+		if errors.As(err, &dnsError) && dnsError.IsNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("dnscontroller: resolve challenge through recursive DNS: %w", err)
+	}
+	return slices.Contains(values, expected), nil
 }
 
 func (v *AuthoritativeVerifier) query(

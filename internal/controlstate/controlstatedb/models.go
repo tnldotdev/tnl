@@ -154,6 +154,14 @@ type ControlDnsAuthority struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type ControlDnsChallengeChange struct {
+	ZoneID        string
+	RecordName    string
+	DesiredDigest []byte
+	ChangeID      string
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type ControlDomain struct {
 	ID                      string
 	Kind                    string

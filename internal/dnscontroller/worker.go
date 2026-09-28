@@ -23,6 +23,7 @@ const (
 type Zone struct {
 	ID          string
 	Nameservers []string
+	ChangeID    string
 }
 
 type PublicURLRecord struct {

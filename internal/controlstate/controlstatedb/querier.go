@@ -92,6 +92,7 @@ type Querier interface {
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)
 	GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
+	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetExternalAuthorityPublicURL(ctx context.Context, arg GetExternalAuthorityPublicURLParams) (GetExternalAuthorityPublicURLRow, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
@@ -314,6 +315,7 @@ type Querier interface {
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)
 	UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error)
 	UpdatePublicURLRecoveryHistogram(ctx context.Context, arg UpdatePublicURLRecoveryHistogramParams) (ControlPublicUrlRecoveryHistogram, error)
+	UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error
 	// A publisher transition invalidates the worker's authorization snapshot.
 	// Call only after changing authorizations while holding the order lock.
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error

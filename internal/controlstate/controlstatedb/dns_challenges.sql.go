@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getDNSChallengeChange = `-- name: GetDNSChallengeChange :one
+SELECT desired_digest, change_id
+FROM control.dns_challenge_changes
+WHERE zone_id = $1 AND record_name = $2
+`
+
+type GetDNSChallengeChangeParams struct {
+	ZoneID     string
+	RecordName string
+}
+
+type GetDNSChallengeChangeRow struct {
+	DesiredDigest []byte
+	ChangeID      string
+}
+
+func (q *Queries) GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error) {
+	row := q.db.QueryRow(ctx, getDNSChallengeChange, arg.ZoneID, arg.RecordName)
+	var i GetDNSChallengeChangeRow
+	err := row.Scan(&i.DesiredDigest, &i.ChangeID)
+	return i, err
+}
+
 const getDNSChallengeContext = `-- name: GetDNSChallengeContext :one
 SELECT
     routes.id AS public_url_id,
@@ -108,4 +131,32 @@ func (q *Queries) ListDNSChallengePresentations(ctx context.Context, baseIdentif
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertDNSChallengeChange = `-- name: UpsertDNSChallengeChange :exec
+INSERT INTO control.dns_challenge_changes (zone_id, record_name, desired_digest, change_id, updated_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (zone_id, record_name) DO UPDATE SET
+    desired_digest = excluded.desired_digest,
+    change_id = excluded.change_id,
+    updated_at = excluded.updated_at
+`
+
+type UpsertDNSChallengeChangeParams struct {
+	ZoneID        string
+	RecordName    string
+	DesiredDigest []byte
+	ChangeID      string
+	UpdatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error {
+	_, err := q.db.Exec(ctx, upsertDNSChallengeChange,
+		arg.ZoneID,
+		arg.RecordName,
+		arg.DesiredDigest,
+		arg.ChangeID,
+		arg.UpdatedAt,
+	)
+	return err
 }

@@ -21,6 +21,7 @@ const (
 	TestTierIntegration  TestTier = "integration"
 	TestTierBinary       TestTier = "binary"
 	TestTierDNS          TestTier = "dns"
+	TestTierRoute53      TestTier = "route53"
 	TestTierDatabaseLoad TestTier = "database-load"
 	TestTierRuntimeLoad  TestTier = "runtime-load"
 )
@@ -106,7 +107,7 @@ func selectedTestTier(t testing.TB) TestTier {
 	t.Helper()
 	tier := TestTier(*testTier)
 	switch tier {
-	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierDatabaseLoad, TestTierRuntimeLoad:
+	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierRoute53, TestTierDatabaseLoad, TestTierRuntimeLoad:
 		return tier
 	default:
 		t.Fatalf("unknown tnl test tier %q", tier)

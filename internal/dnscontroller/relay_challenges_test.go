@@ -54,6 +54,30 @@ func TestRelayChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	}
 }
 
+func TestRelayChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
+	digest := sha256.Sum256([]byte("relay"))
+	store := &relayChallengeStoreStub{challenge: controlstate.RelayDNSChallengeContext{
+		OrderID: "relay_certificate_order_1", RelayServiceID: "relay-a", TLSServerName: "relay-a.tnl.example.test",
+		State: "presented", ChallengeDigest: digest, PresentationReference: "presentation_1",
+		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest, Active: true}},
+	}}
+	provider := &challengeProviderStub{zone: Zone{ID: "ZSERVER", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}, pending: true}
+	verifier := &challengeVerifierStub{verified: true}
+	manager, err := NewRelayChallengeManager(store, provider, verifier, "tnl.example.test", "ZSERVER")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := manager.Verify(t.Context(), store.challenge.OrderID)
+	if err != nil || ready || verifier.calls != 0 {
+		t.Fatalf("relay validation before INSYNC: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	}
+	provider.pending = false
+	ready, err = manager.Verify(t.Context(), store.challenge.OrderID)
+	if err != nil || !ready || verifier.calls != 1 {
+		t.Fatalf("relay validation after INSYNC: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	}
+}
+
 type relayChallengeStoreStub struct {
 	challengeStoreStub
 	challenge controlstate.RelayDNSChallengeContext

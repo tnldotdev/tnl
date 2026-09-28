@@ -219,6 +219,13 @@ tasks:
           compose up --abort-on-container-exit --exit-code-from test --remove-orphans
         '
 
+  go:test:integration:route53:
+    desc: Issue one staging ACME certificate using real Route 53 TXT propagation in the staging zone
+    requires:
+      vars: [ZONE_ID]
+    cmds:
+      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'
+
   go:test:load:database:
     desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
     vars:

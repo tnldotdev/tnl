@@ -3,6 +3,7 @@ package controlstate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -14,7 +15,16 @@ import (
 )
 
 func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
-	url := newDisposableControlStateDatabaseURL(t, "schema_upgrade")
+	for _, initialVersion := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d", initialVersion), func(t *testing.T) {
+			testControlSchemaUpgrade(t, initialVersion)
+		})
+	}
+}
+
+func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
+	t.Helper()
+	url := newDisposableControlStateDatabaseURL(t, fmt.Sprintf("schema_upgrade_v%d", initialVersion))
 	config, err := parseDirectConfig(url)
 	if err != nil {
 		t.Fatal(err)
@@ -28,8 +38,15 @@ func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db,
-		fstest.MapFS{"00001_baseline.sql": &fstest.MapFile{Data: baseline}},
+	previous := fstest.MapFS{"00001_baseline.sql": &fstest.MapFile{Data: baseline}}
+	if initialVersion == 2 {
+		recovery, err := migrationFiles.ReadFile("migrations/00002_recovery.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous["00002_recovery.sql"] = &fstest.MapFile{Data: recovery}
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, previous,
 		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
 	if err != nil {
 		t.Fatal(err)

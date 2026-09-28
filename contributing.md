@@ -32,16 +32,17 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 
 ### choose a test tier
 
-| When you need to check          | Command after `mise exec --`      | What you need                                                            |
-| ------------------------------- | --------------------------------- | ------------------------------------------------------------------------ |
-| Routine behavior                | `task test`                       | Installed dependencies; builds the JavaScript package                    |
-| Go races                        | `task go:test:race`               | No database                                                              |
-| Database and service boundaries | `task go:test:integration`        | Docker and Pebble; Task manages PostgreSQL                               |
-| Binary behavior                 | `task go:test:integration:binary` | Integration prerequisites and Linux with local DNS/HTTPS ports available |
-| Authoritative DNS               | `task go:test:integration:dns`    | Docker Compose; runs DNS on port 53 inside Linux containers              |
-| Fuzz targets                    | `task go:test:fuzz`               | Go toolchain                                                             |
-| npm exports and tarballs        | `pnpm run pack`                   | Built package dependencies                                               |
-| Local release snapshot          | `task package`                    | Builds and checks packages; does not publish                             |
+| When you need to check           | Command after `mise exec --`                                 | What you need                                                            |
+| -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript package                    |
+| Go races                         | `task go:test:race`                                          | No database                                                              |
+| Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                               |
+| Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available |
+| Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers              |
+| Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in  |
+| Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                             |
+| npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                               |
+| Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                             |
 
 Use `RUN` to select an integration test, for example:
 
@@ -53,6 +54,13 @@ Binary integration changes subprocess trust and binds privileged ports. Run it
 only on Linux; the [integration workflow](.github/workflows/integration.yml)
 shows its setup. For database and runtime load tests, see the
 [local workloads](docs/benchmarks/local-workloads.md). Large runs are opt-in.
+
+The DNS e2e job in Checks uses one fresh name under `test.tnl.wtf`, a disposable
+Let's Encrypt staging account, and at most one order per `main` push. It
+checks real Route 53 change propagation and DNS-01 issuance, then removes
+only the test-owned TXT record. Keep the fake Route 53 and Pebble tests in
+routine and DNS integration CI; they cover retries and crashes without
+depending on an external service.
 
 Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Keep that flag for direct Go commands:
 

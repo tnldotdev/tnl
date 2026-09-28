@@ -127,6 +127,36 @@ func TestRoute53ProviderDoesNotRewriteUnchangedChallenge(t *testing.T) {
 	}
 }
 
+func TestRoute53ProviderWaitsForItsChallengeChange(t *testing.T) {
+	client, provider := route53TestProvider(t, "tunnels.example.test")
+	record := ChallengeRecord{
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", RecordName: "_acme-challenge.member.tunnels.example.test",
+		DesiredOwnedValues: []string{"owned"}, PreviouslyOwnedValues: []string{"owned"},
+	}
+	zone, err := provider.ReconcileChallenge(t.Context(), record)
+	if err != nil || zone.ChangeID != "/change/test" {
+		t.Fatalf("challenge change receipt = %#v, %v", zone, err)
+	}
+	client.changeStatus = types.ChangeStatusPending
+	if ready, err := provider.ChangeReady(t.Context(), zone.ChangeID); err != nil || ready || client.getChangeID != zone.ChangeID {
+		t.Fatalf("pending change = %t, queried %q, %v", ready, client.getChangeID, err)
+	}
+	client.changeStatus = types.ChangeStatusInsync
+	if ready, err := provider.ChangeReady(t.Context(), zone.ChangeID); err != nil || !ready {
+		t.Fatalf("synced change = %t, %v", ready, err)
+	}
+	// A lost receipt must be recoverable even when Route 53 already lists
+	// the desired TXT record, without changing any foreign TXT values.
+	client.recordSets[dnsName(record.RecordName)] = []types.ResourceRecordSet{
+		*simpleRecordSet(record.RecordName, types.RRTypeTxt, []string{`"foreign"`, `"owned"`}),
+	}
+	zone, err = provider.RefreshChallenge(t.Context(), record)
+	if err != nil || zone.ChangeID != "/change/test" || len(client.changes) != 1 ||
+		len(client.changes[0].ResourceRecordSet.ResourceRecords) != 2 {
+		t.Fatalf("recovered change receipt = %#v, writes=%#v, error=%v", zone, client.changes, err)
+	}
+}
+
 func ownedRoute53Tags(work controlstate.DNSAuthorityWork) []types.Tag {
 	return []types.Tag{
 		{Key: aws.String(managedByTagKey), Value: aws.String(managedByTagValue)},
@@ -150,6 +180,8 @@ type route53Stub struct {
 	listZones     func(*route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error)
 	listRecords   func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error)
 	changeRecords func(context.Context, *route53.ChangeResourceRecordSetsInput) (*route53.ChangeResourceRecordSetsOutput, error)
+	changeStatus  types.ChangeStatus
+	getChangeID   string
 }
 
 func (s *route53Stub) CreateHostedZone(
@@ -230,7 +262,16 @@ func (s *route53Stub) ChangeResourceRecordSets(
 		return s.changeRecords(ctx, input)
 	}
 	s.changes = append([]types.Change(nil), input.ChangeBatch.Changes...)
-	return &route53.ChangeResourceRecordSetsOutput{}, nil
+	return &route53.ChangeResourceRecordSetsOutput{ChangeInfo: &types.ChangeInfo{Id: aws.String("/change/test"), Status: types.ChangeStatusPending}}, nil
+}
+
+func (s *route53Stub) GetChange(_ context.Context, input *route53.GetChangeInput, _ ...func(*route53.Options)) (*route53.GetChangeOutput, error) {
+	s.getChangeID = aws.ToString(input.Id)
+	status := s.changeStatus
+	if status == "" {
+		status = types.ChangeStatusInsync
+	}
+	return &route53.GetChangeOutput{ChangeInfo: &types.ChangeInfo{Id: aws.String("/change/test"), Status: status}}, nil
 }
 
 func route53TestProvider(t *testing.T, domain string) (*route53Stub, *Route53Provider) {

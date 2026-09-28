@@ -33,6 +33,51 @@ type DNSChallengePresentation struct {
 	Active          bool
 }
 
+type DNSChallengeChange struct {
+	DesiredDigest [32]byte
+	ChangeID      string
+}
+
+func (d *Database) GetDNSChallengeChange(ctx context.Context, zoneID, recordName string) (DNSChallengeChange, bool, error) {
+	if !validStateText(zoneID) || !validStateText(recordName) {
+		return DNSChallengeChange{}, false, ErrDNSChallengeNotFound
+	}
+	if err := d.requireOpen(); err != nil {
+		return DNSChallengeChange{}, false, err
+	}
+	row, err := controlstatedb.New(d.pool).GetDNSChallengeChange(ctx, controlstatedb.GetDNSChallengeChangeParams{
+		ZoneID: zoneID, RecordName: recordName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DNSChallengeChange{}, false, nil
+	}
+	if err != nil {
+		return DNSChallengeChange{}, false, fmt.Errorf("controlstate: get DNS challenge change: %w", err)
+	}
+	if len(row.DesiredDigest) != 32 || !validStateText(row.ChangeID) {
+		return DNSChallengeChange{}, false, errors.New("controlstate: invalid DNS challenge change row")
+	}
+	change := DNSChallengeChange{ChangeID: row.ChangeID}
+	copy(change.DesiredDigest[:], row.DesiredDigest)
+	return change, true, nil
+}
+
+func (d *Database) SaveDNSChallengeChange(ctx context.Context, zoneID, recordName string, desiredDigest [32]byte, changeID string, now time.Time) error {
+	if !validStateText(zoneID) || !validStateText(recordName) || !validStateText(changeID) || now.IsZero() {
+		return ErrDNSChallengeNotFound
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	if err := controlstatedb.New(d.pool).UpsertDNSChallengeChange(ctx, controlstatedb.UpsertDNSChallengeChangeParams{
+		ZoneID: zoneID, RecordName: recordName, DesiredDigest: desiredDigest[:], ChangeID: changeID,
+		UpdatedAt: timestamptz(now),
+	}); err != nil {
+		return fmt.Errorf("controlstate: save DNS challenge change: %w", err)
+	}
+	return nil
+}
+
 func (d *Database) GetDNSChallengeContext(
 	ctx context.Context,
 	publicURLID, authorizationID string,

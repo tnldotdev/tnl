@@ -199,9 +199,20 @@ func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		f.mu.Lock()
+		changeID := fmt.Sprintf("/change/integration-%d", len(f.changes))
+		f.mu.Unlock()
 		write("ChangeResourceRecordSetsResponse", struct {
+			ID     string `xml:"ChangeInfo>Id"`
 			Status string `xml:"ChangeInfo>Status"`
-		}{"INSYNC"})
+		}{changeID, "INSYNC"})
+		return
+	}
+	if len(parts) == 2 && parts[0] == "change" && strings.HasPrefix(parts[1], "integration-") && r.Method == http.MethodGet {
+		write("GetChangeResponse", struct {
+			ID     string `xml:"ChangeInfo>Id"`
+			Status string `xml:"ChangeInfo>Status"`
+		}{"/change/" + parts[1], "INSYNC"})
 		return
 	}
 	f.mu.Lock()

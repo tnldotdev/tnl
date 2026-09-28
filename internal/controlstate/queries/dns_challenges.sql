@@ -31,3 +31,16 @@ WHERE challenge_type = 'dns-01'
       ELSE identifier
   END = sqlc.arg(base_identifier)
 ORDER BY id;
+
+-- name: GetDNSChallengeChange :one
+SELECT desired_digest, change_id
+FROM control.dns_challenge_changes
+WHERE zone_id = sqlc.arg(zone_id) AND record_name = sqlc.arg(record_name);
+
+-- name: UpsertDNSChallengeChange :exec
+INSERT INTO control.dns_challenge_changes (zone_id, record_name, desired_digest, change_id, updated_at)
+VALUES (sqlc.arg(zone_id), sqlc.arg(record_name), sqlc.arg(desired_digest), sqlc.arg(change_id), sqlc.arg(updated_at))
+ON CONFLICT (zone_id, record_name) DO UPDATE SET
+    desired_digest = excluded.desired_digest,
+    change_id = excluded.change_id,
+    updated_at = excluded.updated_at;

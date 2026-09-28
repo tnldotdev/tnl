@@ -2,10 +2,12 @@ package dnscontroller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
@@ -23,6 +25,7 @@ type ChallengeRecord struct {
 }
 
 type ChallengeStore interface {
+	ChallengeChangeStore
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	GetDNSChallengeContext(context.Context, string, string) (controlstate.DNSChallengeContext, error)
 	WithDNSChallengeLock(context.Context, string, func() error) error
@@ -32,7 +35,16 @@ var ErrChallengesNotConfigured = terminalf("DNS challenge automation is not conf
 
 type ChallengeProvider interface {
 	ReconcileChallenge(context.Context, ChallengeRecord) (Zone, error)
+	RefreshChallenge(context.Context, ChallengeRecord) (Zone, error)
+	ChangeReady(context.Context, string) (bool, error)
 }
+
+type ChallengeChangeStore interface {
+	GetDNSChallengeChange(context.Context, string, string) (controlstate.DNSChallengeChange, bool, error)
+	SaveDNSChallengeChange(context.Context, string, string, [32]byte, string, time.Time) error
+}
+
+var errChallengePropagationPending = errors.New("dnscontroller: Route 53 challenge change is still propagating")
 
 type ChallengeVerifier interface {
 	VerifyChallenge(context.Context, string, string, []string) (bool, error)
@@ -86,13 +98,93 @@ func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authoriza
 		if challenge.State != state || record.RecordName != recordName {
 			return terminalf("cannot reconcile DNS challenge in state %q for %q", challenge.State, record.RecordName)
 		}
-		zone, err := m.provider.ReconcileChallenge(ctx, record)
-		if err == nil && state == "presented" {
-			verified, err = m.verifier.VerifyChallenge(ctx, record.RecordName, expected, zone.Nameservers)
-		}
+		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, state)
 		return err
 	})
 	return verified, err
+}
+
+// The per-name lock around this call orders every write and receipt for a
+// shared TXT record, including wildcard and exact-name authorizations.
+func reconcileChallengeChange(
+	ctx context.Context, store ChallengeChangeStore, provider ChallengeProvider, verifier ChallengeVerifier,
+	record ChallengeRecord, expected, state string,
+) (bool, error) {
+	values := slices.Clone(record.DesiredOwnedValues)
+	slices.Sort(values)
+	digest := sha256.Sum256([]byte(strings.Join(values, "\x00")))
+	zoneID := canonicalZoneID(record.ZoneID)
+	change, found, err := store.GetDNSChallengeChange(ctx, zoneID, record.RecordName)
+	if err != nil {
+		return false, err
+	}
+	// Do not rewrite a TXT record while its last Route 53 change is pending:
+	// listing records can see the new value before all DNS replicas have it.
+	checkedReady := false
+	if found && change.DesiredDigest == digest {
+		if state == "presenting" {
+			return false, nil
+		}
+		checkedReady, err = provider.ChangeReady(ctx, change.ChangeID)
+		if err != nil {
+			return false, err
+		}
+		if !checkedReady {
+			if state == "cleaning" {
+				return false, errChallengePropagationPending
+			}
+			return false, nil
+		}
+	}
+	zone, err := provider.ReconcileChallenge(ctx, record)
+	if err != nil {
+		return false, err
+	}
+	if zone.ChangeID == "" && (!found || change.DesiredDigest != digest) && len(values) != 0 {
+		// The Route 53 write may have succeeded just before a crash or a lost
+		// response. An idempotent UPSERT obtains a new, durable receipt.
+		zone, err = provider.RefreshChallenge(ctx, record)
+		if err != nil {
+			return false, err
+		}
+	}
+	if zone.ChangeID != "" {
+		if err := store.SaveDNSChallengeChange(ctx, zoneID, record.RecordName, digest, zone.ChangeID, time.Now()); err != nil {
+			return false, err
+		}
+		change, found = controlstate.DNSChallengeChange{DesiredDigest: digest, ChangeID: zone.ChangeID}, true
+		checkedReady = false
+	}
+	if state == "presenting" {
+		if !found || change.DesiredDigest != digest {
+			return false, errors.New("dnscontroller: challenge presentation has no Route 53 change receipt")
+		}
+		return false, nil
+	}
+	if state == "cleaning" && (!found || change.DesiredDigest != digest) {
+		// A deletion already absent in Route 53 needs no further change. A
+		// later presentation will obtain a fresh receipt before validation.
+		return false, nil
+	}
+	if !found || change.DesiredDigest != digest {
+		return false, errors.New("dnscontroller: challenge has no current Route 53 change receipt")
+	}
+	if !checkedReady {
+		checkedReady, err = provider.ChangeReady(ctx, change.ChangeID)
+		if err != nil {
+			return false, err
+		}
+	}
+	if !checkedReady {
+		if state == "cleaning" {
+			return false, errChallengePropagationPending
+		}
+		return false, nil
+	}
+	if state == "presented" {
+		return verifier.VerifyChallenge(ctx, record.RecordName, expected, zone.Nameservers)
+	}
+	return false, nil
 }
 
 func (m *ChallengeManager) challengeRecord(

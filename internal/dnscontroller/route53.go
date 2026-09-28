@@ -34,6 +34,7 @@ type route53API interface {
 	DeleteHostedZone(context.Context, *route53.DeleteHostedZoneInput, ...func(*route53.Options)) (*route53.DeleteHostedZoneOutput, error)
 	ListResourceRecordSets(context.Context, *route53.ListResourceRecordSetsInput, ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error)
 	ChangeResourceRecordSets(context.Context, *route53.ChangeResourceRecordSetsInput, ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error)
+	GetChange(context.Context, *route53.GetChangeInput, ...func(*route53.Options)) (*route53.GetChangeOutput, error)
 }
 
 func (p *Route53Provider) PublishPublicURL(ctx context.Context, record PublicURLRecord) (Zone, error) {
@@ -125,6 +126,16 @@ func (p *Route53Provider) RemovePublicURL(ctx context.Context, record PublicURLR
 }
 
 func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record ChallengeRecord) (Zone, error) {
+	return p.reconcileChallenge(ctx, record, false)
+}
+
+// RefreshChallenge obtains a new change ID when an earlier Route 53 write
+// succeeded but its receipt was lost before it could be saved.
+func (p *Route53Provider) RefreshChallenge(ctx context.Context, record ChallengeRecord) (Zone, error) {
+	return p.reconcileChallenge(ctx, record, true)
+}
+
+func (p *Route53Provider) reconcileChallenge(ctx context.Context, record ChallengeRecord, force bool) (Zone, error) {
 	zoneRecord := PublicURLRecord{
 		ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, ClaimedZone: record.ClaimedZone,
 		AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
@@ -174,7 +185,7 @@ func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record Challen
 	if existing == nil && len(nextValues) == 0 {
 		return zone, nil
 	}
-	if existing != nil && aws.ToInt64(existing.TTL) == 60 {
+	if !force && existing != nil && aws.ToInt64(existing.TTL) == 60 {
 		currentValues := make([]string, len(existing.ResourceRecords))
 		for index, value := range existing.ResourceRecords {
 			currentValues[index] = aws.ToString(value.Value)
@@ -194,13 +205,39 @@ func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record Challen
 	} else {
 		change.ResourceRecordSet = simpleRecordSet(record.RecordName, types.RRTypeTxt, nextValues)
 	}
-	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+	result, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zone.ID),
 		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("reconcile owned tnl ACME challenge values"), Changes: []types.Change{change}},
-	}); err != nil {
+	})
+	if err != nil {
 		return Zone{}, fmt.Errorf("dnscontroller: reconcile Route 53 DNS challenge: %w", err)
 	}
+	if result == nil || result.ChangeInfo == nil || aws.ToString(result.ChangeInfo.Id) == "" {
+		return Zone{}, errors.New("dnscontroller: Route 53 DNS challenge change has no ID")
+	}
+	zone.ChangeID = aws.ToString(result.ChangeInfo.Id)
 	return zone, nil
+}
+
+func (p *Route53Provider) ChangeReady(ctx context.Context, changeID string) (bool, error) {
+	if changeID == "" {
+		return false, errors.New("dnscontroller: Route 53 DNS challenge change has no ID")
+	}
+	output, err := p.client.GetChange(ctx, &route53.GetChangeInput{Id: aws.String(changeID)})
+	if err != nil {
+		return false, fmt.Errorf("dnscontroller: check Route 53 DNS challenge change: %w", err)
+	}
+	if output == nil || output.ChangeInfo == nil {
+		return false, errors.New("dnscontroller: Route 53 DNS challenge change has no status")
+	}
+	switch string(output.ChangeInfo.Status) {
+	case "PENDING":
+		return false, nil
+	case "INSYNC":
+		return true, nil
+	default:
+		return false, fmt.Errorf("dnscontroller: unexpected Route 53 DNS challenge change status %q", output.ChangeInfo.Status)
+	}
 }
 
 type Route53Provider struct{ client route53API }

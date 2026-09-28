@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
@@ -57,6 +58,109 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	if !slices.Equal(provider.record.DesiredOwnedValues, wantRemaining) ||
 		!slices.Equal(provider.record.PreviouslyOwnedValues, wantValues) {
 		t.Fatalf("cleaned challenge record = %#v", provider.record)
+	}
+}
+
+func TestChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
+	digest := sha256.Sum256([]byte("challenge"))
+	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
+		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
+		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
+		PresentationReference: "presentation_1", State: "presented", ChallengeDigest: digest,
+		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest, Active: true}},
+	}}
+	provider := &challengeProviderStub{zone: Zone{ID: "ZMANAGED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}, pending: true}
+	verifier := &challengeVerifierStub{verified: true}
+	manager, err := NewChallengeManager(store, provider, verifier, Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	if err != nil || ready || verifier.calls != 0 {
+		t.Fatalf("pending Route 53 change reached CA readiness: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	}
+	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	if err != nil || ready || provider.calls != 1 || verifier.calls != 0 {
+		t.Fatalf("pending change was rewritten or verified: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
+	}
+	provider.pending = false
+	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	if err != nil || !ready || verifier.calls != 1 {
+		t.Fatalf("INSYNC Route 53 change did not become ready: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	}
+}
+
+func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
+	digest := sha256.Sum256([]byte("challenge"))
+	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
+		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
+		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_1",
+		PresentationReference: "presentation_1", State: "presented", ChallengeDigest: digest,
+		Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest, Active: true}},
+	}}
+	provider := &challengeProviderStub{zone: Zone{ID: "ZMANAGED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}, pending: true}
+	// Route 53 already shows the desired record, but its previous change ID
+	// was lost after the write and before persistence.
+	provider.reconcile = func(context.Context, ChallengeRecord) (Zone, error) { return provider.zone, nil }
+	verifier := &challengeVerifierStub{verified: true}
+	config := Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"}
+	first, err := NewChallengeManager(store, provider, verifier, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := first.Verify(t.Context(), "public_url_1", "authorization_1")
+	if err != nil || ready || provider.refreshCalls != 1 || verifier.calls != 0 {
+		t.Fatalf("lost receipt recovery: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
+	}
+	provider.pending = false
+	restarted, err := NewChallengeManager(store, provider, verifier, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err = restarted.Verify(t.Context(), "public_url_1", "authorization_1")
+	if err != nil || !ready || provider.refreshCalls != 1 || verifier.calls != 1 {
+		t.Fatalf("restarted change check: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
+	}
+}
+
+func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
+	firstDigest := sha256.Sum256([]byte("wildcard"))
+	secondDigest := sha256.Sum256([]byte("exact"))
+	store := &challengeStoreStub{challenge: controlstate.DNSChallengeContext{
+		PublicURLID: "public_url_1", TeamID: "team_1", DomainID: "domain_1",
+		Identifier: "*.member.tunnels.example.test", AuthorizationID: "authorization_wildcard",
+		PresentationReference: "presentation_1", State: "presenting", ChallengeDigest: firstDigest,
+		Presentations: []controlstate.DNSChallengePresentation{
+			{ChallengeDigest: firstDigest, Active: true}, {ChallengeDigest: secondDigest, Active: true},
+		},
+	}}
+	provider := &challengeProviderStub{zone: Zone{ID: "ZMANAGED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
+	verifier := &challengeVerifierStub{verified: true}
+	manager, err := NewChallengeManager(store, provider, verifier, Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Present(t.Context(), "public_url_1", "authorization_wildcard"); err != nil {
+		t.Fatal(err)
+	}
+	store.challenge.State = "cleaning"
+	store.challenge.Presentations[0].Active = false
+	provider.pending = true
+	if err := manager.Cleanup(t.Context(), "public_url_1", "authorization_wildcard"); !errors.Is(err, errChallengePropagationPending) {
+		t.Fatalf("cleanup completed before latest TXT change propagated: %v", err)
+	}
+	store.challenge.State = "presented"
+	store.challenge.AuthorizationID = "authorization_exact"
+	store.challenge.Identifier = "member.tunnels.example.test"
+	store.challenge.ChallengeDigest = secondDigest
+	ready, err := manager.Verify(t.Context(), "public_url_1", "authorization_exact")
+	if err != nil || ready || verifier.calls != 0 {
+		t.Fatalf("other authorization validated during shared TXT change: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	}
+	provider.pending = false
+	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_exact")
+	if err != nil || !ready || verifier.calls != 1 {
+		t.Fatalf("other authorization after shared TXT sync: ready=%t checks=%d error=%v", ready, verifier.calls, err)
 	}
 }
 
@@ -265,6 +369,8 @@ type challengeStoreStub struct {
 	getContext     func(context.Context, string, string) (controlstate.DNSChallengeContext, error)
 	lock           sync.Mutex
 	lockRequested  func()
+	changes        map[string]controlstate.DNSChallengeChange
+	saveChangeErr  error
 }
 
 func (s *challengeStoreStub) WithDNSChallengeLock(_ context.Context, _ string, run func() error) error {
@@ -288,12 +394,30 @@ func (s *challengeStoreStub) GetDNSAuthority(context.Context, string) (controlst
 	return s.authority, s.authorityErr
 }
 
+func (s *challengeStoreStub) GetDNSChallengeChange(_ context.Context, zoneID, recordName string) (controlstate.DNSChallengeChange, bool, error) {
+	change, found := s.changes[zoneID+"/"+recordName]
+	return change, found, nil
+}
+
+func (s *challengeStoreStub) SaveDNSChallengeChange(_ context.Context, zoneID, recordName string, digest [32]byte, changeID string, _ time.Time) error {
+	if s.saveChangeErr != nil {
+		return s.saveChangeErr
+	}
+	if s.changes == nil {
+		s.changes = make(map[string]controlstate.DNSChallengeChange)
+	}
+	s.changes[zoneID+"/"+recordName] = controlstate.DNSChallengeChange{DesiredDigest: digest, ChangeID: changeID}
+	return nil
+}
+
 type challengeProviderStub struct {
-	mu        sync.Mutex
-	record    ChallengeRecord
-	zone      Zone
-	calls     int
-	reconcile func(context.Context, ChallengeRecord) (Zone, error)
+	mu           sync.Mutex
+	record       ChallengeRecord
+	zone         Zone
+	calls        int
+	refreshCalls int
+	pending      bool
+	reconcile    func(context.Context, ChallengeRecord) (Zone, error)
 }
 
 func (s *challengeProviderStub) ReconcileChallenge(ctx context.Context, record ChallengeRecord) (Zone, error) {
@@ -305,7 +429,27 @@ func (s *challengeProviderStub) ReconcileChallenge(ctx context.Context, record C
 	if reconcile != nil {
 		return reconcile(ctx, record)
 	}
+	if zone.ID == "" {
+		zone.ID = record.ZoneID
+	}
+	if zone.ChangeID == "" {
+		zone.ChangeID = "/change/test"
+	}
 	return zone, nil
+}
+
+func (s *challengeProviderStub) RefreshChallenge(_ context.Context, record ChallengeRecord) (Zone, error) {
+	s.refreshCalls++
+	zone := s.zone
+	if zone.ID == "" {
+		zone.ID = record.ZoneID
+	}
+	zone.ChangeID = "/change/recovered"
+	return zone, nil
+}
+
+func (s *challengeProviderStub) ChangeReady(context.Context, string) (bool, error) {
+	return !s.pending, nil
 }
 
 type challengeVerifierStub struct {

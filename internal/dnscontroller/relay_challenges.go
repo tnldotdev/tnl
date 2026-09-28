@@ -9,6 +9,7 @@ import (
 )
 
 type RelayChallengeStore interface {
+	ChallengeChangeStore
 	GetRelayDNSChallengeContext(context.Context, string) (controlstate.RelayDNSChallengeContext, error)
 	WithDNSChallengeLock(context.Context, string, func() error) error
 }
@@ -64,10 +65,7 @@ func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID, state st
 		if challenge.State != state && !(state == "cleaning" && challenge.State == "failed_cleaning") || record.RecordName != recordName {
 			return terminalf("cannot reconcile relay DNS challenge in state %q for %q", challenge.State, record.RecordName)
 		}
-		zone, err := m.provider.ReconcileChallenge(ctx, record)
-		if err == nil && state == "presented" {
-			verified, err = m.verifier.VerifyChallenge(ctx, record.RecordName, expected, zone.Nameservers)
-		}
+		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, state)
 		return err
 	})
 	return verified, err

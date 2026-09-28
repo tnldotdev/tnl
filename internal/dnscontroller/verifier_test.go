@@ -2,6 +2,7 @@ package dnscontroller
 
 import (
 	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -75,6 +76,31 @@ func TestAuthoritativeVerifierFindsChallengeAmongTXTValues(t *testing.T) {
 	)
 	if err != nil || !valid {
 		t.Fatalf("challenge TXT = valid %v, error %v", valid, err)
+	}
+}
+
+func TestAuthoritativeVerifierWaitsForRecursiveChallengeAnswer(t *testing.T) {
+	var visible atomic.Bool
+	address := verifierDNS(t, func(_ string, request *dns.Msg) *dns.Msg {
+		if !visible.Load() {
+			return verifierResponse(t, request, true, dns.RcodeNameError)
+		}
+		return verifierResponse(t, request, true, dns.RcodeSuccess,
+			`_acme-challenge.example.test. 60 IN TXT "owned"`,
+		)
+	})
+	verifier, err := NewAuthoritativeVerifier(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := verifier.verifyRecursiveChallenge(t.Context(), "_acme-challenge.example.test", "owned")
+	if err != nil || ready {
+		t.Fatalf("cached missing TXT: ready=%t error=%v", ready, err)
+	}
+	visible.Store(true)
+	ready, err = verifier.verifyRecursiveChallenge(t.Context(), "_acme-challenge.example.test", "owned")
+	if err != nil || !ready {
+		t.Fatalf("recursive TXT visible: ready=%t error=%v", ready, err)
 	}
 }
 
