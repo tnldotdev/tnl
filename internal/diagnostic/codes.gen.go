@@ -6,6 +6,7 @@ const (
 	TargetInvalid                Code = "TNL_TARGET_INVALID"
 	PublicURLInvalid             Code = "TNL_PUBLIC_URL_INVALID"
 	RequestRejected              Code = "TNL_REQUEST_REJECTED"
+	RequestMisdirected           Code = "TNL_REQUEST_MISDIRECTED"
 	RequestLimitReached          Code = "TNL_REQUEST_LIMIT_REACHED"
 	IPPolicyDenied               Code = "TNL_IP_POLICY_DENIED"
 	FrameworkRegistrationTimeout Code = "TNL_FRAMEWORK_REGISTRATION_TIMEOUT"

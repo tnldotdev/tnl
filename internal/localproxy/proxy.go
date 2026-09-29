@@ -127,8 +127,8 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 	}
 	requests := make(chan struct{}, requestLimit)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if !validRequest(request, hostname) {
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+		if code := validateRequest(request, hostname); code != "" {
+			diagnostic.WriteHTTP(response, request, code)
 			return
 		}
 		// Admission is shared across the route, not per visitor connection. Do
@@ -191,27 +191,36 @@ func NormalizeTarget(target string) (string, error) {
 	return "http://" + targetAddress, nil
 }
 
-func validRequest(request *http.Request, hostname string) bool {
+func validateRequest(request *http.Request, hostname string) diagnostic.Code {
 	// Bind origin-form authority and TLS SNI to this route's hostname.
 	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
-		return false
+		return diagnostic.RequestRejected
 	}
 	authority, err := naming.CanonicalizeAuthority(request.Host)
-	if err != nil || authority != hostname || request.TLS == nil {
-		return false
+	if err != nil || request.TLS == nil {
+		return diagnostic.RequestRejected
 	}
 	serverName, err := naming.CanonicalizeHostname(request.TLS.ServerName)
 	if err != nil || serverName != hostname {
-		return false
+		return diagnostic.RequestRejected
+	}
+	if authority != hostname {
+		// HTTP/2 clients may reuse a TLS connection for sibling hostnames on
+		// the same wildcard certificate. A 421 asks them to retry on a new
+		// connection with the requested hostname as SNI.
+		if request.ProtoMajor == 2 {
+			return diagnostic.RequestMisdirected
+		}
+		return diagnostic.RequestRejected
 	}
 	fields := 0
 	for _, values := range request.Header {
 		fields += len(values)
 		if fields > maxHeaderFields {
-			return false
+			return diagnostic.RequestRejected
 		}
 	}
-	return true
+	return ""
 }
 
 func removeForwardingHeaders(headers http.Header) {

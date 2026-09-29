@@ -80,6 +80,51 @@ func TestRouteServerBoundsHTTP2FanoutAcrossVisitorConnections(t *testing.T) {
 	assertRouteAvailable(t, client)
 }
 
+func TestRouteServerRejectsMisdirectedHTTP2StreamWithRetryableStatus(t *testing.T) {
+	var forwarded atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		forwarded.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(upstream.Close)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: upstream.URL,
+		Certificate: publicURLTestCertificate(t, "*.example"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	if err := route.Start(); err != nil {
+		t.Fatal(err)
+	}
+	client := singleConnectionRouteClient(t, route, true)
+
+	// Establish a TLS connection for route.example, then send a stream for a
+	// different authority over that same HTTP/2 connection, as browsers can do
+	// when sibling public URLs share a wildcard certificate and ingress address.
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://route.example/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doRouteRequest(client, request); got.err != nil || got.status != http.StatusNoContent || got.protocol != 2 {
+		t.Fatalf("first HTTP/2 request = %+v", got)
+	}
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, "https://route.example/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "sibling.example"
+	got := doRouteRequest(client, request)
+	if got.err != nil || got.status != http.StatusMisdirectedRequest || got.protocol != 2 ||
+		got.header.Get("Tnl-Error-Code") != "TNL_REQUEST_MISDIRECTED" {
+		t.Fatalf("misdirected HTTP/2 stream = %+v", got)
+	}
+	if count := forwarded.Load(); count != 1 {
+		t.Fatalf("requests reaching local service = %d, want 1", count)
+	}
+}
+
 func TestRouteServerTimesOutIncompleteBodies(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		for _, trickle := range []bool{false, true} {

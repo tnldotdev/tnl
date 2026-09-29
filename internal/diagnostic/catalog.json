@@ -113,6 +113,30 @@
       }
     },
     {
+      "code": "TNL_REQUEST_MISDIRECTED",
+      "slug": "request-misdirected",
+      "category": "visitor request",
+      "title": "request misdirected",
+      "summary": "this HTTP/2 connection belongs to another public url. retry on a new connection to the requested hostname.",
+      "description": "the browser reused an HTTP/2 connection for a different public url under the same certificate. tnl asked it to retry on a new connection.",
+      "diagram_label": "the visitor request reached the wrong public url",
+      "surfaces": ["browser"],
+      "http_status": 421,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "request misdirected", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the HTTP/2 request hostname differs from the TLS server name used for this connection"
+      ],
+      "actions": {
+        "visitor": ["retry the exact HTTPS url on a new connection"],
+        "publisher": ["check the requested hostname and any clients reusing HTTP/2 connections"]
+      }
+    },
+    {
       "code": "TNL_REQUEST_LIMIT_REACHED",
       "slug": "request-limit",
       "category": "visitor request",
