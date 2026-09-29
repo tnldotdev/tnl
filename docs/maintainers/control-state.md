@@ -4,6 +4,16 @@ Audience: tnl maintainers working on `internal/controlstate`, routing
 publication, usage aggregation, or recovery. Product and operator documentation
 does not depend on these implementation details.
 
+## keep migrations backward compatible
+
+`tnld migrate` applies migrations through the direct database URL before the
+new control release rolls out. Each migration must preserve the reads and
+writes of control and standalone processes still serving traffic. Add new
+schema first; remove old schema only after all its users have been replaced.
+The runtime checks a minimum schema version and accepts newer versions; an
+older `tnld migrate` still rejects databases newer than its embedded migrations.
+Runtime v4 also accepts v3 because the v4 migration only changes an index.
+
 ## acquire locks in one order
 
 Every transaction must choose its complete lock order before it starts taking

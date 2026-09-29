@@ -340,7 +340,7 @@ Frames follow this general form:
 - The five HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, and `api/public-url-usage/v1/openapi.yaml`. They generate committed models, clients, and strict server interfaces under `pkg/api/*`. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
-- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving controls and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact supported schema version.
+- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving controls and standalone processes accept only pooled `TNLD_DATABASE_URL` and require a minimum schema version. Keep migrations backward compatible with all control and standalone processes still serving traffic; add schema before switching its users and remove old schema only after those users have stopped.
 
 # Operational Safety
 

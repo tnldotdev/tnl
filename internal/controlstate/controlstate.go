@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	schemaVersion       int64 = 4
-	versionTable              = "control.goose_db_version"
-	bootstrapRetryDelay       = 25 * time.Millisecond
+	schemaVersion        int64 = 4
+	minimumSchemaVersion int64 = 3
+	versionTable               = "control.goose_db_version"
+	bootstrapRetryDelay        = 25 * time.Millisecond
 )
 
 //go:embed migrations/*.sql
@@ -147,14 +148,9 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 		return nil, fmt.Errorf("controlstate: connect database: %w", err)
 	}
 
-	version, err := readSchemaVersion(ctx, pool)
-	if err != nil {
+	if err := checkSchemaVersion(ctx, pool); err != nil {
 		pool.Close()
 		return nil, err
-	}
-	if version != schemaVersion {
-		pool.Close()
-		return nil, fmt.Errorf("controlstate: incompatible database schema version %d; supported version is %d", version, schemaVersion)
 	}
 	return &Database{pool: pool, storageKey: keyring, activity: activity, connections: connections}, nil
 }
@@ -179,18 +175,23 @@ func (d *Database) Health(ctx context.Context) error {
 	return nil
 }
 
-// Readiness verifies runtime connectivity and the exact supported schema
-// version. Unlike Open, it is safe to call repeatedly from a readiness probe.
+// Readiness verifies runtime connectivity and schema compatibility. Unlike
+// Open, it is safe to call repeatedly from a readiness probe.
 func (d *Database) Readiness(ctx context.Context) error {
 	if err := d.Health(ctx); err != nil {
 		return err
 	}
-	version, err := readSchemaVersion(ctx, d.pool)
+	return checkSchemaVersion(ctx, d.pool)
+}
+
+// Migrations must remain compatible with processes still serving traffic.
+func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) error {
+	version, err := readSchemaVersion(ctx, database)
 	if err != nil {
 		return err
 	}
-	if version != schemaVersion {
-		return fmt.Errorf("controlstate: incompatible database schema version %d; supported version is %d", version, schemaVersion)
+	if version < minimumSchemaVersion {
+		return fmt.Errorf("controlstate: incompatible database schema version %d; minimum supported version is %d", version, minimumSchemaVersion)
 	}
 	return nil
 }

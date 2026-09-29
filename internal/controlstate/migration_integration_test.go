@@ -61,6 +61,26 @@ func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if initialVersion == 3 {
+		// The fourth migration only changes an index, so both the pre- and
+		// post-migration schema must remain usable by the same runtime.
+		active, err := Open(t.Context(), url, testStorageKey, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer active.Close()
+		if err := active.Readiness(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := active.Readiness(t.Context()); err != nil {
+				t.Errorf("pre-migration runtime after upgrade: %v", err)
+			}
+		}()
+	} else if premature, err := Open(t.Context(), url, testStorageKey, ""); err == nil {
+		premature.Close()
+		t.Fatalf("Open accepted incompatible v%d schema", initialVersion)
+	}
 	if err := Migrate(t.Context(), url); err != nil {
 		t.Fatalf("upgrade existing control schema: %v", err)
 	}
@@ -124,16 +144,21 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
+	// A newer additive migration must not make serving processes unready.
+	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.pool.Exec(ctx, `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Readiness(ctx); err == nil {
-		t.Fatal("Readiness accepted incompatible schema")
+	if err := database.Readiness(ctx); err != nil {
+		t.Fatalf("Readiness rejected additive newer schema: %v", err)
 	}
-	if incompatible, err := Open(ctx, databaseURL, testStorageKey, ""); err == nil {
-		incompatible.Close()
-		t.Fatal("Open accepted incompatible schema")
+	newer, err := Open(ctx, databaseURL, testStorageKey, "")
+	if err != nil {
+		t.Fatalf("Open rejected additive newer schema: %v", err)
 	}
+	newer.Close()
 }
 
 func TestIntegrationPublisherConnectionSchemaConstraints(t *testing.T) {
