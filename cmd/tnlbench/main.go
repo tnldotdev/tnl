@@ -26,7 +26,7 @@ func main() {
 	case "plan":
 		err = commands.Plan.run(os.Stdout)
 	case "run":
-		err = commands.Run.run(ctx, os.Stdout)
+		err = commands.Run.run(ctx, os.Stdout, os.Stderr)
 	case "report":
 		err = commands.Report.run(os.Stdout)
 	}

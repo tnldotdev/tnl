@@ -1,6 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,5 +41,81 @@ func TestStagingPlanAndExecutionGate(t *testing.T) {
 	t.Setenv("BENCH_SUITE", "")
 	if _, err := (runCommand{workloadOptions: options, Approved: "1"}).validate(); err == nil || !strings.Contains(err.Error(), "BENCH_SUITE") {
 		t.Fatalf("execution without explicit suite accepted: %v", err)
+	}
+}
+
+func TestWaitForPublicURLDNSRetriesUntilAvailable(t *testing.T) {
+	attempts := 0
+	lookup := func(_ context.Context, hostname string) ([]net.IPAddr, error) {
+		if hostname != "example.test" {
+			t.Fatalf("unexpected lookup: %s", hostname)
+		}
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("no such host")
+		}
+		return []net.IPAddr{{IP: net.IPv4(192, 0, 2, 1)}}, nil
+	}
+	if err := waitForPublicURLDNS(t.Context(), []string{"https://example.test"}, lookup); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("lookups = %d, want retry after first NXDOMAIN", attempts)
+	}
+}
+
+func TestWaitForPublicURLDNSStopsWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		return nil, errors.New("no such host")
+	}
+	if err := waitForPublicURLDNS(ctx, []string{"https://example.test"}, lookup); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled DNS readiness = %v", err)
+	}
+}
+
+func TestCanceledRunPersistsResultBeforePublishing(t *testing.T) {
+	t.Setenv("BENCH_SUITE", "smoke")
+	options := smokeOptions()
+	options.ResultsRoot = t.TempDir()
+	command := runCommand{workloadOptions: options, Approved: "1"}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stdout, progress bytes.Buffer
+	if err := command.run(ctx, &stdout, &progress); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled run = %v", err)
+	}
+	path := strings.TrimPrefix(strings.SplitN(stdout.String(), "\n", 2)[0], "Results: ")
+	if filepath.Dir(filepath.Dir(path)) != options.ResultsRoot {
+		t.Fatalf("result path outside results root: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result benchmarkResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "interrupted" || result.CleanupStatus != "not_needed" || result.CleanupExact || len(result.PublicURLs) != 0 {
+		t.Fatalf("canceled result = %+v", result)
+	}
+	if !strings.Contains(progress.String(), "local baseline stopped") {
+		t.Fatalf("missing cancellation progress: %s", progress.String())
+	}
+}
+
+func TestPhaseReportsProgressWhileRunning(t *testing.T) {
+	var progress bytes.Buffer
+	if err := reportPhaseEvery(&progress, "local baseline", 80*time.Millisecond, 10*time.Millisecond, func() error {
+		return wait(t.Context(), 80*time.Millisecond)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []string{"local baseline started", "local baseline still running", "local baseline complete"} {
+		if !strings.Contains(progress.String(), message) {
+			t.Fatalf("progress missing %q: %s", message, progress.String())
+		}
 	}
 }

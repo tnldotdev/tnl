@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
@@ -128,6 +131,7 @@ type benchmarkResult struct {
 	Direct        benchworkload.VisitorResult   `json:"direct_baseline"`
 	Steady        []benchworkload.VisitorResult `json:"steady"`
 	CleanupExact  bool                          `json:"cleanup_exact"`
+	CleanupStatus string                        `json:"cleanup_status"`
 	Generator     generatorResult               `json:"generator"`
 }
 
@@ -137,7 +141,7 @@ type generatorResult struct {
 	Elapsed    time.Duration `json:"elapsed"`
 }
 
-func (c runCommand) run(ctx context.Context, stdout io.Writer) error {
+func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 	plan, err := c.validate()
 	if err != nil {
 		return err
@@ -156,24 +160,38 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, runErr := c.measure(ctx, plan, stateDir, filepath.Base(dir))
+	resultPath := filepath.Join(dir, "result.json")
+	initial := benchmarkResult{SchemaVersion: 1, RunID: filepath.Base(dir), Plan: plan,
+		StartedAt: time.Now().UTC(), Status: "running", CleanupStatus: "not_needed"}
+	if err := writeJSON(resultPath, initial); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "Results: %s\n", resultPath); err != nil {
+		return err
+	}
+	result, runErr := c.measure(ctx, plan, stateDir, initial.RunID, progress, func(snapshot benchmarkResult) error {
+		return writeJSON(resultPath, snapshot)
+	})
 	result.FinishedAt = time.Now().UTC()
 	result.Status = "passed"
 	if runErr != nil {
 		result.Status, result.Error = "failed", runErr.Error()
+		if ctx.Err() != nil {
+			result.Status = "interrupted"
+		}
 	}
-	if err := writeJSON(filepath.Join(dir, "result.json"), result); err != nil {
+	if err := writeJSON(resultPath, result); err != nil {
 		return errors.Join(runErr, err)
 	}
-	fmt.Fprintf(stdout, "Results: %s\n", filepath.Join(dir, "result.json"))
 	if err := printResult(stdout, result); err != nil {
 		return errors.Join(runErr, err)
 	}
 	return runErr
 }
 
-func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir, runID string) (result benchmarkResult, retErr error) {
-	result = benchmarkResult{SchemaVersion: 1, RunID: runID, Plan: plan, StartedAt: time.Now().UTC()}
+func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir, runID string, progress io.Writer, checkpoint func(benchmarkResult) error) (result benchmarkResult, retErr error) {
+	result = benchmarkResult{SchemaVersion: 1, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
+		Status: "running", CleanupStatus: "not_needed"}
 	defer func() {
 		var memory runtime.MemStats
 		runtime.ReadMemStats(&memory)
@@ -188,12 +206,17 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	roots := x509.NewCertPool()
 	roots.AddCert(direct.Certificate())
 	baseline := benchworkload.Visitor{Roots: roots, PayloadBytes: c.PayloadBytes}
-	result.Direct, retErr = baseline.Run(ctx, benchworkload.VisitorConfig{
-		Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
-	}, []string{direct.URL})
+	retErr = reportPhase(progress, "local baseline", c.Duration, func() error {
+		var err error
+		result.Direct, err = baseline.Run(ctx, benchworkload.VisitorConfig{
+			Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
+		}, []string{direct.URL})
+		return err
+	})
 	if retErr != nil {
 		return result, fmt.Errorf("local generator baseline: %w", retErr)
 	}
+	fmt.Fprintln(progress, "tnlbench: connecting to staging control")
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
 		Server: c.Server, Domain: "tnl.wtf", StateRoot: stateDir, Target: origin.URL,
 		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "staging-"), Ephemeral: true,
@@ -204,18 +227,41 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	if err != nil {
 		return result, err
 	}
+	result.CleanupStatus = "pending"
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer stop()
-		shutdown, err := group.Close(cleanup)
-		result.CleanupExact = err == nil && shutdown.Failures == 0 && shutdown.Attempts == group.Started()
+		var shutdown benchworkload.ShutdownResult
+		err := reportPhase(progress, "publisher cleanup", 2*time.Minute, func() error {
+			var err error
+			shutdown, err = group.Close(cleanup)
+			return err
+		})
+		if group.Started() == 0 {
+			result.CleanupStatus = "not_needed"
+		} else {
+			result.CleanupExact = err == nil && shutdown.Failures == 0 && shutdown.Attempts == group.Started()
+			result.CleanupStatus = "failed"
+			if result.CleanupExact {
+				result.CleanupStatus = "succeeded"
+			}
+		}
+		fmt.Fprintf(progress, "tnlbench: cleanup %s (%d/%d publisher processes)\n", result.CleanupStatus, shutdown.Successes, group.Started())
 		retErr = errors.Join(retErr, err)
 	}()
+	if err := checkpoint(result); err != nil {
+		return result, err
+	}
 	indexes := make([]int, c.PublicURLs)
 	for i := range indexes {
 		indexes[i] = i
 	}
-	publicURLs, err := group.Start(ctx, indexes)
+	var publicURLs []benchworkload.PublishedPublicURL
+	err = reportPhase(progress, fmt.Sprintf("activating %d public URLs", c.PublicURLs), 0, func() error {
+		var err error
+		publicURLs, err = group.Start(ctx, indexes)
+		return err
+	})
 	if err != nil {
 		return result, err
 	}
@@ -224,11 +270,22 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		urls[publicURL.Index] = publicURL.Ready.PublicURL
 	}
 	result.PublicURLs = urls
-	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes}
-	for _, url := range urls {
-		if url == "" {
+	if err := checkpoint(result); err != nil {
+		return result, err
+	}
+	for _, publicURL := range urls {
+		if publicURL == "" {
 			return result, errors.New("missing public URL after activation")
 		}
+	}
+	if err := reportPhase(progress, "public URL DNS", 2*time.Minute, func() error {
+		return waitForPublicURLDNS(ctx, urls, net.DefaultResolver.LookupIPAddr)
+	}); err != nil {
+		return result, err
+	}
+	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes}
+	fmt.Fprintln(progress, "tnlbench: verifying each public URL")
+	for _, url := range urls {
 		if check := visitor.Request(ctx, url, time.Now()); check.Error != "" {
 			return result, fmt.Errorf("visitor correctness %s: %s", url, check.Error)
 		}
@@ -246,13 +303,21 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		}
 		held = append(held, stream)
 	}
-	if err := wait(ctx, c.Warmup); err != nil {
+	fmt.Fprintf(progress, "tnlbench: %d held visitor streams open\n", len(held))
+	if err := reportPhase(progress, "warmup", c.Warmup, func() error {
+		return wait(ctx, c.Warmup)
+	}); err != nil {
 		return result, err
 	}
-	for range c.Repetitions {
-		phase, err := visitor.Run(ctx, benchworkload.VisitorConfig{
-			Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
-		}, urls)
+	for index := range c.Repetitions {
+		var phase benchworkload.VisitorResult
+		err := reportPhase(progress, fmt.Sprintf("staging window %d/%d", index+1, c.Repetitions), c.Duration, func() error {
+			var err error
+			phase, err = visitor.Run(ctx, benchworkload.VisitorConfig{
+				Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
+			}, urls)
+			return err
+		})
 		result.Steady = append(result.Steady, phase)
 		if err != nil {
 			return result, err
@@ -264,6 +329,66 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		}
 	}
 	return result, nil
+}
+
+func waitForPublicURLDNS(ctx context.Context, publicURLs []string, lookup func(context.Context, string) ([]net.IPAddr, error)) error {
+	dnsCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for _, publicURL := range publicURLs {
+		parsed, err := url.Parse(publicURL)
+		if err != nil {
+			return fmt.Errorf("invalid public URL %q: %w", publicURL, err)
+		}
+		if parsed.Hostname() == "" {
+			return fmt.Errorf("public URL %q has no hostname", publicURL)
+		}
+		for {
+			addresses, lookupErr := lookup(dnsCtx, parsed.Hostname())
+			if lookupErr == nil && len(addresses) > 0 {
+				break
+			}
+			if err := wait(dnsCtx, time.Second); err != nil {
+				return fmt.Errorf("public URL DNS %s not ready: %w", parsed.Hostname(), errors.Join(err, lookupErr))
+			}
+		}
+	}
+	return nil
+}
+
+func reportPhase(progress io.Writer, name string, planned time.Duration, run func() error) error {
+	return reportPhaseEvery(progress, name, planned, 30*time.Second, run)
+}
+
+func reportPhaseEvery(progress io.Writer, name string, planned, interval time.Duration, run func() error) error {
+	started := time.Now()
+	if planned > 0 {
+		fmt.Fprintf(progress, "tnlbench: %s started (%s planned)\n", name, planned)
+	} else {
+		fmt.Fprintf(progress, "tnlbench: %s started\n", name)
+	}
+	done := make(chan struct{})
+	var heartbeat sync.WaitGroup
+	heartbeat.Go(func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Fprintf(progress, "tnlbench: %s still running (%s elapsed)\n", name, time.Since(started).Truncate(time.Second))
+			}
+		}
+	})
+	err := run()
+	close(done)
+	heartbeat.Wait()
+	status := "complete"
+	if err != nil {
+		status = "stopped"
+	}
+	fmt.Fprintf(progress, "tnlbench: %s %s after %s\n", name, status, time.Since(started).Truncate(time.Second))
+	return err
 }
 
 func wait(ctx context.Context, duration time.Duration) error {
@@ -297,7 +422,14 @@ func (c reportCommand) run(stdout io.Writer) error {
 }
 
 func printResult(stdout io.Writer, result benchmarkResult) error {
-	if _, err := fmt.Fprintf(stdout, "%s: %s (%d public URLs; cleanup exact: %t)\n", result.RunID, result.Status, len(result.PublicURLs), result.CleanupExact); err != nil {
+	cleanup := result.CleanupStatus
+	if cleanup == "" {
+		cleanup = "unknown"
+		if result.CleanupExact {
+			cleanup = "succeeded"
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "%s: %s (%d public URLs; cleanup: %s)\n", result.RunID, result.Status, len(result.PublicURLs), cleanup); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "direct: %d/%d successful; p95 %s\n", result.Direct.Successes, result.Direct.Scheduled, p95(&result.Direct)); err != nil {
@@ -328,5 +460,16 @@ func writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".result-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		return errors.Join(err, temporary.Close())
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), path)
 }

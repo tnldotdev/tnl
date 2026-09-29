@@ -342,7 +342,12 @@ tasks:
     desc: Run an explicitly approved local benchmark against staging
     dotenv: [.env.bench]
     cmds:
-      - go run ./cmd/tnlbench run
+      - |
+        set -eu
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnlbench.XXXXXXXX")"
+        trap 'rm -rf "$build_dir"' EXIT
+        go build -o "$build_dir/tnlbench" ./cmd/tnlbench
+        "$build_dir/tnlbench" run
 
   go:bench:report:
     desc: Display results from a local staging benchmark
