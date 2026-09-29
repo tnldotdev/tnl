@@ -293,7 +293,87 @@ func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlsta
 	if err != nil {
 		return Zone{}, err
 	}
+	if err := p.reconcileClaimedZoneTTL(ctx, zoneID, work.CanonicalDomain, nameservers); err != nil {
+		return Zone{}, err
+	}
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
+}
+
+// Route 53 creates apex NS and SOA records with long TTLs. Preserve their
+// contents and lower only the caching values, including SOA negative caching.
+func (p *Route53Provider) reconcileClaimedZoneTTL(ctx context.Context, zoneID, domain string, nameservers []string) error {
+	sets, err := p.listRecordSets(ctx, zoneID, domain)
+	if err != nil {
+		return err
+	}
+	var ns, soa *types.ResourceRecordSet
+	for index := range sets {
+		switch sets[index].Type {
+		case types.RRTypeNs:
+			if ns != nil {
+				return terminalf("claimed zone has multiple apex NS record sets")
+			}
+			ns = &sets[index]
+		case types.RRTypeSoa:
+			if soa != nil {
+				return terminalf("claimed zone has multiple apex SOA record sets")
+			}
+			soa = &sets[index]
+		}
+	}
+	if !plainRecordSet(ns) || !plainRecordSet(soa) || len(soa.ResourceRecords) != 1 {
+		return terminalf("claimed zone has invalid apex NS or SOA records")
+	}
+	actualNameservers, err := canonicalNameserversFromRecords(ns.ResourceRecords)
+	if err != nil || !slices.Equal(actualNameservers, nameservers) {
+		return terminalf("claimed zone apex NS records do not match its delegation set")
+	}
+	fields := strings.Fields(aws.ToString(soa.ResourceRecords[0].Value))
+	if len(fields) != 7 || !slices.Contains(nameservers, strings.TrimSuffix(strings.ToLower(fields[0]), ".")) {
+		return terminalf("claimed zone has invalid apex SOA record")
+	}
+	minimum, err := strconv.ParseUint(fields[6], 10, 32)
+	if err != nil {
+		return terminalf("claimed zone has invalid SOA negative-cache minimum")
+	}
+	changes := make([]types.Change, 0, 2)
+	if ns.TTL == nil || soa.TTL == nil {
+		return terminalf("claimed zone has apex records without TTLs")
+	}
+	if *ns.TTL > 60 {
+		updated := *ns
+		updated.TTL = aws.Int64(60)
+		changes = append(changes, types.Change{Action: types.ChangeActionUpsert, ResourceRecordSet: &updated})
+	}
+	if *soa.TTL > 60 || minimum > 60 {
+		updated := *soa
+		if *soa.TTL > 60 {
+			updated.TTL = aws.Int64(60)
+		}
+		if minimum > 60 {
+			fields[6] = "60"
+			updated.ResourceRecords = []types.ResourceRecord{{Value: aws.String(strings.Join(fields, " "))}}
+		}
+		changes = append(changes, types.Change{Action: types.ChangeActionUpsert, ResourceRecordSet: &updated})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("limit tnl claimed-zone DNS caching to 60 seconds"), Changes: changes},
+	}); err != nil {
+		return fmt.Errorf("dnscontroller: set Route 53 claimed-zone TTLs: %w", err)
+	}
+	return nil
+}
+
+func canonicalNameserversFromRecords(records []types.ResourceRecord) ([]string, error) {
+	values := make([]string, len(records))
+	for index, record := range records {
+		values[index] = aws.ToString(record.Value)
+	}
+	return canonicalNameservers(values)
 }
 
 func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlstate.DNSAuthorityWork) error {

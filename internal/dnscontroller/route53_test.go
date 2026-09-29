@@ -25,6 +25,7 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 				"NS-2.EXAMPLE.TEST.", "ns-1.example.test.",
 			}},
 		},
+		recordSets: route53ApexRecords(work.CanonicalDomain),
 	}
 	provider, err := NewRoute53Provider(client)
 	if err != nil {
@@ -35,8 +36,29 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.ID != "Z123" || len(result.Nameservers) != 2 || result.Nameservers[0] != "ns-1.example.test" ||
-		client.createCalls != 1 || len(client.addedTags) != 4 || client.taggedZoneID != "Z123" {
+		client.createCalls != 1 || len(client.addedTags) != 4 || client.taggedZoneID != "Z123" || len(client.changes) != 2 {
 		t.Fatalf("ensured zone = %#v, client = %#v", result, client)
+	}
+	for _, change := range client.changes {
+		if change.Action != types.ChangeActionUpsert || aws.ToInt64(change.ResourceRecordSet.TTL) != 60 {
+			t.Fatalf("apex TTL change = %#v", change)
+		}
+		if change.ResourceRecordSet.Type == types.RRTypeSoa &&
+			aws.ToString(change.ResourceRecordSet.ResourceRecords[0].Value) !=
+				"ns-1.example.test. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 60" {
+			t.Fatalf("SOA change = %#v", change)
+		}
+	}
+	for _, change := range client.changes {
+		index := 0
+		if change.ResourceRecordSet.Type == types.RRTypeSoa {
+			index = 1
+		}
+		client.recordSets[dnsName(work.CanonicalDomain)][index] = *change.ResourceRecordSet
+	}
+	client.changes = nil
+	if _, err := provider.EnsureClaimedZone(t.Context(), work); err != nil || len(client.changes) != 0 {
+		t.Fatalf("unchanged claimed zone: changes %#v, error %v", client.changes, err)
 	}
 	client.tags = ownedRoute53Tags(work)
 	work.ProviderZoneID = result.ID
@@ -45,6 +67,36 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 	}
 	if client.deletedZoneID != "Z123" {
 		t.Fatalf("deleted zone ID = %q", client.deletedZoneID)
+	}
+}
+
+func TestRoute53ProviderPreservesClaimedZoneSOAFields(t *testing.T) {
+	work := testDNSWork(time.Now().UTC())
+	client, provider := route53TestProvider(t, work.CanonicalDomain)
+	client.get.HostedZone.CallerReference = aws.String(work.Reference)
+	client.created = client.get.HostedZone
+	soa := &client.recordSets[dnsName(work.CanonicalDomain)][1]
+	soa.TTL = aws.Int64(30)
+	soa.ResourceRecords[0].Value = aws.String("ns-1.example.test. hostmaster.example.test. 42 1800 300 604800 86400")
+	if _, err := provider.EnsureClaimedZone(t.Context(), work); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.changes) != 2 || client.changes[1].ResourceRecordSet.Type != types.RRTypeSoa ||
+		aws.ToInt64(client.changes[1].ResourceRecordSet.TTL) != 30 ||
+		aws.ToString(client.changes[1].ResourceRecordSet.ResourceRecords[0].Value) !=
+			"ns-1.example.test. hostmaster.example.test. 42 1800 300 604800 60" {
+		t.Fatalf("claimed zone apex changes = %#v", client.changes)
+	}
+}
+
+func TestRoute53ProviderRejectsChangedClaimedZoneNameservers(t *testing.T) {
+	work := testDNSWork(time.Now().UTC())
+	client, provider := route53TestProvider(t, work.CanonicalDomain)
+	client.get.HostedZone.CallerReference = aws.String(work.Reference)
+	client.created = client.get.HostedZone
+	client.recordSets[dnsName(work.CanonicalDomain)][0].ResourceRecords[0].Value = aws.String("ns-foreign.example.test.")
+	if _, err := provider.EnsureClaimedZone(t.Context(), work); err == nil || len(client.changes) != 0 {
+		t.Fatalf("changed nameservers: changes %#v, error %v", client.changes, err)
 	}
 }
 
@@ -279,12 +331,19 @@ func route53TestProvider(t *testing.T, domain string) (*route53Stub, *Route53Pro
 	client := &route53Stub{get: &route53.GetHostedZoneOutput{
 		HostedZone:    &types.HostedZone{Id: aws.String("Z123"), Name: aws.String(dnsName(domain))},
 		DelegationSet: &types.DelegationSet{NameServers: []string{"ns-1.example.test.", "ns-2.example.test."}},
-	}, recordSets: map[string][]types.ResourceRecordSet{}}
+	}, recordSets: route53ApexRecords(domain)}
 	provider, err := NewRoute53Provider(client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return client, provider
+}
+
+func route53ApexRecords(domain string) map[string][]types.ResourceRecordSet {
+	ns := simpleRecordSet(domain, types.RRTypeNs, []string{"ns-1.example.test.", "ns-2.example.test."})
+	soa := simpleRecordSet(domain, types.RRTypeSoa, []string{"ns-1.example.test. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400"})
+	ns.TTL, soa.TTL = aws.Int64(172800), aws.Int64(900)
+	return map[string][]types.ResourceRecordSet{dnsName(domain): {*ns, *soa}}
 }
 
 func route53TestPublicURL(client *route53Stub) PublicURLRecord {

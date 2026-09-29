@@ -22,7 +22,8 @@ func TestRoute53ReleaseFindsZoneCreatedBeforeAuthoritySave(t *testing.T) {
 				CallerReference: aws.String(work.Reference),
 			}
 			client := &route53Stub{
-				created: zone,
+				created:    zone,
+				recordSets: route53ApexRecords(work.CanonicalDomain),
 				get: &route53.GetHostedZoneOutput{HostedZone: zone, DelegationSet: &types.DelegationSet{
 					NameServers: []string{"ns-1.example.test.", "ns-2.example.test."},
 				}},
