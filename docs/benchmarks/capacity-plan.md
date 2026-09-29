@@ -15,17 +15,21 @@ This plan measures what one deployment can supply. Forecast demand comes later.
 
 ## test deployment
 
-Use this minimum topology:
+The staging tnl server has the same Fly process topology and Machine sizes as
+production:
 
 - Two control processes.
 - Two ingress processes.
-- Two relay services with one relay process each.
-- The smallest suitable dedicated-CPU machine for each `tnld` process.
-- A highly available PostgreSQL service.
+- Two relay services with two relay processes each.
+- One shared CPU and 512 MiB per `tnld` process.
+- A separate PlanetScale staging PostgreSQL branch (PS-DEV, not the production
+  database tier).
 - One region, with copies placed on separate hosts or zones when possible.
 
-Publisher and visitor generators are not part of the capacity result. Give them
-enough resources to exceed the load offered to the tnl server.
+Publisher and visitor generators run on the local machine. Compare their
+loopback baseline and resource use to the public staging path so they do not
+silently become the bottleneck. Results include the machine's network path to
+staging; they do not establish production database capacity.
 
 ## first tests
 
@@ -101,6 +105,9 @@ This test finds limits that do not appear when each kind of work runs alone.
 
 ## failure tests
 
+Run these in the disposable local runtime topology. The ordinary staging
+benchmark leaves its serving processes and shared database untouched.
+
 Start at half of the lowest repeated combined limit. Test each failure separately:
 
 1. Remove relay service A and keep traffic on relay service B.
@@ -158,8 +165,8 @@ Publish:
 2. Add separate upstream, downstream, and bidirectional workloads.
 3. Add relay-service, ingress-process, and control-process fault injection.
 4. Check generator headroom and resource measurements locally.
-5. Produce read-only infrastructure plans.
-6. Get approval before creating billable benchmark infrastructure.
+5. Produce read-only staging workload plans.
+6. Get approval for the staging workload and its limits.
 7. Run the four separate capacity tests.
 8. Run the combined test.
 9. Run failure and endurance tests.

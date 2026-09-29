@@ -1,98 +1,48 @@
 # benchmarks
 
-Local and deployed benchmarks use `internal/benchworkload` for publishers,
-visitors, origin responses, scheduling, measurements, and coordination. Each
-runner owns setup, fault injection, resource collection, and cleanup.
+Local runtime load and staging benchmarks share `internal/benchworkload` for
+publishers, local service responses, visitors, scheduling, TLS verification,
+and measurements. See [local workloads](local-workloads.md) for the Docker
+topology and fault workloads. Staging benchmarks exercise the real, persistent
+staging tnl server from this machine, like a developer publishing a local
+service and visiting its public URL.
 
-The [capacity plan](capacity-plan.md) defines the campaign method. The
-[local capacity results](local-capacity.md) show measured comparisons, and the
-[assertion inventory](assertions.md) lists the behavior each workload checks.
+## staging workload
 
-## local workloads
+Log in to staging once, then preview a small workload without touching staging:
 
-See [local workloads](local-workloads.md) for database and runtime commands.
+```console
+mise exec -- tnl login --server=https://control.tnl.wtf
+mise exec -- task go:bench:plan
+```
 
-Routine tests need no external infrastructure. Large load and fault tests are
-explicit opt-in runs.
+The benchmark requires an existing staging control session. It uses a
+run-specific member namespace, creates ephemeral public URLs, and removes
+them when the publisher stops. It does not create Fly apps, databases, Route 53
+zones, or a separate certificate service. The staging control service uses its
+normal publicly trusted certificate issuer. Successful runs and failures write
+`bench-results/staging-*/result.json` with the selected workload, direct local
+TLS baseline, verified staging visitor measurements, generator measurements,
+and public URL cleanup status. An interrupted process can leave ephemeral
+public URLs until their publish runs expire; inspect the run's URLs before
+removing only those benchmark-owned URLs.
 
-The smoke uses four public URLs and both publisher transports. Capacity runs
-can add a direct TLS baseline, held streams, and paced bandwidth.
+Execution requires a separately approved workload, with an explicit suite and
+`BENCH_APPROVED=1`. For example, after approving a smoke run:
 
-## deployed workloads
+```console
+BENCH_SUITE=smoke BENCH_APPROVED=1 mise exec -- task go:bench:run
+mise exec -- task go:bench:report BENCH_RUN=bench-results/staging-<run-id>
+```
 
-A deployed run measures one explicit workload. Repetitions reuse the same running
-publishers and cached certificates. Setup, measurement, publisher shutdown, and
-infrastructure cleanup are reported separately.
-
-An infrastructure profile defines the region, server topology, process sizes,
-PostgreSQL configuration, and generator limits. Planning and execution use the
-same workload settings.
-
-Planning is read-only. Execution creates billable infrastructure and DNS records,
-so it requires an explicit suite and approval with `BENCH_SUITE` and
-`BENCH_APPROVED=1`.
-
-Credentials are passed through the deployment platform and are not written to
-the ownership manifest. Access checks run before resources are created.
-If local AWS credentials expire before the maximum run duration, set
-`BENCH_AWS_ROLE_ARN` to an IAM role that trusts the Fly Machine OIDC identity and
-permits the control processes to manage the benchmark's Route 53 zones. The
-runner continues to use its local AWS credential chain; control exchanges fresh
-Fly identity tokens for renewable AWS credentials instead of receiving a
-snapshot of the runner's session. Without a role, expiring credentials must
-remain valid for the entire maximum run duration.
-
-Public certificate checks must use a small smoke workload. Other runs use a
-private certificate authority with real DNS validation.
-
-## workload settings
-
-| Setting                              | Default | Meaning                                                    |
-| ------------------------------------ | ------: | ---------------------------------------------------------- |
-| `BENCH_SUITE`                        |   smoke | `smoke` or `target`; execution requires explicit selection |
-| `BENCH_PUBLIC_URLS`                  |       4 | Active publish runs                                        |
-| `BENCH_FRESH_CONNECTIONS_PER_SECOND` |      16 | Total offered fresh visitor connections per second         |
-| `BENCH_HELD_STREAMS`                 |       4 | Held visitor streams                                       |
-| `BENCH_CONCURRENCY`                  |     128 | Total fresh visitor request workers                        |
-| `BENCH_QUEUE_SLOTS`                  |       8 | Total waiting slots                                        |
-| `BENCH_PAYLOAD_BYTES`                |   32768 | Verified response payload                                  |
-| `BENCH_WARMUP`                       |      5s | Setup settling time                                        |
-| `BENCH_DURATION`                     |     10s | Fixed offer window                                         |
-| `BENCH_REPETITIONS`                  |       1 | Measurement windows in one deployment                      |
-| `BENCH_CERTIFICATE_AUTHORITY`        |  pebble | `pebble` or a small public-certificate smoke               |
-
-The runner uses enough visitor generators to keep each source below the source
-connection limit. The five-second request budget includes queue delay. Opening a
-held stream has its own five-second deadline.
-
-The coordinator waits for every participant before starting a phase. Publishers
-stay alive across measurement windows and fail the run if they exit early. Each
-publisher process includes its origin handler, so publisher resource measurements
-also include the origin.
-
-## results
-
-Artifacts are written under `bench-results/<run-id>/`:
-
-- `plan.json` records the infrastructure and workload.
-- `manifest.json` records owned resources, progress, and cleanup.
-- `results.jsonl` records participant results and measurements.
-- `report.json` and `report.md` contain merged summaries.
-- `diagnostics/` contains bounded and redacted failure data.
-
-The results keep scheduled, started, completed, successful, failed, timed-out,
-missed, and queue-expired visitor work separate. They also keep queue, DNS,
-connect, TLS, first-body-byte, and total durations separate. Normal measurement
-windows require zero failures, missed offers, and expired queued work.
-
-Local fault results also record request timestamps, fault boundaries, dropped
-work, process resources, raw metrics, usage reconciliation, and process exits.
-
-## cleanup
-
-The runner records resource ownership before creating infrastructure. It cleans up
-after both successful and failed runs. Interrupted cleanup can resume and checks
-ownership before deleting anything.
-
-Cleanup failures fail the benchmark and leave the resource identities in the
-manifest for a later cleanup attempt.
+The default smoke publishes four public URLs and verifies both publisher
+transports, four held streams, and 16 fresh visitor requests per second for 10
+seconds. `BENCH_PUBLIC_URLS`, `BENCH_FRESH_CONNECTIONS_PER_SECOND`,
+`BENCH_HELD_STREAMS`, `BENCH_CONCURRENCY`, `BENCH_QUEUE_SLOTS`,
+`BENCH_PAYLOAD_BYTES`, `BENCH_WARMUP`, `BENCH_DURATION`, and
+`BENCH_REPETITIONS` select the workload; larger values require
+`BENCH_SUITE=target`. Record the location and network conditions of the local
+machine alongside results. The direct loopback baseline tests generator
+headroom, while the staging measurement includes the public network and
+local publisher path. Large capacity and fault sweeps remain explicit opt-in
+local Docker workloads, described in [local workloads](local-workloads.md).

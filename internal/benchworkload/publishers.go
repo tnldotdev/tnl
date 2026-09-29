@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -22,6 +23,8 @@ import (
 
 type PublisherConfig struct {
 	Server, LoginToken, Domain, StateRoot, Target string
+	HostnamePrefix                                string
+	Ephemeral                                     bool
 	HTTPClient                                    *http.Client
 	RelayTLS                                      *tls.Config
 	AllowedIPPrefixes                             []string
@@ -90,8 +93,24 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	}()
 	authConfig := clientauth.Config{
 		ServerEndpoint: config.Server, State: database, HTTPClient: config.HTTPClient,
-		Diagnostics: io.Discard, ForceLoginToken: true,
-		LoginToken: func() (credentials.LoginToken, error) { return credentials.LoginToken(config.LoginToken), nil },
+		Diagnostics: io.Discard,
+	}
+	if config.LoginToken != "" {
+		authConfig.ForceLoginToken = true
+		authConfig.LoginToken = func() (credentials.LoginToken, error) { return credentials.LoginToken(config.LoginToken), nil }
+	} else {
+		authConfig.AuthenticationPrompt = func(oidcauth.Prompt) error {
+			return fmt.Errorf("saved login needs renewal; run tnl login --server=%s", config.Server)
+		}
+		store, err := database.Server(ctx, config.Server)
+		if err != nil {
+			return nil, err
+		}
+		if session, found, err := store.ControlSession(ctx); err != nil {
+			return nil, err
+		} else if !found || !session.RefreshExpiresAt.After(time.Now().Add(time.Minute)) {
+			return nil, fmt.Errorf("no usable saved login for %s; run tnl login --server=%s", config.Server, config.Server)
+		}
 	}
 	var auth *clientauth.Client
 	authCtx, cancelAuth := context.WithTimeout(ctx, 2*time.Minute)
@@ -152,6 +171,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
 			RequestLimit: config.RequestLimit,
+			Ephemeral:    config.Ephemeral,
 			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS},
@@ -180,7 +200,11 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 		process := &publicURLProcess{index: index, cancel: cancel, done: make(chan struct{})}
 		g.processes = append(g.processes, process)
 		cfg := g.base
-		cfg.Hostname = fmt.Sprintf("tnlbench-r%06d.%s", index, g.namespace)
+		prefix := g.config.HostnamePrefix
+		if prefix == "" {
+			prefix = "tnlbench"
+		}
+		cfg.Hostname = fmt.Sprintf("%s-r%06d.%s", prefix, index, g.namespace)
 		transport := g.config.Transport
 		if transport == "mixed" {
 			if index%2 == 0 {

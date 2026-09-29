@@ -332,26 +332,20 @@ tasks:
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
 
-  go:bench-fly:plan:
-    desc: Describe one Fly workload and its resources without creating them
+  go:bench:plan:
+    desc: Describe a local workload against the staging tnl server without creating resources
     dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench plan
 
-  go:bench-fly:run:
-    desc: Run an explicitly approved Fly benchmark and clean up its resources
+  go:bench:run:
+    desc: Run an explicitly approved local benchmark against staging
     dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench run
 
-  go:bench-fly:cleanup:
-    desc: Clean up resources recorded by an interrupted Fly benchmark
-    dotenv: [.env.bench]
-    cmds:
-      - go run ./cmd/tnlbench cleanup
-
-  go:bench-fly:report:
-    desc: Merge Fly benchmark result rows and write reports
+  go:bench:report:
+    desc: Display results from a local staging benchmark
     dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench report
