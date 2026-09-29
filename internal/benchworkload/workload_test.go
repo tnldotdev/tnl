@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -91,6 +93,36 @@ func TestVisitorVerifiesTLSHostAndPayloadAndHeldLifetime(t *testing.T) {
 	visitor.Roots = nil
 	if result := visitor.Request(t.Context(), server.URL, time.Now()); result.Error == "" {
 		t.Fatal("accepted untrusted TLS")
+	}
+}
+
+func TestVisitorBindsConfiguredIPv4Source(t *testing.T) {
+	available, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourcePort := available.Addr().(*net.TCPAddr).Port
+	if err := available.Close(); err != nil {
+		t.Fatal(err)
+	}
+	remote := make(chan string, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remote <- r.RemoteAddr
+		Origin(32).ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	visitor := Visitor{
+		Roots: roots, Network: "tcp4", SourceAddress: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: sourcePort}, PayloadBytes: 32,
+	}
+	row := visitor.Request(t.Context(), server.URL, time.Now())
+	if row.Error != "" || row.Bytes != 32 {
+		t.Fatalf("bound visitor response failed: %+v", row)
+	}
+	host, port, err := net.SplitHostPort(<-remote)
+	if err != nil || host != "127.0.0.1" || port != strconv.Itoa(sourcePort) {
+		t.Fatalf("visitor source = %s:%s, %v; want 127.0.0.1:%d", host, port, err, sourcePort)
 	}
 }
 

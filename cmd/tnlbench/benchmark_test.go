@@ -9,14 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
+	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 func smokeOptions() workloadOptions {
-	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Transport: "mixed", PublicURLs: 4, FreshRate: 16,
+	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Transport: "mixed", VisitorNetwork: "tcp", PublicURLs: 4, FreshRate: 16,
 		HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768,
 		Repetitions: 1, Warmup: 5 * time.Second, Duration: 10 * time.Second}
 }
@@ -24,9 +26,22 @@ func smokeOptions() workloadOptions {
 func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	options := smokeOptions()
 	plan, err := options.plan()
-	if err != nil || !plan.ReadOnly || plan.Server != options.Server || plan.Workload.Transport != "mixed" {
+	if err != nil || !plan.ReadOnly || plan.Server != options.Server || plan.Workload.Transport != "mixed" || plan.Workload.VisitorNetwork != "tcp" {
 		t.Fatalf("unexpected benchmark plan: %+v, %v", plan, err)
 	}
+	options.VisitorNetwork = "tcp4"
+	if plan, err := options.plan(); err != nil || plan.Workload.VisitorNetwork != "tcp4" {
+		t.Fatalf("IPv4 visitor plan = %+v, %v", plan, err)
+	}
+	options.VisitorInterface = "missing-tnl-benchmark-interface"
+	if _, err := options.plan(); err == nil {
+		t.Fatal("accepted a missing visitor interface")
+	}
+	options.VisitorNetwork = "tcp6"
+	if _, err := options.plan(); err == nil || !strings.Contains(err.Error(), "requires IPv4") {
+		t.Fatalf("accepted IPv6 with an IPv4 visitor interface: %v", err)
+	}
+	options = smokeOptions()
 	options.Transport = "quic"
 	if _, err := options.plan(); err == nil {
 		t.Fatal("smoke accepted a changed publisher transport")
@@ -34,6 +49,10 @@ func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	options.Suite = "target"
 	if plan, err := options.plan(); err != nil || plan.Workload.Transport != "quic" {
 		t.Fatalf("target QUIC plan = %+v, %v", plan, err)
+	}
+	options.Transport = "auto"
+	if plan, err := options.plan(); err != nil || plan.Workload.Transport != "auto" {
+		t.Fatalf("target auto plan = %+v, %v", plan, err)
 	}
 	options = smokeOptions()
 	options.Server = "https://control.tnl.dev/"
@@ -61,6 +80,51 @@ func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	if _, err := (runCommand{workloadOptions: options, Approved: "1"}).validate(); err == nil || !strings.Contains(err.Error(), "BENCH_SUITE") {
 		t.Fatalf("execution without explicit suite accepted: %v", err)
 	}
+}
+
+func TestAutoTransportReportsFallbacksWithoutMislabelingPublicURLs(t *testing.T) {
+	recorder := &transportFallbackRecorder{}
+	var group sync.WaitGroup
+	for _, id := range []string{"public_url_a", "public_url_b"} {
+		group.Go(func() {
+			if err := recorder.Observe(0, publisher.Event{Type: publisher.EventTransportFallback, PublicURLID: id}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	group.Wait()
+	if err := recorder.Observe(0, publisher.Event{Type: publisher.EventReady, PublicURLID: "public_url_c"}); err != nil {
+		t.Fatal(err)
+	}
+	events := recorder.Snapshot()
+	if len(events) != 2 || events[0].At.IsZero() || events[1].At.IsZero() {
+		t.Fatalf("fallback events = %+v", events)
+	}
+	result := benchmarkResult{RunID: "run-1", Status: "passed", Plan: benchmarkPlan{Workload: workloadSummary{Transport: "auto"}},
+		PublicURLInfo: []benchmarkPublicURL{{PublicURL: "https://example.test", PublicURLID: "public_url_a", Transport: "auto"}}, Fallbacks: events,
+		Steady:      []benchworkload.VisitorResult{{Scheduled: 1, Successes: 1}},
+		SteadyByURL: []map[string]*urlVisitorResult{{"https://example.test": {Scheduled: 1, Successes: 1}}}}
+	var output bytes.Buffer
+	if err := printResult(&output, result); err != nil || !strings.Contains(output.String(), "public_url_a auto: 1/1 successful") || !strings.Contains(output.String(), "auto: 2 TLS/TCP selection events") {
+		t.Fatalf("auto report = %q, %v", output.String(), err)
+	}
+}
+
+func TestVisitorSourceAddressUsesNamedLocalInterface(t *testing.T) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, interface_ := range interfaces {
+		if interface_.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		address, err := visitorSourceAddress(interface_.Name)
+		if err == nil && address.IP.IsLoopback() && address.IP.To4() != nil {
+			return
+		}
+	}
+	t.Skip("no IPv4 loopback interface available")
 }
 
 func TestReportReadsExistingAndGenericBenchmarkResults(t *testing.T) {

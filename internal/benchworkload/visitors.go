@@ -19,19 +19,24 @@ import (
 const RequestTimeout = 5 * time.Second
 
 type Visitor struct {
-	Roots        *x509.CertPool
-	Address      string
-	Resolver     *net.Resolver
-	PayloadBytes int
+	Roots         *x509.CertPool
+	Address       string
+	Resolver      *net.Resolver
+	Network       string
+	SourceAddress *net.TCPAddr
+	PayloadBytes  int
 }
 
 func (v Visitor) client() (*http.Client, *http.Transport) {
-	dialer := &net.Dialer{Resolver: v.Resolver}
-	dial := dialer.DialContext
-	if v.Address != "" {
-		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, v.Address)
+	dialer := &net.Dialer{Resolver: v.Resolver, LocalAddr: v.SourceAddress}
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		if v.Network != "" {
+			network = v.Network
 		}
+		if v.Address != "" {
+			address = v.Address
+		}
+		return dialer.DialContext(ctx, network, address)
 	}
 	transport := &http.Transport{DialContext: dial,
 		TLSClientConfig:   &tls.Config{RootCAs: v.Roots, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},

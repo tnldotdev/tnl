@@ -45,8 +45,11 @@ seconds. `BENCH_PUBLIC_URLS`, `BENCH_FRESH_CONNECTIONS_PER_SECOND`,
 `BENCH_HELD_STREAMS`, `BENCH_CONCURRENCY`, `BENCH_QUEUE_SLOTS`,
 `BENCH_PAYLOAD_BYTES`, `BENCH_WARMUP`, `BENCH_DURATION`, and
 `BENCH_REPETITIONS` select the workload. `BENCH_TRANSPORT` defaults to `mixed`;
-`quic` and `tcp` isolate one publisher transport. Larger workloads or an
-isolated transport require `BENCH_SUITE=target` and separate approval. Results
+`quic` and `tcp` isolate one publisher transport, while `mixed` alternates
+forced QUIC and TLS/TCP public URLs. `auto` uses the normal publisher connection
+race and records when TLS/TCP is selected for any connection; it does not move
+existing visitor streams if QUIC later stalls. Larger workloads or a transport
+other than `mixed` require `BENCH_SUITE=target` and separate approval. Results
 include public URL IDs, transports, and per-URL visitor counts so server logs
 can be correlated with failures. Record the location and network conditions
 of the local machine alongside results. The direct loopback baseline tests
@@ -54,3 +57,9 @@ generator headroom, while the selected server measurement includes the public
 network and local publisher path. Large capacity and fault sweeps remain
 explicit opt-in local Docker workloads, described in
 [local workloads](local-workloads.md).
+
+`BENCH_VISITOR_NETWORK=tcp4` limits public visitor connections to IPv4.
+`BENCH_VISITOR_INTERFACE` optionally binds only those visitor sockets to the
+IPv4 address of a named local interface. The publisher connections and direct
+loopback baseline retain their normal paths. Selecting a different network or
+interface changes the approved workload.

@@ -20,24 +20,27 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 )
 
 type workloadOptions struct {
-	Suite        string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
-	Server       string        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
-	Transport    string        `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp" help:"Mixed, QUIC-only, or TLS/TCP-only publisher connections."`
-	PublicURLs   int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Public URLs to publish."`
-	FreshRate    int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Offered visitor requests per second."`
-	HeldStreams  int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
-	Concurrency  int           `name:"concurrency" env:"BENCH_CONCURRENCY" default:"128" help:"Concurrent visitor request workers."`
-	QueueSlots   int           `name:"queue-slots" env:"BENCH_QUEUE_SLOTS" default:"8" help:"Waiting visitor request slots."`
-	PayloadBytes int           `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" default:"32768" help:"Verified response bytes."`
-	Repetitions  int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows."`
-	Warmup       time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Time before measuring."`
-	Duration     time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Length of each measurement window."`
-	StateDir     string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing login for the selected server."`
-	ResultsRoot  string        `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Result directory."`
+	Suite            string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
+	Server           string        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
+	Transport        string        `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp,auto" help:"Forced cohorts or normal QUIC/TLS-TCP selection."`
+	VisitorNetwork   string        `name:"visitor-network" env:"BENCH_VISITOR_NETWORK" default:"tcp" enum:"tcp,tcp4,tcp6" help:"Network used by public visitor TCP sockets."`
+	VisitorInterface string        `name:"visitor-interface" env:"BENCH_VISITOR_INTERFACE" help:"Local interface whose IPv4 address is used by public visitors only."`
+	PublicURLs       int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Public URLs to publish."`
+	FreshRate        int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Offered visitor requests per second."`
+	HeldStreams      int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
+	Concurrency      int           `name:"concurrency" env:"BENCH_CONCURRENCY" default:"128" help:"Concurrent visitor request workers."`
+	QueueSlots       int           `name:"queue-slots" env:"BENCH_QUEUE_SLOTS" default:"8" help:"Waiting visitor request slots."`
+	PayloadBytes     int           `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" default:"32768" help:"Verified response bytes."`
+	Repetitions      int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows."`
+	Warmup           time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Time before measuring."`
+	Duration         time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Length of each measurement window."`
+	StateDir         string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing login for the selected server."`
+	ResultsRoot      string        `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Result directory."`
 }
 
 type benchmarkPlan struct {
@@ -48,17 +51,19 @@ type benchmarkPlan struct {
 }
 
 type workloadSummary struct {
-	Suite        string        `json:"suite"`
-	Transport    string        `json:"transport"`
-	PublicURLs   int           `json:"public_urls"`
-	FreshRate    int           `json:"fresh_connections_per_second"`
-	HeldStreams  int           `json:"held_streams"`
-	Concurrency  int           `json:"concurrency"`
-	QueueSlots   int           `json:"queue_slots"`
-	PayloadBytes int           `json:"payload_bytes"`
-	Repetitions  int           `json:"repetitions"`
-	Warmup       time.Duration `json:"warmup"`
-	Duration     time.Duration `json:"duration"`
+	Suite            string        `json:"suite"`
+	Transport        string        `json:"transport"`
+	VisitorNetwork   string        `json:"visitor_network"`
+	VisitorInterface string        `json:"visitor_interface,omitempty"`
+	PublicURLs       int           `json:"public_urls"`
+	FreshRate        int           `json:"fresh_connections_per_second"`
+	HeldStreams      int           `json:"held_streams"`
+	Concurrency      int           `json:"concurrency"`
+	QueueSlots       int           `json:"queue_slots"`
+	PayloadBytes     int           `json:"payload_bytes"`
+	Repetitions      int           `json:"repetitions"`
+	Warmup           time.Duration `json:"warmup"`
+	Duration         time.Duration `json:"duration"`
 }
 
 func (c workloadOptions) plan() (benchmarkPlan, error) {
@@ -72,8 +77,19 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 	if c.Suite != "smoke" && c.Suite != "target" {
 		return benchmarkPlan{}, errors.New("suite must be smoke or target")
 	}
-	if c.Transport != "mixed" && c.Transport != "quic" && c.Transport != "tcp" {
-		return benchmarkPlan{}, errors.New("transport must be mixed, quic, or tcp")
+	if c.Transport != "mixed" && c.Transport != "quic" && c.Transport != "tcp" && c.Transport != "auto" {
+		return benchmarkPlan{}, errors.New("transport must be mixed, quic, tcp, or auto")
+	}
+	if c.VisitorNetwork != "tcp" && c.VisitorNetwork != "tcp4" && c.VisitorNetwork != "tcp6" {
+		return benchmarkPlan{}, errors.New("visitor network must be tcp, tcp4, or tcp6")
+	}
+	if c.VisitorInterface != "" {
+		if c.VisitorNetwork == "tcp6" {
+			return benchmarkPlan{}, errors.New("a selected visitor interface requires IPv4 visitor sockets")
+		}
+		if _, err := visitorSourceAddress(c.VisitorInterface); err != nil {
+			return benchmarkPlan{}, err
+		}
 	}
 	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > time.Hour {
 		return benchmarkPlan{}, errors.New("invalid workload shape or duration")
@@ -82,7 +98,7 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
 	return benchmarkPlan{SchemaVersion: 2, ReadOnly: true, Server: server,
-		Workload: workloadSummary{Suite: c.Suite, Transport: c.Transport, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
+		Workload: workloadSummary{Suite: c.Suite, Transport: c.Transport, VisitorNetwork: c.VisitorNetwork, VisitorInterface: c.VisitorInterface, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
 			HeldStreams: c.HeldStreams, Concurrency: c.Concurrency, QueueSlots: c.QueueSlots,
 			PayloadBytes: c.PayloadBytes, Repetitions: c.Repetitions, Warmup: c.Warmup, Duration: c.Duration}}, nil
 }
@@ -102,6 +118,11 @@ func (c planCommand) run(stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Benchmark plan (READ ONLY)\nServer: %s\nGenerators: local publisher and visitor\n", plan.Server)
 	fmt.Fprintf(stdout, "Publisher transport: %s\n", c.Transport)
+	fmt.Fprintf(stdout, "Visitor network: %s", c.VisitorNetwork)
+	if c.VisitorInterface != "" {
+		fmt.Fprintf(stdout, " via %s", c.VisitorInterface)
+	}
+	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "Workload: %d public URLs, %d fresh/s, %d held, %d bytes\n", c.PublicURLs, c.FreshRate, c.HeldStreams, c.PayloadBytes)
 	fmt.Fprintf(stdout, "Windows: %d x %s; warmup %s; local direct baseline %s\n", c.Repetitions, c.Duration, c.Warmup, c.Duration)
 	_, err = fmt.Fprintln(stdout, "Execution requires an explicit BENCH_SUITE and BENCH_APPROVED=1.")
@@ -137,6 +158,7 @@ type benchmarkResult struct {
 	Error         string                         `json:"error,omitempty"`
 	PublicURLs    []string                       `json:"public_urls,omitempty"`
 	PublicURLInfo []benchmarkPublicURL           `json:"public_url_info,omitempty"`
+	Fallbacks     []benchmarkTransportFallback   `json:"transport_fallbacks,omitempty"`
 	Direct        benchworkload.VisitorResult    `json:"direct_baseline"`
 	Steady        []benchworkload.VisitorResult  `json:"steady"`
 	SteadyByURL   []map[string]*urlVisitorResult `json:"steady_by_public_url,omitempty"`
@@ -150,6 +172,31 @@ type benchmarkPublicURL struct {
 	PublicURLID string        `json:"public_url_id"`
 	Transport   string        `json:"transport"`
 	Activation  time.Duration `json:"activation"`
+}
+
+type benchmarkTransportFallback struct {
+	PublicURLID string    `json:"public_url_id"`
+	At          time.Time `json:"at"`
+}
+
+type transportFallbackRecorder struct {
+	mu     sync.Mutex
+	events []benchmarkTransportFallback
+}
+
+func (r *transportFallbackRecorder) Observe(_ int, event publisher.Event) error {
+	if event.Type == publisher.EventTransportFallback {
+		r.mu.Lock()
+		r.events = append(r.events, benchmarkTransportFallback{PublicURLID: event.PublicURLID, At: time.Now().UTC()})
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+func (r *transportFallbackRecorder) Snapshot() []benchmarkTransportFallback {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]benchmarkTransportFallback(nil), r.events...)
 }
 
 type urlVisitorResult struct {
@@ -225,6 +272,10 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		runtime.ReadMemStats(&memory)
 		result.Generator = generatorResult{Goroutines: runtime.NumGoroutine(), HeapBytes: memory.HeapAlloc, Elapsed: time.Since(result.StartedAt)}
 	}()
+	source, err := visitorSourceAddress(c.VisitorInterface)
+	if err != nil {
+		return result, err
+	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration((c.PublicURLs+3)/4)*5*time.Minute+c.Warmup+time.Duration(c.Repetitions+1)*c.Duration+3*time.Minute)
 	defer cancel()
 	origin := httptest.NewServer(benchworkload.Origin(c.PayloadBytes))
@@ -248,10 +299,13 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		return result, fmt.Errorf("local generator baseline: %w", err)
 	}
 	fmt.Fprintf(progress, "tnlbench: connecting to %s\n", plan.Server)
+	fallbacks := &transportFallbackRecorder{}
+	defer func() { result.Fallbacks = fallbacks.Snapshot() }()
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
 		Server: plan.Server, StateRoot: stateDir, Target: origin.URL,
 		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "run-"), Ephemeral: true,
 		Transport: c.Transport, RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},
+		Observe:  fallbacks.Observe,
 		Parallel: 4, StartParallel: 4,
 		ReadyTimeout: 5 * time.Minute, StopTimeout: 10 * time.Second,
 	})
@@ -300,13 +354,15 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	result.PublicURLInfo = make([]benchmarkPublicURL, c.PublicURLs)
 	for _, publicURL := range publicURLs {
 		urls[publicURL.Index] = publicURL.Ready.PublicURL
-		transport := tunnel.TransportTLSTCP
-		if c.Transport == "quic" || c.Transport == "mixed" && publicURL.Index%2 == 0 {
-			transport = tunnel.TransportQUIC
+		transport := c.Transport
+		if transport == "tcp" || transport == "mixed" && publicURL.Index%2 != 0 {
+			transport = string(tunnel.TransportTLSTCP)
+		} else if transport == "quic" || transport == "mixed" {
+			transport = string(tunnel.TransportQUIC)
 		}
 		result.PublicURLInfo[publicURL.Index] = benchmarkPublicURL{
 			PublicURL: publicURL.Ready.PublicURL, PublicURLID: publicURL.Ready.PublicURLID,
-			Transport: string(transport), Activation: publicURL.Activation,
+			Transport: transport, Activation: publicURL.Activation,
 		}
 	}
 	result.PublicURLs = urls
@@ -323,7 +379,7 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	}); err != nil {
 		return result, err
 	}
-	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes}
+	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes, Network: c.VisitorNetwork, SourceAddress: source}
 	fmt.Fprintln(progress, "tnlbench: verifying each public URL")
 	for _, url := range urls {
 		if check := visitor.Request(ctx, url, time.Now()); check.Error != "" {
@@ -383,6 +439,26 @@ func visitorWindowError(result benchworkload.VisitorResult, held []*benchworkloa
 		}
 	}
 	return err
+}
+
+func visitorSourceAddress(name string) (*net.TCPAddr, error) {
+	if name == "" {
+		return nil, nil
+	}
+	interface_, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("visitor interface %q: %w", name, err)
+	}
+	addresses, err := interface_.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("visitor interface %q: %w", name, err)
+	}
+	for _, address := range addresses {
+		if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil {
+			return &net.TCPAddr{IP: network.IP.To4()}, nil
+		}
+	}
+	return nil, fmt.Errorf("visitor interface %q has no IPv4 address", name)
 }
 
 func newURLVisitorResults(urls []string) (map[string]*urlVisitorResult, func(benchworkload.RequestResult)) {
@@ -550,6 +626,11 @@ func printResult(stdout io.Writer, result benchmarkResult) error {
 					return err
 				}
 			}
+		}
+	}
+	if result.Plan.Workload.Transport == "auto" {
+		if _, err := fmt.Fprintf(stdout, "auto: %d TLS/TCP selection events\n", len(result.Fallbacks)); err != nil {
+			return err
 		}
 	}
 	if result.Error != "" {
