@@ -37,11 +37,18 @@ type RelayConfig struct {
 	HTTPClient          *http.Client
 	DNSChallenges       RelayDNSChallenges
 	Logger              *slog.Logger
+	Observer            RelayWorkObserver
 	LeaseDuration       time.Duration
 	OperationTimeout    time.Duration
 	PollInterval        time.Duration
 	IdleInterval        time.Duration
 	FailedRetryInterval time.Duration
+}
+
+type RelayWorkObserver interface {
+	ObserveCertificateClaim(kind, outcome string)
+	ObserveCertificateIteration(kind, stage, outcome string, elapsed time.Duration)
+	ObserveCertificateTransition(kind, state string)
 }
 
 type RelayWorker struct {
@@ -90,9 +97,19 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	work, found, err := w.store.ClaimRelayCertificateOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	if w.config.Observer != nil && ctx.Err() == nil {
+		outcome := "claimed"
+		if err != nil {
+			outcome = "error"
+		} else if !found {
+			outcome = "empty"
+		}
+		w.config.Observer.ObserveCertificateClaim("relay", outcome)
+	}
 	if err != nil || !found {
 		return found, err
 	}
+	stage, started := work.State, time.Now()
 	client, err := w.client(work.Account)
 	if err == nil && work.Account.AccountURL == "" {
 		err = errors.New("certificates: relay worker ACME account is not registered")
@@ -116,8 +133,31 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 			work.AvailableAt = completedAt.Add(w.config.FailedRetryInterval)
 		}
 	}
-	if _, saveErr := w.store.SaveRelayCertificateOrderWork(ctx, work, completedAt); saveErr != nil {
+	saved, saveErr := w.store.SaveRelayCertificateOrderWork(ctx, work, completedAt)
+	if saveErr != nil {
+		if w.config.Observer != nil && ctx.Err() == nil {
+			w.config.Observer.ObserveCertificateIteration("relay", stage, "save_failed", time.Since(started))
+		}
 		return true, saveErr
+	}
+	if w.config.Observer != nil {
+		outcome := "progress"
+		if saved.State == "failed" {
+			outcome = "terminal"
+		} else if err != nil {
+			outcome = "retry"
+		}
+		w.config.Observer.ObserveCertificateIteration("relay", stage, outcome, time.Since(started))
+		if stage != saved.State {
+			switch saved.State {
+			case "cleaning":
+				w.config.Observer.ObserveCertificateTransition("relay", "available")
+			case "complete":
+				w.config.Observer.ObserveCertificateTransition("relay", "cleanup_complete")
+			case "failed":
+				w.config.Observer.ObserveCertificateTransition("relay", "failed")
+			}
+		}
 	}
 	return true, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
@@ -20,7 +21,10 @@ type RelayChallengeManager struct {
 	verifier     ChallengeVerifier
 	serverDomain string
 	zoneID       string
+	observer     DNSObserver
 }
+
+func (m *RelayChallengeManager) SetObserver(observer DNSObserver) { m.observer = observer }
 
 func NewRelayChallengeManager(
 	store RelayChallengeStore,
@@ -37,16 +41,23 @@ func NewRelayChallengeManager(
 }
 
 func (m *RelayChallengeManager) Present(ctx context.Context, orderID string) error {
+	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, "presenting")
+	observeDNS(m.observer, "relay_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *RelayChallengeManager) Verify(ctx context.Context, orderID string) (bool, error) {
-	return m.reconcile(ctx, orderID, "presented")
+	started := time.Now()
+	verified, err := m.reconcile(ctx, orderID, "presented")
+	observeDNS(m.observer, "relay_challenge", "verify", started, verified, err)
+	return verified, err
 }
 
 func (m *RelayChallengeManager) Cleanup(ctx context.Context, orderID string) error {
+	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, "cleaning")
+	observeDNS(m.observer, "relay_challenge", "cleanup", started, true, err)
 	return err
 }
 

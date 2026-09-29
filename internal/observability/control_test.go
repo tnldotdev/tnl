@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,5 +53,21 @@ func TestControlRequestDurationOutcomes(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing HTTP outcomes: %v", want)
+	}
+}
+
+func TestAPIRequestsCountPreAuthenticationFailuresWithMatchedPattern(t *testing.T) {
+	metrics := New("control")
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/relays/private-relay-id/renew", nil)
+	request.Pattern = "POST /internal/v1/relays/{relay_id}/renew"
+	metrics.APIRequests("private_relay", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})).ServeHTTP(httptest.NewRecorder(), request)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	text := response.Body.String()
+	if strings.Contains(text, "private-relay-id") || !strings.Contains(text,
+		`tnl_control_api_request_duration_seconds_count{operation="POST /internal/v1/relays/{relay_id}/renew",outcome="client_error",surface="private_relay"} 1`) {
+		t.Fatalf("private request metric omitted matched pattern or leaked an ID: %s", text)
 	}
 }

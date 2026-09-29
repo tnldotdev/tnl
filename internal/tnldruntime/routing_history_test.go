@@ -42,7 +42,7 @@ func TestRoutingHistoryCleanupOrderingAndCancellation(t *testing.T) {
 					return controlstate.RoutingHistoryPruneResult{NextRevision: 10, Scanned: 1000, Deleted: 1000, More: true}, nil
 				},
 			}
-			if err := runRoutingHistoryCleanup(ctx, store); err != nil {
+			if err := runRoutingHistoryCleanup(ctx, store, nil); err != nil {
 				t.Fatal(err)
 			}
 			if !floorCalled || batches != map[bool]int{false: 1, true: 0}[failFloor] {

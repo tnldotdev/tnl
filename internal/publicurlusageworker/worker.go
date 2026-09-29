@@ -51,10 +51,17 @@ type Config struct {
 	Token            string
 	HTTPClient       *http.Client
 	Logger           *slog.Logger
+	Observer         UsageObserver
 	LeaseDuration    time.Duration
 	OperationTimeout time.Duration
 	PollInterval     time.Duration
 	RetryInterval    time.Duration
+}
+
+type UsageObserver interface {
+	ObserveUsageWork(phase, outcome string)
+	AddUsageItems(result string, count int)
+	ObserveUsageReceiver(outcome string, elapsed time.Duration)
 }
 
 type Worker struct {
@@ -137,16 +144,29 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) process(ctx context.Context) (bool, error) {
 	now := w.now()
-	if _, err := w.store.MarkExpiredIngressUsageRunsIncomplete(ctx, now); err != nil {
+	incomplete, err := w.store.MarkExpiredIngressUsageRunsIncomplete(ctx, now)
+	w.observeWork("incomplete_runs", err)
+	if err != nil {
 		return false, err
 	}
-	if _, err := w.store.FinalizePublicURLUsageBuckets(ctx, now.Truncate(time.Minute), now); err != nil {
+	w.addItems("incomplete", incomplete)
+	finalized, err := w.store.FinalizePublicURLUsageBuckets(ctx, now.Truncate(time.Minute), now)
+	w.observeWork("finalize", err)
+	if err != nil {
 		return false, err
 	}
+	w.addItems("finalized", finalized)
 	if w.api == nil {
 		return false, nil
 	}
 	work, err := w.store.ClaimPublicURLUsageDeliveries(ctx, w.config.WorkerID, maximumBatchItems, now, w.config.LeaseDuration)
+	if err != nil {
+		w.observeWork("claim", err)
+	} else if len(work) == 0 {
+		w.observeEmptyClaim()
+	} else {
+		w.observeWork("claim", nil)
+	}
 	if err != nil || len(work) == 0 {
 		return false, err
 	}
@@ -155,13 +175,19 @@ func (w *Worker) process(ctx context.Context) (bool, error) {
 
 func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsageDeliveryWork) error {
 	results, err := w.send(ctx, work)
+	w.observeWork("deliver", err)
 	completedAt := w.now()
 	if errors.Is(err, errBatchTooLarge) {
 		if len(work) > 1 {
 			middle := len(work) / 2
 			return errors.Join(w.deliver(ctx, work[:middle]), w.deliver(ctx, work[middle:]))
 		}
-		return errors.Join(err, w.store.RejectPublicURLUsageDelivery(ctx, work[0], err.Error(), completedAt))
+		rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, work[0], err.Error(), completedAt)
+		w.observeWork("reject", rejectErr)
+		if rejectErr == nil {
+			w.addItems("rejected", 1)
+		}
+		return errors.Join(err, rejectErr)
 	}
 	if err != nil {
 		return errors.Join(err, w.retry(ctx, work, completedAt, err.Error()))
@@ -170,12 +196,22 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 	for index, item := range work {
 		response := results[item.DeliveryKey]
 		if response.Accepted {
-			result = errors.Join(result, w.store.CompletePublicURLUsageDelivery(ctx, item, completedAt))
+			completeErr := w.store.CompletePublicURLUsageDelivery(ctx, item, completedAt)
+			w.observeWork("complete", completeErr)
+			if completeErr == nil {
+				w.addItems("accepted", 1)
+			}
+			result = errors.Join(result, completeErr)
 			continue
 		}
 		rejection := fmt.Errorf("publicurlusageworker: receiver rejected %s with %s", item.DeliveryKey, *response.Code)
 		if *response.Code == publicurlusagev1.BatchProblemCodeInvalidArgument {
-			result = errors.Join(result, rejection, w.store.RejectPublicURLUsageDelivery(ctx, item, string(*response.Code), completedAt))
+			rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, item, string(*response.Code), completedAt)
+			w.observeWork("reject", rejectErr)
+			if rejectErr == nil {
+				w.addItems("rejected", 1)
+			}
+			result = errors.Join(result, rejection, rejectErr)
 		} else {
 			result = errors.Join(result, rejection, w.retry(ctx, work[index:index+1], completedAt, string(*response.Code)))
 		}
@@ -186,7 +222,7 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 func (w *Worker) send(
 	ctx context.Context,
 	work []controlstate.PublicURLUsageDeliveryWork,
-) (map[string]publicurlusagev1.BatchResult, error) {
+) (results map[string]publicurlusagev1.BatchResult, retErr error) {
 	items := make([]publicurlusagev1.PublicURLUsageBucketReport, len(work))
 	ids := make(map[string]struct{}, len(work))
 	for index, item := range work {
@@ -200,12 +236,21 @@ func (w *Worker) send(
 	if len(body) > maximumRequestBytes {
 		return nil, errBatchTooLarge
 	}
+	started := time.Now()
+	outcome := "invalid_response"
+	defer func() {
+		if w.config.Observer != nil {
+			w.config.Observer.ObserveUsageReceiver(outcome, time.Since(started))
+		}
+	}()
 	response, err := w.api.IngestPublicURLUsageBucketReportsWithBody(ctx, "application/json", bytes.NewReader(body))
 	if err != nil {
+		outcome = "transport_error"
 		return nil, fmt.Errorf("publicurlusageworker: send batch: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		outcome = "http_error"
 		if response.StatusCode == http.StatusRequestEntityTooLarge {
 			return nil, fmt.Errorf("%w: receiver returned HTTP %d", errBatchTooLarge, response.StatusCode)
 		}
@@ -231,7 +276,7 @@ func (w *Worker) send(
 	if len(batch.Results) != len(work) {
 		return nil, errors.New("publicurlusageworker: response result count does not match request")
 	}
-	results := make(map[string]publicurlusagev1.BatchResult, len(batch.Results))
+	results = make(map[string]publicurlusagev1.BatchResult, len(batch.Results))
 	for _, result := range batch.Results {
 		if _, expected := ids[result.ItemId]; !expected {
 			return nil, errors.New("publicurlusageworker: response contains an unknown item ID")
@@ -244,6 +289,7 @@ func (w *Worker) send(
 		}
 		results[result.ItemId] = result
 	}
+	outcome = "success"
 	return results, nil
 }
 
@@ -265,9 +311,37 @@ func (w *Worker) retry(
 		for attempt := uint64(1); attempt < item.Attempts && delay < time.Minute; attempt++ {
 			delay = min(delay*2, time.Minute)
 		}
-		result = errors.Join(result, w.store.RetryPublicURLUsageDelivery(ctx, item, now.Add(delay), message, now))
+		retryErr := w.store.RetryPublicURLUsageDelivery(ctx, item, now.Add(delay), message, now)
+		w.observeWork("retry", retryErr)
+		if retryErr == nil {
+			w.addItems("retried", 1)
+		}
+		result = errors.Join(result, retryErr)
 	}
 	return result
+}
+
+func (w *Worker) observeWork(phase string, err error) {
+	if w.config.Observer == nil {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	}
+	w.config.Observer.ObserveUsageWork(phase, outcome)
+}
+
+func (w *Worker) observeEmptyClaim() {
+	if w.config.Observer != nil {
+		w.config.Observer.ObserveUsageWork("claim", "empty")
+	}
+}
+
+func (w *Worker) addItems(result string, count int) {
+	if w.config.Observer != nil {
+		w.config.Observer.AddUsageItems(result, count)
+	}
 }
 
 func usageBucketReport(work controlstate.PublicURLUsageDeliveryWork) publicurlusagev1.PublicURLUsageBucketReport {

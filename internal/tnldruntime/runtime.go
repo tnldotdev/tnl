@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -106,8 +107,12 @@ func serveWithRelayClientTLS(
 		metrics.SetCapacityLimit("denied_public_url_connections", int64(max(1, ingress.DefaultDeniedConnectionLimit/2)))
 	}
 	if cfg.Role.RunsRelay() {
-		metrics.SetCapacityLimit("publisher_connections", cfg.PublisherConnectionLimit)
-		metrics.SetCapacityLimit("relay_streams", cfg.RelayStreamCapacity)
+		relayCount := int64(1)
+		if cfg.Role == tnldconfig.RoleStandalone {
+			relayCount = 2
+		}
+		metrics.SetCapacityLimit("publisher_connections", cfg.PublisherConnectionLimit*relayCount)
+		metrics.SetCapacityLimit("relay_streams", cfg.RelayStreamCapacity*relayCount)
 	}
 	if cfg.Role == tnldconfig.RoleStandalone {
 		metrics.SetCapacityLimit("control_connections", int64(cfg.StandaloneControlConnectionLimit))
@@ -123,13 +128,13 @@ func serveWithRelayClientTLS(
 		database.Instrument(metrics)
 		metrics.RegisterDatabase(database.PrometheusMetrics)
 		d.forward("expire saved publish runs", runAsync(func() error {
-			return runExpiredPublishRunCleanup(lifetime, database)
+			return runExpiredPublishRunCleanup(lifetime, database, metrics)
 		}))
 		d.forward("clean up ephemeral routes", runAsync(func() error {
-			return runEphemeralRouteCleanup(lifetime, database)
+			return runEphemeralRouteCleanup(lifetime, database, metrics)
 		}))
 		d.forward("clean up routing history", runAsync(func() error {
-			return runRoutingHistoryCleanup(lifetime, database)
+			return runRoutingHistoryCleanup(lifetime, database, metrics)
 		}))
 		if err := database.CompleteStorageKeyRotation(ctx); err != nil {
 			return fmt.Errorf("rotate stored secrets: %w", err)
@@ -144,6 +149,7 @@ func serveWithRelayClientTLS(
 		dnsConfig := dnscontroller.Config{
 			ManagedDomain: cfg.ManagedDomain(), ManagedZoneID: cfg.Route53ManagedZoneID,
 			IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
+			Observer: metrics,
 		}
 		if cfg.DNSProviderEnabled() {
 			awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
@@ -166,12 +172,14 @@ func serveWithRelayClientTLS(
 				}
 			}
 			if cfg.RelayCertificateAutomationEnabled() {
-				relayDNSChallenges, err = dnscontroller.NewRelayChallengeManager(
+				manager, managerErr := dnscontroller.NewRelayChallengeManager(
 					database, dnsProvider, dnsVerifier, cfg.ServerDomain, cfg.Route53ServerZoneID,
 				)
-				if err != nil {
-					return err
+				if managerErr != nil {
+					return managerErr
 				}
+				manager.SetObserver(metrics)
+				relayDNSChallenges = manager
 			}
 		}
 		if cfg.ACMEEnabled() {
@@ -206,7 +214,7 @@ func serveWithRelayClientTLS(
 				}
 				relayWorker, err := certificates.NewRelayWorker(database, certificates.RelayConfig{
 					WorkerID: relayWorkerID, AccountID: account.ID, Profile: cfg.ACMEProfile,
-					HTTPClient: acmeHTTPClient, DNSChallenges: relayDNSChallenges,
+					HTTPClient: acmeHTTPClient, DNSChallenges: relayDNSChallenges, Observer: metrics,
 				})
 				if err != nil {
 					return err
@@ -225,6 +233,7 @@ func serveWithRelayClientTLS(
 			}
 			worker, err := publicurlusageworker.New(database, publicurlusageworker.Config{
 				WorkerID: workerID, Endpoint: cfg.PublicURLUsageURL, Token: cfg.PublicURLUsageToken,
+				Observer: metrics,
 			})
 			if err != nil {
 				return err
@@ -242,6 +251,17 @@ func serveWithRelayClientTLS(
 				return err
 			}
 			d.forward("run DNS controller", runAsync(func() error { return worker.Run(lifetime) }))
+		}
+	}
+	if d.controlTLSManager != nil {
+		metrics.RegisterControlCertificate(d.controlTLSManager.EarliestCertificateExpiry)
+	} else if d.controlTLS != nil && len(d.controlTLS.Certificates) > 0 {
+		leaf := d.controlTLS.Certificates[0].Leaf
+		if leaf == nil && len(d.controlTLS.Certificates[0].Certificate) > 0 {
+			leaf, _ = x509.ParseCertificate(d.controlTLS.Certificates[0].Certificate[0])
+		}
+		if leaf != nil {
+			metrics.RegisterControlCertificate(func() time.Time { return leaf.NotAfter })
 		}
 	}
 

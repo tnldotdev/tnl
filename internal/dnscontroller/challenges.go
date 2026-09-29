@@ -70,16 +70,23 @@ func NewChallengeManager(
 }
 
 func (m *ChallengeManager) Present(ctx context.Context, publicURLID, authorizationID string) error {
+	started := time.Now()
 	_, err := m.reconcile(ctx, publicURLID, authorizationID, "presenting")
+	observeDNS(m.config.Observer, "public_url_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *ChallengeManager) Verify(ctx context.Context, publicURLID, authorizationID string) (bool, error) {
-	return m.reconcile(ctx, publicURLID, authorizationID, "presented")
+	started := time.Now()
+	verified, err := m.reconcile(ctx, publicURLID, authorizationID, "presented")
+	observeDNS(m.config.Observer, "public_url_challenge", "verify", started, verified, err)
+	return verified, err
 }
 
 func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizationID string) error {
+	started := time.Now()
 	_, err := m.reconcile(ctx, publicURLID, authorizationID, "cleaning")
+	observeDNS(m.config.Observer, "public_url_challenge", "cleanup", started, true, err)
 	return err
 }
 

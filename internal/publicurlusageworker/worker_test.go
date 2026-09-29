@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/publicurlusagev1"
 )
 
@@ -53,6 +54,8 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 	t.Cleanup(receiver.Close)
 	store := &publicURLUsageStoreStub{work: work}
 	worker := testWorker(t, store, receiver.URL, now)
+	metrics := observability.New("control")
+	worker.config.Observer = metrics
 	found, err := worker.process(t.Context())
 	if !found || err == nil {
 		t.Fatalf("process = found %v, error %v", found, err)
@@ -86,6 +89,17 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 	}
 	if !reflect.DeepEqual(store.retryCalls, []retryCall{{work: work[1], retryAt: now.Add(time.Second), message: "not_found", now: now}}) {
 		t.Fatalf("retry calls = %#v", store.retryCalls)
+	}
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{`tnl_control_public_url_usage_items_total{result="accepted"} 1`, `tnl_control_public_url_usage_items_total{result="retried"} 1`,
+		`tnl_control_public_url_usage_receiver_duration_seconds_count{outcome="success"} 1`} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Errorf("missing metric %q", want)
+		}
+	}
+	if strings.Contains(response.Body.String(), work[0].DeliveryKey) || strings.Contains(response.Body.String(), work[1].DeliveryKey) {
+		t.Fatal("metrics exposed a delivery key")
 	}
 }
 

@@ -65,6 +65,24 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 func (m *Metrics) ObserveDatabaseQuery(operation string, err error, elapsed time.Duration) {
 	if m != nil {
 		m.databaseQueryDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+		if err != nil {
+			phase := "query"
+			switch operation {
+			case "begin", "commit", "rollback":
+				phase = operation
+			}
+			m.databaseFailures.WithLabelValues(phase, durationOutcome(err)).Inc()
+		}
+	}
+}
+
+func (m *Metrics) ObserveDatabaseAcquire(err error, elapsed time.Duration) {
+	if m == nil {
+		return
+	}
+	m.databaseAcquireDuration.WithLabelValues(durationOutcome(err)).Observe(elapsed.Seconds())
+	if err != nil {
+		m.databaseFailures.WithLabelValues("acquire", durationOutcome(err)).Inc()
 	}
 }
 

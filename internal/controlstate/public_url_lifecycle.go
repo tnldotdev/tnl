@@ -231,6 +231,7 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	if err != nil {
 		return PublishRunLifecycle{}, err
 	}
+	alreadyInstalled := session.CertificateInstalledAt.Valid
 	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
 		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
 		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
@@ -268,6 +269,9 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunLifecycle{}, fmt.Errorf("controlstate: install public URL certificate: commit: %w", err)
+	}
+	if !alreadyInstalled {
+		d.activity.metrics.Load().ObserveCertificateTransition("public_url", "installed")
 	}
 	return publishRunLifecycle(session, connections, 0, 0), nil
 }
@@ -326,13 +330,15 @@ func (d *Database) HeartbeatPublishRun(
 		return PublishRunSetup{}, err
 	}
 	removedReadyConnection := false
+	var replenishment replenishmentResult
 	if len(connections) != publishRunConnectionCount {
-		removedReadyConnection, err = replenishPublishRunConnections(
+		replenishment, err = replenishPublishRunConnections(
 			ctx, queries, session, authentication.PublishRunToken, connections, now, connectionCredentialDuration,
 		)
 		if err != nil {
 			return PublishRunSetup{}, err
 		}
+		removedReadyConnection = replenishment.removedReady
 		connections, err = validReadyPublisherConnections(ctx, queries, session.ID, now)
 		if err != nil {
 			return PublishRunSetup{}, err
@@ -367,6 +373,17 @@ func (d *Database) HeartbeatPublishRun(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: heartbeat publish run: commit: %w", err)
+	}
+	metrics := d.activity.metrics.Load()
+	for reason, count := range replenishment.replacements {
+		metrics.AddAssignmentReplacements(reason, count)
+	}
+	if replenishment.attempted {
+		outcome := "placed"
+		if replenishment.unavailable {
+			outcome = "unavailable"
+		}
+		metrics.ObservePlacement("replenish", outcome)
 	}
 	return setup, nil
 }

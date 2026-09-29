@@ -104,6 +104,24 @@ func New(config Config) (*Source, error) {
 
 func (s *Source) TLSConfig() *tls.Config { return s.tlsConfig.Clone() }
 
+// EarliestCertificateExpiry reads only loaded certificate material. Zero means
+// at least one configured hostname has not yet been loaded into this process.
+func (s *Source) EarliestCertificateExpiry() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var earliest time.Time
+	for _, hostname := range s.hostnames {
+		certificate := s.certificates[hostname]
+		if certificate == nil || certificate.Leaf == nil {
+			return time.Time{}
+		}
+		if earliest.IsZero() || certificate.Leaf.NotAfter.Before(earliest) {
+			earliest = certificate.Leaf.NotAfter
+		}
+	}
+	return earliest
+}
+
 func (s *Source) Ready(now time.Time) bool {
 	for _, hostname := range s.hostnames {
 		s.mu.RLock()

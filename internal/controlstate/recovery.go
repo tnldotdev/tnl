@@ -95,6 +95,9 @@ func (d *Database) ObservePublicURLRecovery(
 	if err := tx.Commit(ctx); err != nil {
 		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: commit: %w", err)
 	}
+	if d.activity != nil {
+		d.activity.metrics.Load().ObserveRecoveryDuration(time.Duration(seconds * float64(time.Second)))
+	}
 	return recoveryObservation(episode), nil
 }
 

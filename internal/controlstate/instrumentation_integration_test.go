@@ -66,15 +66,29 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 1,
 		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 1, "ReportIngressUsage": 1,
 	} {
-		assertDurationCount(t, families, "tnl_operation_duration_seconds", operation, "success", count)
+		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", operation, "success", count)
 	}
 	for _, outcome := range []string{"error", "canceled", "deadline_exceeded"} {
-		assertDurationCount(t, families, "tnl_operation_duration_seconds", "CreatePublishRun", outcome, 1)
+		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "CreatePublishRun", outcome, 1)
 	}
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockLocalTeamForSession", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRelayServicesForPlacement", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockPublishRunForUsage", "success", 1)
+	var placements float64
+	for _, family := range families {
+		if family.GetName() != "tnl_control_placement_decisions_total" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			if len(metric.Label) == 2 && metric.Label[0].GetValue() == "create" && metric.Label[1].GetValue() == "placed" {
+				placements += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	if placements != 1 {
+		t.Fatalf("committed create placements=%g, want 1", placements)
+	}
 }
 
 func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
@@ -169,7 +183,23 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "error", 1)
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "canceled", 1)
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "deadline_exceeded", 1)
-	assertDurationCount(t, families, "tnl_operation_duration_seconds", "ReadIngressRoutingTableSnapshot", "deadline_exceeded", 1)
+	assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "ReadIngressRoutingTableSnapshot", "deadline_exceeded", 1)
+	var acquireFailures uint64
+	for _, family := range families {
+		if family.GetName() != "tnl_database_pool_acquire_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			for _, label := range metric.Label {
+				if label.GetName() == "outcome" && label.GetValue() == "deadline_exceeded" {
+					acquireFailures += metric.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+	}
+	if acquireFailures == 0 {
+		t.Fatal("pool exhaustion did not emit acquire timeout")
+	}
 }
 
 func TestIntegrationQueryDelayPreservesProductionGuardWindow(t *testing.T) {

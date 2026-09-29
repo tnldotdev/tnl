@@ -17,7 +17,7 @@ func TestRunEphemeralRouteCleanupDrainsAvailableBatches(t *testing.T) {
 		cancel()
 		return 0, nil
 	})
-	if err := runEphemeralRouteCleanup(ctx, store); err != nil {
+	if err := runEphemeralRouteCleanup(ctx, store, nil); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {

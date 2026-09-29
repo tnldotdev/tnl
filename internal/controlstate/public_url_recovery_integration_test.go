@@ -5,12 +5,16 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestIntegrationPublicURLRecovery(t *testing.T) {
 	f := newPublishRunFixture(t)
 	claims := readyTestSession(t, f)
 	database, now := f.database, f.now
+	metrics := observability.New("control")
+	database.Instrument(metrics)
 	ingress := registerTestIngress(t, database, now)
 	for slot, claim := range claims {
 		if _, err := database.DisconnectPublisherConnection(t.Context(), claim, now.Add(time.Duration(slot+1)*time.Second), true); err != nil {
@@ -72,6 +76,25 @@ func TestIntegrationPublicURLRecovery(t *testing.T) {
 	}
 	if count != 1 || sum != wantSeconds || half != 0 || one != 0 || ten != 1 || infinite != 1 {
 		t.Fatalf("recovery histogram = %d/%f, buckets %d/%d/%d/%d", count, sum, half, one, ten, infinite)
+	}
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recoveryCount uint64
+	var replacements float64
+	for _, family := range families {
+		switch family.GetName() {
+		case "tnl_control_public_url_recovery_duration_seconds":
+			recoveryCount = family.Metric[0].GetHistogram().GetSampleCount()
+		case "tnl_control_connection_assignments_replaced_total":
+			for _, metric := range family.Metric {
+				replacements += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	if recoveryCount != 1 || replacements != 2 {
+		t.Fatalf("committed recovery metrics: observations=%d replacements=%g", recoveryCount, replacements)
 	}
 }
 

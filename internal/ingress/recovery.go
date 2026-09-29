@@ -15,6 +15,11 @@ type recoveryControl interface {
 	ObserveRecovery(context.Context, string, uint64, uint64, time.Time) (ingressv1.PublicURLRecoveryObservation, error)
 }
 
+type RecoveryObserver interface {
+	AddRecoveryPending(int)
+	ObserveRecoveryAttempt(string)
+}
+
 // RecoveryReporter retries first-public-byte observations until control
 // durably completes the corresponding recovery episode.
 type RecoveryReporter struct {
@@ -23,11 +28,15 @@ type RecoveryReporter struct {
 	retry   time.Duration
 	report  func(error)
 
-	mu      sync.Mutex
-	pending map[uint64]struct{}
-	closed  bool
-	active  sync.WaitGroup
+	mu       sync.Mutex
+	pending  map[uint64]struct{}
+	closed   bool
+	active   sync.WaitGroup
+	observer RecoveryObserver
 }
+
+// SetObserver configures process-local metrics before observations begin.
+func (r *RecoveryReporter) SetObserver(observer RecoveryObserver) { r.observer = observer }
 
 func NewRecoveryReporter(
 	ctx context.Context,
@@ -63,6 +72,9 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 		return
 	}
 	r.pending[recoveryEpisodeID] = struct{}{}
+	if r.observer != nil {
+		r.observer.AddRecoveryPending(1)
+	}
 	r.active.Add(1)
 	r.mu.Unlock()
 	go func() {
@@ -70,16 +82,32 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 		defer func() {
 			r.mu.Lock()
 			delete(r.pending, recoveryEpisodeID)
+			if r.observer != nil {
+				r.observer.AddRecoveryPending(-1)
+			}
 			r.mu.Unlock()
 		}()
 		for {
 			if _, err := r.control.ObserveRecovery(r.ctx, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt); err == nil {
+				if r.observer != nil {
+					r.observer.ObserveRecoveryAttempt("success")
+				}
 				return
 			} else {
 				var problem *ControlProblemError
 				if errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem != nil &&
 					problemtype.Is(problem.Problem.Type, "recovery_episode_stale") {
+					if r.observer != nil {
+						r.observer.ObserveRecoveryAttempt("stale")
+					}
 					return
+				}
+				if r.observer != nil {
+					outcome := "retry"
+					if r.ctx.Err() != nil {
+						outcome = "canceled"
+					}
+					r.observer.ObserveRecoveryAttempt(outcome)
 				}
 				if r.ctx.Err() == nil {
 					r.report(err)

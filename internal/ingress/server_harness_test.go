@@ -261,6 +261,7 @@ func (u *testUsageConnection) Close(at time.Time) {
 
 type testMetrics struct {
 	ipAllowlistDenials, challengeUnavailable, challengeMissing atomic.Int32
+	visitorOutcomes                                            chan string
 	forwardedMu                                                sync.Mutex
 	forwardedBytes                                             map[string]int64
 }
@@ -276,6 +277,9 @@ func (m *testMetrics) IncChallengeRejection(reason string) {
 	}
 }
 func (m *testMetrics) ObserveVisitor(outcome string) {
+	if m.visitorOutcomes != nil {
+		m.visitorOutcomes <- outcome
+	}
 	if outcome == "policy_denied" {
 		m.ipAllowlistDenials.Add(1)
 	}

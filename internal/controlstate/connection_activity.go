@@ -3,8 +3,10 @@ package controlstate
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type connectionPurpose int
@@ -68,6 +70,21 @@ type connectionTracer struct {
 	connections *connectionActivity
 	purpose     connectionPurpose
 	queries     *queryActivity
+}
+
+type acquireStartedKey struct{}
+
+func (t *connectionTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
+	return context.WithValue(ctx, acquireStartedKey{}, time.Now())
+}
+
+func (t *connectionTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
+	if t.queries == nil {
+		return
+	}
+	if started, ok := ctx.Value(acquireStartedKey{}).(time.Time); ok {
+		t.queries.metrics.Load().ObserveDatabaseAcquire(data.Err, time.Since(started))
+	}
 }
 
 func (t *connectionTracer) TraceConnectStart(ctx context.Context, _ pgx.TraceConnectStartData) context.Context {

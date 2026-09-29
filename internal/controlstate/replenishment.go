@@ -20,6 +20,20 @@ type relayProcessLeaseIdentity struct {
 	relayLeaseRevision int64
 }
 
+type replenishmentResult struct {
+	removedReady bool
+	attempted    bool
+	unavailable  bool
+	replacements map[string]int
+}
+
+func (r *replenishmentResult) replaced(reason string) {
+	if r.replacements == nil {
+		r.replacements = make(map[string]int)
+	}
+	r.replacements[reason]++
+}
+
 func replenishPublishRunConnections(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -28,15 +42,15 @@ func replenishPublishRunConnections(
 	validConnections []controlstatedb.ListValidReadyPublisherConnectionsRow,
 	now time.Time,
 	credentialDuration time.Duration,
-) (bool, error) {
+) (replenishmentResult, error) {
+	var result replenishmentResult
 	rows, err := queries.ListPublishRunConnections(ctx, session.ID)
 	if err != nil {
-		return false, fmt.Errorf("controlstate: replenish publish-run connections: list slots: %w", err)
+		return result, fmt.Errorf("controlstate: replenish publish-run connections: list slots: %w", err)
 	}
 	if len(rows) != publishRunConnectionCount {
-		return false, errors.New("controlstate: replenish publish-run connections: invalid slot count")
+		return result, errors.New("controlstate: replenish publish-run connections: invalid slot count")
 	}
-	removedReady := false
 	needsPlacement := false
 	for index, row := range rows {
 		if row.State != "ready" {
@@ -62,19 +76,21 @@ func replenishPublishRunConnections(
 			continue
 		}
 		if err != nil {
-			return false, err
+			return result, err
 		}
 		rows[index] = updated
-		removedReady = true
+		result.removedReady = true
+		result.replaced("failed_ready")
 	}
 	if !needsPlacement {
-		return removedReady, nil
+		return result, nil
 	}
+	result.attempted = true
 	// No broad locks were taken by reservation reuse, so a remaining allocation
 	// can still acquire reservation -> service -> lease guards in normal order.
 	availableServices, leases, err := availableRelayServicePlacements(ctx, queries, now)
 	if err != nil {
-		return false, fmt.Errorf("controlstate: replenish publish-run connections: %w", err)
+		return result, fmt.Errorf("controlstate: replenish publish-run connections: %w", err)
 	}
 	leaseIdentities := make(map[relayProcessLeaseIdentity]struct{}, len(leases))
 	serviceConfigurations := make(map[string]relayServicePlacement, len(availableServices))
@@ -93,6 +109,7 @@ func replenishPublishRunConnections(
 		reservedServices[row.RelayServiceID] = true
 	}
 	replace := make([]bool, len(rows))
+	reasons := make([]string, len(rows))
 	for index, row := range rows {
 		valid := true
 		switch row.State {
@@ -123,15 +140,21 @@ func replenishPublishRunConnections(
 			continue
 		}
 		replace[index] = true
-		removedReady = removedReady || row.State == "ready"
+		reasons[index] = "unavailable"
+		if row.State == "ready" {
+			result.removedReady = true
+			reasons[index] = "failed_ready"
+		} else if row.State == "expired" || row.State == "closed" || row.State == "assigned" && !row.PublisherConnectionCredentialExpiresAt.Time.After(now) {
+			reasons[index] = "expired"
+		}
 		if row.State != "closed" && row.State != "expired" {
 			if _, err := queries.ExpirePublisherConnection(ctx, controlstatedb.ExpirePublisherConnectionParams{
 				ExpiredAt: timestamptz(now), PublisherConnectionID: row.PublisherConnectionID,
 				PublishRunID: row.PublishRunID, ConnectionAssignmentRevision: row.ConnectionAssignmentRevision,
 			}); errors.Is(err, pgx.ErrNoRows) {
-				return false, ErrConnectionAssignmentStale
+				return result, ErrConnectionAssignmentStale
 			} else if err != nil {
-				return false, fmt.Errorf("controlstate: replenish publish-run connections: expire slot %d: %w", row.ConnectionSlot, err)
+				return result, fmt.Errorf("controlstate: replenish publish-run connections: expire slot %d: %w", row.ConnectionSlot, err)
 			}
 			if service, found := serviceConfigurations[row.RelayServiceID]; found {
 				service.assignments--
@@ -164,17 +187,19 @@ func replenishPublishRunConnections(
 	for index, row := range rows {
 		placement := placements[index]
 		if placement.relayServiceID == "" {
+			result.unavailable = true
 			continue
 		}
 		_, err := replacePublishRunConnection(ctx, queries, row, publishRunToken, placement, now, credentialDuration)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrConnectionAssignmentStale
+			return result, ErrConnectionAssignmentStale
 		}
 		if err != nil {
-			return false, err
+			return result, err
 		}
+		result.replaced(reasons[index])
 	}
-	return removedReady, nil
+	return result, nil
 }
 
 func replacePublishRunConnection(

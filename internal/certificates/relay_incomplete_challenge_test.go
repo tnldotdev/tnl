@@ -5,11 +5,14 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestRelayWorkerRetiresAuthorizationWithIncompleteDNSChallenge(t *testing.T) {
@@ -45,6 +48,8 @@ func TestRelayWorkerRetiresAuthorizationWithIncompleteDNSChallenge(t *testing.T)
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"},
 	}}
 	worker := &RelayWorker{store: store, config: RelayConfig{DNSChallenges: &relayDNSChallengesStub{}, FailedRetryInterval: time.Hour}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
+	metrics := observability.New("control")
+	worker.config.Observer = metrics
 	for range 2 {
 		if found, err := worker.processOne(t.Context()); !found || err != nil {
 			t.Fatalf("process incomplete challenge: found=%t error=%v", found, err)
@@ -54,5 +59,16 @@ func TestRelayWorkerRetiresAuthorizationWithIncompleteDNSChallenge(t *testing.T)
 	}
 	if store.saved.State != "failed" {
 		t.Fatalf("authorization with no DNS challenge token remains active: state=%q fetches=%d error=%q", store.saved.State, len(api.authorizationURLs), store.saved.LastError)
+	}
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+	for _, want := range []string{
+		`tnl_control_certificate_claims_total{kind="relay",outcome="claimed"} 2`,
+		`tnl_control_certificate_transitions_total{kind="relay",state="failed"} 1`,
+		`tnl_control_certificate_work_duration_seconds_count{kind="relay",outcome="terminal",stage="failed"} 1`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Errorf("missing relay certificate metric %q", want)
+		}
 	}
 }

@@ -94,6 +94,15 @@ func (w *PublicURLWorker) Run(ctx context.Context) error {
 func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	if observer, ok := w.config.Observer.(interface{ ObserveCertificateClaim(string, string) }); ok && ctx.Err() == nil {
+		outcome := "claimed"
+		if err != nil {
+			outcome = "error"
+		} else if !found {
+			outcome = "empty"
+		}
+		observer.ObserveCertificateClaim("public_url", outcome)
+	}
 	if err != nil || !found {
 		return found, err
 	}
@@ -123,6 +132,19 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 		return true, saveErr
 	}
 	if w.config.Observer != nil {
+		if observer, ok := w.config.Observer.(interface{ ObserveCertificateTransition(string, string) }); ok {
+			if stage != saved.State {
+				switch saved.State {
+				case "waiting_for_install":
+					observer.ObserveCertificateTransition("public_url", "available")
+				case "failed":
+					observer.ObserveCertificateTransition("public_url", "failed")
+				}
+			}
+			if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) {
+				observer.ObserveCertificateTransition("public_url", "cleanup_complete")
+			}
+		}
 		if stage != "waiting_for_install" && saved.State == "waiting_for_install" && len(saved.CertificatePEM) != 0 {
 			w.config.Observer.ObserveCertificateMilestone("ready", completedAt.Sub(saved.CreatedAt))
 		}

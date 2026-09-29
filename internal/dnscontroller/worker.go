@@ -62,6 +62,7 @@ type Store interface {
 
 type Config struct {
 	WorkerID             string
+	Observer             DNSObserver
 	Logger               *slog.Logger
 	LeaseDuration        time.Duration
 	OperationTimeout     time.Duration
@@ -71,6 +72,24 @@ type Config struct {
 	ManagedZoneID        string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string
+}
+
+type DNSObserver interface {
+	ObserveDNSWork(kind, phase, outcome string, elapsed time.Duration)
+	ObserveDNSTransition(kind, state string)
+}
+
+func observeDNS(observer DNSObserver, kind, phase string, started time.Time, ready bool, err error) {
+	if observer == nil {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	} else if !ready {
+		outcome = "pending"
+	}
+	observer.ObserveDNSWork(kind, phase, outcome, time.Since(started))
 }
 
 type Worker struct {
@@ -134,34 +153,70 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
+	started := time.Now()
 	work, found, err := w.store.ClaimDNSAuthorityWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "authority", "claim", started, found, err)
+	}
 	if err != nil {
 		return false, err
 	}
 	if found {
-		if err := w.advance(ctx, &work, now); err != nil {
+		initial := work.State
+		advanceStarted := time.Now()
+		advanceErr := w.advance(ctx, &work, now)
+		if advanceErr != nil {
 			if ctx.Err() != nil {
 				return true, ctx.Err()
 			}
-			w.applyFailure(&work, err, w.now())
+			w.applyFailure(&work, advanceErr, w.now())
 		}
-		if _, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now()); err != nil {
+		started = time.Now()
+		saved, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now())
+		if ctx.Err() == nil {
+			observeDNS(w.config.Observer, "authority", "save", started, true, err)
+		}
+		if err != nil {
 			return true, err
+		}
+		if ctx.Err() == nil {
+			observeDNS(w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
+		}
+		if w.config.Observer != nil && initial != saved.State {
+			w.config.Observer.ObserveDNSTransition("authority", saved.State)
 		}
 		return true, nil
 	}
+	started = time.Now()
 	route, found, err := w.store.ClaimDNSPublicURLWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "public_url", "claim", started, found, err)
+	}
 	if err != nil || !found {
 		return found, err
 	}
-	if err := w.advancePublicURL(ctx, &route, now); err != nil {
+	initial := route.State
+	advanceStarted := time.Now()
+	advanceErr := w.advancePublicURL(ctx, &route, now)
+	if advanceErr != nil {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
-		w.applyRouteFailure(&route, err, w.now())
+		w.applyRouteFailure(&route, advanceErr, w.now())
 	}
-	if _, err := w.store.SaveDNSPublicURLWork(ctx, route, w.now()); err != nil {
+	started = time.Now()
+	saved, err := w.store.SaveDNSPublicURLWork(ctx, route, w.now())
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "public_url", "save", started, true, err)
+	}
+	if err != nil {
 		return true, err
+	}
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "public_url", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
+	}
+	if w.config.Observer != nil && initial != saved.State {
+		w.config.Observer.ObserveDNSTransition("public_url", string(saved.State))
 	}
 	return true, nil
 }
@@ -178,16 +233,20 @@ func (w *Worker) advancePublicURL(ctx context.Context, work *controlstate.DNSPub
 	}
 	switch work.State {
 	case controlstate.PublicURLDNSPending:
+		started := time.Now()
 		zone, err := w.provider.PublishPublicURL(ctx, record)
+		observeDNS(w.config.Observer, "public_url", "provider", started, true, err)
 		if err != nil {
 			return err
 		}
 		if len(zone.Nameservers) != 0 {
 			nameservers = zone.Nameservers
 		}
+		started = time.Now()
 		verified, err := w.verifier.VerifyPublicURL(
 			ctx, work.CanonicalHostname, record.IngressIPv4Addresses, record.IngressIPv6Addresses, nameservers,
 		)
+		observeDNS(w.config.Observer, "public_url", "verify", started, verified, err)
 		if err != nil {
 			return err
 		}
@@ -199,14 +258,18 @@ func (w *Worker) advancePublicURL(ctx context.Context, work *controlstate.DNSPub
 		}
 		return nil
 	case controlstate.PublicURLDNSRemoving:
+		started := time.Now()
 		zone, err := w.provider.RemovePublicURL(ctx, record)
+		observeDNS(w.config.Observer, "public_url", "provider", started, true, err)
 		if err != nil {
 			return err
 		}
 		if len(zone.Nameservers) != 0 {
 			nameservers = zone.Nameservers
 		}
+		started = time.Now()
 		verified, err := w.verifier.VerifyPublicURL(ctx, work.CanonicalHostname, nil, nil, nameservers)
+		observeDNS(w.config.Observer, "public_url", "verify", started, verified, err)
 		if err != nil {
 			return err
 		}
@@ -265,7 +328,9 @@ func (w *Worker) advance(ctx context.Context, work *controlstate.DNSAuthorityWor
 	switch work.State {
 	case "pending":
 		if work.ProviderZoneID == "" {
+			started := time.Now()
 			zone, err := w.provider.EnsureClaimedZone(ctx, *work)
+			observeDNS(w.config.Observer, "authority", "provider", started, true, err)
 			if err != nil {
 				return err
 			}
@@ -277,7 +342,9 @@ func (w *Worker) advance(ctx context.Context, work *controlstate.DNSAuthorityWor
 			work.AvailableAt = now.Add(w.config.PollInterval)
 			return nil
 		}
+		started := time.Now()
 		verified, err := w.verifier.Verify(ctx, work.CanonicalDomain, work.Nameservers)
+		observeDNS(w.config.Observer, "authority", "verify", started, verified, err)
 		if err != nil {
 			return err
 		}
@@ -297,7 +364,10 @@ func (w *Worker) advance(ctx context.Context, work *controlstate.DNSAuthorityWor
 			work.AvailableAt = now.Add(w.config.PollInterval)
 			return nil
 		}
-		if err := w.provider.ReleaseClaimedZone(ctx, *work); err != nil {
+		started := time.Now()
+		err = w.provider.ReleaseClaimedZone(ctx, *work)
+		observeDNS(w.config.Observer, "authority", "provider", started, true, err)
+		if err != nil {
 			return err
 		}
 		work.State = "released"

@@ -325,6 +325,9 @@ func (r *UsageReporter) acknowledge(reports []ingressv1.IngressUsageReport) {
 		}
 	}
 	r.cleanupVisitors()
+	if observer, ok := r.observer.(interface{ SetUsageRetained(int) }); ok {
+		observer.SetUsageRetained(len(r.buckets))
+	}
 }
 
 func (r *UsageReporter) bucket(publicURLID string, publishRunNumber uint64, at time.Time) *usageBucket {
@@ -339,6 +342,9 @@ func (r *UsageReporter) bucket(publicURLID string, publishRunNumber uint64, at t
 		}
 		bucket = &usageBucket{key: key, visitors: visitors}
 		r.buckets[key] = bucket
+		if observer, ok := r.observer.(interface{ SetUsageRetained(int) }); ok {
+			observer.SetUsageRetained(len(r.buckets))
+		}
 	}
 	return bucket
 }

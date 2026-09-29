@@ -3,11 +3,14 @@ package dnscontroller
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestWorkerCreatesAndVerifiesClaimedZone(t *testing.T) {
@@ -63,11 +66,23 @@ func TestWorkerPersistsProviderFailureForRetry(t *testing.T) {
 	store := &dnsStoreStub{work: testDNSWork(now)}
 	provider := &providerStub{err: errors.New("Route 53 unavailable")}
 	worker := testDNSWorker(t, store, provider, &verifierStub{}, now)
+	metrics := observability.New("control")
+	worker.config.Observer = metrics
 	if found, err := worker.processOne(t.Context()); err != nil || !found {
 		t.Fatalf("failed iteration = found %v, error %v", found, err)
 	}
 	if store.saved.State != "pending" || store.saved.LastError == "" || !store.saved.AvailableAt.Equal(now.Add(time.Second)) {
 		t.Fatalf("retried work = %#v", store.saved)
+	}
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+	for _, want := range []string{
+		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="provider"} 1`,
+		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="advance"} 1`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Errorf("saved retry missing metric %q", want)
+		}
 	}
 }
 

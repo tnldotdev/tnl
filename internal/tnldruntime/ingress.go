@@ -132,6 +132,7 @@ func (d *daemon) startIngressRuntime(
 	}
 	runtime.controller = controller
 	metrics.RegisterIngressRouting(controller.RoutingStatus)
+	metrics.RegisterIngressLease(func() time.Time { return controller.Lease().LeaseExpiresAt })
 	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { log.Printf("ingress usage: %v", err) })
 	if err != nil {
 		return err
@@ -145,6 +146,7 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.recovery = recovery
+	recovery.SetObserver(metrics)
 	forwardingTLS := d.relayClientTLS
 	if forwardingTLS == nil {
 		forwardingTLS = &tls.Config{MinVersion: tls.VersionTLS13}

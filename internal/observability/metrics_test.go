@@ -102,8 +102,8 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics := New("standalone")
 	metrics.SetRelayLeases("active", 3)
 	metrics.AddRelayLeases("active", -1)
-	metrics.SetPublisherConnections("ready", 2)
-	metrics.AddPublisherConnections("ready", 1)
+	metrics.SetReadyPublisherConnections(2)
+	metrics.AddReadyPublisherConnections(1)
 	metrics.SetIngressStreams(4)
 	metrics.AddRelayStreams(2)
 	metrics.IncCapacityRejection("public_url_connections")
@@ -242,7 +242,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 		t.Run(test.role, func(t *testing.T) {
 			metrics := New(test.role)
 			metrics.SetRelayLeases("active", 1)
-			metrics.SetPublisherConnections("ready", 1)
+			metrics.SetReadyPublisherConnections(1)
 			metrics.SetIngressStreams(1)
 			metrics.AddRelayStreams(1)
 			metrics.IncCapacityRejection("test")
@@ -262,6 +262,11 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 				name := family.GetName()
 				if !strings.HasPrefix(name, "tnl_") {
 					continue
+				}
+				if test.role != "standalone" && (test.role != "control" && strings.HasPrefix(name, "tnl_control_") ||
+					test.role != "ingress" && strings.HasPrefix(name, "tnl_ingress_") ||
+					test.role != "relay" && strings.HasPrefix(name, "tnl_relay_")) {
+					t.Errorf("%s exposes another role's metric %q", test.role, name)
 				}
 				if !want[name] {
 					continue

@@ -3,6 +3,7 @@ package tnldruntime
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -172,11 +173,30 @@ func (d *daemon) startRelayRuntime(
 	if runtimeConfig.transportTLS == nil {
 		return nil, errors.New("relay TLS certificate is not configured")
 	}
+	if runtimeConfig.metrics != nil && len(runtimeConfig.transportTLS.Certificates) > 0 {
+		leaf := runtimeConfig.transportTLS.Certificates[0].Leaf
+		if leaf == nil && len(runtimeConfig.transportTLS.Certificates[0].Certificate) > 0 {
+			leaf, _ = x509.ParseCertificate(runtimeConfig.transportTLS.Certificates[0].Certificate[0])
+		}
+		if leaf != nil {
+			runtimeConfig.metrics.SetRelayCertificateExpiry(runtimeConfig.relayID, leaf.NotAfter)
+		}
+	}
+	if runtimeConfig.certificateChanged != nil && runtimeConfig.metrics != nil {
+		install := runtimeConfig.certificateChanged
+		runtimeConfig.certificateChanged = func(cert relayv1.RelayTransportCertificate) error {
+			if err := install(cert); err != nil {
+				return err
+			}
+			runtimeConfig.metrics.SetRelayCertificateExpiry(runtimeConfig.relayID, cert.NotAfter)
+			return nil
+		}
+	}
 	runtime := &relayRuntime{internalListener: runtimeConfig.internalListener}
 	if runtimeConfig.metrics != nil {
 		runtimeConfig.metrics.AddRelayLeases("active", 0)
 		runtimeConfig.metrics.AddRelayLeases("draining", 0)
-		runtimeConfig.metrics.AddPublisherConnections("ready", 0)
+		runtimeConfig.metrics.AddReadyPublisherConnections(0)
 	}
 	runID, err := opaqueid.New("relay_run_")
 	if err != nil {
@@ -198,6 +218,9 @@ func (d *daemon) startRelayRuntime(
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		CertificateChanged: runtimeConfig.certificateChanged,
 		Load:               registry.Load, LeaseChanged: func(previous, current relayv1.RelayLease) {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
+			}
 			if !previous.Draining && current.Draining && current.DrainDeadline != nil {
 				deadline := *current.DrainDeadline
 				runtime.drainOnce.Do(func() {
@@ -230,7 +253,7 @@ func (d *daemon) startRelayRuntime(
 		Control:  controller, Registry: registry,
 		ReadyConnectionsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
-				runtimeConfig.metrics.AddPublisherConnections("ready", delta)
+				runtimeConfig.metrics.AddReadyPublisherConnections(delta)
 			}
 		},
 		ConnectionExited: func(unexpected bool) {

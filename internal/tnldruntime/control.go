@@ -158,10 +158,12 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/ingresses/"):
+			request.Pattern = matchedPrivatePattern(ingressHandler, request)
 			metrics.APIRequests("private_ingress", ingressHandler).ServeHTTP(response, request)
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/relays/"),
 			strings.HasPrefix(request.URL.Path, "/internal/v1/relay-services/"),
 			strings.HasPrefix(request.URL.Path, "/internal/v1/publisher-connections/"):
+			request.Pattern = matchedPrivatePattern(relayHandler, request)
 			metrics.APIRequests("private_relay", relayHandler).ServeHTTP(response, request)
 		default:
 			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found")
@@ -176,6 +178,13 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	d.forward("serve private control API", serveTLS(d.privateControlServer, listener))
 	log.Printf("private control API listening on %s", listener.Addr())
 	return nil
+}
+
+func matchedPrivatePattern(handler http.Handler, request *http.Request) string {
+	if matcher, ok := handler.(interface{ MatchedPattern(*http.Request) string }); ok {
+		return matcher.MatchedPattern(request)
+	}
+	return ""
 }
 
 func controlHTTPServer(handler http.Handler, tlsConfig *tls.Config) *http.Server {

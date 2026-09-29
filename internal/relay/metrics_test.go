@@ -119,3 +119,43 @@ func TestPublisherAcceptorPreservesControlErrorBehindProtocolCode(t *testing.T) 
 		t.Fatalf("control error = %v", err)
 	}
 }
+
+func TestRegisteredPublisherGaugeTracksReplacementAndClose(t *testing.T) {
+	metrics := observability.New("relay")
+	registry := NewRegistry()
+	registry.Instrument(metrics)
+	t.Cleanup(func() { _ = registry.Close() })
+	assertRegistered := func(want float64) {
+		t.Helper()
+		families, err := metrics.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() == "tnl_relay_publisher_connections_registered" {
+				if got := family.Metric[0].GetGauge().GetValue(); got != want {
+					t.Fatalf("registered=%g, want %g", got, want)
+				}
+				return
+			}
+		}
+		t.Fatal("missing registered-connection gauge")
+	}
+	first, _ := publisherFixture(t, "connection_1", 3)
+	second, _ := publisherFixture(t, "connection_2", 4)
+	if err := registry.Insert(first); err != nil {
+		t.Fatal(err)
+	}
+	assertRegistered(1)
+	if err := registry.Insert(second); err != nil {
+		t.Fatal(err)
+	}
+	assertRegistered(1) // Replacing one slot never creates a second registration.
+	if registry.Remove(first) {
+		t.Fatal("old publisher connection removed the replacement")
+	}
+	if !registry.Remove(second) {
+		t.Fatal("replacement not removed")
+	}
+	assertRegistered(0)
+}

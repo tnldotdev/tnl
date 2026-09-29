@@ -33,6 +33,7 @@ var (
 	ErrPublishRunIdempotency     = errors.New("controlstate: publish-run idempotency conflict")
 	ErrPublishRunCreationGated   = errors.New("controlstate: publish-run creation is disabled")
 	ErrInsufficientRelayServices = errors.New("controlstate: insufficient relay-service placement capacity")
+	errRelayPlacementCapacity    = errors.New("controlstate: relay-service placement capacity exhausted")
 )
 
 // PublishRunRequest contains authority already established by the control
@@ -95,6 +96,16 @@ func (d *Database) CreatePublishRun(
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
 	defer d.observeOperation("CreatePublishRun", &retErr)()
+	defer func() {
+		if !errors.Is(retErr, ErrInsufficientRelayServices) {
+			return
+		}
+		outcome := "insufficient_services"
+		if errors.Is(retErr, errRelayPlacementCapacity) {
+			outcome = "capacity"
+		}
+		d.activity.metrics.Load().ObservePlacement("create", outcome)
+	}()
 	if err := validatePublishRunRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -305,6 +316,7 @@ func (d *Database) createPublishRun(
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: commit: %w", err)
 	}
+	d.activity.metrics.Load().ObservePlacement("create", "placed")
 	return setup, nil
 }
 
@@ -336,6 +348,9 @@ func selectRelayServicePlacements(
 		if index == len(result) {
 			return result, nil
 		}
+	}
+	if len(services) >= publishRunConnectionCount {
+		return result, fmt.Errorf("%w: %w", ErrInsufficientRelayServices, errRelayPlacementCapacity)
 	}
 	return result, ErrInsufficientRelayServices
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 const routingHistoryRetention = 10 * time.Minute
@@ -15,7 +16,7 @@ type routingHistoryStore interface {
 	PruneIngressRoutingHistory(context.Context, uint64) (controlstate.RoutingHistoryPruneResult, error)
 }
 
-func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore) error {
+func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore, metrics *observability.Metrics) error {
 	var cursor uint64
 	var nextFloorCheck time.Time
 	for ctx.Err() == nil {
@@ -25,6 +26,7 @@ func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore) er
 			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_, err = store.AdvanceIngressRoutingRetention(callCtx, now.Add(-routingHistoryRetention))
 			cancel()
+			metrics.ObserveCleanup("routing_floor", 0, false, err)
 			if err == nil {
 				nextFloorCheck = now.Add(30 * time.Second)
 			}
@@ -34,6 +36,7 @@ func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore) er
 			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			batch, pruneErr := store.PruneIngressRoutingHistory(callCtx, cursor)
 			cancel()
+			metrics.ObserveCleanup("routing_prune", 0, batch.Busy, pruneErr)
 			err = pruneErr
 			if err == nil && !batch.Busy {
 				cursor = batch.NextRevision

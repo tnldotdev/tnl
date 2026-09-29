@@ -123,7 +123,7 @@ func (m *Metrics) ObserveDNSWork(kind, phase, outcome string, elapsed time.Durat
 		return
 	}
 	switch phase {
-	case "claim", "provider", "verify", "save", "cleanup":
+	case "claim", "advance", "provider", "verify", "save", "cleanup":
 	default:
 		return
 	}
@@ -140,7 +140,7 @@ func (m *Metrics) ObserveDNSTransition(kind, state string) {
 		return
 	}
 	switch state {
-	case "published", "removed", "ready", "failed":
+	case "published", "removed", "ready", "released", "failed":
 	default:
 		return
 	}
@@ -162,6 +162,9 @@ func (m *Metrics) ObserveUsageWork(phase, outcome string) {
 		return
 	}
 	m.usageWork.WithLabelValues(phase, outcome).Inc()
+	if phase == "finalize" && outcome == "success" {
+		m.usageLastSuccess.WithLabelValues("finalize").SetToCurrentTime()
+	}
 }
 
 func (m *Metrics) AddUsageItems(result string, count int) {
@@ -174,6 +177,9 @@ func (m *Metrics) AddUsageItems(result string, count int) {
 		return
 	}
 	m.usageItems.WithLabelValues(result).Add(float64(count))
+	if result == "accepted" {
+		m.usageLastSuccess.WithLabelValues("deliver").SetToCurrentTime()
+	}
 }
 
 func (m *Metrics) ObserveUsageReceiver(outcome string, elapsed time.Duration) {
@@ -226,7 +232,7 @@ func (m *Metrics) ObservePlacement(action, outcome string) {
 		return
 	}
 	switch outcome {
-	case "placed", "insufficient_services", "capacity", "stale", "error":
+	case "placed", "insufficient_services", "capacity", "unavailable", "stale", "error":
 	default:
 		return
 	}

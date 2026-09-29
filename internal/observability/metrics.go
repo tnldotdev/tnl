@@ -2,6 +2,7 @@ package observability
 
 import (
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,54 +14,60 @@ import (
 
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
-	registry               *prometheus.Registry
-	relayLeases            *prometheus.GaugeVec
-	publisherConnections   prometheus.Gauge
-	registeredConnections  prometheus.Gauge
-	publisherExits         *prometheus.CounterVec
-	ingressStreams         prometheus.Gauge
-	relayStreams           prometheus.Gauge
-	ingressConnections     *prometheus.GaugeVec
-	visitorConnections     *prometheus.CounterVec
-	visitorOpenDuration    *prometheus.HistogramVec
-	relayStreamRejections  *prometheus.CounterVec
-	capacityRejections     *prometheus.CounterVec
-	drainingRejections     prometheus.Counter
-	capacityLimits         *prometheus.GaugeVec
-	inspectionFailures     *prometheus.CounterVec
-	challengeRejections    *prometheus.CounterVec
-	forwardedBytes         *prometheus.CounterVec
-	relayAttempts          *prometheus.CounterVec
-	apiDuration            *prometheus.HistogramVec
-	apiInFlight            *prometheus.GaugeVec
-	readinessDuration      *prometheus.HistogramVec
-	readinessAge           *prometheus.HistogramVec
-	certificateDuration    *prometheus.HistogramVec
-	certificateMilestone   *prometheus.HistogramVec
-	controlOperations      *prometheus.HistogramVec
-	ingressOperations      *prometheus.HistogramVec
-	relayOperations        *prometheus.HistogramVec
-	databaseQueryDuration  *prometheus.HistogramVec
-	databaseGuardDuration  *prometheus.HistogramVec
-	recoveryDuration       prometheus.Histogram
-	recoveryPending        prometheus.Gauge
-	recoveryAttempts       *prometheus.CounterVec
-	certificateClaims      *prometheus.CounterVec
-	certificateTransitions *prometheus.CounterVec
-	dnsWork                *prometheus.HistogramVec
-	dnsTransitions         *prometheus.CounterVec
-	usageWork              *prometheus.CounterVec
-	usageItems             *prometheus.CounterVec
-	usageReceiverDuration  *prometheus.HistogramVec
-	usageRetained          prometheus.Gauge
-	cleanupRuns            *prometheus.CounterVec
-	cleanupItems           *prometheus.CounterVec
-	cleanupLastSuccess     *prometheus.GaugeVec
-	placementDecisions     *prometheus.CounterVec
-	assignmentReplacements *prometheus.CounterVec
-	routingHistoryFloor    atomic.Uint64
-	routingHistoryRows     *prometheus.CounterVec
-	routingHistorySkipped  prometheus.Counter
+	registry                *prometheus.Registry
+	relayLeaseMu            sync.Mutex
+	relayLeaseExpiry        map[string]time.Time
+	relayCertificateExpiry  map[string]time.Time
+	relayLeases             *prometheus.GaugeVec
+	publisherConnections    prometheus.Gauge
+	registeredConnections   prometheus.Gauge
+	publisherExits          *prometheus.CounterVec
+	ingressStreams          prometheus.Gauge
+	relayStreams            prometheus.Gauge
+	ingressConnections      *prometheus.GaugeVec
+	visitorConnections      *prometheus.CounterVec
+	visitorOpenDuration     *prometheus.HistogramVec
+	relayStreamRejections   *prometheus.CounterVec
+	capacityRejections      *prometheus.CounterVec
+	drainingRejections      prometheus.Counter
+	capacityLimits          *prometheus.GaugeVec
+	inspectionFailures      *prometheus.CounterVec
+	challengeRejections     *prometheus.CounterVec
+	forwardedBytes          *prometheus.CounterVec
+	relayAttempts           *prometheus.CounterVec
+	apiDuration             *prometheus.HistogramVec
+	apiInFlight             *prometheus.GaugeVec
+	readinessDuration       *prometheus.HistogramVec
+	readinessAge            *prometheus.HistogramVec
+	certificateDuration     *prometheus.HistogramVec
+	certificateMilestone    *prometheus.HistogramVec
+	controlOperations       *prometheus.HistogramVec
+	ingressOperations       *prometheus.HistogramVec
+	relayOperations         *prometheus.HistogramVec
+	databaseQueryDuration   *prometheus.HistogramVec
+	databaseGuardDuration   *prometheus.HistogramVec
+	databaseAcquireDuration *prometheus.HistogramVec
+	databaseFailures        *prometheus.CounterVec
+	recoveryDuration        prometheus.Histogram
+	recoveryPending         prometheus.Gauge
+	recoveryAttempts        *prometheus.CounterVec
+	certificateClaims       *prometheus.CounterVec
+	certificateTransitions  *prometheus.CounterVec
+	dnsWork                 *prometheus.HistogramVec
+	dnsTransitions          *prometheus.CounterVec
+	usageWork               *prometheus.CounterVec
+	usageItems              *prometheus.CounterVec
+	usageReceiverDuration   *prometheus.HistogramVec
+	usageLastSuccess        *prometheus.GaugeVec
+	usageRetained           prometheus.Gauge
+	cleanupRuns             *prometheus.CounterVec
+	cleanupItems            *prometheus.CounterVec
+	cleanupLastSuccess      *prometheus.GaugeVec
+	placementDecisions      *prometheus.CounterVec
+	assignmentReplacements  *prometheus.CounterVec
+	routingHistoryFloor     atomic.Uint64
+	routingHistoryRows      *prometheus.CounterVec
+	routingHistorySkipped   prometheus.Counter
 }
 
 // New constructs an isolated registry for one tnld role.
@@ -71,9 +78,11 @@ func New(role string) *Metrics {
 	})
 	info.Set(1)
 	metrics := &Metrics{
-		registry:              registry,
-		routingHistoryRows:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_rows_total", Help: "Committed routing-history cleanup rows by action."}, []string{"action"}),
-		routingHistorySkipped: prometheus.NewCounter(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_skipped_total", Help: "Cleanup batches skipped because another control holds the cleanup guard."}),
+		registry:               registry,
+		relayLeaseExpiry:       make(map[string]time.Time),
+		relayCertificateExpiry: make(map[string]time.Time),
+		routingHistoryRows:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_rows_total", Help: "Committed routing-history cleanup rows by action."}, []string{"action"}),
+		routingHistorySkipped:  prometheus.NewCounter(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_skipped_total", Help: "Cleanup batches skipped because another control holds the cleanup guard."}),
 		relayLeases: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_relay_local_leases", Help: "Relay leases held by this process by state; not a control-wide lease count.",
 		}, []string{"state"}),
@@ -140,22 +149,25 @@ func New(role string) *Metrics {
 		databaseGuardDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_database_guard_held_duration_seconds", Help: "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.", Buckets: DurationBucketsSeconds(),
 		}, []string{"operation", "outcome"}),
-		recoveryDuration:       prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tnl_control_public_url_recovery_duration_seconds", Help: "Duration of newly committed public URL recovery observations on this control process.", Buckets: DurationBucketsSeconds()}),
-		recoveryPending:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_recovery_observations_pending", Help: "Recovery observations awaiting a successful or stale response."}),
-		recoveryAttempts:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_recovery_observation_attempts_total", Help: "Recovery reporting attempts by bounded outcome."}, []string{"outcome"}),
-		certificateClaims:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_claims_total", Help: "Certificate worker claims by certificate kind and outcome."}, []string{"kind", "outcome"}),
-		certificateTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_transitions_total", Help: "Committed certificate work transitions by kind and resulting state."}, []string{"kind", "state"}),
-		dnsWork:                prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_dns_work_duration_seconds", Help: "DNS worker phase duration; count is the number of attempts.", Buckets: DurationBucketsSeconds()}, []string{"kind", "phase", "outcome"}),
-		dnsTransitions:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_dns_transitions_total", Help: "Committed DNS work transitions by kind and resulting state."}, []string{"kind", "state"}),
-		usageWork:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_work_total", Help: "Usage worker operations by fixed phase and outcome."}, []string{"phase", "outcome"}),
-		usageItems:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_items_total", Help: "Usage runs, buckets or deliveries committed by result."}, []string{"result"}),
-		usageReceiverDuration:  prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_public_url_usage_receiver_duration_seconds", Help: "Usage receiver request duration by bounded outcome.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
-		usageRetained:          prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_usage_retained_buckets", Help: "Ingress usage buckets retained in memory, including dirty and pending buckets."}),
-		cleanupRuns:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_runs_total", Help: "Cleanup calls by fixed kind and outcome."}, []string{"kind", "outcome"}),
-		cleanupItems:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_items_total", Help: "Committed items removed by cleanup kind."}, []string{"kind"}),
-		cleanupLastSuccess:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_cleanup_last_success_timestamp_seconds", Help: "Unix time of last successful cleanup by kind; zero before success."}, []string{"kind"}),
-		placementDecisions:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_placement_decisions_total", Help: "Publish run placement decisions by action and bounded result."}, []string{"action", "outcome"}),
-		assignmentReplacements: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_connection_assignments_replaced_total", Help: "Committed replacement of connection assignments by fixed reason."}, []string{"reason"}),
+		databaseAcquireDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_database_pool_acquire_duration_seconds", Help: "Time to acquire a request-pool connection, including waits and failed acquisitions.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
+		databaseFailures:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_database_failures_total", Help: "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name."}, []string{"phase", "outcome"}),
+		recoveryDuration:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tnl_control_public_url_recovery_duration_seconds", Help: "Duration of newly committed public URL recovery observations on this control process.", Buckets: DurationBucketsSeconds()}),
+		recoveryPending:         prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_recovery_observations_pending", Help: "Recovery observations awaiting a successful or stale response."}),
+		recoveryAttempts:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_recovery_observation_attempts_total", Help: "Recovery reporting attempts by bounded outcome."}, []string{"outcome"}),
+		certificateClaims:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_claims_total", Help: "Certificate worker claims by certificate kind and outcome."}, []string{"kind", "outcome"}),
+		certificateTransitions:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_transitions_total", Help: "Committed certificate work transitions by kind and resulting state."}, []string{"kind", "state"}),
+		dnsWork:                 prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_dns_work_duration_seconds", Help: "DNS worker phase duration; count is the number of attempts.", Buckets: DurationBucketsSeconds()}, []string{"kind", "phase", "outcome"}),
+		dnsTransitions:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_dns_transitions_total", Help: "Committed DNS work transitions by kind and resulting state."}, []string{"kind", "state"}),
+		usageWork:               prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_work_total", Help: "Usage worker operations by fixed phase and outcome."}, []string{"phase", "outcome"}),
+		usageItems:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_items_total", Help: "Usage runs, buckets or deliveries committed by result."}, []string{"result"}),
+		usageReceiverDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_public_url_usage_receiver_duration_seconds", Help: "Usage receiver request duration by bounded outcome.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
+		usageLastSuccess:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_public_url_usage_last_success_timestamp_seconds", Help: "Unix time of the last successful finalization call or committed delivery; zero before success."}, []string{"phase"}),
+		usageRetained:           prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_usage_retained_buckets", Help: "Ingress usage buckets retained in memory, including dirty and pending buckets."}),
+		cleanupRuns:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_runs_total", Help: "Cleanup calls by fixed kind and outcome."}, []string{"kind", "outcome"}),
+		cleanupItems:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_items_total", Help: "Committed items removed by cleanup kind."}, []string{"kind"}),
+		cleanupLastSuccess:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_cleanup_last_success_timestamp_seconds", Help: "Unix time of last successful cleanup by kind; zero before success."}, []string{"kind"}),
+		placementDecisions:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_placement_decisions_total", Help: "Publish run placement decisions by action and bounded result."}, []string{"action", "outcome"}),
+		assignmentReplacements:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_connection_assignments_replaced_total", Help: "Committed replacement of connection assignments by fixed reason."}, []string{"reason"}),
 	}
 	registered := []prometheus.Collector{
 		info, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -165,10 +177,18 @@ func New(role string) *Metrics {
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_control_routing_history_retained_after_revision", Help: "Highest committed routing-history retention floor observed by this process."}, func() float64 { return float64(metrics.routingHistoryFloor.Load()) }))
 		registered = append(registered, metrics.apiDuration, metrics.apiInFlight,
 			metrics.readinessDuration, metrics.readinessAge, metrics.certificateDuration, metrics.certificateMilestone,
-			metrics.databaseQueryDuration, metrics.databaseGuardDuration, metrics.controlOperations, metrics.recoveryDuration,
+			metrics.databaseQueryDuration, metrics.databaseGuardDuration, metrics.databaseAcquireDuration, metrics.databaseFailures, metrics.controlOperations, metrics.recoveryDuration,
 			metrics.certificateClaims, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
-			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration,
+			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration, metrics.usageLastSuccess,
 			metrics.cleanupRuns, metrics.cleanupItems, metrics.cleanupLastSuccess, metrics.placementDecisions, metrics.assignmentReplacements)
+	}
+	if role == "control" || role == "standalone" {
+		for _, surface := range []string{"control", "authority", "private_ingress", "private_relay"} {
+			metrics.apiInFlight.WithLabelValues(surface).Set(0)
+		}
+		for _, phase := range []string{"finalize", "deliver"} {
+			metrics.usageLastSuccess.WithLabelValues(phase).Set(0)
+		}
 	}
 	registered = append(registered, metrics.capacityLimits)
 	if role == "ingress" || role == "standalone" {
@@ -186,13 +206,71 @@ func New(role string) *Metrics {
 	}
 	if role == "relay" || role == "standalone" {
 		registered = append(registered, metrics.relayLeases, metrics.publisherConnections, metrics.registeredConnections,
-			metrics.publisherExits, metrics.relayStreamRejections, metrics.relayStreams, metrics.relayOperations)
+			metrics.publisherExits, metrics.relayStreamRejections, metrics.relayStreams, metrics.relayOperations,
+			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_relay_earliest_lease_expiration_timestamp_seconds", Help: "Earliest known relay lease expiration in this process; zero without a lease."}, metrics.earliestRelayLeaseExpiry),
+			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_relay_transport_certificate_expiration_timestamp_seconds", Help: "Earliest locally known relay transport certificate expiry; zero before material is observed."}, metrics.earliestRelayCertificateExpiry))
 		if role == "relay" {
 			registered = append(registered, metrics.capacityRejections)
 		}
 	}
 	registry.MustRegister(registered...)
 	return metrics
+}
+
+func (m *Metrics) SetRelayLeaseExpiry(identity string, expires time.Time) {
+	m.relayLeaseMu.Lock()
+	defer m.relayLeaseMu.Unlock()
+	if expires.IsZero() {
+		delete(m.relayLeaseExpiry, identity)
+	} else {
+		m.relayLeaseExpiry[identity] = expires
+	}
+}
+
+func (m *Metrics) earliestRelayLeaseExpiry() float64 {
+	m.relayLeaseMu.Lock()
+	defer m.relayLeaseMu.Unlock()
+	return earliestExpiry(m.relayLeaseExpiry)
+}
+
+func (m *Metrics) SetRelayCertificateExpiry(identity string, expires time.Time) {
+	m.relayLeaseMu.Lock()
+	defer m.relayLeaseMu.Unlock()
+	if expires.IsZero() {
+		delete(m.relayCertificateExpiry, identity)
+	} else {
+		m.relayCertificateExpiry[identity] = expires
+	}
+}
+
+func (m *Metrics) earliestRelayCertificateExpiry() float64 {
+	m.relayLeaseMu.Lock()
+	defer m.relayLeaseMu.Unlock()
+	return earliestExpiry(m.relayCertificateExpiry)
+}
+
+func earliestExpiry(expiresByIdentity map[string]time.Time) float64 {
+	var earliest time.Time
+	for _, expires := range expiresByIdentity {
+		if earliest.IsZero() || expires.Before(earliest) {
+			earliest = expires
+		}
+	}
+	return routingTimestamp(earliest)
+}
+
+// RegisterIngressLease reads a local controller snapshot without external I/O.
+func (m *Metrics) RegisterIngressLease(source func() time.Time) {
+	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tnl_ingress_lease_expiration_timestamp_seconds", Help: "Local ingress lease expiration; zero before registration or after lease loss.",
+	}, func() float64 { return routingTimestamp(source()) }))
+}
+
+// RegisterControlCertificate reads certificate material already in this process.
+func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
+	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tnl_control_tls_certificate_expiration_timestamp_seconds", Help: "Earliest locally loaded public control certificate expiry; zero when any configured hostname is not yet loaded.",
+	}, func() float64 { return routingTimestamp(source()) }))
 }
 
 func (m *Metrics) Handler() http.Handler {
@@ -212,17 +290,9 @@ func (m *Metrics) AddRelayLeases(state string, delta int) {
 	m.relayLeases.WithLabelValues(state).Add(float64(delta))
 }
 
-func (m *Metrics) SetPublisherConnections(state string, count int) {
-	if state == "ready" {
-		m.publisherConnections.Set(float64(count))
-	}
-}
+func (m *Metrics) SetReadyPublisherConnections(count int) { m.publisherConnections.Set(float64(count)) }
 
-func (m *Metrics) AddPublisherConnections(state string, delta int) {
-	if state == "ready" {
-		m.publisherConnections.Add(float64(delta))
-	}
-}
+func (m *Metrics) AddReadyPublisherConnections(delta int) { m.publisherConnections.Add(float64(delta)) }
 
 func (m *Metrics) SetIngressStreams(count int) {
 	m.ingressStreams.Set(float64(count))
@@ -237,13 +307,30 @@ func (m *Metrics) IncCapacityRejection(resource string) {
 		m.drainingRejections.Inc()
 		return
 	}
+	if !admissionResource(resource) {
+		resource = "other"
+	}
 	m.capacityRejections.WithLabelValues(resource).Inc()
 }
 
 func (m *Metrics) IncDrainingRejection() { m.drainingRejections.Inc() }
 
 func (m *Metrics) SetCapacityLimit(resource string, limit int64) {
+	if !admissionResource(resource) || limit < 0 {
+		return
+	}
 	m.capacityLimits.WithLabelValues(resource).Set(float64(limit))
+}
+
+func admissionResource(resource string) bool {
+	switch resource {
+	case "client_hello_connections", "public_connections", "public_url_connections",
+		"denied_connections", "denied_public_url_connections", "challenge_connections",
+		"challenge_hostname_connections", "control_connections", "relay_tcp_connections",
+		"publisher_connections", "relay_streams":
+		return true
+	}
+	return false
 }
 
 func (m *Metrics) IncInspectionFailure(stage string) {

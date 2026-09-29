@@ -77,6 +77,12 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	h.mux.ServeHTTP(response, request)
 }
 
+// MatchedPattern is safe to call before authentication; it never returns an ID.
+func (h *handler) MatchedPattern(request *http.Request) string {
+	_, pattern := h.mux.Handler(request)
+	return pattern
+}
+
 func (h *handler) registerRelay(response http.ResponseWriter, request *http.Request) {
 	var body relayv1.RelayRegistration
 	if !serviceapi.DecodeJSON(response, request, &body) {
