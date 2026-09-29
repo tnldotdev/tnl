@@ -703,7 +703,7 @@ func separatedReportHeld(t *testing.T, phase string, results []separatedVisitorR
 func assertSeparatedNoRejections(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
 	for _, role := range append(separatedIngresses(), "relay-a", "relay-b") {
-		for _, name := range []string{"tnl_capacity_rejections_total"} {
+		for _, name := range []string{"tnl_admission_rejections_total"} {
 			count := func(snapshot separatedSnapshot) float64 {
 				var total float64
 				for _, family := range snapshot.Metrics[role] {
@@ -728,7 +728,7 @@ func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot
 		count := func(snapshot separatedSnapshot) uint64 {
 			var total uint64
 			for _, family := range snapshot.Metrics[role] {
-				if family.GetName() != "tnl_operation_duration_seconds" {
+				if family.GetName() != "tnl_ingress_operation_duration_seconds" {
 					continue
 				}
 				for _, metric := range family.Metric {
@@ -1064,7 +1064,7 @@ func assertRelayOpenedVisitors(t *testing.T, before, after separatedSnapshot, ro
 	count := func(snapshot separatedSnapshot) uint64 {
 		var count uint64
 		for _, family := range snapshot.Metrics[role] {
-			if family.GetName() != "tnl_operation_duration_seconds" {
+			if family.GetName() != "tnl_relay_operation_duration_seconds" {
 				continue
 			}
 			for _, metric := range family.Metric {
@@ -1122,7 +1122,7 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 				}
 				for _, family := range families {
 					name := family.GetName()
-					if !strings.HasPrefix(name, "tnl_ingress_routing_") && name != "tnl_streams_active" && name != "tnl_publisher_connections" && name != "tnl_database_pool_acquired_connections" {
+					if !strings.HasPrefix(name, "tnl_ingress_routing_") && name != "tnl_ingress_backend_streams" && name != "tnl_relay_visitor_stream_slots_occupied" && name != "tnl_relay_publisher_connections_ready" && name != "tnl_ingress_connections" && name != "tnl_database_pool_acquired_connections" {
 						continue
 					}
 					for _, metric := range family.Metric {

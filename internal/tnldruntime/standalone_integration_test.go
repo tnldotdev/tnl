@@ -63,7 +63,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	metricsText := string(metricsBody)
 	for _, want := range []string{
 		"tnl_database_client_connections", "tnl_database_operations_omitted",
-		`tnl_streams_active{stage="ingress"}`, `tnl_streams_active{stage="relay"}`,
+		"tnl_ingress_backend_streams", "tnl_relay_visitor_stream_slots_occupied",
 	} {
 		if !strings.Contains(metricsText, want) {
 			t.Errorf("standalone metrics missing %q", want)

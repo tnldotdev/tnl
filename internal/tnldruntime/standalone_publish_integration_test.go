@@ -159,7 +159,7 @@ func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, mini
 			t.Fatal(err)
 		}
 		for _, summary := range summaries {
-			if summary.Name == "tnl_operation_duration_seconds" && summary.Labels["outcome"] == "success" {
+			if strings.HasSuffix(summary.Name, "_operation_duration_seconds") && summary.Labels["outcome"] == "success" {
 				counts[summary.Labels["operation"]] += summary.Count
 			}
 		}
