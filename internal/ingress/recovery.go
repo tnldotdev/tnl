@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -77,7 +78,7 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 			} else {
 				var problem *ControlProblemError
 				if errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem != nil &&
-					problem.Problem.Type == "https://tnl.dev/problems/recovery_episode_stale" {
+					problemtype.Is(problem.Problem.Type, "recovery_episode_stale") {
 					return
 				}
 				if r.ctx.Err() == nil {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -494,7 +495,7 @@ func (c *Controller) responseError(operation string, err error) error {
 	err = relayControlError(operation, err)
 	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
-		problem.Problem.Type == "https://tnl.dev/problems/relay_lease_stale" {
+		problemtype.Is(problem.Problem.Type, "relay_lease_stale") {
 		c.clearLease()
 	}
 	return err
@@ -520,21 +521,21 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 	if !errors.As(err, &problem) || problem.Problem == nil {
 		return tunnelv1.Internal
 	}
-	switch problem.Problem.Type {
-	case "https://tnl.dev/problems/unauthenticated",
-		"https://tnl.dev/problems/relay_identity_mismatch",
-		"https://tnl.dev/problems/invalid_publisher_connection_credential":
+	switch {
+	case problemtype.Is(problem.Problem.Type, "unauthenticated"),
+		problemtype.Is(problem.Problem.Type, "relay_identity_mismatch"),
+		problemtype.Is(problem.Problem.Type, "invalid_publisher_connection_credential"):
 		return tunnelv1.Unauthenticated
-	case "https://tnl.dev/problems/stale_connection_assignment",
-		"https://tnl.dev/problems/relay_lease_stale":
+	case problemtype.Is(problem.Problem.Type, "stale_connection_assignment"),
+		problemtype.Is(problem.Problem.Type, "relay_lease_stale"):
 		return tunnelv1.StaleConnectionAssignment
-	case "https://tnl.dev/problems/publisher_connection_already_claimed":
+	case problemtype.Is(problem.Problem.Type, "publisher_connection_already_claimed"):
 		return tunnelv1.DuplicatePublisherConnection
-	case "https://tnl.dev/problems/relay_draining":
+	case problemtype.Is(problem.Problem.Type, "relay_draining"):
 		return tunnelv1.DrainingPublisherConnection
-	case "https://tnl.dev/problems/relay_connection_capacity_exhausted":
+	case problemtype.Is(problem.Problem.Type, "relay_connection_capacity_exhausted"):
 		return tunnelv1.CapacityExceeded
-	case "https://tnl.dev/problems/publisher_connection_unavailable":
+	case problemtype.Is(problem.Problem.Type, "publisher_connection_unavailable"):
 		return tunnelv1.Unavailable
 	default:
 		return tunnelv1.Internal

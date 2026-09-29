@@ -11,9 +11,11 @@ import (
 	"syscall"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 )
 
@@ -197,6 +199,18 @@ func classifyCommandError(err error) error {
 	}
 	if errors.Is(err, clientauth.ErrAuthenticationTimeout) {
 		return diagnostic.Wrap(diagnostic.AuthenticationTimeout, err)
+	}
+	if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+		return diagnostic.Wrap(diagnostic.AuthenticationRequired, err)
+	}
+	if errors.Is(err, controlclient.ErrDNSProofPending) || errors.Is(err, authorityclient.ErrDNSProofPending) {
+		return diagnostic.Wrap(diagnostic.DNSSetupPending, err)
+	}
+	if errors.Is(err, controlclient.ErrRateLimited) || errors.Is(err, authorityclient.ErrRateLimited) {
+		return diagnostic.Wrap(diagnostic.RateLimited, err)
+	}
+	if errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrUnavailable) {
+		return diagnostic.Wrap(diagnostic.ServerUnavailable, err)
 	}
 	return err
 }

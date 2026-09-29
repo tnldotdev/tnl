@@ -1,5 +1,5 @@
 {
-  "type": "https://tnl.dev/problems/name-unavailable",
+  "type": "https://tnl.dev/p/name-unavailable",
   "title": "Name unavailable",
   "status": 409,
   "code": "name_unavailable",

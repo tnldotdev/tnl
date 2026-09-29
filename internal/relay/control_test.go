@@ -263,7 +263,7 @@ func (s *relayDrainControlStub) RenewRelay(
 		close(s.secondRenewal)
 	}
 	return relayv1.RelayLease{}, &serviceapi.ProblemError{
-		Status: 409, Type: "https://tnl.dev/problems/relay_lease_stale",
+		Status: 409, Type: "https://tnl.dev/p/relay-lease-stale",
 	}
 }
 

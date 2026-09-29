@@ -122,7 +122,11 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
-	publisher, err := connection.OpenVisitor(ctx, incoming.Header.VisitorConnectionID)
+	openVisitor := connection.OpenVisitor
+	if incoming.Header.IPPolicyDenied {
+		openVisitor = connection.OpenDeniedVisitor
+	}
+	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
 	if err != nil {
 		code := tunnelv1.Unavailable
 		var protocolError *tunnel.ProtocolError

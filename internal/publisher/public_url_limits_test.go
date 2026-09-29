@@ -296,7 +296,7 @@ func assertRouteOverloaded(t *testing.T, client *http.Client) {
 	}
 	got := doRouteRequest(client, request)
 	if got.err != nil || got.status != http.StatusServiceUnavailable || got.protocol != 2 ||
-		got.header.Get("Retry-After") != "1" || got.header.Get("Tnl-Error-Code") != "TNL_REQUEST_REJECTED" {
+		got.header.Get("Retry-After") != "1" || got.header.Get("Tnl-Error-Code") != "TNL_REQUEST_LIMIT_REACHED" {
 		t.Fatalf("excess request = %+v", got)
 	}
 }

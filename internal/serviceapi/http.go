@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 )
 
 const MaximumRequestBytes = 64 << 10
@@ -32,7 +33,7 @@ func (e *ProblemError) Error() string {
 
 func NewProblemError(status int, problemType, detail string) *ProblemError {
 	return &ProblemError{
-		Status: status, Type: "https://tnl.dev/problems/" + problemType,
+		Status: status, Type: problemtype.URL(problemType),
 		Title: strings.ReplaceAll(problemType, "_", " "), Detail: detail,
 	}
 }

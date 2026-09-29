@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +86,59 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	stopIntegrationPublisher(t, handle)
 	stopIntegrationProcess(t, fixture.process)
 	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
+}
+
+func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			fixture := newStandalonePublishFixture(t, "denied-"+transport)
+			var contacted atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				contacted.Add(1)
+				response.WriteHeader(http.StatusOK)
+			}))
+			cleanupIntegrationHTTPServer(t, target, fixture.owner)
+			quic, tcp := fixture.connectors()
+			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
+			config.AllowedIPPrefixes = []string{"192.0.2.10/32"} // Visitor connects from 127.0.0.1.
+			handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
+			ready := fixture.waitReady(t, handle)
+			http2Client, http2Transport := newIntegrationHTTPSClient(t, fixture.pebble.roots, fixture.publicAddress, true, fixture.owner)
+			http2Transport.ForceAttemptHTTP2 = true
+			for _, test := range []struct {
+				accept string
+				client *http.Client
+				proto  int
+			}{
+				{accept: "text/html", client: fixture.visitor.client, proto: 1},
+				{accept: "text/plain", client: http2Client, proto: 2},
+			} {
+				request, err := http.NewRequest(http.MethodGet, ready.PublicURL, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set("Accept", test.accept)
+				response, err := test.client.Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(response.Body)
+				closeErr := response.Body.Close()
+				if readErr != nil || closeErr != nil {
+					t.Fatalf("read denial: %v, %v", readErr, closeErr)
+				}
+				if response.ProtoMajor != test.proto || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_IP_POLICY_DENIED" ||
+					!strings.Contains(string(body), "https://tnl.dev/e/ip-policy-denied") && test.accept == "text/plain" ||
+					!strings.Contains(string(body), "ask the public URL owner") && test.accept == "text/html" {
+					t.Fatalf("denied response = %s, %d, %v, %q", response.Proto, response.StatusCode, response.Header, body)
+				}
+			}
+			if contacted.Load() != 0 {
+				t.Fatalf("local service received %d denied requests", contacted.Load())
+			}
+			stopIntegrationPublisher(t, handle)
+		})
+	}
 }
 
 func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, minimums map[string]uint64) {

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,6 +121,51 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if !strings.HasPrefix(body, "+--[ tnl ]-- local service unavailable ") ||
 		!strings.Contains(body, "+-- TNL_TARGET_UNAVAILABLE ") || !strings.Contains(body, "https://tnl.dev/e/target") {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestProxyReportsTargetFailureOnceUntilItRecovers(t *testing.T) {
+	var broken atomic.Bool
+	broken.Store(true)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if broken.Load() {
+			connection, _, err := response.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = connection.Close()
+			}
+			return
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	var failures atomic.Int32
+	handler, err := New(upstream.URL, "route.example", 0, func() { failures.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func() int {
+		r := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, "/", nil)
+		r.Host = "route.example"
+		r.TLS = &tls.ConnectionState{ServerName: "route.example"}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, r)
+		return response.Code
+	}
+	for _, expected := range []int{http.StatusBadGateway, http.StatusBadGateway} {
+		if status := request(); status != expected {
+			t.Fatalf("broken target status = %d", status)
+		}
+	}
+	if got := failures.Load(); got != 1 {
+		t.Fatalf("first failure count = %d", got)
+	}
+	broken.Store(false)
+	if status := request(); status != http.StatusOK {
+		t.Fatalf("recovered status = %d", status)
+	}
+	broken.Store(true)
+	if status := request(); status != http.StatusBadGateway || failures.Load() != 2 {
+		t.Fatalf("second failure status = %d, count = %d", status, failures.Load())
 	}
 }
 

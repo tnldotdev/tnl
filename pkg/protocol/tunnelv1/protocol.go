@@ -93,6 +93,7 @@ type VisitorStreamHeader struct {
 	PublishRunNumber             uint64     `json:"publish_run_number"`
 	PublisherConnectionID        string     `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
+	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
 }
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
@@ -112,6 +113,7 @@ type InternalForwardingHeader struct {
 	RelayLeaseRevision           uint64     `json:"relay_lease_revision"`
 	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
+	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
 }
 
 type StreamResponseType string

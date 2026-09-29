@@ -132,7 +132,7 @@ func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if event.Code != string(diagnostic.TargetUnavailable) || event.HelpURL != diagnostic.HelpURL(diagnostic.TargetUnavailable) ||
-		event.Message != "connection refused" {
+		event.Message != diagnostic.Summary(diagnostic.TargetUnavailable) {
 		t.Fatalf("event = %#v", event)
 	}
 }
@@ -478,11 +478,28 @@ func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
 		}
 	}
 	got := stderr.String()
-	if strings.Count(got, "]-- provisioning ") != 2 || strings.Count(got, "]-- visitors blocked ") != 2 ||
+	if strings.Count(got, "]-- provisioning ") != 2 || strings.Count(got, "]-- ip address not allowed ") != 2 ||
 		!strings.Contains(got, "certificate and publisher connections") ||
 		!strings.Contains(got, "newly blocked") || !strings.Contains(got, "total blocked") ||
+		!strings.Contains(got, "TNL_IP_POLICY_DENIED") || !strings.Contains(got, "https://tnl.dev/e/ip-policy-denied") ||
 		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("human lifecycle output = %q", got)
+	}
+}
+
+func TestPublishOutputWarnsWhenRunningLocalServiceFails(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.targetUnavailable(); err != nil {
+		t.Fatal(err)
+	}
+	text := stderr.String()
+	if !strings.Contains(text, "local service unavailable") || !strings.Contains(text, "TNL_TARGET_UNAVAILABLE") ||
+		!strings.Contains(text, "https://tnl.dev/e/target") || strings.Contains(text, "localproxy:") {
+		t.Fatalf("target warning = %q", text)
 	}
 }
 
@@ -508,7 +525,7 @@ func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 	for index, fields := range []map[string]any{
 		{"type": "starting", "target": "http://127.0.0.1:3000"},
 		{"type": "ready", "url": "https://demo.example", "publish_run_number": float64(7)},
-		{"type": "error", "message": "connection refused", "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
+		{"type": "error", "message": diagnostic.Summary(diagnostic.TargetUnavailable), "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
 		{"type": "stopped", "reason": "canceled"},
 	} {
 		var wire map[string]any

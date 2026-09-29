@@ -114,6 +114,10 @@ func runSession(
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
 		RequestLimit: config.RequestLimit,
+		OnTargetFailure: func() {
+			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
+				Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version})
+		},
 	})
 	if err != nil {
 		return err

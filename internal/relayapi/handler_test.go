@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 )
@@ -38,7 +39,7 @@ func TestHandlerRequiresClusterSecret(t *testing.T) {
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
 			}
-			assertRelayProblemType(t, response, "https://tnl.dev/problems/unauthenticated")
+			assertRelayProblemType(t, response, "https://tnl.dev/p/unauthenticated")
 		})
 	}
 }
@@ -241,7 +242,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
-			assertRelayProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
+			assertRelayProblemType(t, response, problemtype.URL(test.problemType))
 		})
 	}
 }

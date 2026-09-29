@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/problemtype"
 )
 
 func TestDecodeJSONPolicy(t *testing.T) {
@@ -62,7 +64,7 @@ func assertProblem(t *testing.T, response *httptest.ResponseRecorder, status int
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Type != "https://tnl.dev/problems/"+kind || problem.Title != strings.ReplaceAll(kind, "_", " ") ||
+	if problem.Type != problemtype.URL(kind) || problem.Title != strings.ReplaceAll(kind, "_", " ") ||
 		problem.Status != status || problem.Detail != detail {
 		t.Fatalf("problem = %+v", problem)
 	}

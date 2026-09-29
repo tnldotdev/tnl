@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -39,7 +40,7 @@ func TestHandlerRequiresClusterSecret(t *testing.T) {
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
 			}
-			assertIngressProblemType(t, response, "https://tnl.dev/problems/unauthenticated")
+			assertIngressProblemType(t, response, "https://tnl.dev/p/unauthenticated")
 		})
 	}
 }
@@ -178,7 +179,7 @@ func TestIngressRoutingEventsRequireResnapshotAfterCompaction(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("resnapshot status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
 	}
-	assertIngressProblemType(t, response, "https://tnl.dev/problems/routing_table_resnapshot_required")
+	assertIngressProblemType(t, response, "https://tnl.dev/p/routing-table-resnapshot-required")
 }
 
 func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
@@ -315,7 +316,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
-			assertIngressProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
+			assertIngressProblemType(t, response, problemtype.URL(test.problemType))
 		})
 	}
 }

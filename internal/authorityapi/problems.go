@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -47,7 +48,7 @@ func writeProblem(response http.ResponseWriter, status int, code authorityv1.Pro
 	requestID := newRequestID()
 	details := map[string]any{}
 	httpjson.WriteProblem(response, status, authorityv1.Problem{
-		Type: "https://tnl.dev/problems/" + string(code), Title: title,
+		Type: problemtype.URL(string(code)), Title: title,
 		Status: status, Code: code, RequestId: requestID, Details: &details,
 	})
 	return requestID

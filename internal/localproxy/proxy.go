@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -68,7 +69,7 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-func New(target, hostname string, requestLimit int) (http.Handler, error) {
+func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -86,6 +87,7 @@ func New(target, hostname string, requestLimit int) (http.Handler, error) {
 	targetAddress := strings.TrimPrefix(canonicalTarget, "http://")
 	targetURL := &url.URL{Scheme: "http", Host: targetAddress}
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
+	var failing atomic.Bool
 	transport := &http.Transport{
 		Proxy:               nil,
 		DisableCompression:  true,
@@ -113,13 +115,20 @@ func New(target, hostname string, requestLimit int) (http.Handler, error) {
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, _ error) {
-			diagnostic.WriteHTTP(response, request, http.StatusBadGateway, diagnostic.TargetUnavailable)
+			if failing.CompareAndSwap(false, true) && len(onTargetFailure) != 0 && onTargetFailure[0] != nil {
+				onTargetFailure[0]()
+			}
+			diagnostic.WriteHTTP(response, request, diagnostic.TargetUnavailable)
+		},
+		ModifyResponse: func(*http.Response) error {
+			failing.Store(false)
+			return nil
 		},
 	}
 	requests := make(chan struct{}, requestLimit)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if !validRequest(request, hostname) {
-			diagnostic.WriteHTTP(response, request, http.StatusBadRequest, diagnostic.RequestRejected)
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
 			return
 		}
 		// Admission is shared across the route, not per visitor connection. Do
@@ -133,7 +142,7 @@ func New(target, hostname string, requestLimit int) (http.Handler, error) {
 				response.Header().Set("Connection", "close")
 			}
 			response.Header().Set("Retry-After", "1")
-			diagnostic.WriteHTTP(response, request, http.StatusServiceUnavailable, diagnostic.RequestRejected)
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
 			return
 		}
 		// The slot remains occupied through streamed responses and upgrades.

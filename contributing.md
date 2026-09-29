@@ -97,6 +97,7 @@ Edit the source, then run `mise exec -- task generate` and
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                       |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/tnl/src/config.gen.ts` |
 | `internal/projectconfig/loader.ts`                                                        | `internal/projectconfig/loader.mjs`, embedded by Go                                        |
+| `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                        |
 
 `packages/tnl/dist` is disposable build output. The CLI generates project-local
 `.tnl/project.json` and `.tnl/project.d.ts`; see the

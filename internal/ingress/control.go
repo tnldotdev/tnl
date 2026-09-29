@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -290,7 +291,7 @@ func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{
 			}
 			var problem *serviceapi.ProblemError
 			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
-				problem.Type == "https://tnl.dev/problems/routing_table_resnapshot_required" {
+				problemtype.Is(problem.Type, "routing_table_resnapshot_required") {
 				c.mu.Lock()
 				c.routingStatus.Resnapshots++
 				c.routingStatus.CaughtUp = false
@@ -585,7 +586,7 @@ func (c *Controller) responseError(operation string, err error) error {
 	err = ingressControlError(operation, err)
 	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
-		problem.Problem.Type == "https://tnl.dev/problems/ingress_lease_stale" {
+		problemtype.Is(problem.Problem.Type, "ingress_lease_stale") {
 		c.mu.Lock()
 		c.leaseLost = true
 		c.mu.Unlock()

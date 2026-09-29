@@ -169,8 +169,17 @@ type forwardingBackend struct {
 // The caller owns the returned stream, not the pooled session. Acceptance does
 // not establish route TLS or prove local-service health.
 func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+	return b.open(ctx, visitorConnectionID, false)
+}
+
+func (b forwardingBackend) OpenDenied(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+	return b.open(ctx, visitorConnectionID, true)
+}
+
+func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
 	header := b.header
 	header.VisitorConnectionID = visitorConnectionID
+	header.IPPolicyDenied = denied
 	if err := header.Validate(); err != nil {
 		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
 	}

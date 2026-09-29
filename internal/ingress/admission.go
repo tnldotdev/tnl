@@ -13,6 +13,7 @@ const (
 	DefaultChallengeHostnameConnectionLimit = 8
 	DefaultControlConnectionLimit           = 1024
 	DefaultRelayConnectionLimit             = 4096
+	DefaultDeniedConnectionLimit            = 16
 	challengeConnectionTimeout              = 10 * time.Second
 )
 
@@ -20,6 +21,7 @@ type connectionKind uint8
 
 const (
 	visitorConnection connectionKind = iota
+	deniedConnection
 	challengeConnection
 	controlConnection
 	relayConnection
@@ -36,6 +38,7 @@ func admissionDefaults(config *Config) error {
 		{&config.MaxHostnameChallengeConnections, DefaultChallengeHostnameConnectionLimit},
 		{&config.MaxControlConnections, DefaultControlConnectionLimit},
 		{&config.MaxRelayConnections, DefaultRelayConnectionLimit},
+		{&config.MaxDeniedConnections, DefaultDeniedConnectionLimit},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -63,6 +66,11 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		if s.byPublicURL[key] >= max(1, s.config.MaxConnections/2) {
 			return nil, "public_url_connections"
 		}
+	case deniedConnection:
+		limit, resource = s.config.MaxDeniedConnections, "denied_connections"
+		if s.byDenied[key] >= max(1, limit/2) {
+			return nil, "denied_public_url_connections"
+		}
 	case challengeConnection:
 		limit, resource = s.config.MaxChallengeConnections, "challenge_connections"
 		if s.byChallenge[key] >= s.config.MaxHostnameChallengeConnections {
@@ -79,6 +87,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	s.admitted[kind]++
 	if kind == visitorConnection {
 		s.byPublicURL[key]++
+	} else if kind == deniedConnection {
+		s.byDenied[key]++
 	} else if kind == challengeConnection {
 		s.byChallenge[key]++
 	}
@@ -89,6 +99,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		var counts map[string]int
 		if kind == visitorConnection {
 			counts = s.byPublicURL
+		} else if kind == deniedConnection {
+			counts = s.byDenied
 		} else if kind == challengeConnection {
 			counts = s.byChallenge
 		}

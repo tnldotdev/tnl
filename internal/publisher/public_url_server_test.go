@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -82,6 +83,55 @@ func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("route handler did not close")
 	}
+}
+
+func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
+	var forwarded int
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		forwarded++
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	route := startHTTPTestRouteServer(t, upstream.URL)
+	ingress, publisher := net.Pipe()
+	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
+	handled := make(chan struct{})
+	go func() { route.handleVisitor(publisher, true); close(handled) }()
+	t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, handled) })
+	header, err := proxyproto.Encode(proxyproto.Header{
+		Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingress.Write(header); err != nil {
+		t.Fatal(err)
+	}
+	visitor := tls.Client(ingress, &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // Test certificate is self-signed.
+	if err := visitor.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		if _, err := fmt.Fprintf(visitor, "%s / HTTP/1.1\r\nHost: route.example\r\nAccept: text/html\r\n\r\n", method); err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(bufio.NewReader(visitor), &http.Request{Method: method})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_IP_POLICY_DENIED" {
+			t.Fatalf("response = %d, %v, %v", response.StatusCode, response.Header, readErr)
+		}
+		if method == http.MethodGet && !strings.Contains(string(body), "ask the public URL owner") || method == http.MethodHead && len(body) != 0 {
+			t.Fatalf("denial body = %q", body)
+		}
+	}
+	if forwarded != 0 {
+		t.Fatalf("local service received %d denied requests", forwarded)
+	}
+	_ = visitor.Close()
 }
 
 func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {

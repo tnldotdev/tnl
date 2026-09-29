@@ -36,7 +36,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 			response.Header().Set("Content-Type", "application/problem+json")
 			response.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(response).Encode(controlv1.Problem{
-				Type: "https://tnl.dev/problems/conflict", Title: "Conflict", Status: http.StatusConflict,
+				Type: "https://tnl.dev/p/conflict", Title: "Conflict", Status: http.StatusConflict,
 				Code: controlv1.Conflict, RequestId: "req_test", Details: &details,
 			})
 		default:
@@ -58,7 +58,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 
 func TestNameUnavailableRemainsDistinctFromStatusConflict(t *testing.T) {
 	payload, err := json.Marshal(controlv1.Problem{
-		Type: "https://tnl.dev/problems/name_unavailable", Title: "route hostname is unavailable",
+		Type: "https://tnl.dev/p/name-unavailable", Title: "route hostname is unavailable",
 		Status: http.StatusConflict, Code: controlv1.NameUnavailable, RequestId: "request_test",
 	})
 	if err != nil {

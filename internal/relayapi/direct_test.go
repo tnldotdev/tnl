@@ -50,7 +50,7 @@ func TestClaimRejectsMalformedCredentialWithoutStoreCall(t *testing.T) {
 					problemType = response.ApplicationproblemJSONDefault.Type
 				}
 			}
-			if status != http.StatusUnauthorized || problemType != "https://tnl.dev/problems/invalid_publisher_connection_credential" || calls != 0 {
+			if status != http.StatusUnauthorized || problemType != "https://tnl.dev/p/invalid-publisher-connection-credential" || calls != 0 {
 				t.Fatalf("response = %d %s, %v", status, problemType, err)
 			}
 		})
@@ -73,7 +73,7 @@ func TestDirectRenewStatus(t *testing.T) {
 	failure = controlstate.ErrRelayLeaseStale
 	_, err = client.RenewRelay(t.Context(), "relay-1", body)
 	var problem *serviceapi.ProblemError
-	if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Type != "https://tnl.dev/problems/relay_lease_stale" {
+	if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Type != "https://tnl.dev/p/relay-lease-stale" {
 		t.Fatalf("stale lease = %#v, %v", problem, err)
 	}
 }

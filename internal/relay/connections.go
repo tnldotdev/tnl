@@ -58,6 +58,14 @@ func NewPublisherConnection(
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
 
 func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+	return c.openVisitor(ctx, visitorConnectionID, false)
+}
+
+func (c *PublisherConnection) OpenDeniedVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+	return c.openVisitor(ctx, visitorConnectionID, true)
+}
+
+func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
@@ -67,6 +75,7 @@ func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnection
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
+		IPPolicyDenied:               denied,
 	})
 	return c.finishOpen(stream, err)
 }

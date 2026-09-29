@@ -1,0 +1,418 @@
+{
+  "schema_version": 1,
+  "diagnostics": [
+    {
+      "code": "TNL_TARGET_UNAVAILABLE",
+      "slug": "target",
+      "category": "local service",
+      "title": "local service unavailable",
+      "summary": "tnl could not reach the local service or get a usable response from it. check that the target is running, then try again.",
+      "description": "tnl could not reach the local service at startup or while serving a visitor request.",
+      "diagram_label": "tnl cannot reach the local service",
+      "surfaces": ["cli", "browser"],
+      "http_status": 502,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "local service unavailable", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the local service stopped or has not finished starting",
+        "the target points to the wrong port or loopback address",
+        "the local service closed the connection or returned an invalid HTTP response"
+      ],
+      "actions": {
+        "visitor": ["ask the public URL owner to check the local service, then retry"],
+        "publisher": [
+          "check the target passed to `tnl publish` or registered with `tnl dev`",
+          "start the local service and verify that its target accepts connections on the machine running `tnl`",
+          "if the command failed at startup, rerun it; if the tunnel is still running, retry the visit after restarting the local service"
+        ]
+      }
+    },
+    {
+      "code": "TNL_TARGET_INVALID",
+      "slug": "config",
+      "category": "configuration",
+      "title": "invalid target",
+      "summary": "tnl could not use the target configured for the local service.",
+      "description": "tnl rejected the target before contacting the local service.",
+      "diagram_label": "the target configuration is invalid",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        { "label": "target configuration", "detail": "invalid host or port", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the target port is missing or outside the valid range",
+        "the target contains a path, query, fragment, credentials, or whitespace",
+        "the target uses HTTPS or a host other than `localhost`, a `127.x.x.x` address, or `::1`"
+      ],
+      "actions": {
+        "publisher": [
+          "use a bare port such as `3000`, `localhost:3000`, or an HTTP loopback origin",
+          "run the command again with the corrected target"
+        ]
+      }
+    },
+    {
+      "code": "TNL_PUBLIC_URL_INVALID",
+      "slug": "public-url",
+      "category": "public url",
+      "title": "invalid public url",
+      "summary": "tnl could not use the hostname assigned to the public url.",
+      "description": "the tnl server assigned a malformed or noncanonical public url hostname.",
+      "diagram_label": "the server returned an invalid hostname",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl server", "detail": "invalid hostname", "failure": true },
+        { "label": "tnl (not publishing)" }
+      ],
+      "causes": [
+        "the server returned a malformed hostname",
+        "the client and server use incompatible public url contracts"
+      ],
+      "actions": {
+        "publisher": [
+          "verify that tnl is connected to the intended server",
+          "check control API and `tnld` logs on a self-hosted server"
+        ]
+      }
+    },
+    {
+      "code": "TNL_REQUEST_REJECTED",
+      "slug": "request",
+      "category": "visitor request",
+      "title": "request rejected",
+      "summary": "tnl rejected the request before contacting the local service. use the exact public url with an ordinary HTTPS request.",
+      "description": "the request reached tnl but did not match the public url or supported HTTP request form.",
+      "diagram_label": "the visitor request was rejected before the local service",
+      "surfaces": ["browser"],
+      "http_status": 400,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "request rejected", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the request hostname and TLS server name do not match the public url",
+        "the request uses CONNECT or an absolute URL",
+        "the request contains too many header fields"
+      ],
+      "actions": {
+        "visitor": [
+          "use the exact HTTPS url provided by the public URL owner",
+          "send an ordinary HTTP request rather than a forward-proxy request"
+        ],
+        "publisher": [
+          "check the requested hostname and any clients constructing unusual HTTP requests"
+        ]
+      }
+    },
+    {
+      "code": "TNL_REQUEST_LIMIT_REACHED",
+      "slug": "request-limit",
+      "category": "visitor request",
+      "title": "request limit reached",
+      "summary": "tnl has reached the concurrent request limit for this public url. wait briefly, then retry.",
+      "description": "too many requests are active at once; tnl did not contact the local service for this request.",
+      "diagram_label": "the request limit stopped this request before the local service",
+      "surfaces": ["browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "request limit reached", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the public url has reached its concurrent request limit, including streams and upgrades"
+      ],
+      "actions": {
+        "visitor": ["honor `Retry-After: 1` before retrying"],
+        "publisher": [
+          "check `--request-limit` and local service concurrency if saturation persists"
+        ]
+      }
+    },
+    {
+      "code": "TNL_IP_POLICY_DENIED",
+      "slug": "ip-policy-denied",
+      "category": "visitor access",
+      "title": "ip address not allowed",
+      "summary": "this public url does not allow connections from your IP address.",
+      "description": "the public url's IP policy blocked this connection before any request reached the local service.",
+      "diagram_label": "the IP policy denied this visitor before the local service",
+      "surfaces": ["browser", "cli"],
+      "http_status": 403,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server", "detail": "IP policy denied", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the visitor's current public IP address is outside the public url's allowed addresses",
+        "IP addresses can change when a visitor changes networks or uses a VPN"
+      ],
+      "actions": {
+        "visitor": ["ask the public URL owner to allow your current IP address"],
+        "publisher": [
+          "check `--allow-ip` and the public url's IP policy",
+          "only use `--allow-all-ips` if the local service should be available to everyone"
+        ]
+      }
+    },
+    {
+      "code": "TNL_FRAMEWORK_REGISTRATION_TIMEOUT",
+      "slug": "framework-registration-timeout",
+      "category": "framework",
+      "title": "framework registration timed out",
+      "summary": "tnl dev did not receive the framework's target registration before the startup timeout.",
+      "description": "the development service did not register a listening target with tnl dev in time.",
+      "diagram_label": "the framework did not register its target",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl dev" },
+        { "label": "framework integration", "detail": "target not registered", "failure": true },
+        { "label": "tnl (not publishing)" }
+      ],
+      "causes": [
+        "the Next.js or Vite integration is missing from the active config",
+        "a Node or Bun service did not call `tnl.register(server)`",
+        "framework startup exceeded the configured timeout"
+      ],
+      "actions": {
+        "publisher": [
+          "run `tnl init` and complete the reported framework setup",
+          "check the active framework config or call `tnl.register(server)` for Node or Bun",
+          "use `--port` when there is no integration, or increase `dev.startupTimeout` if startup needs more time"
+        ]
+      }
+    },
+    {
+      "code": "TNL_TARGET_MISMATCH",
+      "slug": "target-mismatch",
+      "category": "framework",
+      "title": "target mismatch",
+      "summary": "the development service listened on a different target than the port required by tnl dev.",
+      "description": "the framework reported a different listening port from the one tnl dev required.",
+      "diagram_label": "the registered target does not match the required port",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "port required by tnl dev" },
+        { "label": "framework target", "detail": "different port", "failure": true },
+        { "label": "tnl (not publishing)" }
+      ],
+      "causes": [
+        "the framework ignored or overrode the requested port",
+        "the port was occupied and the framework switched to another one"
+      ],
+      "actions": {
+        "publisher": [
+          "remove competing port settings from the project script",
+          "when using `--port`, free that port and keep the framework on the exact value"
+        ]
+      }
+    },
+    {
+      "code": "TNL_AUTHENTICATION_TIMEOUT",
+      "slug": "authentication-timeout",
+      "category": "authentication",
+      "title": "authentication timed out",
+      "summary": "interactive authentication did not finish before login expired. run the command again and complete sign-in promptly.",
+      "description": "interactive authentication expired before tnl received a login.",
+      "diagram_label": "the interactive login expired",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl command" },
+        { "label": "identity provider", "detail": "login expired", "failure": true },
+        { "label": "control API (not authenticated)" }
+      ],
+      "causes": [
+        "sign-in did not finish before the interactive limit",
+        "the provider's device code expired sooner"
+      ],
+      "actions": {
+        "publisher": [
+          "run the command again for a new login URL and code",
+          "finish sign-in before the new login expires"
+        ]
+      }
+    },
+    {
+      "code": "TNL_AUTHENTICATION_REQUIRED",
+      "slug": "authentication-required",
+      "category": "authentication",
+      "title": "authentication required",
+      "summary": "tnl could not authenticate this request. log in again or check the supplied access token.",
+      "description": "the control API or authority API did not accept the current credential.",
+      "diagram_label": "the server rejected authentication",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        {
+          "label": "control API or authority API",
+          "detail": "authentication required",
+          "failure": true
+        },
+        { "label": "operation (not completed)" }
+      ],
+      "causes": [
+        "the saved session expired or was revoked",
+        "the supplied access token is invalid"
+      ],
+      "actions": {
+        "publisher": [
+          "run `tnl login` again",
+          "if using `--access-token`, check that the token belongs to the selected server"
+        ]
+      }
+    },
+    {
+      "code": "TNL_SERVER_UNAVAILABLE",
+      "slug": "server-unavailable",
+      "category": "availability",
+      "title": "server unavailable",
+      "summary": "tnl could not reach the control API or authority API. check the server address and try again.",
+      "description": "the selected server is unavailable or did not respond in time.",
+      "diagram_label": "the server did not respond",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        { "label": "control API or authority API", "detail": "unavailable", "failure": true },
+        { "label": "operation (not completed)" }
+      ],
+      "causes": [
+        "a network connection or the server is temporarily unavailable",
+        "the selected control URL points to the wrong server"
+      ],
+      "actions": {
+        "publisher": [
+          "verify `--server` or `TNL_SERVER` and network connectivity",
+          "retry with backoff; if self-hosted, check control and authority health"
+        ]
+      }
+    },
+    {
+      "code": "TNL_RATE_LIMITED",
+      "slug": "rate-limited",
+      "category": "availability",
+      "title": "rate limited",
+      "summary": "the server is limiting requests. wait before retrying.",
+      "description": "the control API or authority API limited this request rate.",
+      "diagram_label": "the server limited the request rate",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        { "label": "control API or authority API", "detail": "rate limited", "failure": true },
+        { "label": "operation (not completed)" }
+      ],
+      "causes": ["the server received too many requests in a short period"],
+      "actions": {
+        "publisher": [
+          "wait for the server's Retry-After interval before retrying",
+          "reduce the rate of automated requests if the limit persists"
+        ]
+      }
+    },
+    {
+      "code": "TNL_DNS_SETUP_PENDING",
+      "slug": "dns-setup-pending",
+      "category": "provisioning",
+      "title": "dns setup pending",
+      "summary": "the domain's DNS setup is not ready. check its records, then retry after they propagate.",
+      "description": "the server is waiting for DNS authority or hostname setup.",
+      "diagram_label": "DNS setup has not completed",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        { "label": "domain DNS setup", "detail": "not ready", "failure": true },
+        { "label": "operation (not completed)" }
+      ],
+      "causes": ["required DNS records have not propagated or are incorrect"],
+      "actions": {
+        "publisher": [
+          "check the requested DNS records with your domain provider",
+          "retry when the domain becomes ready"
+        ]
+      }
+    },
+    {
+      "code": "TNL_SERVICE_AMBIGUOUS",
+      "slug": "ambiguous-service",
+      "category": "configuration",
+      "title": "service selection ambiguous",
+      "summary": "the project configures multiple services. select one by name and run the command again.",
+      "description": "tnl cannot choose one project service when several are configured.",
+      "diagram_label": "multiple project services matched and none was selected",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "project configuration" },
+        { "label": "service selection", "detail": "multiple matches", "failure": true },
+        { "label": "local service (not started)" }
+      ],
+      "causes": [
+        "`tnl dev` or `tnl publish` was run without a service name in a multi-service project"
+      ],
+      "actions": {
+        "publisher": [
+          "choose one of the sorted service names printed by tnl",
+          "run `tnl dev <service>` or `tnl publish <service>`"
+        ]
+      }
+    },
+    {
+      "code": "TNL_PUBLIC_URL_CONFLICT",
+      "slug": "public-url-conflict",
+      "category": "public url",
+      "title": "public url conflict",
+      "summary": "tnl could not create or reconcile the public url because its hostname, identity, or lifecycle conflicts with the requested public url.",
+      "description": "the requested public url conflicts with an existing hostname, identity, or lifecycle state.",
+      "diagram_label": "the control API rejected the requested public url",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "requested public url" },
+        { "label": "control API", "detail": "public url conflict", "failure": true },
+        { "label": "tnl (not publishing)" }
+      ],
+      "causes": [
+        "the hostname is owned by another public url, team, or membership",
+        "an existing public url has a different identity or is suspended, deleted, or in use"
+      ],
+      "actions": {
+        "publisher": [
+          "check `tnl team current` and `tnl url list`",
+          "choose a hostname the selected team owns or resolve the existing public url's lifecycle conflict"
+        ]
+      }
+    },
+    {
+      "code": "TNL_PROVISIONING_STALLED",
+      "slug": "provisioning-stalled",
+      "category": "provisioning",
+      "title": "provisioning stalled",
+      "summary": "public url provisioning has not completed. tnl is still retrying certificate or publisher connection work.",
+      "description": "the public url is not yet routable; tnl is still retrying certificate or publisher connection work.",
+      "diagram_label": "the public url is not yet routable",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl" },
+        { "label": "public url provisioning", "detail": "still waiting", "failure": true },
+        { "label": "public url (not yet routable)" }
+      ],
+      "causes": [
+        "certificate authorization or issuance is pending",
+        "one or more assigned relay services are unavailable"
+      ],
+      "actions": {
+        "publisher": [
+          "keep the command running while tnl retries",
+          "check `tnl status` and, on a self-hosted server, control and relay health"
+        ]
+      }
+    }
+  ]
+}

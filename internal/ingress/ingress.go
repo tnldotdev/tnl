@@ -74,6 +74,7 @@ type Config struct {
 	HandleRelayChallenge            func(net.Conn) bool
 	RequireProxyHeader              bool
 	MaxConnections                  int
+	MaxDeniedConnections            int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
@@ -98,6 +99,7 @@ type Server struct {
 	connections map[net.Conn]struct{}
 	backends    map[net.Conn]struct{}
 	byPublicURL map[string]int
+	byDenied    map[string]int
 	byChallenge map[string]int
 	pending     int
 	admitted    [connectionKinds]int
@@ -142,6 +144,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
 		byPublicURL: make(map[string]int),
+		byDenied:    make(map[string]int),
 		byChallenge: make(map[string]int),
 		done:        make(chan struct{}),
 	}, nil
@@ -307,18 +310,20 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
 	}
-	if !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes) {
+	denied := !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes)
+	if denied {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncIPAllowlistDenial()
 		}
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
 		}
-		return nil
 	}
 	kind, key := visitorConnection, route.ID
 	if challenge {
 		kind, key = challengeConnection, hello.ServerName
+	} else if denied {
+		kind = deniedConnection
 	}
 	release, rejected := s.admitClass(kind, key)
 	if release == nil {
@@ -359,6 +364,8 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	openTimeout := s.config.OpenTimeout
 	if challenge {
 		openTimeout = min(openTimeout, time.Until(challengeDeadline))
+	} else if denied {
+		openTimeout = min(openTimeout, 2*time.Second)
 	}
 	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
 	defer cancel()
@@ -388,7 +395,17 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		attemptCtx, stopAttempt := backendAttemptContext(openCtx, len(backends)-attempt)
 		started := time.Now()
-		candidate, openErr := backend.Open(attemptCtx, visitorConnectionID)
+		var candidate net.Conn
+		var openErr error
+		if denied {
+			if denialBackend, ok := backend.(routebackend.DenialBackend); ok {
+				candidate, openErr = denialBackend.OpenDenied(attemptCtx, visitorConnectionID)
+			} else {
+				openErr = errors.New("ingress: backend does not support denied connections")
+			}
+		} else {
+			candidate, openErr = backend.Open(attemptCtx, visitorConnectionID)
+		}
 		if openErr != nil {
 			stopAttempt()
 			s.observeAttempt(attempt, openErr, started)
@@ -455,14 +472,14 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	if usage != nil {
 		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
 	}
-	if usage != nil || route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+	if usage != nil || !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 		var recoveryOnce sync.Once
 		observeEgress = func(bytes int64) {
 			now := time.Now().UTC()
 			if usage != nil {
 				usage.AddEgress(bytes, now)
 			}
-			if route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+			if !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 				recoveryOnce.Do(func() {
 					s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, now)
 				})

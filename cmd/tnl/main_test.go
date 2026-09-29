@@ -10,10 +10,12 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -326,6 +328,23 @@ func TestClassifyCommandErrorMapsAuthenticationTimeout(t *testing.T) {
 	}
 	if canceled := classifyCommandError(context.Canceled); canceled != context.Canceled {
 		t.Fatalf("cancellation was classified: %v", canceled)
+	}
+}
+
+func TestClassifyCommandErrorMapsCommonServerFailures(t *testing.T) {
+	for _, test := range []struct {
+		cause error
+		code  diagnostic.Code
+	}{
+		{controlclient.ErrUnavailable, diagnostic.ServerUnavailable},
+		{authorityclient.ErrRateLimited, diagnostic.RateLimited},
+		{controlclient.ErrDNSProofPending, diagnostic.DNSSetupPending},
+		{authorityclient.ErrUnauthenticated, diagnostic.AuthenticationRequired},
+	} {
+		classified := classifyCommandError(fmt.Errorf("request: %w", test.cause))
+		if code, ok := diagnostic.CodeOf(classified); !ok || code != test.code || !errors.Is(classified, test.cause) {
+			t.Fatalf("classified %v as %q, %t", test.cause, code, ok)
+		}
 	}
 }
 

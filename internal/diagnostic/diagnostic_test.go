@@ -3,10 +3,10 @@ package diagnostic
 import (
 	"bytes"
 	"errors"
-	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +16,14 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 	seenCodes := make(map[Code]bool)
 	seenURLs := make(map[string]bool)
 	for _, code := range Codes() {
+		entry := definitionFor(code)
+		if entry.HTTPStatus != 0 && (entry.HTTPStatus < 400 || entry.HTTPStatus > 599) {
+			t.Fatalf("invalid HTTP status for %s", code)
+		}
+		if entry.HTTPStatus == 0 && slices.Contains(entry.Surfaces, "browser") ||
+			entry.HTTPStatus != 0 && !slices.Contains(entry.Surfaces, "browser") {
+			t.Fatalf("inconsistent browser surface for %s", code)
+		}
 		if seenCodes[code] {
 			t.Fatalf("duplicate code %q", code)
 		}
@@ -114,7 +122,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			request := httptest.NewRequest(test.method, "https://route.example/", nil)
 			request.Header.Set("Accept", test.accept)
 			response := httptest.NewRecorder()
-			WriteHTTP(response, request, http.StatusBadGateway, TargetUnavailable)
+			WriteHTTP(response, request, TargetUnavailable)
 			if response.Code != http.StatusBadGateway || response.Header().Get("Content-Type") != test.contentType ||
 				response.Header().Get("Tnl-Error-Code") != string(TargetUnavailable) ||
 				response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Vary") != "Accept" ||
@@ -127,7 +135,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			get := httptest.NewRecorder()
 			getRequest := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
 			getRequest.Header.Set("Accept", test.accept)
-			WriteHTTP(get, getRequest, http.StatusBadGateway, TargetUnavailable)
+			WriteHTTP(get, getRequest, TargetUnavailable)
 			if response.Header().Get("Content-Length") != strconv.Itoa(get.Body.Len()) {
 				t.Fatalf("Content-Length = %q, GET bytes = %d", response.Header().Get("Content-Length"), get.Body.Len())
 			}
@@ -143,14 +151,15 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 					response.Header().Get("Referrer-Policy") != "no-referrer" {
 					t.Fatalf("HTML headers = %v", response.Header())
 				}
-				if !strings.Contains(get.Body.String(), html.EscapeString(Text(TargetUnavailable))) ||
+				if !strings.Contains(get.Body.String(), `<h1>local service unavailable</h1>`) ||
+					!strings.Contains(get.Body.String(), `<code>TNL_TARGET_UNAVAILABLE</code>`) ||
 					!strings.Contains(get.Body.String(), "<title>local service unavailable - tnl</title>") {
 					t.Fatalf("HTML diagnostic content = %q", get.Body.String())
 				}
 			}
 			if test.contentType == "text/html; charset=utf-8" && test.body {
 				body := response.Body.String()
-				if !strings.Contains(body, "<pre>") || !strings.Contains(body, `<a href="https://tnl.dev/e/target">`) ||
+				if !strings.Contains(body, "<main>") || !strings.Contains(body, `<a href="https://tnl.dev/e/target">`) ||
 					!strings.Contains(body, `font-family:"Fira Code"`) {
 					t.Fatalf("HTML body = %q", body)
 				}

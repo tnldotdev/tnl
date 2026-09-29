@@ -59,8 +59,10 @@ local service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
-destination. Relay preserves that header and the visitor TLS bytes. The publisher
-removes untrusted forwarding headers before proxying the HTTP request.
+destination. Relay preserves that header and the visitor TLS bytes. A denied
+visitor may use a separate, bounded forwarding budget to reach the publisher
+for an HTTPS 403, but never reaches the local service. The publisher removes
+untrusted forwarding headers before proxying an allowed HTTP request.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the

@@ -96,6 +96,20 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 	})
 }
 
+func (o *publishOutput) targetUnavailable() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.mode == "human" {
+		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.TargetUnavailable)
+	}
+	retryable := false
+	return o.emitLocked(publishEvent{
+		Type: "warning", Message: diagnostic.Summary(diagnostic.TargetUnavailable),
+		Code: string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
+		Retryable: &retryable,
+	})
+}
+
 func (o *publishOutput) transportFallback(publishRunNumber uint64, transport string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -132,12 +146,7 @@ func (o *publishOutput) blockedVisitors(publishRunNumber, total uint64) error {
 	if o.mode != "human" {
 		return nil
 	}
-	return writeHumanFrame(o.stderr, o.command, "visitors blocked", "IP policy remains active",
-		clioutput.Fields(
-			clioutput.Field{Label: "newly blocked", Value: fmt.Sprint(increase)},
-			clioutput.Field{Label: "total blocked", Value: fmt.Sprint(total)},
-		),
-	)
+	return diagnostic.WritePolicyDenial(o.stderr, o.command, increase, total)
 }
 
 func newPublishOutput(mode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
@@ -316,6 +325,9 @@ func (o *publishOutput) emitLocked(event publishEvent) error {
 
 func boundedOutputError(err error) string {
 	message := err.Error()
+	if code, ok := diagnostic.CodeOf(err); ok {
+		message = diagnostic.Summary(code)
+	}
 	if len(message) > 1024 {
 		return message[:1024]
 	}
@@ -346,6 +358,8 @@ func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, outpu
 		return output.transportFallback(event.PublishRunNumber, string(event.Transport))
 	case publisher.EventIPPolicyDenials:
 		return output.blockedVisitors(event.PublishRunNumber, event.PolicyDenials)
+	case publisher.EventTargetUnavailable:
+		return output.targetUnavailable()
 	}
 	return nil
 }

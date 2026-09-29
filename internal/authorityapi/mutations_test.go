@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -289,7 +290,7 @@ func TestAuthorityResourceMutationProblems(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 				t.Fatal(err)
 			}
-			if response.Code != test.status || problem.Status != test.status || problem.Code != test.code || problem.Type != "https://tnl.dev/problems/"+string(test.code) ||
+			if response.Code != test.status || problem.Status != test.status || problem.Code != test.code || problem.Type != problemtype.URL(string(test.code)) ||
 				len(store.mutations) != 1 || strings.Contains(response.Body.String(), "exact-invitation-token") {
 				t.Fatalf("response = %d: %s; calls %#v", response.Code, response.Body.String(), store.mutations)
 			}

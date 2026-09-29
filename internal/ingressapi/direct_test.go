@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -60,7 +61,7 @@ func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
 					status = response.StatusCode()
 					problem = response.ApplicationproblemJSON409
 				}
-				want := ingressv1.Problem{Status: http.StatusConflict, Type: "https://tnl.dev/problems/" + test.name, Title: strings.ReplaceAll(test.name, "_", " "), Detail: test.detail}
+				want := ingressv1.Problem{Status: http.StatusConflict, Type: problemtype.URL(test.name), Title: strings.ReplaceAll(test.name, "_", " "), Detail: test.detail}
 				if status != http.StatusConflict || !reflect.DeepEqual(problem, &want) {
 					t.Fatalf("response = %d %#v, want %#v", status, problem, want)
 				}

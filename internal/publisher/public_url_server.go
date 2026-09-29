@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -31,6 +32,7 @@ type PublicURLServerConfig struct {
 	Hostname        string
 	Target          string
 	RequestLimit    int // Zero selects localproxy.DefaultRequestLimit.
+	OnTargetFailure func()
 	Certificate     tls.Certificate
 	CertificatePlan controlv1.CertificatePlan
 }
@@ -59,6 +61,8 @@ type PublicURLServer struct {
 	challengeID         string
 }
 
+type denialContextKey struct{}
+
 // NewPublicURLServer creates a publisher route server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
@@ -71,7 +75,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			return nil, errors.New("publisher: certificate plan does not cover route")
 		}
 	}
-	handler, err := localproxy.New(config.Target, hostname, config.RequestLimit)
+	handler, err := localproxy.New(config.Target, hostname, config.RequestLimit, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +90,27 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			SessionTicketsDisabled: true,
 		},
 		http: &http.Server{
-			Handler:           handler,
+			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Context().Value(denialContextKey{}) == true {
+					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+					return
+				}
+				handler.ServeHTTP(response, request)
+			}),
+			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
+				if secured, ok := connection.(*tls.Conn); ok {
+					if tracked, ok := secured.NetConn().(*doneConn); ok {
+						if metadata, ok := tracked.Conn.(*metadataConn); ok {
+							if metadata.denied {
+								return context.WithValue(ctx, denialContextKey{}, true)
+							}
+							return ctx
+						}
+					}
+				}
+				// An unrecognized connection must never bypass visitor policy.
+				return context.WithValue(ctx, denialContextKey{}, true)
+			},
 			ReadHeaderTimeout: 10 * time.Second,
 			// Bound incomplete bodies with a real read deadline. For HTTP/2,
 			// net/http enforces this independently on each request stream.
@@ -288,7 +312,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 				delete(r.streams, incoming.Stream)
 				r.mu.Unlock()
 			}()
-			r.handle(incoming.Stream)
+			r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied)
 		}()
 	}
 }
@@ -359,13 +383,17 @@ func (r *PublicURLServer) startHTTP() {
 }
 
 func (r *PublicURLServer) handle(connection net.Conn) {
+	r.handleVisitor(connection, false)
+}
+
+func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
 	if err != nil {
 		return
 	}
-	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header}
+	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -375,7 +403,11 @@ func (r *PublicURLServer) handle(connection net.Conn) {
 		_ = secured.Close()
 		return
 	}
-	_ = secured.SetDeadline(time.Time{})
+	if denied {
+		_ = secured.SetDeadline(time.Now().Add(5 * time.Second))
+	} else {
+		_ = secured.SetDeadline(time.Time{})
+	}
 	if secured.ConnectionState().NegotiatedProtocol == acme.ALPNProto {
 		_ = tracked.Close()
 		return
@@ -459,6 +491,7 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 type metadataConn struct {
 	net.Conn
 	header proxyproto.Header
+	denied bool
 }
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }

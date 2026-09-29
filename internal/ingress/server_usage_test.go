@@ -162,6 +162,48 @@ type gatedOpenBackend struct {
 	err        error
 }
 
+type gatedDeniedBackend struct {
+	*gatedOpenBackend
+}
+
+func (b gatedDeniedBackend) OpenDenied(ctx context.Context, id string) (net.Conn, error) {
+	return b.Open(ctx, id)
+}
+
+func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	backend := gatedDeniedBackend{&gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("relay unavailable")}}
+	usage := newUsageRecorder()
+	config := Config{
+		RequireProxyHeader: true, MaxDeniedConnections: 2, OpenUsage: usage.Open,
+		Lookup: func(host string) (PublicURL, bool) {
+			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend},
+				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
+		},
+	}
+	_, address := startIngress(t, config)
+	first := ingressClient(t, address, "route.example", "203.0.113.1:40001")
+	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
+	ingressAwait(t, backend.entered)
+	second := ingressClient(t, address, "route.example", "203.0.113.2:40002")
+	if err := second.Handshake(); err == nil {
+		t.Fatal("denied connection bypassed capacity")
+	}
+	unblock()
+	if err := ingressAwait(t, result); err == nil {
+		t.Fatal("denied connection completed TLS without a publisher")
+	}
+	for range 2 {
+		observed := ingressAwait(t, usage.opened)
+		ingressAwait(t, observed.closed)
+		if observed.policyDenials != 1 || observed.streams != 0 {
+			t.Fatalf("denial usage = %+v", observed)
+		}
+	}
+}
+
 func (b *gatedOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
 	close(b.entered)
 	select {

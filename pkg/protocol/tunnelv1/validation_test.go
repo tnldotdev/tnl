@@ -41,6 +41,33 @@ func TestControlMessages(t *testing.T) {
 	}
 }
 
+func TestDeniedPolicyMarkerSurvivesBothStreamHeaders(t *testing.T) {
+	visitor, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitor.IPPolicyDenied = true
+	var wire bytes.Buffer
+	if err := WriteVisitorStreamHeader(&wire, visitor); err != nil {
+		t.Fatal(err)
+	}
+	if received, err := ReadVisitorStreamHeader(&wire); err != nil || received != visitor {
+		t.Fatalf("visitor header = %+v, %v", received, err)
+	}
+	forward, err := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward.IPPolicyDenied = true
+	wire.Reset()
+	if err := WriteInternalForwardingHeader(&wire, forward); err != nil {
+		t.Fatal(err)
+	}
+	if received, err := ReadInternalForwardingHeader(&wire); err != nil || received != forward {
+		t.Fatalf("forwarding header = %+v, %v", received, err)
+	}
+}
+
 func TestReadersRejectInvalidMessages(t *testing.T) {
 	for _, test := range []struct {
 		name, payload string
