@@ -22,10 +22,10 @@ func TestControlRequestDurationOutcomes(t *testing.T) {
 		{canceled, 204}, {expired, 204},
 	} {
 		mux := http.NewServeMux()
-		mux.Handle("GET /test/{id}", metrics.ControlRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mux.Handle("GET /test/{id}", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(test.status)
-		})))
-		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(test.ctx, "GET", "/test/private-id", nil))
+		}))
+		metrics.APIRequests("control", mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(test.ctx, "GET", "/test/private-id", nil))
 	}
 	families, err := metrics.Gather()
 	if err != nil {
@@ -33,7 +33,7 @@ func TestControlRequestDurationOutcomes(t *testing.T) {
 	}
 	want := map[string]bool{"success": true, "client_error": true, "server_error": true, "canceled": true, "deadline_exceeded": true}
 	for _, family := range families {
-		if family.GetName() != "tnl_control_request_duration_seconds" {
+		if family.GetName() != "tnl_control_api_request_duration_seconds" {
 			continue
 		}
 		for _, metric := range family.Metric {
@@ -41,7 +41,7 @@ func TestControlRequestDurationOutcomes(t *testing.T) {
 			for _, label := range metric.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
-			if len(labels) != 2 || labels["operation"] != "GET /test/{id}" || !want[labels["outcome"]] {
+			if len(labels) != 3 || labels["surface"] != "control" || labels["operation"] != "GET /test/{id}" || !want[labels["outcome"]] {
 				t.Fatalf("unexpected labels: %v", labels)
 			}
 			if metric.GetHistogram().GetSampleCount() != 1 || metric.GetHistogram().GetSampleSum() <= 0 {

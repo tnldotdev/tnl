@@ -189,7 +189,9 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	return err
 }
 
-func (c *Controller) register(ctx context.Context) error {
+func (c *Controller) register(ctx context.Context) (retErr error) {
+	started := time.Now()
+	defer func() { c.observeOperation("IngressRegister", retErr, started) }()
 	if lease := c.Lease(); lease.IngressLeaseRevision != 0 && !lease.LeaseExpiresAt.After(c.now()) {
 		return ErrIngressLeaseLost
 	}
@@ -401,10 +403,19 @@ func (c *Controller) Ready(now time.Time) bool {
 }
 
 func (c *Controller) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
+	entry, reason := c.LookupWithReason(canonicalHostname, now)
+	return entry, reason == ""
+}
+
+func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
 	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, false
+		return ingressv1.IngressRoutingTableEntry{}, "ingress_unavailable"
 	}
-	return c.routingTable.Lookup(canonicalHostname, now)
+	entry, ok := c.routingTable.Lookup(canonicalHostname, now)
+	if !ok {
+		return ingressv1.IngressRoutingTableEntry{}, "not_found"
+	}
+	return entry, ""
 }
 
 func (c *Controller) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {

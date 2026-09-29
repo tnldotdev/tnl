@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/controltls"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
+	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publicurlusageworker"
@@ -101,6 +102,8 @@ func serveWithRelayClientTLS(
 		metrics.SetCapacityLimit("challenge_hostname_connections", int64(cfg.ChallengeHostnameConnectionLimit))
 		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)
 		metrics.SetCapacityLimit("public_url_connections", max(1, cfg.VisitorConnectionLimit/2))
+		metrics.SetCapacityLimit("denied_connections", int64(ingress.DefaultDeniedConnectionLimit))
+		metrics.SetCapacityLimit("denied_public_url_connections", int64(max(1, ingress.DefaultDeniedConnectionLimit/2)))
 	}
 	if cfg.Role.RunsRelay() {
 		metrics.SetCapacityLimit("publisher_connections", cfg.PublisherConnectionLimit)
@@ -300,7 +303,7 @@ func serveWithRelayClientTLS(
 		if err := d.startControl(cfg.ControlListen, cfg.RequireProxyHeader, controlHandler); err != nil {
 			return err
 		}
-		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg)); err != nil {
+		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg), metrics); err != nil {
 			return err
 		}
 	}

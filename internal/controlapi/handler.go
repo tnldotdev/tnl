@@ -137,13 +137,8 @@ func NewHandler(
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	}
-	var middleware []controlv1.MiddlewareFunc
-	if cfg.Metrics != nil {
-		middleware = append(middleware, cfg.Metrics.ControlRequests)
-	}
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{
 		BaseRouter: mux, ErrorHandlerFunc: parameterError,
-		Middlewares: middleware,
 	})
 	mux.HandleFunc("/", notFound)
 	return mux, nil

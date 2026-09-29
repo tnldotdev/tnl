@@ -65,7 +65,7 @@ func newPublicAPIHandler(
 	metrics *observability.Metrics,
 	d *daemon,
 	route53Readiness func(context.Context) error,
-) (*http.ServeMux, error) {
+) (http.Handler, error) {
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
@@ -96,7 +96,18 @@ func newPublicAPIHandler(
 			return nil, err
 		}
 	}
-	return mux, nil
+	// Classify by fixed API prefixes, never by an identity or path parameter.
+	// The router sets r.Pattern for matched routes, including binding errors.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		surface := "control"
+		for _, prefix := range []string{"/v1/auth/", "/v1/identity", "/v1/teams", "/v1/invitations/", "/v1/service/authorize"} {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				surface = "authority"
+				break
+			}
+		}
+		metrics.APIRequests(surface, mux).ServeHTTP(w, r)
+	}), nil
 }
 
 func (d *daemon) startControl(listenAddress string, requireProxyHeader bool, handler http.Handler) error {
@@ -129,7 +140,7 @@ func privateControlSettingsFrom(cfg tnldconfig.Config) privateControlSettings {
 	}
 }
 
-func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateControlSettings) error {
+func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateControlSettings, metrics *observability.Metrics) error {
 	ingressHandler, err := ingressapi.NewHandler(ingressapi.Config{
 		Store: d.database, ClusterSecrets: d.clusterSecrets,
 		LeaseDuration: settings.ingressLeaseDuration,
@@ -147,11 +158,11 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/ingresses/"):
-			ingressHandler.ServeHTTP(response, request)
+			metrics.APIRequests("private_ingress", ingressHandler).ServeHTTP(response, request)
 		case strings.HasPrefix(request.URL.Path, "/internal/v1/relays/"),
 			strings.HasPrefix(request.URL.Path, "/internal/v1/relay-services/"),
 			strings.HasPrefix(request.URL.Path, "/internal/v1/publisher-connections/"):
-			relayHandler.ServeHTTP(response, request)
+			metrics.APIRequests("private_relay", relayHandler).ServeHTTP(response, request)
 		default:
 			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found")
 		}

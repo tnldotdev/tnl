@@ -85,6 +85,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		return nil, resource
 	}
 	s.admitted[kind]++
+	s.reportAdmittedLocked()
 	if kind == visitorConnection {
 		s.byPublicURL[key]++
 	} else if kind == deniedConnection {
@@ -96,6 +97,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.admitted[kind]--
+		s.reportAdmittedLocked()
 		var counts map[string]int
 		if kind == visitorConnection {
 			counts = s.byPublicURL
@@ -119,9 +121,22 @@ func (s *Server) rejectCapacity(resource string) {
 	}
 }
 
+// Call only with mu held, so a later update cannot overwrite a newer count.
+func (s *Server) reportAdmittedLocked() {
+	if s.config.Metrics == nil {
+		return
+	}
+	for kind, class := range []string{"public", "denied", "challenge", "control", "relay_tcp"} {
+		s.config.Metrics.SetIngressConnections(class, s.admitted[kind])
+	}
+}
+
 func (s *Server) finishInspection() {
 	s.mu.Lock()
 	s.pending--
+	if s.config.Metrics != nil {
+		s.config.Metrics.SetIngressConnections("client_hello", s.pending)
+	}
 	s.mu.Unlock()
 }
 

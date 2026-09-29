@@ -7,18 +7,19 @@ import (
 	"time"
 )
 
-// ControlRequests records matched route patterns, never URLs or route IDs.
-func (m *Metrics) ControlRequests(next http.Handler) http.Handler {
+// APIRequests records matched route patterns, never URLs or resource IDs. Wrap
+// the router so authentication and parameter-binding failures are counted too.
+func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		operation := r.Pattern
-		if operation == "" {
-			operation = "unmatched"
-		}
 		started := time.Now()
 		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		m.controlInFlight.WithLabelValues(operation).Inc()
+		m.apiInFlight.WithLabelValues(surface).Inc()
 		defer func() {
-			m.controlInFlight.WithLabelValues(operation).Dec()
+			m.apiInFlight.WithLabelValues(surface).Dec()
+			operation := r.Pattern
+			if operation == "" || operation == "/" {
+				operation = "unmatched"
+			}
 			outcome := "success"
 			switch {
 			case errors.Is(r.Context().Err(), context.DeadlineExceeded):
@@ -30,7 +31,7 @@ func (m *Metrics) ControlRequests(next http.Handler) http.Handler {
 			case response.status >= 400:
 				outcome = "client_error"
 			}
-			m.ObserveControlRequest(operation, outcome, time.Since(started))
+			m.ObserveAPIRequest(surface, operation, outcome, time.Since(started))
 		}()
 		next.ServeHTTP(response, r)
 	})

@@ -31,7 +31,7 @@ func (m *Metrics) RegisterIngressRouting(source func() IngressRoutingSnapshot) {
 
 type ingressRoutingCollector struct {
 	source func() IngressRoutingSnapshot
-	descs  [11]*prometheus.Desc
+	descs  [10]*prometheus.Desc
 }
 
 func newIngressRoutingCollector(source func() IngressRoutingSnapshot) *ingressRoutingCollector {
@@ -43,7 +43,6 @@ func newIngressRoutingCollector(source func() IngressRoutingSnapshot) *ingressRo
 		{"last_caught_up_timestamp_seconds", "Unix time of the last event response confirming catch-up; zero before confirmation."},
 		{"latest_observed_revision", "Highest control revision observed in a successfully applied routing response; pending requests may hide newer revisions."},
 		{"applied_revision", "Last applied routing-table revision."},
-		{"known_revision_backlog", "Latest observed minus applied revision; zero does not imply freshness while a request is pending."},
 		{"acknowledged_revision", "Last routing-table revision acknowledged by a successful ingress lease renewal."},
 		{"last_acknowledged_timestamp_seconds", "Unix time of the last routing-table acknowledgment; zero before success."},
 		{"update_failures_total", "Routing fetch or apply failures, excluding resnapshot-required responses and controller shutdown cancellation."},
@@ -73,13 +72,12 @@ func (c *ingressRoutingCollector) Collect(metrics chan<- prometheus.Metric) {
 		initialized, caughtUp,
 		routingTimestamp(snapshot.LastSuccessfulCheck), routingTimestamp(snapshot.LastCaughtUp),
 		float64(snapshot.LatestRevision), float64(snapshot.AppliedRevision),
-		float64(max(0, snapshot.LatestRevision-snapshot.AppliedRevision)),
 		float64(snapshot.AcknowledgedRevision), routingTimestamp(snapshot.LastAcknowledged),
 	} {
 		metrics <- prometheus.MustNewConstMetric(c.descs[i], prometheus.GaugeValue, value)
 	}
-	metrics <- prometheus.MustNewConstMetric(c.descs[9], prometheus.CounterValue, float64(snapshot.UpdateFailures))
-	metrics <- prometheus.MustNewConstMetric(c.descs[10], prometheus.CounterValue, float64(snapshot.Resnapshots))
+	metrics <- prometheus.MustNewConstMetric(c.descs[8], prometheus.CounterValue, float64(snapshot.UpdateFailures))
+	metrics <- prometheus.MustNewConstMetric(c.descs[9], prometheus.CounterValue, float64(snapshot.Resnapshots))
 }
 
 func routingTimestamp(at time.Time) float64 {

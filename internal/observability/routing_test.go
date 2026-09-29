@@ -16,7 +16,7 @@ func TestIngressRoutingMetricsUseOnePassiveSnapshot(t *testing.T) {
 			want := map[string]float64{
 				"initialized": 0, "caught_up": 0, "last_successful_check_timestamp_seconds": 0,
 				"last_caught_up_timestamp_seconds": 0, "latest_observed_revision": 0,
-				"applied_revision": 0, "known_revision_backlog": 0,
+				"applied_revision":      0,
 				"acknowledged_revision": 0, "last_acknowledged_timestamp_seconds": 0,
 				"update_failures_total": 0, "resnapshots_total": 0,
 			}
@@ -30,7 +30,7 @@ func TestIngressRoutingMetricsUseOnePassiveSnapshot(t *testing.T) {
 				want = map[string]float64{
 					"initialized": 1, "caught_up": 0, "last_successful_check_timestamp_seconds": 100.5,
 					"last_caught_up_timestamp_seconds": 90, "latest_observed_revision": 13,
-					"applied_revision": 8, "known_revision_backlog": 5,
+					"applied_revision":      8,
 					"acknowledged_revision": 7, "last_acknowledged_timestamp_seconds": 95,
 					"update_failures_total": 2, "resnapshots_total": 1,
 				}

@@ -97,7 +97,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			}
 			assertRoutingMetrics(t, metrics, map[string]float64{
 				"initialized": 1, "caught_up": 0, "applied_revision": 1,
-				"latest_observed_revision": 1, "known_revision_backlog": 0,
+				"latest_observed_revision":                1,
 				"last_successful_check_timestamp_seconds": float64(start.Unix()),
 				"last_caught_up_timestamp_seconds":        0,
 			})
@@ -172,7 +172,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			assertRoutingMetrics(t, metrics, map[string]float64{
 				"last_successful_check_timestamp_seconds": float64(checked.Unix()),
 				"last_caught_up_timestamp_seconds":        float64(checked.Unix()),
-				"applied_revision":                        1, "latest_observed_revision": 1, "known_revision_backlog": 0,
+				"applied_revision":                        1, "latest_observed_revision": 1,
 				"caught_up": 1, "update_failures_total": 0, "resnapshots_total": 0,
 			})
 			if operationSamples(t, metrics, "IngressRenewLease", "success") < 2 || operationSamples(t, metrics, "IngressFetchEvents", "success") != 1 {
@@ -206,7 +206,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				}})
 				ingressAwait(t, eventStarted)
 				assertRoutingMetrics(t, metrics, map[string]float64{
-					"caught_up": 0, "applied_revision": 2, "latest_observed_revision": 3, "known_revision_backlog": 1,
+					"caught_up": 0, "applied_revision": 2, "latest_observed_revision": 3,
 					"last_successful_check_timestamp_seconds": float64(now().Unix()),
 					"last_caught_up_timestamp_seconds":        float64(checked.Unix()),
 				})
@@ -222,8 +222,8 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			ingressAwait(t, eventStarted)
 			assertRoutingMetrics(t, metrics, map[string]float64{
 				"caught_up": 1, "applied_revision": float64(finalRevision), "latest_observed_revision": float64(finalRevision),
-				"known_revision_backlog": 0, "last_successful_check_timestamp_seconds": float64(now().Unix()),
-				"last_caught_up_timestamp_seconds": float64(now().Unix()),
+				"last_successful_check_timestamp_seconds": float64(now().Unix()),
+				"last_caught_up_timestamp_seconds":        float64(now().Unix()),
 			})
 			if entry, ok := controller.Lookup("route.example", now()); !ok || entry.PolicyRevision != finalRevision || !controller.Ready(now()) {
 				t.Fatalf("routing did not recover: entry=%+v found=%t", entry, ok)
@@ -327,7 +327,7 @@ func operationSamples(t *testing.T, metrics *observability.Metrics, operation, o
 		t.Fatal(err)
 	}
 	for _, family := range families {
-		if family.GetName() != "tnl_operation_duration_seconds" {
+		if family.GetName() != "tnl_ingress_operation_duration_seconds" {
 			continue
 		}
 		for _, metric := range family.Metric {

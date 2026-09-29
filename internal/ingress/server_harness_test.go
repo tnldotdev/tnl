@@ -275,7 +275,13 @@ func (m *testMetrics) IncChallengeRejection(reason string) {
 		m.challengeMissing.Add(1)
 	}
 }
-func (m *testMetrics) IncIPAllowlistDenial() { m.ipAllowlistDenials.Add(1) }
+func (m *testMetrics) ObserveVisitor(outcome string) {
+	if outcome == "policy_denied" {
+		m.ipAllowlistDenials.Add(1)
+	}
+}
+func (*testMetrics) ObserveVisitorOpen(bool, time.Duration) {}
+func (*testMetrics) SetIngressConnections(string, int)      {}
 func (m *testMetrics) AddForwardedBytes(direction string, n int64) {
 	m.forwardedMu.Lock()
 	defer m.forwardedMu.Unlock()

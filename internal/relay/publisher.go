@@ -28,6 +28,7 @@ type PublisherAcceptorConfig struct {
 	Registry              *Registry
 	Select                func(string) (PublisherConnectionController, *Registry, bool)
 	ReadyConnectionsDelta func(int)
+	ConnectionExited      func(bool)
 	CapacityRejected      func()
 	Report                func(error)
 	Observer              OperationObserver
@@ -35,13 +36,14 @@ type PublisherAcceptorConfig struct {
 
 // PublisherAcceptor authenticates and owns publisher connections.
 type PublisherAcceptor struct {
-	control      PublisherConnectionController
-	registry     *Registry
-	selectTarget func(string) (PublisherConnectionController, *Registry, bool)
-	readyDelta   func(int)
-	capacity     func()
-	report       func(error)
-	observer     OperationObserver
+	control          PublisherConnectionController
+	registry         *Registry
+	selectTarget     func(string) (PublisherConnectionController, *Registry, bool)
+	readyDelta       func(int)
+	connectionExited func(bool)
+	capacity         func()
+	report           func(error)
+	observer         OperationObserver
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -58,9 +60,13 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 	if config.CapacityRejected == nil {
 		config.CapacityRejected = func() {}
 	}
+	if config.ConnectionExited == nil {
+		config.ConnectionExited = func(bool) {}
+	}
 	return &PublisherAcceptor{
 		control: config.Control, registry: config.Registry, selectTarget: config.Select,
-		readyDelta: config.ReadyConnectionsDelta, capacity: config.CapacityRejected, report: config.Report,
+		readyDelta: config.ReadyConnectionsDelta, connectionExited: config.ConnectionExited,
+		capacity: config.CapacityRejected, report: config.Report,
 		observer: config.Observer,
 	}, nil
 }
@@ -101,6 +107,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		}
 		if ready {
 			a.readyDelta(-1)
+			a.connectionExited(retErr != nil && ctx.Err() == nil && !errors.Is(retErr, net.ErrClosed))
 		}
 		if registered {
 			registry.Remove(connection)
@@ -110,7 +117,9 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		if claimed.PublisherConnectionId != "" {
 			disconnectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			unexpected := retErr != nil && ctx.Err() == nil && !errors.Is(retErr, net.ErrClosed)
+			finishDisconnect := startOperation(disconnectCtx, a.observer, "RelayDisconnectPublisherConnection")
 			_, disconnectErr := control.DisconnectPublisherConnection(disconnectCtx, claimed, unexpected)
+			finishDisconnect(disconnectErr)
 			cancel()
 			if disconnectErr != nil {
 				a.report(fmt.Errorf("disconnect publisher connection %q: %w", claimed.PublisherConnectionId, disconnectErr))

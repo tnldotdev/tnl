@@ -167,17 +167,17 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	ingressConfig := ingress.Config{
-		Lookup: func(hostname string) (ingress.PublicURL, bool) {
-			entry, ok := controller.Lookup(hostname, time.Now())
-			if !ok {
-				return ingress.PublicURL{}, false
+		LookupWithReason: func(hostname string) (ingress.PublicURL, string) {
+			entry, reason := controller.LookupWithReason(hostname, time.Now())
+			if reason != "" {
+				return ingress.PublicURL{}, reason
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
 				log.Printf("ingress route %q: %v", hostname, err)
-				return ingress.PublicURL{}, false
+				return ingress.PublicURL{}, "invalid_projection"
 			}
-			return route, true
+			return route, ""
 		},
 		LookupChallenge: func(hostname string) ([]routebackend.Backend, string) {
 			entry, reason := controller.LookupChallengeWithReason(hostname, time.Now())

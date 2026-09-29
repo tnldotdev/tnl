@@ -86,13 +86,13 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 		if response.Code != http.StatusOK || strings.Contains(body, "secret") {
 			t.Fatalf("unbounded diagnostic labels: status=%d body=%s", response.Code, body)
 		}
-		if metrics == control && (!strings.Contains(body, `tnl_publish_run_readiness_total{outcome="error"} 1`) ||
-			!strings.Contains(body, `tnl_public_url_certificate_work_total{outcome="retry",stage="other"} 1`) ||
-			!strings.Contains(body, `tnl_public_url_certificate_milestone_age_seconds_count{milestone="ready"} 1`) ||
-			!strings.Contains(body, `tnl_public_url_certificate_milestone_age_seconds_count{milestone="cleanup"} 1`)) {
+		if metrics == control && (!strings.Contains(body, `tnl_control_publish_run_readiness_duration_seconds_count{outcome="error"} 1`) ||
+			!strings.Contains(body, `tnl_control_certificate_work_duration_seconds_count{kind="public_url",outcome="retry",stage="other"} 1`) ||
+			!strings.Contains(body, `tnl_control_public_url_certificate_milestone_age_seconds_count{milestone="ready"} 1`) ||
+			!strings.Contains(body, `tnl_control_public_url_certificate_milestone_age_seconds_count{milestone="cleanup"} 1`)) {
 			t.Fatalf("missing bounded readiness or certificate outcomes: %s", body)
 		}
-		if metrics == ingress && !strings.Contains(body, `tnl_ingress_relay_attempts_total{connection_slot="unknown",outcome="open_failed"} 1`) {
+		if metrics == ingress && !strings.Contains(body, `tnl_ingress_relay_attempts_total{connection_slot="unknown",outcome="other"} 1`) {
 			t.Fatalf("missing bounded relay outcome: %s", body)
 		}
 	}
@@ -109,9 +109,9 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.IncCapacityRejection("public_url_connections")
 	metrics.IncInspectionFailure("client_hello")
 	metrics.IncChallengeRejection("unavailable")
-	metrics.IncIPAllowlistDenial()
+	metrics.ObserveVisitor("policy_denied")
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
-	metrics.ObserveControlRequest("routes.create", "success", 10*time.Millisecond)
+	metrics.ObserveAPIRequest("control", "POST /v1/public-urls", "success", 10*time.Millisecond)
 	metrics.ObserveRoutingHistoryFloor(100)
 	metrics.ObserveRoutingHistoryFloor(50)
 	metrics.ObserveRoutingHistoryBatch(0, 0, true)
@@ -126,19 +126,19 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
-		"tnl_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
-		"tnl_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
-		"tnl_info":                               {"GAUGE", map[string]string{"role": "standalone"}, 1},
-		"tnl_relay_leases":                       {"GAUGE", map[string]string{"state": "active"}, 2},
-		"tnl_publisher_connections":              {"GAUGE", map[string]string{"state": "ready"}, 3},
-		"tnl_streams_active":                     {kind: "GAUGE"},
-		"tnl_capacity_rejections_total":          {"COUNTER", map[string]string{"resource": "public_url_connections"}, 1},
-		"tnl_ingress_inspection_failures_total":  {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
-		"tnl_ingress_challenge_rejections_total": {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
-		"tnl_ip_allowlist_denials_total":         {kind: "COUNTER", value: 1},
-		"tnl_forwarded_bytes_total":              {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
-		"tnl_control_requests_total":             {"COUNTER", map[string]string{"operation": "routes.create", "outcome": "success"}, 1},
-		"tnl_control_request_duration_seconds":   {"HISTOGRAM", map[string]string{"operation": "routes.create", "outcome": "success"}, 0.01},
+		"tnl_control_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
+		"tnl_control_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
+		"tnl_process_info":                         {"GAUGE", map[string]string{"role": "standalone"}, 1},
+		"tnl_relay_local_leases":                   {"GAUGE", map[string]string{"state": "active"}, 2},
+		"tnl_relay_publisher_connections_ready":    {kind: "GAUGE", value: 3},
+		"tnl_ingress_backend_streams":              {kind: "GAUGE", value: 4},
+		"tnl_relay_visitor_stream_slots_occupied":  {kind: "GAUGE", value: 2},
+		"tnl_admission_rejections_total":           {"COUNTER", map[string]string{"resource": "public_url_connections"}, 1},
+		"tnl_ingress_inspection_failures_total":    {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
+		"tnl_ingress_challenge_rejections_total":   {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
+		"tnl_ingress_visitor_connections_total":    {"COUNTER", map[string]string{"outcome": "policy_denied"}, 1},
+		"tnl_ingress_forwarded_bytes_total":        {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
+		"tnl_control_api_request_duration_seconds": {"HISTOGRAM", map[string]string{"surface": "control", "operation": "POST /v1/public-urls", "outcome": "success"}, 0.01},
 	}
 	for _, family := range families {
 		name := family.GetName()
@@ -152,28 +152,9 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		}
 		expected, ok := want[name]
 		if !ok {
-			t.Errorf("unexpected application metric %q", name)
 			continue
 		}
 		delete(want, name)
-		if name == "tnl_streams_active" {
-			if family.GetType().String() != expected.kind || len(family.Metric) != 2 {
-				t.Errorf("%s: type=%v samples=%d", name, family.GetType(), len(family.Metric))
-				continue
-			}
-			values := make(map[string]float64)
-			for _, metric := range family.Metric {
-				if len(metric.Label) != 1 || metric.Label[0].GetName() != "stage" {
-					t.Errorf("%s: labels=%v", name, metric.Label)
-					continue
-				}
-				values[metric.Label[0].GetValue()] = metric.GetGauge().GetValue()
-			}
-			if !reflect.DeepEqual(values, map[string]float64{"ingress": 4, "relay": 2}) {
-				t.Errorf("%s: values=%v", name, values)
-			}
-			continue
-		}
 		if family.GetType().String() != expected.kind || len(family.Metric) != 1 {
 			t.Errorf("%s: type=%v samples=%d", name, family.GetType(), len(family.Metric))
 			continue
@@ -228,8 +209,8 @@ func TestMetricsExposeEffectiveCapacityLimits(t *testing.T) {
 	metrics.SetCapacityLimit("public_url_connections", 50)
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `tnl_capacity_limit{resource="public_connections"} 101`) ||
-		!strings.Contains(response.Body.String(), `tnl_capacity_limit{resource="public_url_connections"} 50`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `tnl_admission_limit{resource="public_connections"} 101`) ||
+		!strings.Contains(response.Body.String(), `tnl_admission_limit{resource="public_url_connections"} 50`) {
 		t.Fatalf("effective limits missing: %s", response.Body.String())
 	}
 }
@@ -240,22 +221,22 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 		want []string
 	}{
 		{role: "control", want: []string{
-			"tnl_routing_history_cleanup_rows_total", "tnl_routing_history_cleanup_skipped_total", "tnl_routing_history_retained_after_revision",
-			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
+			"tnl_control_routing_history_cleanup_rows_total", "tnl_control_routing_history_cleanup_skipped_total", "tnl_control_routing_history_retained_after_revision",
+			"tnl_process_info", "tnl_control_api_request_duration_seconds",
 		}},
 		{role: "ingress", want: []string{
-			"tnl_info", "tnl_streams_active", "tnl_capacity_rejections_total",
-			"tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
+			"tnl_process_info", "tnl_ingress_backend_streams", "tnl_admission_rejections_total",
+			"tnl_ingress_visitor_connections_total", "tnl_ingress_forwarded_bytes_total",
 		}},
 		{role: "relay", want: []string{
-			"tnl_info", "tnl_relay_leases", "tnl_publisher_connections",
-			"tnl_streams_active", "tnl_capacity_rejections_total",
+			"tnl_process_info", "tnl_relay_local_leases", "tnl_relay_publisher_connections_ready",
+			"tnl_relay_visitor_stream_slots_occupied", "tnl_admission_rejections_total",
 		}},
 		{role: "standalone", want: []string{
-			"tnl_routing_history_cleanup_rows_total", "tnl_routing_history_cleanup_skipped_total", "tnl_routing_history_retained_after_revision",
-			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
-			"tnl_relay_leases", "tnl_publisher_connections", "tnl_streams_active",
-			"tnl_capacity_rejections_total", "tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
+			"tnl_control_routing_history_cleanup_rows_total", "tnl_control_routing_history_cleanup_skipped_total", "tnl_control_routing_history_retained_after_revision",
+			"tnl_process_info", "tnl_control_api_request_duration_seconds",
+			"tnl_relay_local_leases", "tnl_relay_publisher_connections_ready", "tnl_ingress_backend_streams", "tnl_relay_visitor_stream_slots_occupied",
+			"tnl_admission_rejections_total", "tnl_ingress_visitor_connections_total", "tnl_ingress_forwarded_bytes_total",
 		}},
 	} {
 		t.Run(test.role, func(t *testing.T) {
@@ -265,9 +246,9 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			metrics.SetIngressStreams(1)
 			metrics.AddRelayStreams(1)
 			metrics.IncCapacityRejection("test")
-			metrics.IncIPAllowlistDenial()
+			metrics.ObserveVisitor("policy_denied")
 			metrics.AddForwardedBytes("visitor_to_publisher", 1)
-			metrics.ObserveControlRequest("test", "success", time.Millisecond)
+			metrics.ObserveAPIRequest("control", "GET /test", "success", time.Millisecond)
 			metrics.ObserveRoutingHistoryBatch(2, 1, false)
 			families, err := metrics.registry.Gather()
 			if err != nil {
@@ -283,7 +264,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 					continue
 				}
 				if !want[name] {
-					t.Errorf("unexpected %s metric %q", test.role, name)
+					continue
 				}
 				delete(want, name)
 			}

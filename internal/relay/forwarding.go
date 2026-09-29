@@ -23,6 +23,7 @@ type ForwardingAcceptorConfig struct {
 	StreamCapacity   int
 	StreamsDelta     func(int)
 	CapacityRejected func()
+	StreamRejected   func(string)
 	Now              func() time.Time
 	Report           func(error)
 	Observer         OperationObserver
@@ -37,6 +38,7 @@ type ForwardingAcceptor struct {
 	streams          chan struct{}
 	streamsDelta     func(int)
 	capacityRejected func()
+	streamRejected   func(string)
 	now              func() time.Time
 	report           func(error)
 	observer         OperationObserver
@@ -58,9 +60,12 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 	if config.CapacityRejected == nil {
 		config.CapacityRejected = func() {}
 	}
+	if config.StreamRejected == nil {
+		config.StreamRejected = func(string) {}
+	}
 	return &ForwardingAcceptor{
 		registry: config.Registry, currentLease: config.CurrentLease, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
-		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected,
+		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected, streamRejected: config.StreamRejected,
 		now: config.Now, report: config.Report,
 		observer: config.Observer,
 	}, nil
@@ -119,6 +124,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	defer a.releaseStream()
 	connection, ok := a.registry.Candidate(incoming.Header, a.currentLease(), a.now())
 	if !ok {
+		a.streamRejected("stale_assignment")
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
@@ -128,6 +134,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	}
 	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
 	if err != nil {
+		a.streamRejected("publisher_unavailable")
 		code := tunnelv1.Unavailable
 		var protocolError *tunnel.ProtocolError
 		if errors.As(err, &protocolError) {

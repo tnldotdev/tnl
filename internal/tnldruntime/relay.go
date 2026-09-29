@@ -233,6 +233,11 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.AddPublisherConnections("ready", delta)
 			}
 		},
+		ConnectionExited: func(unexpected bool) {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.ObservePublisherExit(unexpected)
+			}
+		},
 		CapacityRejected: func() {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.IncCapacityRejection("publisher_connections")
@@ -260,6 +265,11 @@ func (d *daemon) startRelayRuntime(
 		CapacityRejected: func() {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.IncCapacityRejection("relay_streams")
+			}
+		},
+		StreamRejected: func(reason string) {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.ObserveRelayStreamRejection(reason)
 			}
 		},
 		Report: func(err error) { log.Printf("relay forwarding: %v", err) },

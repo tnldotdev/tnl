@@ -40,6 +40,10 @@ type PublicURL struct {
 
 type LookupFunc func(string) (PublicURL, bool)
 
+// LookupWithReason returns a fixed reason on failure; it must not return a
+// hostname, identifier, or error string as the reason.
+type LookupWithReasonFunc func(string) (PublicURL, string)
+
 type BackendLookupFunc func(string) ([]routebackend.Backend, bool)
 
 type UsageConnection interface {
@@ -58,7 +62,9 @@ type Metrics interface {
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
 	IncChallengeRejection(string)
-	IncIPAllowlistDenial()
+	ObserveVisitor(string)
+	ObserveVisitorOpen(bool, time.Duration)
+	SetIngressConnections(string, int)
 	AddForwardedBytes(string, int64)
 	SetIngressStreams(int)
 	ObserveRelayAttempt(string, string)
@@ -66,6 +72,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
+	LookupWithReason                LookupWithReasonFunc
 	LookupChallenge                 func(string) ([]routebackend.Backend, string)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
@@ -111,7 +118,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || config.Lookup == nil {
+	if listener == nil || config.Lookup == nil && config.LookupWithReason == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -173,7 +180,6 @@ func (s *Server) Serve() error {
 		}
 		if !s.admit(connection) {
 			_ = connection.Close()
-			s.rejectCapacity("client_hello_connections")
 			continue
 		}
 		go func() {
@@ -280,6 +286,11 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	var ok bool
 	var challengeReason string
 	challenge := hello.ACMETLSALPN
+	visitorOutcome := "lookup_missing"
+	visitorStarted := time.Now()
+	if !challenge && s.config.Metrics != nil {
+		defer func() { s.config.Metrics.ObserveVisitor(visitorOutcome) }()
+	}
 	// An ALPN claim alone cannot authorize challenge forwarding. Require an
 	// exact, currently live challenge from control; never fall back to a route.
 	if challenge {
@@ -291,10 +302,25 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
 	} else {
-		route, ok = s.config.Lookup(hello.ServerName)
+		if s.config.LookupWithReason != nil {
+			var reason string
+			route, reason = s.config.LookupWithReason(hello.ServerName)
+			ok = reason == ""
+			switch reason {
+			case "ingress_unavailable":
+				visitorOutcome = "lookup_unavailable"
+			case "invalid_projection":
+				visitorOutcome = "invalid_projection"
+			}
+		} else {
+			route, ok = s.config.Lookup(hello.ServerName)
+		}
 		backends = route.Backends
 	}
 	if challengeReason != "" || (!challenge && !ok) || len(backends) == 0 {
+		if !challenge && ok {
+			visitorOutcome = "lookup_unavailable"
+		}
 		if challenge && s.config.Metrics != nil {
 			if challengeReason == "" {
 				challengeReason = "unavailable"
@@ -312,9 +338,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	denied := !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes)
 	if denied {
-		if s.config.Metrics != nil {
-			s.config.Metrics.IncIPAllowlistDenial()
-		}
+		visitorOutcome = "policy_denied"
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
 		}
@@ -328,6 +352,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	release, rejected := s.admitClass(kind, key)
 	if release == nil {
 		s.rejectCapacity(rejected)
+		if !challenge && !denied {
+			visitorOutcome = "capacity_denied"
+			if rejected == "draining" {
+				visitorOutcome = "draining"
+			}
+		}
 		if usage != nil {
 			usage.CapacityDenied(time.Now().UTC())
 		}
@@ -442,7 +472,13 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		break
 	}
 	cancel()
+	if !challenge && s.config.Metrics != nil {
+		s.config.Metrics.ObserveVisitorOpen(stream != nil && committedErr == nil, time.Since(visitorStarted))
+	}
 	if stream == nil {
+		if !denied {
+			visitorOutcome = "open_failed"
+		}
 		if lastErr == nil {
 			lastErr = errors.New("ingress: route has no usable backend")
 		}
@@ -459,6 +495,9 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", committed)
 	}
 	if committedErr != nil {
+		if !denied {
+			visitorOutcome = "committed_failed"
+		}
 		s.reportForwardingFailure(challenge, route, visitorConnectionID, "committed_write", len(backends))
 		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", committed, committedErr)
 	}
@@ -487,6 +526,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 	}
 	result, err := streamcopy.CopyObserved(replayed, stream, observeIngress, observeEgress)
+	if !denied {
+		visitorOutcome = "forwarded"
+		if err != nil {
+			visitorOutcome = "committed_failed"
+		}
+	}
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
 		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)
@@ -557,9 +602,19 @@ func (s *Server) admit(connection net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.pending >= s.config.MaxClientHelloConnections {
+		if s.config.Metrics != nil {
+			if s.closing {
+				s.config.Metrics.IncCapacityRejection("draining")
+			} else {
+				s.config.Metrics.IncCapacityRejection("client_hello_connections")
+			}
+		}
 		return false
 	}
 	s.pending++
+	if s.config.Metrics != nil {
+		s.config.Metrics.SetIngressConnections("client_hello", s.pending)
+	}
 	s.connections[connection] = struct{}{}
 	// Register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
@@ -590,10 +645,10 @@ func (s *Server) trackBackend(connection net.Conn) bool {
 	}
 	s.backends[connection] = struct{}{}
 	active := len(s.backends)
-	s.mu.Unlock()
 	if s.config.Metrics != nil {
 		s.config.Metrics.SetIngressStreams(active)
 	}
+	s.mu.Unlock()
 	return true
 }
 
@@ -601,10 +656,10 @@ func (s *Server) releaseBackend(connection net.Conn) error {
 	s.mu.Lock()
 	delete(s.backends, connection)
 	active := len(s.backends)
-	s.mu.Unlock()
 	if s.config.Metrics != nil {
 		s.config.Metrics.SetIngressStreams(active)
 	}
+	s.mu.Unlock()
 	started := time.Now()
 	err := connection.Close()
 	if s.config.Observer != nil {

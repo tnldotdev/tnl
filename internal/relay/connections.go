@@ -277,6 +277,11 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 	}
 	r.connections[ref.PublisherConnectionID] = connection
 	r.slots[key] = connection
+	if previous == nil {
+		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
+			observer.AddRegisteredPublisherConnections(1)
+		}
+	}
 	r.mu.Unlock()
 	if previous != nil {
 		_ = previous.Close()
@@ -323,6 +328,9 @@ func (r *Registry) Remove(connection *PublisherConnection) bool {
 		return false
 	}
 	delete(r.connections, connection.ref.PublisherConnectionID)
+	if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
+		observer.AddRegisteredPublisherConnections(-1)
+	}
 	key := slotKey{publishRunID: connection.ref.PublishRunID, slot: connection.ref.ConnectionSlot}
 	if r.slots[key] == connection {
 		delete(r.slots, key)
@@ -395,6 +403,9 @@ func (r *Registry) Close() error {
 	connections := r.snapshotLocked()
 	clear(r.connections)
 	clear(r.slots)
+	if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
+		observer.AddRegisteredPublisherConnections(-len(connections))
+	}
 	r.mu.Unlock()
 	var result error
 	for _, connection := range connections {

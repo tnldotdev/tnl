@@ -22,7 +22,7 @@ func assertRelayOperation(t *testing.T, metrics *observability.Metrics, operatio
 	}
 	var count uint64
 	for _, family := range families {
-		if family.GetName() != "tnl_operation_duration_seconds" {
+		if family.GetName() != "tnl_relay_operation_duration_seconds" {
 			continue
 		}
 		for _, metric := range family.Metric {

@@ -3,7 +3,10 @@ package observability
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // DurationBucketsSeconds returns independent boundaries shared by operation,
@@ -43,8 +46,17 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback",
 		"IngressUsagePage", "IngressUsageFinalFlush",
 		"RelayRegister", "RelayRenewLease", "RelayBeginDrain", "RelayDrain",
-		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream":
-		m.operationDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream", "RelayDisconnectPublisherConnection", "IngressRegister":
+		var histogram *prometheus.HistogramVec
+		switch {
+		case strings.HasPrefix(operation, "Ingress"):
+			histogram = m.ingressOperations
+		case strings.HasPrefix(operation, "Relay"):
+			histogram = m.relayOperations
+		default:
+			histogram = m.controlOperations
+		}
+		histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
 	}
 }
 
