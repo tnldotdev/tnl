@@ -20,8 +20,6 @@ services:
       postgres:
         condition: service_healthy
     working_dir: /workspace
-    environment:
-      GOFLAGS: -tags=ts_omit_ssh
     volumes:
       - ../../..:/workspace:ro
     command:

@@ -70,7 +70,6 @@ services:
     image: golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452
     working_dir: /workspace
     environment:
-      GOFLAGS: -tags=ts_omit_ssh
       GOBIN: /artifacts
       RACE: "${RACE:-0}"
     volumes:

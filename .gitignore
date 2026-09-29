@@ -15,4 +15,3 @@ dist/
 /.local/
 /deploy/backups/
 /deploy/certs/
-/deploy/derp-map.json

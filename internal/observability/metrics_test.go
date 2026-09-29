@@ -142,7 +142,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	}
 	for _, family := range families {
 		name := family.GetName()
-		for _, retired := range []string{"gateway", "tailcat", "worker", "sqlite"} {
+		for _, retired := range []string{"gateway", "worker", "sqlite"} {
 			if strings.Contains(name, retired) {
 				t.Errorf("obsolete metric family %q", name)
 			}

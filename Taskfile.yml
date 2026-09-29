@@ -1,8 +1,5 @@
 version: "3"
 
-env:
-  GOFLAGS: -tags=ts_omit_ssh
-
 tasks:
   dev:
     desc: Run the local development stack

@@ -62,10 +62,10 @@ only the test-owned TXT record. Keep the fake Route 53 and Pebble tests in
 routine and DNS integration CI; they cover retries and crashes without
 depending on an external service.
 
-Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Keep that flag for direct Go commands:
+Use the pinned Go toolchain for direct commands:
 
 ```console
-mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
+mise exec -- go test ./internal/tunnel
 ```
 
 ### test the javascript package

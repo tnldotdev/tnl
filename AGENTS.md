@@ -244,7 +244,6 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | fence                         | Name the specific identity or revision being checked         |
 | boot ID                       | process run ID                                               |
 | lease epoch                   | lease revision                                               |
-| DERP relay                    | Removed; unrelated to the new relay role                     |
 | relay map                     | Removed                                                      |
 | relay region                  | Removed                                                      |
 | relay provider                | Removed                                                      |
@@ -319,7 +318,6 @@ Frames follow this general form:
 # Development Commands
 
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
-- The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands.
 - Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
 - Task targets are the public test interface; use `go:test:integration:*` and `go:test:load:*`, and have CI call the same targets.

@@ -15,7 +15,6 @@ builds:
     binary: tnl
     env:
       - CGO_ENABLED=0
-      - GOFLAGS=-tags=ts_omit_ssh
     flags:
       - -mod=readonly
       - -trimpath
@@ -36,7 +35,6 @@ builds:
     binary: tnld
     env:
       - CGO_ENABLED=0
-      - GOFLAGS=-tags=ts_omit_ssh
     flags:
       - -mod=readonly
       - -trimpath

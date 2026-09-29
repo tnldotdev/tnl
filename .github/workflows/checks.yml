@@ -243,8 +243,6 @@ jobs:
     name: Go race
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      GOFLAGS: -tags=ts_omit_ssh
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -20,11 +20,11 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY pkg ./pkg
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-tags=ts_omit_ssh \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -mod=readonly -trimpath \
     -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
     -o /out/tnld ./cmd/tnld && \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-tags=ts_omit_ssh \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -mod=readonly -trimpath \
     -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
     -o /out/tnl ./cmd/tnl && \

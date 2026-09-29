@@ -12,9 +12,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GOFLAGS: -tags=ts_omit_ssh
-
 jobs:
   fuzz:
     name: Go fuzz
