@@ -332,7 +332,7 @@
         "public_url_certificate_workers": {
           "type": "integer",
           "description": "Concurrent public URL certificate workers per control process (1-8).",
-          "default": 4
+          "default": 8
         },
         "oidc_issuer": {
           "type": "string",

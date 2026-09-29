@@ -150,6 +150,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("one ACME staging order for %s", namespace)
+	certificateReady := false
 	for ctx.Err() == nil {
 		if _, err := worker.processOne(ctx); err != nil {
 			t.Fatal(err)
@@ -160,6 +161,9 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		}
 		switch current.State {
 		case "waiting_for_install":
+			if certificateReady {
+				t.Fatal("certificate installation did not persist")
+			}
 			block, _ := pem.Decode([]byte(current.CertificatePEM))
 			if block == nil {
 				t.Fatal("ACME staging issued no X.509 certificate")
@@ -176,8 +180,41 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			if count := orders.count.Load(); count != 1 {
 				t.Fatalf("ACME new orders = %d, want exactly one", count)
 			}
-			t.Logf("ACME staging certificate issued for %s with one order", namespace)
-			return
+			pendingCleanup := false
+			for _, authorization := range store.saved[len(store.saved)-1].Authorizations {
+				if authorization.ChallengeType == "dns-01" && authorization.CleanupCompletedAt == nil {
+					pendingCleanup = true
+				}
+			}
+			if !pendingCleanup {
+				t.Fatal("certificate was not available before DNS cleanup")
+			}
+			if _, err := database.MarkPublicURLCertificateInstalled(ctx, controlstate.PublishRunAuthentication{
+				PublicURLID: publicURL.ID, PublishRunID: run.PublishRunID,
+				PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken,
+			}, issuance.ID, leaf.NotAfter, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			certificateReady = true
+			t.Logf("ACME staging certificate ready for %s before DNS cleanup after %s", namespace, time.Since(issuance.CreatedAt).Round(time.Second))
+		case "installed":
+			if !certificateReady {
+				t.Fatal("certificate was installed before the early-ready check")
+			}
+			cleaned := len(store.saved) != 0 && len(store.saved[len(store.saved)-1].Authorizations) == 2
+			if cleaned {
+				for _, authorization := range store.saved[len(store.saved)-1].Authorizations {
+					cleaned = cleaned && authorization.State == "complete" && authorization.CleanupCompletedAt != nil
+				}
+			}
+			if cleaned {
+				record, err := route53SmokeTXT(ctx, route53Client, *route53TestZoneID, challengeName)
+				if err != nil || record != nil || orders.count.Load() != 1 {
+					t.Fatalf("DNS cleanup or one-order budget: TXT present=%t orders=%d error=%v", record != nil, orders.count.Load(), err)
+				}
+				t.Logf("ACME staging certificate issued for %s with one order and DNS cleanup complete after %s", namespace, time.Since(issuance.CreatedAt).Round(time.Second))
+				return
+			}
 		case "failed", "canceled":
 			cause := "unknown"
 			for _, saved := range store.saved {

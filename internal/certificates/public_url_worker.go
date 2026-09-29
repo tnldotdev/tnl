@@ -33,6 +33,7 @@ type PublicURLConfig struct {
 // PublicURLWorkObserver records only fixed worker stages and outcomes.
 type PublicURLWorkObserver interface {
 	ObserveCertificateWork(stage, outcome string, elapsed time.Duration)
+	ObserveCertificateMilestone(milestone string, age time.Duration)
 }
 
 type PublicURLDNSChallenges interface {
@@ -97,6 +98,7 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 		return found, err
 	}
 	stage := work.State
+	hadPendingCleanup := hasPendingDNSCleanup(work.Authorizations)
 	started := time.Now()
 	client, err := w.clientFor(work.Account)
 	if err == nil && work.Account.AccountURL == "" {
@@ -112,12 +114,22 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 		}
 		w.applyFailure(&work, err, completedAt)
 	}
-	if _, saveErr := w.store.SaveACMEOrderWork(ctx, work, completedAt); saveErr != nil {
+	saved, saveErr := w.store.SaveACMEOrderWork(ctx, work, completedAt)
+	if saveErr != nil {
 		if ctx.Err() == nil {
 			w.observeWork(stage, "save_failed", started)
 			w.logWork(work, stage, "save_failed", completedAt)
 		}
 		return true, saveErr
+	}
+	if w.config.Observer != nil {
+		if stage != "waiting_for_install" && saved.State == "waiting_for_install" && len(saved.CertificatePEM) != 0 {
+			w.config.Observer.ObserveCertificateMilestone("ready", completedAt.Sub(saved.CreatedAt))
+		}
+		if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) &&
+			(saved.State == "waiting_for_install" || saved.State == "installed") {
+			w.config.Observer.ObserveCertificateMilestone("cleanup", completedAt.Sub(saved.CreatedAt))
+		}
 	}
 	outcome := "progress"
 	if work.State == "failed" || work.State == "canceled" {
@@ -184,6 +196,15 @@ func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *con
 		return w.finalizeOrder(ctx, client, work, now)
 	case "finalizing":
 		return w.collectCertificate(ctx, client, work, now)
+	case "waiting_for_install", "installed":
+		_, err := w.continueDNSCleanup(ctx, work, now)
+		if err == nil && !hasPendingDNSCleanup(work.Authorizations) {
+			if work.RenewAt == nil {
+				return terminalf("issued public URL certificate has no renewal date")
+			}
+			work.AvailableAt = *work.RenewAt
+		}
+		return err
 	case "failed", "canceled":
 		return w.cleanupFailedOrder(ctx, work, now)
 	default:
@@ -276,102 +297,129 @@ func (w *PublicURLWorker) authorizeOrder(ctx context.Context, client acmeAPI, wo
 		work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
 		return nil
 	}
-	for index := range work.Authorizations {
-		authorization := &work.Authorizations[index]
+	for _, authorization := range work.Authorizations {
 		if authorization.ExpiresAt != nil && !authorization.ExpiresAt.After(now) &&
 			authorization.State != "canceled" {
 			return terminalf("authorization for %q expired in state %q", authorization.Identifier, authorization.State)
 		}
 		switch authorization.State {
-		case "presenting":
-			if authorization.ChallengeType == "dns-01" {
-				if err := w.config.DNSChallenges.Present(ctx, work.PublicURLID, authorization.ID); err != nil {
-					return err
-				}
-				authorization.State = "presented"
-				authorization.Attempts++
-				authorization.PresentedAt = timePointer(now)
-				authorization.AvailableAt = now.Add(w.config.PollInterval)
-				work.AvailableAt = authorization.AvailableAt
-				return nil
-			}
-		case "presented":
-			if authorization.ChallengeType == "dns-01" {
-				verified, err := w.config.DNSChallenges.Verify(ctx, work.PublicURLID, authorization.ID)
-				if err != nil {
-					return err
-				}
-				if !verified {
-					authorization.AvailableAt = now.Add(w.config.PollInterval)
-					work.AvailableAt = authorization.AvailableAt
-					return nil
-				}
-			}
-			if authorization.ChallengeType == "tls-alpn-01" {
-				ready, err := w.store.ACMEChallengeRoutingReady(ctx, work.ID, now)
-				if err != nil {
-					return err
-				}
-				if !ready {
-					authorization.AvailableAt = now.Add(w.config.PollInterval)
-					work.AvailableAt = authorization.AvailableAt
-					return nil
-				}
-			}
-			retryAfter, err := client.AcceptChallenge(ctx, authorization.ChallengeURL)
-			if err != nil {
-				return err
-			}
-			authorization.State = "validating"
-			authorization.Attempts++
-			authorization.AvailableAt = pollAt(now, w.config.PollInterval, retryAfter)
-			work.AvailableAt = authorization.AvailableAt
-			return nil
-		case "validating":
-			remote, err := client.GetAuthorization(ctx, authorization.AuthorizationURL)
-			if err != nil {
-				return err
-			}
-			if remote.URL != authorization.AuthorizationURL || remote.Identifier.Type != "dns" ||
-				authorizationIdentifier(remote) != authorization.Identifier {
-				return terminalf("authorization identity changed for %q", authorization.Identifier)
-			}
-			switch remote.Status {
-			case "pending", "processing":
-				authorization.AvailableAt = pollAt(now, w.config.PollInterval, remote.RetryAfter)
-			case "valid":
-				if remote.Expires != nil && !remote.Expires.After(now) {
-					return terminalf("authorization for %q expired", authorization.Identifier)
-				}
-				authorization.State = "valid"
-				authorization.ValidatedAt = timePointer(now)
-				authorization.AvailableAt = now
-			case "invalid", "deactivated", "expired", "revoked":
-				authorization.State = "failed"
-				if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, authorization.ChallengeURL); problem != "" {
-					return terminalf("authorization for %q became %q: %s", authorization.Identifier, remote.Status, problem)
-				}
-				return terminalf("authorization for %q became %q", authorization.Identifier, remote.Status)
-			default:
-				return fmt.Errorf("certificates: unknown public URL authorization status %q", remote.Status)
-			}
-			work.AvailableAt = authorization.AvailableAt
-			return nil
-		case "valid", "complete":
-			continue
+		case "presenting", "presented", "validating", "valid", "complete":
 		case "failed", "canceled", "cleaning":
 			return terminalf("authorization for %q is in state %q", authorization.Identifier, authorization.State)
 		default:
 			return terminalf("unknown persisted authorization state %q", authorization.State)
 		}
 	}
+	// Present all challenges before waiting for any one authorization to
+	// validate. Wildcard and exact-name DNS-01 challenges can share a TXT name;
+	// the challenge manager publishes and checks their values as one record.
+	for _, state := range []string{"presenting", "presented", "validating"} {
+		for index := range work.Authorizations {
+			authorization := &work.Authorizations[index]
+			if authorization.State != state || authorization.AvailableAt.After(now) {
+				continue
+			}
+			switch state {
+			case "presenting":
+				if authorization.ChallengeType == "dns-01" {
+					if err := w.config.DNSChallenges.Present(ctx, work.PublicURLID, authorization.ID); err != nil {
+						return err
+					}
+					authorization.State = "presented"
+					authorization.Attempts++
+					authorization.PresentedAt = timePointer(now)
+					authorization.AvailableAt = now.Add(w.config.PollInterval)
+					work.AvailableAt = w.nextAuthorizationAt(work, now)
+					return nil
+				}
+			case "presented":
+				if authorization.ChallengeType == "dns-01" {
+					verified, err := w.config.DNSChallenges.Verify(ctx, work.PublicURLID, authorization.ID)
+					if err != nil {
+						return err
+					}
+					if !verified {
+						authorization.AvailableAt = now.Add(w.config.PollInterval)
+						work.AvailableAt = w.nextAuthorizationAt(work, now)
+						return nil
+					}
+				}
+				if authorization.ChallengeType == "tls-alpn-01" {
+					ready, err := w.store.ACMEChallengeRoutingReady(ctx, work.ID, now)
+					if err != nil {
+						return err
+					}
+					if !ready {
+						authorization.AvailableAt = now.Add(w.config.PollInterval)
+						work.AvailableAt = w.nextAuthorizationAt(work, now)
+						return nil
+					}
+				}
+				retryAfter, err := client.AcceptChallenge(ctx, authorization.ChallengeURL)
+				if err != nil {
+					return err
+				}
+				authorization.State = "validating"
+				authorization.Attempts++
+				authorization.AvailableAt = pollAt(now, w.config.PollInterval, retryAfter)
+				work.AvailableAt = w.nextAuthorizationAt(work, now)
+				return nil
+			case "validating":
+				remote, err := client.GetAuthorization(ctx, authorization.AuthorizationURL)
+				if err != nil {
+					return err
+				}
+				if remote.URL != authorization.AuthorizationURL || remote.Identifier.Type != "dns" ||
+					authorizationIdentifier(remote) != authorization.Identifier {
+					return terminalf("authorization identity changed for %q", authorization.Identifier)
+				}
+				switch remote.Status {
+				case "pending", "processing":
+					authorization.AvailableAt = pollAt(now, w.config.PollInterval, remote.RetryAfter)
+				case "valid":
+					if remote.Expires != nil && !remote.Expires.After(now) {
+						return terminalf("authorization for %q expired", authorization.Identifier)
+					}
+					authorization.State = "valid"
+					authorization.ValidatedAt = timePointer(now)
+					authorization.AvailableAt = now
+				case "invalid", "deactivated", "expired", "revoked":
+					authorization.State = "failed"
+					if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, authorization.ChallengeURL); problem != "" {
+						return terminalf("authorization for %q became %q: %s", authorization.Identifier, remote.Status, problem)
+					}
+					return terminalf("authorization for %q became %q", authorization.Identifier, remote.Status)
+				default:
+					return fmt.Errorf("certificates: unknown public URL authorization status %q", remote.Status)
+				}
+				work.AvailableAt = w.nextAuthorizationAt(work, now)
+				return nil
+			}
+		}
+	}
 	if allAuthorizationsValid(work.Authorizations) {
 		work.State = "ready_to_finalize"
 		work.AvailableAt = now
 	} else {
-		work.AvailableAt = now.Add(w.config.PollInterval)
+		work.AvailableAt = w.nextAuthorizationAt(work, now)
 	}
 	return nil
+}
+
+func (w *PublicURLWorker) nextAuthorizationAt(work *controlstate.ACMEOrderWork, now time.Time) time.Time {
+	var next time.Time
+	for _, authorization := range work.Authorizations {
+		if authorization.State == "valid" || authorization.State == "complete" {
+			continue
+		}
+		if next.IsZero() || authorization.AvailableAt.Before(next) {
+			next = authorization.AvailableAt
+		}
+	}
+	if next.IsZero() || next.Before(now) {
+		return now
+	}
+	return next
 }
 
 func authorizationChallengeProblem(authorization acmeclient.Authorization, challengeType, challengeURL string) string {
@@ -452,12 +500,11 @@ func (w *PublicURLWorker) finalizeOrder(ctx context.Context, client acmeAPI, wor
 
 func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	if len(work.CertificatePEM) != 0 {
-		handled, err := w.continueDNSCleanup(ctx, work, now)
-		if err != nil || handled {
-			return err
+		if work.RenewAt == nil {
+			return terminalf("issued public URL certificate has no renewal date")
 		}
 		work.State = "waiting_for_install"
-		work.AvailableAt = *work.RenewAt
+		work.AvailableAt = certificateCleanupAvailableAt(work, now)
 		return nil
 	}
 	order, err := client.GetOrder(ctx, work.OrderURL)
@@ -500,15 +547,26 @@ func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI
 		work.NotAfter = &notAfter
 		renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
 		work.RenewAt = &renewAt
-		if handled, err := w.continueDNSCleanup(ctx, work, now); err != nil || handled {
-			return err
-		}
 		work.State = "waiting_for_install"
-		work.AvailableAt = renewAt
+		work.AvailableAt = certificateCleanupAvailableAt(work, now)
 		return nil
 	default:
 		return fmt.Errorf("certificates: unknown public URL order status %q", order.Status)
 	}
+}
+
+func certificateCleanupAvailableAt(work *controlstate.ACMEOrderWork, now time.Time) time.Time {
+	if hasPendingDNSCleanup(work.Authorizations) {
+		return now
+	}
+	return *work.RenewAt
+}
+
+func hasPendingDNSCleanup(authorizations []controlstate.ACMEAuthorizationWork) bool {
+	return slices.ContainsFunc(authorizations, func(authorization controlstate.ACMEAuthorizationWork) bool {
+		return authorization.ChallengeType == "dns-01" &&
+			(authorization.State == "valid" || authorization.State == "cleaning")
+	})
 }
 
 func (w *PublicURLWorker) applyOrderStatus(work *controlstate.ACMEOrderWork, status string, retryAfter, now time.Time) error {
@@ -537,6 +595,11 @@ func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operati
 	unconfigured := errors.Is(operationErr, dnscontroller.ErrChallengesNotConfigured)
 	if unconfigured {
 		work.AvailableAt = now.Add(time.Minute)
+	}
+	// DNS cleanup must continue after installation without changing the
+	// availability of an already validated public URL certificate.
+	if work.State == "waiting_for_install" || work.State == "installed" {
+		return
 	}
 	var acmeError *acmeclient.Error
 	if work.State == "failed" || work.State == "canceled" {
@@ -642,6 +705,7 @@ func (w *PublicURLWorker) continueDNSCleanup(
 	work *controlstate.ACMEOrderWork,
 	now time.Time,
 ) (bool, error) {
+	changed := false
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
 		if authorization.ChallengeType != "dns-01" || authorization.State == "complete" || authorization.State == "canceled" {
@@ -651,23 +715,44 @@ func (w *PublicURLWorker) continueDNSCleanup(
 			authorization.State = "complete"
 			authorization.CleanupCompletedAt = timePointer(now)
 			authorization.AvailableAt = now
+			changed = true
 			continue
 		}
 		if authorization.State == "valid" {
 			authorization.State = "cleaning"
 			authorization.AvailableAt = now
-			work.AvailableAt = now
-			return true, nil
+			changed = true
+			continue
 		}
 		if authorization.State != "cleaning" {
 			return false, terminalf("cannot clean DNS authorization for %q in state %q", authorization.Identifier, authorization.State)
 		}
+	}
+	if changed {
+		work.AvailableAt = now
+		return true, nil
+	}
+	for index := range work.Authorizations {
+		authorization := &work.Authorizations[index]
+		if authorization.ChallengeType != "dns-01" || authorization.State != "cleaning" {
+			continue
+		}
 		if err := w.config.DNSChallenges.Cleanup(ctx, work.PublicURLID, authorization.ID); err != nil {
 			return false, err
 		}
-		authorization.State = "complete"
-		authorization.CleanupCompletedAt = timePointer(now)
-		authorization.AvailableAt = now
+		// All authorizations for this base identifier share one TXT name. The
+		// challenge manager reconciles their combined owned values in one write.
+		base := strings.TrimPrefix(authorization.Identifier, "*.")
+		for otherIndex := range work.Authorizations {
+			other := &work.Authorizations[otherIndex]
+			if other.ChallengeType != "dns-01" || other.State != "cleaning" ||
+				strings.TrimPrefix(other.Identifier, "*.") != base {
+				continue
+			}
+			other.State = "complete"
+			other.CleanupCompletedAt = timePointer(now)
+			other.AvailableAt = now
+		}
 		work.AvailableAt = now
 		return true, nil
 	}

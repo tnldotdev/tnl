@@ -31,8 +31,8 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
-	if config.PublicURLCertificateWorkers != 4 {
-		t.Fatalf("public URL certificate workers = %d, want 4", config.PublicURLCertificateWorkers)
+	if config.PublicURLCertificateWorkers != 8 {
+		t.Fatalf("public URL certificate workers = %d, want 8", config.PublicURLCertificateWorkers)
 	}
 	if config.PublisherConnectionLimit < 1 {
 		t.Fatalf("publisher connection limit = %d", config.PublisherConnectionLimit)

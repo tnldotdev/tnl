@@ -74,7 +74,7 @@ type Config struct {
 	ACMEEmail                   string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms             bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
 	ACMEProfile                 string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
-	PublicURLCertificateWorkers int    `name:"public-url-certificate-workers" env:"TNLD_PUBLIC_URL_CERTIFICATE_WORKERS" default:"4" help:"Concurrent public URL certificate workers per control process (1-8)."`
+	PublicURLCertificateWorkers int    `name:"public-url-certificate-workers" env:"TNLD_PUBLIC_URL_CERTIFICATE_WORKERS" default:"8" help:"Concurrent public URL certificate workers per control process (1-8)."`
 
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`

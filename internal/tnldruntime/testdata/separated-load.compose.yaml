@@ -27,7 +27,7 @@ x-runtime: &runtime
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
-        -tnl-runtime-load-public-url-certificate-workers='${PUBLIC_URL_CERTIFICATE_WORKERS:-4}' \
+        -tnl-runtime-load-public-url-certificate-workers='${PUBLIC_URL_CERTIFICATE_WORKERS:-8}' \
         -tnl-runtime-load-rps='${RPS:-16}' \
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
@@ -352,7 +352,7 @@ services:
       - "-tnl-runtime-load-public-urls=${PUBLIC_URLS:-4}"
       - "-tnl-runtime-load-start-parallel=${START_PARALLEL:-4}"
       - "-tnl-runtime-load-ready-timeout=${READY_TIMEOUT:-30s}"
-      - "-tnl-runtime-load-public-url-certificate-workers=${PUBLIC_URL_CERTIFICATE_WORKERS:-4}"
+      - "-tnl-runtime-load-public-url-certificate-workers=${PUBLIC_URL_CERTIFICATE_WORKERS:-8}"
       - "-tnl-runtime-load-rps=${RPS:-16}"
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"

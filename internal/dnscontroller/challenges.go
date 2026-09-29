@@ -118,11 +118,12 @@ func reconcileChallengeChange(
 	if err != nil {
 		return false, err
 	}
-	// Do not rewrite a TXT record while its last Route 53 change is pending:
-	// listing records can see the new value before all DNS replicas have it.
+	// Do not rewrite a TXT record while its last Route 53 change is pending,
+	// even if another authorization changed the desired values. Listing records
+	// can see the new value before all DNS replicas have it.
 	checkedReady := false
-	if found && change.DesiredDigest == digest {
-		if state == "presenting" {
+	if found {
+		if change.DesiredDigest == digest && state == "presenting" {
 			return false, nil
 		}
 		checkedReady, err = provider.ChangeReady(ctx, change.ChangeID)
@@ -130,7 +131,7 @@ func reconcileChallengeChange(
 			return false, err
 		}
 		if !checkedReady {
-			if state == "cleaning" {
+			if state == "cleaning" || change.DesiredDigest != digest {
 				return false, errChallengePropagationPending
 			}
 			return false, nil

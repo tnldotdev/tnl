@@ -154,13 +154,13 @@ func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
 	store.challenge.Identifier = "member.tunnels.example.test"
 	store.challenge.ChallengeDigest = secondDigest
 	ready, err := manager.Verify(t.Context(), "public_url_1", "authorization_exact")
-	if err != nil || ready || verifier.calls != 0 {
-		t.Fatalf("other authorization validated during shared TXT change: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	if !errors.Is(err, errChallengePropagationPending) || ready || provider.calls != 1 || verifier.calls != 0 {
+		t.Fatalf("other authorization changed the pending shared TXT: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 	provider.pending = false
 	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_exact")
-	if err != nil || !ready || verifier.calls != 1 {
-		t.Fatalf("other authorization after shared TXT sync: ready=%t checks=%d error=%v", ready, verifier.calls, err)
+	if err != nil || !ready || provider.calls != 2 || verifier.calls != 1 {
+		t.Fatalf("other authorization after shared TXT sync: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 )
 
 func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
-	for _, initialVersion := range []int{1, 2} {
+	for _, initialVersion := range []int{1, 2, 3} {
 		t.Run(fmt.Sprintf("v%d", initialVersion), func(t *testing.T) {
 			testControlSchemaUpgrade(t, initialVersion)
 		})
@@ -39,12 +39,19 @@ func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
 		t.Fatal(err)
 	}
 	previous := fstest.MapFS{"00001_baseline.sql": &fstest.MapFile{Data: baseline}}
-	if initialVersion == 2 {
+	if initialVersion >= 2 {
 		recovery, err := migrationFiles.ReadFile("migrations/00002_recovery.sql")
 		if err != nil {
 			t.Fatal(err)
 		}
 		previous["00002_recovery.sql"] = &fstest.MapFile{Data: recovery}
+	}
+	if initialVersion >= 3 {
+		changes, err := migrationFiles.ReadFile("migrations/00003_dns_challenge_changes.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous["00003_dns_challenge_changes.sql"] = &fstest.MapFile{Data: changes}
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, previous,
 		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))

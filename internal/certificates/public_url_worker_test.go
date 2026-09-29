@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -63,14 +64,14 @@ func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
 		t.Fatalf("validating order work = %#v, accepted = %q", work, api.acceptedChallenge)
 	}
 	api.authorization.Status = "valid"
-	if err := worker.advance(t.Context(), api, &work, now.Add(3*time.Second)); err != nil {
+	if err := worker.advance(t.Context(), api, &work, api.challengeRetryAt); err != nil {
 		t.Fatal(err)
 	}
 	if work.Authorizations[0].State != "valid" {
 		t.Fatalf("valid authorization work = %#v", work)
 	}
 	api.order.Status = "ready"
-	if err := worker.advance(t.Context(), api, &work, now.Add(4*time.Second)); err != nil {
+	if err := worker.advance(t.Context(), api, &work, api.challengeRetryAt.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if work.State != "ready_to_finalize" {
@@ -78,7 +79,7 @@ func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
 	}
 	api.finalizedOrder = api.order
 	api.finalizedOrder.Status = "processing"
-	if err := worker.advance(t.Context(), api, &work, now.Add(5*time.Second)); err != nil {
+	if err := worker.advance(t.Context(), api, &work, api.challengeRetryAt.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if work.State != "finalizing" || string(api.finalizedCSR) != string(csrDER) {
@@ -86,7 +87,7 @@ func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
 	}
 	api.order.Status = "valid"
 	api.order.Certificate = "https://acme.example.test/certificate/1"
-	if err := worker.advance(t.Context(), api, &work, now.Add(6*time.Second)); err != nil {
+	if err := worker.advance(t.Context(), api, &work, api.challengeRetryAt.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if work.State != "waiting_for_install" || len(work.CertificatePEM) == 0 || work.NotBefore == nil || work.NotAfter == nil || work.RenewAt == nil {
@@ -314,25 +315,119 @@ func TestPublicURLWorkerAdvancesDNSOrderAndCleansPresentation(t *testing.T) {
 	if err := worker.advance(t.Context(), api, &work, now.Add(7*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if work.State != "finalizing" || work.Authorizations[0].State != "cleaning" || len(work.CertificatePEM) == 0 {
-		t.Fatalf("cleaning DNS order = %#v", work)
+	if work.State != "waiting_for_install" || work.Authorizations[0].State != "valid" || len(work.CertificatePEM) == 0 ||
+		!work.AvailableAt.Equal(now.Add(7*time.Second)) || len(dnsChallenges.cleanupCalls) != 0 {
+		t.Fatalf("certificate was not available before DNS cleanup = %#v", work)
 	}
 	if err := worker.advance(t.Context(), api, &work, now.Add(8*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if work.Authorizations[0].State != "complete" || dnsChallenges.cleaned != work.Authorizations[0].ID {
-		t.Fatalf("cleaned DNS authorization = %#v, calls %#v", work.Authorizations[0], dnsChallenges)
+	if work.State != "waiting_for_install" || work.Authorizations[0].State != "cleaning" || len(dnsChallenges.cleanupCalls) != 0 {
+		t.Fatalf("DNS cleanup intent was not retained after certificate availability = %#v", work)
 	}
 	if err := worker.advance(t.Context(), api, &work, now.Add(9*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if work.State != "waiting_for_install" {
-		t.Fatalf("completed DNS order = %#v", work)
+	if work.State != "waiting_for_install" || work.Authorizations[0].State != "complete" ||
+		dnsChallenges.cleaned != work.Authorizations[0].ID || !work.AvailableAt.Equal(*work.RenewAt) {
+		t.Fatalf("cleaned DNS authorization = %#v, calls %#v", work, dnsChallenges)
 	}
 	wantCall := [2]string{"public_url_dns", "acme_authorization_dns"}
 	if !reflect.DeepEqual(dnsChallenges.presentCalls, [][2]string{wantCall}) ||
 		!reflect.DeepEqual(dnsChallenges.verifyCalls, [][2]string{wantCall}) || !reflect.DeepEqual(dnsChallenges.cleanupCalls, [][2]string{wantCall}) {
 		t.Fatalf("DNS challenge calls = %#v", dnsChallenges)
+	}
+}
+
+func TestPublicURLWorkerStartsSharedDNSAuthorizationsBeforeEitherValidates(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	const base = "member.example.test"
+	expires := now.Add(time.Hour)
+	identifiers := []string{"*." + base, base}
+	urls := []string{"https://acme.example.test/authz/wildcard", "https://acme.example.test/authz/exact"}
+	api := &acmeStub{order: acmeclient.Order{
+		URL: "https://acme.example.test/order/shared", Status: "pending", Finalize: "https://acme.example.test/finalize/shared",
+		Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: identifiers[0]}, {Type: "dns", Value: identifiers[1]}},
+		Authorizations: urls,
+	}}
+	dns := &dnsChallengesStub{verified: true}
+	worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", DNSChallenges: dns, PollInterval: time.Second}}
+	work := controlstate.ACMEOrderWork{
+		State: "authorizing", OrderURL: api.order.URL, PublicURLID: "public_url_shared", ChallengeMethod: "dns-01",
+		CertificateIdentifiers: identifiers,
+		Authorizations: []controlstate.ACMEAuthorizationWork{
+			{ID: "auth_wildcard", Identifier: identifiers[0], AuthorizationURL: urls[0], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/wildcard", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
+			{ID: "auth_exact", Identifier: identifiers[1], AuthorizationURL: urls[1], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/exact", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
+		},
+	}
+	for iteration := range 4 {
+		at := now.Add(time.Duration(iteration) * time.Second)
+		if err := worker.authorizeOrder(t.Context(), api, &work, at); err != nil {
+			t.Fatal(err)
+		}
+		if iteration == 1 && (len(dns.presentCalls) != 2 || len(dns.verifyCalls) != 0 || api.acceptCalls != 0) {
+			t.Fatalf("both challenges were not presented before CA validation: presentations=%v verifications=%v accepts=%d", dns.presentCalls, dns.verifyCalls, api.acceptCalls)
+		}
+	}
+	if len(dns.verifyCalls) != 2 || api.acceptCalls != 2 || work.State != "authorizing" ||
+		work.Authorizations[0].State != "validating" || work.Authorizations[1].State != "validating" ||
+		work.Authorizations[0].ValidatedAt != nil || work.Authorizations[1].ValidatedAt != nil {
+		t.Fatalf("shared authorizations were not validating together: verifies=%v accepts=%d states=%q,%q", dns.verifyCalls, api.acceptCalls, work.Authorizations[0].State, work.Authorizations[1].State)
+	}
+}
+
+func TestPublicURLWorkerCleansSharedDNSNameWithOneReconciliation(t *testing.T) {
+	now := time.Now().UTC()
+	dns := &dnsChallengesStub{}
+	worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns}}
+	work := controlstate.ACMEOrderWork{
+		PublicURLID: "public_url_shared", State: "waiting_for_install",
+		Authorizations: []controlstate.ACMEAuthorizationWork{
+			{ID: "auth_wildcard", Identifier: "*.member.example.test", ChallengeType: "dns-01", State: "valid", PresentedAt: &now},
+			{ID: "auth_exact", Identifier: "member.example.test", ChallengeType: "dns-01", State: "valid", PresentedAt: &now},
+		},
+	}
+	handled, err := worker.continueDNSCleanup(t.Context(), &work, now)
+	if err != nil || !handled || len(dns.cleanupCalls) != 0 ||
+		work.Authorizations[0].State != "cleaning" || work.Authorizations[1].State != "cleaning" {
+		t.Fatalf("shared cleanup intent was not saved before DNS write: handled=%t error=%v states=%q,%q", handled, err, work.Authorizations[0].State, work.Authorizations[1].State)
+	}
+	handled, err = worker.continueDNSCleanup(t.Context(), &work, now.Add(time.Second))
+	if err != nil || !handled || len(dns.cleanupCalls) != 1 || work.Authorizations[0].State != "complete" ||
+		work.Authorizations[1].State != "complete" || work.Authorizations[0].CleanupCompletedAt == nil ||
+		work.Authorizations[1].CleanupCompletedAt == nil {
+		t.Fatalf("shared DNS name was not cleaned once: handled=%t error=%v calls=%v states=%q,%q", handled, err, dns.cleanupCalls, work.Authorizations[0].State, work.Authorizations[1].State)
+	}
+}
+
+func TestPublicURLWorkerObservesAvailabilityBeforeCleanup(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	api, work := dnsSafetyOrder(t, "finalizing", now)
+	work.CreatedAt = now.Add(-30 * time.Second)
+	store := &certificateStoreStub{work: work}
+	observer := &certificateMilestoneRecorder{}
+	worker, err := NewPublicURLWorker(store, PublicURLConfig{
+		WorkerID: "milestones", Profile: "tlsserver", HTTPClient: http.DefaultClient,
+		DNSChallenges: &dnsChallengesStub{}, Observer: observer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }
+	worker.now = func() time.Time { return now }
+	for _, milestone := range []string{"ready", "cleanup"} {
+		if _, err := worker.processOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(observer.milestones) == 0 || observer.milestones[len(observer.milestones)-1] != milestone {
+			t.Fatalf("milestones = %v, want latest %q", observer.milestones, milestone)
+		}
+		store.work = store.saved
+		now = now.Add(time.Second)
+	}
+	if len(observer.milestones) != 2 || store.saved.Authorizations[0].State != "complete" ||
+		!store.saved.AvailableAt.Equal(*work.RenewAt) {
+		t.Fatalf("milestones or cleanup = %v, state %q", observer.milestones, store.saved.Authorizations[0].State)
 	}
 }
 
@@ -604,6 +699,14 @@ type dnsChallengesStub struct {
 	err                                     error
 	cleanup                                 func(context.Context) error
 	presentCalls, verifyCalls, cleanupCalls [][2]string
+}
+
+type certificateMilestoneRecorder struct{ milestones []string }
+
+func (*certificateMilestoneRecorder) ObserveCertificateWork(string, string, time.Duration) {}
+
+func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(milestone string, _ time.Duration) {
+	r.milestones = append(r.milestones, milestone)
 }
 
 func (s *dnsChallengesStub) Present(_ context.Context, publicURLID, authorizationID string) error {

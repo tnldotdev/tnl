@@ -102,6 +102,63 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 	}
 }
 
+func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
+	database, now := newCertificatePlanDatabase(t)
+	const hostname = "api.member.routes.example.test"
+	plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
+	_, authentication := newExternalPlanSession(t, database, now, "team_external", hostname, "managed:routes.example.test", plan)
+	renewAt := now.Add(16 * time.Hour)
+	prepared := createPlanIssuanceWork(t, database, now, authentication, plan, true, func(work *ACMEOrderWork) {
+		work.Authorizations[0].State = "valid"
+		work.Authorizations[0].CleanupCompletedAt = nil
+		work.RenewAt, work.AvailableAt = &renewAt, now
+	})
+	issued, err := database.GetCertificateIssuance(t.Context(), prepared.ID, authentication.PublishRunToken, now)
+	if err != nil || issued.State != "waiting_for_install" || issued.CertificatePEM == "" {
+		t.Fatalf("certificate blocked on DNS cleanup: state=%q certificate=%t error=%v", issued.State, issued.CertificatePEM != "", err)
+	}
+	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "before-install", now.Add(time.Second), time.Second)
+	if err != nil || !found || claimed.ID != prepared.ID || claimed.Authorizations[0].State != "valid" {
+		t.Fatalf("uninstalled cleanup claim: found=%t error=%v", found, err)
+	}
+	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, prepared.ID, *prepared.NotAfter, now.Add(1500*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	claimed.Authorizations[0].State = "cleaning"
+	if _, err := database.SaveACMEOrderWork(t.Context(), claimed, now.Add(1500*time.Millisecond)); !errors.Is(err, ErrACMEWorkStale) {
+		t.Fatalf("cleanup overwrote concurrent certificate installation: %v", err)
+	}
+	current, found, err := database.ClaimACMEOrderWork(t.Context(), "after-install", now.Add(2*time.Second), time.Second)
+	if err != nil || !found || current.State != "installed" || current.Authorizations[0].State != "valid" {
+		t.Fatalf("installed cleanup work was lost: found=%t state=%q error=%v", found, current.State, err)
+	}
+	current.Authorizations[0].State, current.Authorizations[0].AvailableAt = "cleaning", now
+	current.AvailableAt = now
+	if _, err := database.SaveACMEOrderWork(t.Context(), current, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, found, err := database.ClaimACMEOrderWork(t.Context(), "after-restart", now.Add(3*time.Second), time.Second)
+	if err != nil || !found || cleanup.State != "installed" || cleanup.Authorizations[0].State != "cleaning" {
+		t.Fatalf("cleanup did not survive restart: found=%t state=%q error=%v", found, cleanup.State, err)
+	}
+	challenge, err := database.GetDNSChallengeContext(t.Context(), authentication.PublicURLID, cleanup.Authorizations[0].ID)
+	if err != nil || len(challenge.Presentations) != 1 || challenge.Presentations[0].Active {
+		t.Fatalf("installed certificate kept DNS presentation active: %+v, %v", challenge.Presentations, err)
+	}
+	cleanup.Authorizations[0].State, cleanup.Authorizations[0].CleanupCompletedAt = "complete", &now
+	cleanup.AvailableAt = renewAt
+	if _, err := database.SaveACMEOrderWork(t.Context(), cleanup, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "after-cleanup", now.Add(4*time.Second), time.Second); err != nil || found {
+		t.Fatalf("cleaned installed order remained claimable: found=%t error=%v", found, err)
+	}
+	installed, err := database.GetCertificateIssuance(t.Context(), prepared.ID, authentication.PublishRunToken, now.Add(4*time.Second))
+	if err != nil || installed.State != "installed" || installed.CertificatePEM != issued.CertificatePEM {
+		t.Fatalf("cleanup changed installed material: state=%q error=%v", installed.State, err)
+	}
+}
+
 func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 	for _, kind := range []string{"lease", "order_revision", "authorization_revision"} {
 		t.Run(kind, func(t *testing.T) {

@@ -33,7 +33,7 @@ var (
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
 	runtimeLoadReadyTimeout       = flag.Duration("tnl-runtime-load-ready-timeout", 30*time.Second, "publisher readiness timeout (30s-5m)")
-	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-public-url-certificate-workers", 4, "public URL certificate workers per control process (1-8)")
+	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-public-url-certificate-workers", 8, "public URL certificate workers per control process (1-8)")
 	runtimeLoadRPS                = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
 	runtimeLoadDuration           = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")

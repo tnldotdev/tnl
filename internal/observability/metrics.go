@@ -32,6 +32,7 @@ type Metrics struct {
 	readinessAge          *prometheus.HistogramVec
 	certificateWork       *prometheus.CounterVec
 	certificateDuration   *prometheus.HistogramVec
+	certificateMilestone  *prometheus.HistogramVec
 	operationDuration     *prometheus.HistogramVec
 	databaseQueryDuration *prometheus.HistogramVec
 	databaseGuardDuration *prometheus.HistogramVec
@@ -106,6 +107,10 @@ func New(role string) *Metrics {
 		certificateDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_public_url_certificate_work_duration_seconds", Help: "Public URL certificate worker iteration duration by fixed stage and outcome.", Buckets: DurationBucketsSeconds(),
 		}, []string{"stage", "outcome"}),
+		certificateMilestone: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "tnl_public_url_certificate_milestone_age_seconds", Help: "Time from public URL certificate issuance creation to certificate availability or completed DNS cleanup.",
+			Buckets: []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600},
+		}, []string{"milestone"}),
 		operationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_operation_duration_seconds", Help: "Completed application operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
 		}, []string{"operation", "outcome"}),
@@ -123,7 +128,7 @@ func New(role string) *Metrics {
 		registered = append(registered, metrics.routingHistoryRows, metrics.routingHistorySkipped,
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_routing_history_retained_after_revision", Help: "Highest committed routing-history retention floor observed by this process."}, func() float64 { return float64(metrics.routingHistoryFloor.Load()) }))
 		registered = append(registered, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight,
-			metrics.readinessAttempts, metrics.readinessDuration, metrics.readinessAge, metrics.certificateWork, metrics.certificateDuration,
+			metrics.readinessAttempts, metrics.readinessDuration, metrics.readinessAge, metrics.certificateWork, metrics.certificateDuration, metrics.certificateMilestone,
 			metrics.databaseQueryDuration, metrics.databaseGuardDuration)
 	}
 	if role == "control" || role == "ingress" || role == "relay" || role == "standalone" {
@@ -254,4 +259,11 @@ func (m *Metrics) ObserveCertificateWork(stage, outcome string, duration time.Du
 	}
 	m.certificateWork.WithLabelValues(stage, outcome).Inc()
 	m.certificateDuration.WithLabelValues(stage, outcome).Observe(duration.Seconds())
+}
+
+func (m *Metrics) ObserveCertificateMilestone(milestone string, age time.Duration) {
+	if milestone != "ready" && milestone != "cleanup" || age < 0 {
+		return
+	}
+	m.certificateMilestone.WithLabelValues(milestone).Observe(age.Seconds())
 }

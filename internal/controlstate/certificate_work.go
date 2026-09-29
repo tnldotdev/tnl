@@ -339,7 +339,8 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !workEpochOK || !orderRevisionOK || !attemptsOK ||
 		work.WorkExpiresAt.IsZero() ||
 		work.State != "pending" && work.State != "authorizing" && work.State != "ready_to_finalize" &&
-			work.State != "finalizing" && work.State != "waiting_for_install" && work.State != "failed" && work.State != "canceled" ||
+			work.State != "finalizing" && work.State != "waiting_for_install" && work.State != "installed" &&
+			work.State != "failed" && work.State != "canceled" ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
 	}

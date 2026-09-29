@@ -179,7 +179,7 @@ func TestPublicURLWorkerDNSFailureDoesNotPresentOrAcceptChallenge(t *testing.T) 
 }
 
 func TestPublicURLWorkerDNSCleanupFailurePreservesRetryAndRenewal(t *testing.T) {
-	for _, phase := range []string{"failed", "canceled", "finalizing"} {
+	for _, phase := range []string{"failed", "canceled", "finalizing", "waiting_for_install", "installed"} {
 		for _, canceled := range []bool{false, true} {
 			name := phase + "/provider_failure"
 			if canceled {
@@ -200,20 +200,31 @@ func TestPublicURLWorkerDNSCleanupFailurePreservesRetryAndRenewal(t *testing.T) 
 					return failure
 				}}
 				worker := &PublicURLWorker{store: store, config: PublicURLConfig{DNSChallenges: dns, PollInterval: time.Second}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
+				wantState, initialSaves := phase, 0
+				if phase == "finalizing" {
+					if found, err := worker.processOne(ctx); err != nil || !found || store.saves != 1 || store.saved.State != "waiting_for_install" ||
+						!bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) || len(dns.cleanupCalls) != 0 {
+						t.Fatalf("issued certificate blocked on cleanup: found=%t error=%v state=%q saves=%d cleanups=%d", found, err, store.saved.State, store.saves, len(dns.cleanupCalls))
+					}
+					store.work = store.saved
+					wantState, initialSaves = "waiting_for_install", 1
+				}
 				found, err := worker.processOne(ctx)
 				if !found {
 					t.Fatal("cleanup work was not claimed")
 				}
 				if canceled {
-					if !errors.Is(err, context.Canceled) || store.saves != 0 {
+					if !errors.Is(err, context.Canceled) || store.saves != initialSaves {
 						t.Fatalf("canceled cleanup: error %v, saves %d", err, store.saves)
 					}
 					return
 				}
-				if err != nil || store.saves != 1 || store.saved.State != phase || store.saved.Authorizations[0].State != "cleaning" || store.saved.Authorizations[0].CleanupCompletedAt != nil || store.saved.LastError == "" || !store.saved.AvailableAt.After(now) {
-					t.Fatalf("failed cleanup: error %v, saves %d, work %#v", err, store.saves, store.saved)
+				if err != nil || store.saves != initialSaves+1 || store.saved.State != wantState || store.saved.Authorizations[0].State != "cleaning" || store.saved.Authorizations[0].CleanupCompletedAt != nil || store.saved.LastError == "" || !store.saved.AvailableAt.After(now) {
+					t.Fatalf("failed cleanup: error=%v saves=%d state=%q authorization=%q retry=%v", err, store.saves, store.saved.State, store.saved.Authorizations[0].State, store.saved.AvailableAt)
 				}
-				if !bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) || (phase == "finalizing" && (store.saved.RenewAt == nil || !store.saved.RenewAt.Equal(*work.RenewAt))) {
+				if !bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) ||
+					(phase == "finalizing" || phase == "waiting_for_install" || phase == "installed") &&
+						(store.saved.RenewAt == nil || !store.saved.RenewAt.Equal(*work.RenewAt)) {
 					t.Fatal("DNS cleanup failure discarded the issued certificate or renewal schedule")
 				}
 				store.work = store.saved
@@ -226,6 +237,28 @@ func TestPublicURLWorkerDNSCleanupFailurePreservesRetryAndRenewal(t *testing.T) 
 				}
 			})
 		}
+	}
+}
+
+func TestPublicURLWorkerTerminalDNSCleanupErrorDoesNotRevokeIssuedCertificate(t *testing.T) {
+	for _, phase := range []string{"waiting_for_install", "installed"} {
+		t.Run(phase, func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Second)
+			api, work := dnsSafetyOrder(t, phase, now)
+			store := &certificateStoreStub{work: work}
+			worker := &PublicURLWorker{
+				store:  store,
+				config: PublicURLConfig{DNSChallenges: &dnsChallengesStub{err: terminalf("conflicting DNS record")}},
+				now:    func() time.Time { return now },
+				client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil },
+			}
+			if found, err := worker.processOne(t.Context()); err != nil || !found || store.saves != 1 ||
+				store.saved.State != phase || store.saved.Authorizations[0].State != "cleaning" ||
+				!bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) ||
+				store.saved.LastError == "" || !store.saved.AvailableAt.After(now) {
+				t.Fatalf("issued certificate was revoked on cleanup error: found=%t error=%v state=%q saves=%d", found, err, store.saved.State, store.saves)
+			}
+		})
 	}
 }
 
@@ -253,10 +286,10 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 		work.OrderURL = ""
 		work.Authorizations = nil
 	}
-	if phase == "failed" || phase == "canceled" || phase == "finalizing" {
+	if phase == "failed" || phase == "canceled" || phase == "finalizing" || phase == "waiting_for_install" || phase == "installed" {
 		work.Authorizations[0].State, work.Authorizations[0].PresentedAt = "cleaning", &now
 	}
-	if phase == "finalizing" {
+	if phase == "finalizing" || phase == "waiting_for_install" || phase == "installed" {
 		work.RenewAt = &renewAt
 		work.CertificatePEM = certificate
 		notBefore := now.Add(-time.Minute)

@@ -121,6 +121,13 @@ WITH candidate AS (
     FROM control.acme_orders AS orders
     WHERE (
           orders.state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing')
+          OR orders.state IN ('waiting_for_install', 'installed') AND EXISTS (
+              SELECT 1
+              FROM control.acme_authorizations AS authorizations
+              WHERE authorizations.order_id = orders.id
+                AND authorizations.challenge_type = 'dns-01'
+                AND authorizations.state IN ('valid', 'cleaning')
+          )
           OR orders.state IN ('failed', 'canceled') AND EXISTS (
               SELECT 1
               FROM control.acme_authorizations AS authorizations
