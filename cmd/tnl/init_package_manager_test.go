@@ -57,21 +57,30 @@ func TestRunInitInstallPreservesCommandContextCancellation(t *testing.T) {
 	}
 }
 
-func TestInitDevCommandPrefersPackageScript(t *testing.T) {
+func TestInitDevCommandKeepsTheAppCommandSeparateFromTnl(t *testing.T) {
 	for _, test := range []struct {
 		name, framework, manager string
 		scripts                  map[string]string
 		want                     []string
 	}{
-		{"pnpm next", "next", "pnpm", map[string]string{"dev": "next dev --turbo"}, []string{"pnpm", "dev"}},
-		{"yarn vite", "vite", "yarn", map[string]string{"dev": "vite --host"}, []string{"yarn", "dev"}},
-		{"npm next", "next", "npm", map[string]string{"dev": "next dev"}, []string{"npm", "run", "dev"}},
-		{"bun vite", "vite", "bun", map[string]string{"dev": "vite"}, []string{"bun", "run", "dev"}},
-		{"unknown manager", "next", "", map[string]string{"dev": "next dev"}, []string{"npm", "run", "dev"}},
-		{"pnpm generic", "", "pnpm", map[string]string{"dev": "node server.js"}, []string{"pnpm", "dev"}},
-		{"yarn generic", "", "yarn", map[string]string{"dev": "node server.js"}, []string{"yarn", "dev"}},
-		{"bun generic", "", "bun", map[string]string{"dev": "node server.js"}, []string{"bun", "run", "dev"}},
-		{"npm generic", "", "npm", map[string]string{"dev": "node server.js"}, []string{"npm", "run", "dev"}},
+		{"pnpm next", "next", "pnpm", map[string]string{"dev": "next dev --turbo"}, []string{"next", "dev", "--turbo"}},
+		{"yarn vite", "vite", "yarn", map[string]string{"dev": "vite --host"}, []string{"vite", "--host"}},
+		{"npm next", "next", "npm", map[string]string{"dev": "next dev"}, []string{"next", "dev"}},
+		{"bun vite", "vite", "bun", map[string]string{"dev": "vite"}, []string{"vite"}},
+		{"unknown manager", "next", "", map[string]string{"dev": "next dev"}, []string{"next", "dev"}},
+		{"pnpm generic", "", "pnpm", map[string]string{"dev": "node server.js"}, []string{"node", "server.js"}},
+		{"yarn generic", "", "yarn", map[string]string{"dev": "node server.js"}, []string{"node", "server.js"}},
+		{"bun generic", "", "bun", map[string]string{"dev": "node server.js"}, []string{"node", "server.js"}},
+		{"npm generic", "", "npm", map[string]string{"dev": "node server.js"}, []string{"node", "server.js"}},
+		{"next already tnl", "next", "pnpm", map[string]string{"dev": "tnl dev"}, []string{"next", "dev"}},
+		{"vite already tnl", "vite", "npm", map[string]string{"dev": "tnl dev"}, []string{"vite"}},
+		{"generic already tnl", "", "pnpm", map[string]string{"dev": "tnl dev"}, nil},
+		{"generic tnl wrapper", "", "pnpm", map[string]string{"dev": "pnpm exec tnl dev"}, nil},
+		{"bun self script", "", "bun", map[string]string{"dev": "bun dev"}, nil},
+		{"generic env wrapper", "", "pnpm", map[string]string{"dev": "cross-env FOO=bar node server.js"}, []string{"cross-env", "FOO=bar", "node", "server.js"}},
+		{"generic shell script", "", "pnpm", map[string]string{"dev": "NODE_ENV=development node server.js && echo ready"}, []string{"pnpm", "dev"}},
+		{"separate app script", "", "pnpm", map[string]string{"dev": "pnpm run dev:app"}, []string{"pnpm", "run", "dev:app"}},
+		{"next shell script", "next", "pnpm", map[string]string{"dev": "cross-env FOO=bar next dev"}, []string{"next", "dev"}},
 		{"next fallback", "next", "", nil, []string{"next", "dev"}},
 		{"vite fallback", "vite", "", nil, []string{"vite"}},
 		{"no framework or script", "", "pnpm", nil, nil},

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,86 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 		t.Fatalf("session socket still exists: %v", err)
 	}
 	startDevBootstrapTest(t, ctx, "", worktree)
+}
+
+func TestDevLockDistinguishesRecursiveChildFromAnotherSession(t *testing.T) {
+	ctx := devBootstrapTestContext(t)
+	root := t.TempDir()
+	bootstrap := startDevBootstrapTest(t, ctx, "", root, "app")
+	_, err := newDevBootstrap(ctx, "", root, "app")
+	if !errors.Is(err, errDevLockHeld) {
+		t.Fatalf("lock error = %v", err)
+	}
+	command := []string{"pnpm", "dev"}
+	if got := devBootstrapError(err, root, "app", command); got != err {
+		t.Fatalf("independent session was changed: %v", got)
+	}
+	t.Setenv("TNL_DEV_SOCKET", bootstrap.socket)
+	early := rejectNestedDevSession(root, "app", command)
+	if code, ok := diagnostic.CodeOf(early); !ok || code != diagnostic.DevCommandRecursion {
+		t.Fatalf("early recursive child error = %v, code = %s", early, code)
+	}
+	classified := devBootstrapError(err, root, "app", command)
+	if code, ok := diagnostic.CodeOf(classified); !ok || code != diagnostic.DevCommandRecursion || !errors.Is(classified, errDevLockHeld) ||
+		!strings.Contains(classified.Error(), "pnpm dev") {
+		t.Fatalf("recursive child error = %v, code = %s", classified, code)
+	}
+	if got := devBootstrapError(err, root, "api", command); got != err {
+		t.Fatalf("other service was classified as recursive: %v", got)
+	}
+	if err := bootstrap.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rejectNestedDevSession(root, "app", command); err != nil {
+		t.Fatalf("stale child socket blocked a new session: %v", err)
+	}
+}
+
+func TestDevCommandRecursionNamesOnlySafeCommands(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"tnl dev"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		command []string
+		want    string
+	}{
+		{[]string{"pnpm", "dev"}, "pnpm dev"},
+		{[]string{"pnpm", "run", "dev"}, "pnpm run dev"},
+		{[]string{"npm", "run", "dev"}, "npm run dev"},
+		{[]string{"yarn", "dev"}, "yarn dev"},
+		{[]string{"bun", "run", "dev"}, "bun run dev"},
+		{[]string{"bun", "dev"}, "bun dev"},
+		{[]string{"tnl", "dev"}, "dev.command starts tnl dev"},
+		{[]string{"next", "dev"}, ""},
+	} {
+		got := devCommandRecursion(test.command, root)
+		if !strings.Contains(got, test.want) || (test.want == "" && got != "") {
+			t.Fatalf("devCommandRecursion(%q) = %q, want %q", test.command, got, test.want)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"next dev"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := devCommandRecursion([]string{"pnpm", "dev"}, root); got != "" {
+		t.Fatalf("safe package script = %q", got)
+	}
+}
+
+func TestDevReportsARecursiveCommandBeforeOpeningASession(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"tnl dev"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := runDev(t.Context(), devCommand{Command: []string{"pnpm", "dev"}, commandDir: root}, nil, io.Discard, io.Discard)
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.DevCommandRecursion {
+		t.Fatalf("preflight error = %v, code = %s", err, code)
+	}
+	text, ok := diagnostic.TextForCommandError("tnl dev", err)
+	if !ok || !strings.Contains(text, "pnpm dev") || !strings.Contains(text, diagnostic.HelpURL(diagnostic.DevCommandRecursion)) ||
+		!strings.Contains(text, "TNL_DEV_COMMAND_RECURSION") {
+		t.Fatalf("preflight output = %q", text)
+	}
 }
 
 func devBootstrapTestContext(t *testing.T) context.Context {

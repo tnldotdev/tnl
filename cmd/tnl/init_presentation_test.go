@@ -44,7 +44,7 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 					t.Fatalf("config = %q, %v", config, err)
 				}
 				gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-				if err != nil || string(gitignore) != ".tnl/\n" {
+				if err != nil || string(gitignore) != "# tnl\n.tnl/\n" {
 					t.Fatalf("gitignore = %q, %v", gitignore, err)
 				}
 				if test.framework == "next" && !strings.Contains(stdout.String(), "pnpm add --save-dev") {
@@ -106,7 +106,7 @@ func TestInitGenericMissingSettingsRepeatUntilAnswered(t *testing.T) {
 	for _, test := range []struct {
 		name, script, action, command string
 	}{
-		{"script", "node server.js", "services.app.dev.port", `["npm","run","dev"]`},
+		{"script", "node server.js", "services.app.dev.port", `["node","server.js"]`},
 		{"no script", "", "services.app.dev.command and services.app.dev.port", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestInitGenericPromptsSaveAnswers(t *testing.T) {
 	for _, test := range []struct {
 		name, script, answers, command string
 	}{
-		{"script", "node server.js", "4321\n", `["yarn","dev"]`},
+		{"script", "node server.js", "4321\n", `["node","server.js"]`},
 		{"no script", "", "node 'server file.js' --name \"two words\"\n4321\n", `["node","server file.js","--name","two words"]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -223,7 +223,7 @@ func TestInitGenericRerunUpdatesUntouchedConfigWithPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(config), `dev: { command: ["bun","run","dev"], port: 5174 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "updated") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "dev port") {
+	if err != nil || !strings.Contains(string(config), `dev: { command: ["node","server.js"], port: 5174 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "updated") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "dev port") {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
 	}
 }
@@ -250,5 +250,55 @@ func TestInitPreservesCustomizedGenericService(t *testing.T) {
 				t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", after, stdout.String(), stderr.String(), err)
 			}
 		})
+	}
+}
+
+func TestInitMigratesGeneratedFrameworkCommandBeforeChangingDevScript(t *testing.T) {
+	root := copyInitFixture(t, "next")
+	path := filepath.Join(root, "tnl.config.ts")
+	if err := os.WriteFile(path, initConfigSource("app", []string{"pnpm", "dev"}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var output bytes.Buffer
+	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, initConfigSource("app", []string{"next", "dev"})) || !strings.Contains(output.String(), "scripts.dev to") || !strings.Contains(output.String(), `"tnl dev"`) {
+		t.Fatalf("migrated config = %s, output = %s, err = %v", data, output.String(), err)
+	}
+	packagePath := filepath.Join(root, "package.json")
+	packageJSON, err := os.ReadFile(packagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(packagePath, bytes.Replace(packageJSON, []byte("next dev"), []byte("tnl dev"), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, initConfigSource("app", []string{"next", "dev"})) || strings.Contains(output.String(), "scripts.dev to") {
+		t.Fatalf("repeat config = %s, output = %s, err = %v", data, output.String(), err)
+	}
+}
+
+func TestInitCannotReuseGenericScriptOnceItStartsTnl(t *testing.T) {
+	root := genericInitFixture(t, "tnl dev", "pnpm")
+	path := filepath.Join(root, "tnl.config.ts")
+	if err := os.WriteFile(path, initConfigSourceWithPort("app", []string{"pnpm", "dev"}, 4242), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var output bytes.Buffer
+	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, initConfigSourceWithPort("app", nil, 4242)) || !strings.Contains(output.String(), "set services.app.dev.command") {
+		t.Fatalf("generic config = %s, output = %s, err = %v", data, output.String(), err)
 	}
 }

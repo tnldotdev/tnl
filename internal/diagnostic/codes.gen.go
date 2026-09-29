@@ -9,6 +9,7 @@ const (
 	RequestMisdirected           Code = "TNL_REQUEST_MISDIRECTED"
 	RequestLimitReached          Code = "TNL_REQUEST_LIMIT_REACHED"
 	IPPolicyDenied               Code = "TNL_IP_POLICY_DENIED"
+	DevCommandRecursion          Code = "TNL_DEV_COMMAND_RECURSION"
 	FrameworkRegistrationTimeout Code = "TNL_FRAMEWORK_REGISTRATION_TIMEOUT"
 	TargetMismatch               Code = "TNL_TARGET_MISMATCH"
 	AuthenticationTimeout        Code = "TNL_AUTHENTICATION_TIMEOUT"

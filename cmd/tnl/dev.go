@@ -39,6 +39,8 @@ const (
 	defaultDevStartupTimeout = 2 * time.Minute
 )
 
+var errDevLockHeld = errors.New("another tnl dev is already running for this project service")
+
 type devCommand struct {
 	openOptions    `embed:""`
 	remoteFlags    `embed:""`
@@ -64,6 +66,10 @@ func (e *childExitError) Error() string { return fmt.Sprintf("command exited wit
 
 func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
+	configuredCommand := flags.Command
+	if detail := devCommandRecursion(configuredCommand, flags.commandDir); detail != "" {
+		return diagnostic.WrapMessage(diagnostic.DevCommandRecursion, detail, errors.New("dev command starts tnl dev"))
+	}
 	command, err := resolveDevCommand(flags.Command, flags.commandDir)
 	if err != nil {
 		return err
@@ -88,6 +94,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		if err != nil {
 			return err
 		}
+	}
+	if err := rejectNestedDevSession(flags.projectRoot, flags.Service, configuredCommand); err != nil {
+		return err
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
@@ -169,7 +178,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 
 	bootstrap, err := newDevBootstrap(ctx, forcedTarget, flags.projectRoot, flags.Service)
 	if err != nil {
-		return err
+		return devBootstrapError(err, flags.projectRoot, flags.Service, configuredCommand)
 	}
 	defer func() { result = errors.Join(result, bootstrap.Close()) }()
 
@@ -640,12 +649,106 @@ func devRuntimeDirectory() (string, error) {
 func acquireDevLock(path string) (*filelock.Lock, error) {
 	lock, err := filelock.Acquire(path, filelock.Nonblocking, os.Getuid())
 	if errors.Is(err, filelock.ErrLocked) {
-		return nil, errors.New("another tnl dev is already running for this project service")
+		return nil, errDevLockHeld
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lock development session: %w", err)
 	}
 	return lock, nil
+}
+
+func devCommandRecursion(command []string, directory string) string {
+	if len(command) == 0 {
+		return ""
+	}
+	if filepath.Base(command[0]) == "tnl" && len(command) >= 2 && command[1] == "dev" {
+		return "dev.command starts tnl dev instead of the local service"
+	}
+	label := packageDevCommandLabel(command)
+	if label == "" {
+		return ""
+	}
+	data, err := readInitFile(filepath.Join(directory, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var project struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &project) != nil || !scriptStartsTnlDev(project.Scripts["dev"]) {
+		return ""
+	}
+	return fmt.Sprintf("dev.command runs %s, but package.json scripts.dev starts tnl dev; set dev.command to start the local service directly", label)
+}
+
+func packageDevCommandLabel(command []string) string {
+	if len(command) < 2 {
+		return ""
+	}
+	switch filepath.Base(command[0]) {
+	case "pnpm", "yarn":
+		if command[1] == "dev" {
+			return filepath.Base(command[0]) + " dev"
+		}
+		if len(command) >= 3 && command[1] == "run" && command[2] == "dev" {
+			return filepath.Base(command[0]) + " run dev"
+		}
+	case "bun":
+		if command[1] == "dev" {
+			return "bun dev"
+		}
+		if len(command) >= 3 && command[1] == "run" && command[2] == "dev" {
+			return "bun run dev"
+		}
+	case "npm":
+		if len(command) >= 3 && command[1] == "run" && command[2] == "dev" {
+			return "npm run dev"
+		}
+	}
+	return ""
+}
+
+func configuredDevCommandLabel(command []string, service string) string {
+	if label := packageDevCommandLabel(command); label != "" {
+		return "the configured command " + label
+	}
+	if service != "" {
+		return "services." + service + ".dev.command"
+	}
+	return "dev.command"
+}
+
+func nestedDevSession(projectRoot, service string) bool {
+	socket := os.Getenv("TNL_DEV_SOCKET")
+	if socket == "" {
+		return false
+	}
+	dir, err := devRuntimeDirectory()
+	return err == nil && socket == filepath.Join(dir, "dev-"+devSocketDigest(projectRoot, service)+".sock")
+}
+
+func devBootstrapError(err error, projectRoot, service string, command []string) error {
+	// Only a child that inherited the matching socket and encountered a held lock is recursive.
+	if !errors.Is(err, errDevLockHeld) || !nestedDevSession(projectRoot, service) {
+		return err
+	}
+	detail := fmt.Sprintf("%s started another tnl dev for this project service; set dev.command to start the local service directly", configuredDevCommandLabel(command, service))
+	return diagnostic.WrapMessage(diagnostic.DevCommandRecursion, detail, err)
+}
+
+func rejectNestedDevSession(projectRoot, service string, command []string) error {
+	if !nestedDevSession(projectRoot, service) {
+		return nil
+	}
+	dir, err := devRuntimeDirectory()
+	if err != nil {
+		return err
+	}
+	lock, err := acquireDevLock(filepath.Join(dir, "dev-"+devSocketDigest(projectRoot, service)+".lock"))
+	if err != nil {
+		return devBootstrapError(err, projectRoot, service, command)
+	}
+	return lock.Close()
 }
 
 func removeDevSocket(path string) error {

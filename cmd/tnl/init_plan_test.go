@@ -20,7 +20,7 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.manager != "pnpm" || plan.framework != "next" || !slices.Equal(plan.packages, []string{"@tnldotdev/tnl"}) || len(plan.frameworkAfter) != 0 || !slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	for _, fragment := range []string{"app:", `directory: "."`, `["pnpm","dev"]`, "defineConfig"} {
+	for _, fragment := range []string{"app:", `directory: "."`, `["next","dev"]`, "defineConfig"} {
 		if !strings.Contains(string(plan.configData), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.configData)
 		}
@@ -92,7 +92,7 @@ func TestInitPlansGenericDevSettings(t *testing.T) {
 	for _, test := range []struct {
 		name, script, manager, command, action string
 	}{
-		{"dev script", "node server.js", "pnpm", `["pnpm","dev"]`, "set services.app.dev.port in tnl.config.ts to your app's listening port."},
+		{"dev script", "node server.js", "pnpm", `["node","server.js"]`, "set services.app.dev.port in tnl.config.ts to your app's listening port."},
 		{"no dev script", "", "npm", "", "set services.app.dev.command and services.app.dev.port in tnl.config.ts."},
 	} {
 		t.Run(test.name, func(t *testing.T) {

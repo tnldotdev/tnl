@@ -49,6 +49,7 @@ type initPlan struct {
 	devCommand       []string
 	devPort          int
 	devAction        string
+	scriptHint       string
 }
 
 type packageDocument struct {
@@ -99,7 +100,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		created = true
 	}
 	configUpdated := false
-	if len(plan.generatedConfig) != 0 && (plan.genericDev || plan.apiDev) {
+	if len(plan.generatedConfig) != 0 && (plan.genericDev || plan.apiDev || plan.framework != "") {
 		updated := initConfigSourceWithPort("app", plan.devCommand, plan.devPort)
 		if !bytes.Equal(updated, plan.generatedConfig) {
 			if err := replaceRecognizedInitFile(plan.configPath, plan.generatedConfig, updated); err != nil {
@@ -126,7 +127,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err != nil {
 		return err
 	}
-	if plan.generatedService {
+	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
 			Project: projectconfig.Project{
 				Root:                       plan.root,
@@ -166,9 +167,13 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
 	}
+	fields = append(fields, clioutput.Field{Label: "ignored", Value: ".tnl/"})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {
 		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
+	}
+	if plan.scriptHint != "" {
+		blocks = append(blocks, clioutput.Section("hint", clioutput.Text(plan.scriptHint)))
 	}
 	footer := "run tnl dev"
 	if len(plan.actions) != 0 {
@@ -226,6 +231,9 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 				plan.generatedService = true
 				plan.generatedConfig = data
 				plan.devCommand, plan.devPort = settings.command, settings.port
+				if slices.Equal(settings.command, initDevScriptCommand(plan.manager)) {
+					plan.devCommand = command
+				}
 			}
 		}
 	} else {
@@ -234,6 +242,17 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	}
 	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
 	plan.apiDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind != "" && plan.generatedService
+	if plan.generatedService && len(plan.devCommand) != 0 && !slices.Equal(plan.devCommand, initDevScriptCommand(plan.manager)) &&
+		!scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
+		plan.scriptHint = "To use your package.json dev script, set scripts.dev to \"tnl dev\" after tnl.config.ts starts the app directly."
+	}
+	if plan.generatedService && plan.framework != "" && packageConfig.Scripts["dev"] != "" &&
+		!scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
+		parsed, simple := simpleInitScript(packageConfig.Scripts["dev"])
+		if !simple || !slices.Equal(parsed, plan.devCommand) {
+			plan.actions = append(plan.actions, "Review package.json scripts.dev and keep any required startup options in services.app.dev.command before changing scripts.dev to tnl dev.")
+		}
+	}
 	if plan.genericDev {
 		updateInitDevAction(&plan)
 	} else if plan.apiDev {
@@ -552,23 +571,68 @@ func initDependencies() []string {
 }
 
 func initDevCommand(framework, manager string, scripts map[string]string) []string {
-	if scripts["dev"] != "" {
-		switch manager {
-		case "pnpm", "yarn":
-			return []string{manager, "dev"}
-		case "bun":
-			return []string{"bun", "run", "dev"}
-		default:
-			return []string{"npm", "run", "dev"}
-		}
-	}
+	script := scripts["dev"]
+	parsed, simple := simpleInitScript(script)
 	switch framework {
 	case "next":
+		if simple && len(parsed) >= 2 && parsed[0] == "next" && parsed[1] == "dev" {
+			return parsed
+		}
 		return []string{"next", "dev"}
 	case "vite":
+		if simple && len(parsed) != 0 && parsed[0] == "vite" {
+			return parsed
+		}
 		return []string{"vite"}
 	}
+	if script != "" {
+		if simple && (scriptStartsTnlDev(script) || packageDevCommandLabel(parsed) != "") {
+			return nil
+		}
+		if simple {
+			return parsed
+		}
+		return initDevScriptCommand(manager)
+	}
 	return nil
+}
+
+func simpleInitScript(script string) ([]string, bool) {
+	// Shell operators and assignments need the original script runner or a manual command.
+	if script == "" || strings.ContainsAny(script, "$`|&;<>\n") {
+		return nil, false
+	}
+	command, err := parseInitCommand(script)
+	return command, err == nil && !strings.Contains(command[0], "=")
+}
+
+func scriptStartsTnlDev(script string) bool {
+	command, ok := simpleInitScript(script)
+	if !ok || len(command) < 2 {
+		return false
+	}
+	if command[0] == "tnl" && command[1] == "dev" {
+		return true
+	}
+	return len(command) >= 3 && (command[0] == "npx" || command[0] == "bunx") && command[1] == "tnl" && command[2] == "dev" ||
+		len(command) >= 4 && (command[0] == "pnpm" || command[0] == "npm" || command[0] == "yarn" || command[0] == "bun") &&
+			(command[1] == "exec" || command[1] == "run") && command[2] == "tnl" && command[3] == "dev"
+}
+
+func initDevScriptCommand(manager string) []string {
+	switch manager {
+	case "pnpm", "yarn":
+		return []string{manager, "dev"}
+	case "bun":
+		return []string{"bun", "run", "dev"}
+	default:
+		return []string{"npm", "run", "dev"}
+	}
+}
+
+func packageTypeConfigExists(root string) bool {
+	info, err := os.Stat(filepath.Join(root, "tsconfig.json"))
+	return err == nil && !info.IsDir()
 }
 
 func initConfigSource(service string, command []string) []byte {
@@ -829,7 +893,7 @@ func ensureTnlGitignore(root string) (bool, error) {
 	path := filepath.Join(root, ".gitignore")
 	data, err := readInitFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := createInitFile(path, []byte(".tnl/\n")); err != nil {
+		if err := createInitFile(path, []byte("# tnl\n.tnl/\n")); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -846,7 +910,7 @@ func ensureTnlGitignore(root string) (bool, error) {
 	if len(replacement) != 0 && replacement[len(replacement)-1] != '\n' {
 		replacement = append(replacement, '\n')
 	}
-	replacement = append(replacement, []byte(".tnl/\n")...)
+	replacement = append(replacement, []byte("# tnl\n.tnl/\n")...)
 	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
 		return false, err
 	}

@@ -55,6 +55,7 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 
 func TestActionableDiagnosticHelpURLsAreStable(t *testing.T) {
 	for code, want := range map[Code]string{
+		DevCommandRecursion:          "https://tnl.dev/e/dev-command-recursion",
 		FrameworkRegistrationTimeout: "https://tnl.dev/e/framework-registration-timeout",
 		TargetMismatch:               "https://tnl.dev/e/target-mismatch",
 		AuthenticationTimeout:        "https://tnl.dev/e/authentication-timeout",

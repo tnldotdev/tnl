@@ -79,7 +79,7 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 		t.Fatalf("Hono Bun entrypoint = %s, %v", entry, err)
 	}
 	config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
-	if err != nil || !bytes.Contains(config, []byte(`command: ["pnpm","dev"]`)) || bytes.Contains(config, []byte("port:")) {
+	if err != nil || !bytes.Contains(config, []byte(`command: ["bun","--hot","src/index.ts"]`)) || bytes.Contains(config, []byte("port:")) {
 		t.Fatalf("generated config = %s, %v", config, err)
 	}
 	if !strings.Contains(output.String(), "src/index.ts") {
@@ -106,7 +106,7 @@ func TestInitRemovesRecognizedFixedPortFromAPIServerConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, initConfigSource("app", []string{"pnpm", "dev"})) {
+	if err != nil || !bytes.Equal(got, initConfigSource("app", []string{"bun", "--hot", "src/index.ts"})) {
 		t.Fatalf("fixed-port project config = %s, %v", got, err)
 	}
 }

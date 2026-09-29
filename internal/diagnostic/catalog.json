@@ -190,6 +190,32 @@
       }
     },
     {
+      "code": "TNL_DEV_COMMAND_RECURSION",
+      "slug": "dev-command-recursion",
+      "category": "configuration",
+      "title": "dev command loops",
+      "summary": "tnl dev started itself instead of the local service. set dev.command to start your app directly.",
+      "description": "the configured development command led back to tnl dev, so the local service never started.",
+      "diagram_label": "the development command loops before starting the local service",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "tnl dev" },
+        { "label": "configured dev.command", "detail": "starts tnl dev again", "failure": true },
+        { "label": "local service (not started)" }
+      ],
+      "causes": [
+        "`dev.command` calls `tnl dev` directly",
+        "`dev.command` runs the package.json `dev` script, and that script starts `tnl dev`"
+      ],
+      "actions": {
+        "publisher": [
+          "set `dev.command` to the app command, such as `[\"next\", \"dev\"]` for Next.js or `[\"vite\"]` for Vite",
+          "for another app, run its binary directly or use a separate script such as `dev:app`; `scripts.dev` may then run `tnl dev`",
+          "run `tnl init` to review the project setup, then start your app again"
+        ]
+      }
+    },
+    {
       "code": "TNL_FRAMEWORK_REGISTRATION_TIMEOUT",
       "slug": "framework-registration-timeout",
       "category": "framework",
