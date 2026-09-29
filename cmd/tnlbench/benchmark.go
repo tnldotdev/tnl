@@ -20,13 +20,13 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 )
-
-const stagingServer = "https://control.tnl.wtf"
 
 type workloadOptions struct {
 	Suite        string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
-	Server       string        `name:"server" env:"BENCH_SERVER" default:"https://control.tnl.wtf" help:"Staging control URL."`
+	Server       string        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
+	Transport    string        `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp" help:"Mixed, QUIC-only, or TLS/TCP-only publisher connections."`
 	PublicURLs   int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Public URLs to publish."`
 	FreshRate    int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Offered visitor requests per second."`
 	HeldStreams  int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
@@ -36,20 +36,20 @@ type workloadOptions struct {
 	Repetitions  int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows."`
 	Warmup       time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Time before measuring."`
 	Duration     time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Length of each measurement window."`
-	StateDir     string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing staging login."`
+	StateDir     string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing login for the selected server."`
 	ResultsRoot  string        `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Result directory."`
 }
 
 type benchmarkPlan struct {
 	SchemaVersion int             `json:"schema_version"`
 	ReadOnly      bool            `json:"read_only"`
-	Environment   string          `json:"environment"`
 	Server        string          `json:"server"`
 	Workload      workloadSummary `json:"workload"`
 }
 
 type workloadSummary struct {
 	Suite        string        `json:"suite"`
+	Transport    string        `json:"transport"`
 	PublicURLs   int           `json:"public_urls"`
 	FreshRate    int           `json:"fresh_connections_per_second"`
 	HeldStreams  int           `json:"held_streams"`
@@ -62,20 +62,27 @@ type workloadSummary struct {
 }
 
 func (c workloadOptions) plan() (benchmarkPlan, error) {
-	if c.Server != stagingServer {
-		return benchmarkPlan{}, fmt.Errorf("staging benchmarks require --server=%s", stagingServer)
+	if c.Server == "" {
+		return benchmarkPlan{}, errors.New("benchmark requires --server or BENCH_SERVER")
+	}
+	server, err := clientstate.CanonicalServer(c.Server)
+	if err != nil {
+		return benchmarkPlan{}, err
 	}
 	if c.Suite != "smoke" && c.Suite != "target" {
 		return benchmarkPlan{}, errors.New("suite must be smoke or target")
 	}
+	if c.Transport != "mixed" && c.Transport != "quic" && c.Transport != "tcp" {
+		return benchmarkPlan{}, errors.New("transport must be mixed, quic, or tcp")
+	}
 	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > time.Hour {
 		return benchmarkPlan{}, errors.New("invalid workload shape or duration")
 	}
-	if c.Suite == "smoke" && (c.PublicURLs > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
+	if c.Suite == "smoke" && (c.Transport != "mixed" || c.PublicURLs > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
-	return benchmarkPlan{SchemaVersion: 1, ReadOnly: true, Environment: "staging", Server: c.Server,
-		Workload: workloadSummary{Suite: c.Suite, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
+	return benchmarkPlan{SchemaVersion: 2, ReadOnly: true, Server: server,
+		Workload: workloadSummary{Suite: c.Suite, Transport: c.Transport, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
 			HeldStreams: c.HeldStreams, Concurrency: c.Concurrency, QueueSlots: c.QueueSlots,
 			PayloadBytes: c.PayloadBytes, Repetitions: c.Repetitions, Warmup: c.Warmup, Duration: c.Duration}}, nil
 }
@@ -93,7 +100,8 @@ func (c planCommand) run(stdout io.Writer) error {
 	if c.Format == "json" {
 		return json.NewEncoder(stdout).Encode(plan)
 	}
-	fmt.Fprintf(stdout, "Staging benchmark plan (READ ONLY)\nServer: %s\nGenerators: local publisher and visitor\n", plan.Server)
+	fmt.Fprintf(stdout, "Benchmark plan (READ ONLY)\nServer: %s\nGenerators: local publisher and visitor\n", plan.Server)
+	fmt.Fprintf(stdout, "Publisher transport: %s\n", c.Transport)
 	fmt.Fprintf(stdout, "Workload: %d public URLs, %d fresh/s, %d held, %d bytes\n", c.PublicURLs, c.FreshRate, c.HeldStreams, c.PayloadBytes)
 	fmt.Fprintf(stdout, "Windows: %d x %s; warmup %s; local direct baseline %s\n", c.Repetitions, c.Duration, c.Warmup, c.Duration)
 	_, err = fmt.Fprintln(stdout, "Execution requires an explicit BENCH_SUITE and BENCH_APPROVED=1.")
@@ -102,7 +110,7 @@ func (c planCommand) run(stdout io.Writer) error {
 
 type runCommand struct {
 	workloadOptions
-	Approved string `name:"approved" env:"BENCH_APPROVED" help:"Explicit staging benchmark approval; must be 1."`
+	Approved string `name:"approved" env:"BENCH_APPROVED" help:"Explicit approval for this server and workload; must be 1."`
 }
 
 func (c runCommand) validate() (benchmarkPlan, error) {
@@ -120,19 +128,39 @@ func (c runCommand) validate() (benchmarkPlan, error) {
 }
 
 type benchmarkResult struct {
-	SchemaVersion int                           `json:"schema_version"`
-	RunID         string                        `json:"run_id"`
-	Plan          benchmarkPlan                 `json:"plan"`
-	StartedAt     time.Time                     `json:"started_at"`
-	FinishedAt    time.Time                     `json:"finished_at"`
-	Status        string                        `json:"status"`
-	Error         string                        `json:"error,omitempty"`
-	PublicURLs    []string                      `json:"public_urls,omitempty"`
-	Direct        benchworkload.VisitorResult   `json:"direct_baseline"`
-	Steady        []benchworkload.VisitorResult `json:"steady"`
-	CleanupExact  bool                          `json:"cleanup_exact"`
-	CleanupStatus string                        `json:"cleanup_status"`
-	Generator     generatorResult               `json:"generator"`
+	SchemaVersion int                            `json:"schema_version"`
+	RunID         string                         `json:"run_id"`
+	Plan          benchmarkPlan                  `json:"plan"`
+	StartedAt     time.Time                      `json:"started_at"`
+	FinishedAt    time.Time                      `json:"finished_at"`
+	Status        string                         `json:"status"`
+	Error         string                         `json:"error,omitempty"`
+	PublicURLs    []string                       `json:"public_urls,omitempty"`
+	PublicURLInfo []benchmarkPublicURL           `json:"public_url_info,omitempty"`
+	Direct        benchworkload.VisitorResult    `json:"direct_baseline"`
+	Steady        []benchworkload.VisitorResult  `json:"steady"`
+	SteadyByURL   []map[string]*urlVisitorResult `json:"steady_by_public_url,omitempty"`
+	CleanupExact  bool                           `json:"cleanup_exact"`
+	CleanupStatus string                         `json:"cleanup_status"`
+	Generator     generatorResult                `json:"generator"`
+}
+
+type benchmarkPublicURL struct {
+	PublicURL   string        `json:"public_url"`
+	PublicURLID string        `json:"public_url_id"`
+	Transport   string        `json:"transport"`
+	Activation  time.Duration `json:"activation"`
+}
+
+type urlVisitorResult struct {
+	Scheduled    int                          `json:"scheduled"`
+	Started      int                          `json:"started"`
+	Successes    int                          `json:"successes"`
+	Failures     int                          `json:"failures"`
+	Timeouts     int                          `json:"timeouts"`
+	Missed       int                          `json:"missed"`
+	QueueExpired int                          `json:"queue_expired"`
+	FirstFailure *benchworkload.RequestResult `json:"first_failure,omitempty"`
 }
 
 type generatorResult struct {
@@ -156,12 +184,12 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 	if err := os.MkdirAll(c.ResultsRoot, 0o700); err != nil {
 		return err
 	}
-	dir, err := os.MkdirTemp(c.ResultsRoot, "staging-")
+	dir, err := os.MkdirTemp(c.ResultsRoot, "run-")
 	if err != nil {
 		return err
 	}
 	resultPath := filepath.Join(dir, "result.json")
-	initial := benchmarkResult{SchemaVersion: 1, RunID: filepath.Base(dir), Plan: plan,
+	initial := benchmarkResult{SchemaVersion: 2, RunID: filepath.Base(dir), Plan: plan,
 		StartedAt: time.Now().UTC(), Status: "running", CleanupStatus: "not_needed"}
 	if err := writeJSON(resultPath, initial); err != nil {
 		return err
@@ -190,7 +218,7 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 }
 
 func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir, runID string, progress io.Writer, checkpoint func(benchmarkResult) error) (result benchmarkResult, retErr error) {
-	result = benchmarkResult{SchemaVersion: 1, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
+	result = benchmarkResult{SchemaVersion: 2, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
 		Status: "running", CleanupStatus: "not_needed"}
 	defer func() {
 		var memory runtime.MemStats
@@ -216,11 +244,14 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	if retErr != nil {
 		return result, fmt.Errorf("local generator baseline: %w", retErr)
 	}
-	fmt.Fprintln(progress, "tnlbench: connecting to staging control")
+	if err := result.Direct.Err(); err != nil {
+		return result, fmt.Errorf("local generator baseline: %w", err)
+	}
+	fmt.Fprintf(progress, "tnlbench: connecting to %s\n", plan.Server)
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
-		Server: c.Server, Domain: "tnl.wtf", StateRoot: stateDir, Target: origin.URL,
-		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "staging-"), Ephemeral: true,
-		Transport: "mixed", RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},
+		Server: plan.Server, StateRoot: stateDir, Target: origin.URL,
+		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "run-"), Ephemeral: true,
+		Transport: c.Transport, RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},
 		Parallel: 4, StartParallel: 4,
 		ReadyTimeout: 5 * time.Minute, StopTimeout: 10 * time.Second,
 	})
@@ -266,8 +297,17 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		return result, err
 	}
 	urls := make([]string, c.PublicURLs)
+	result.PublicURLInfo = make([]benchmarkPublicURL, c.PublicURLs)
 	for _, publicURL := range publicURLs {
 		urls[publicURL.Index] = publicURL.Ready.PublicURL
+		transport := tunnel.TransportTLSTCP
+		if c.Transport == "quic" || c.Transport == "mixed" && publicURL.Index%2 == 0 {
+			transport = tunnel.TransportQUIC
+		}
+		result.PublicURLInfo[publicURL.Index] = benchmarkPublicURL{
+			PublicURL: publicURL.Ready.PublicURL, PublicURLID: publicURL.Ready.PublicURLID,
+			Transport: string(transport), Activation: publicURL.Activation,
+		}
 	}
 	result.PublicURLs = urls
 	if err := checkpoint(result); err != nil {
@@ -311,24 +351,82 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	}
 	for index := range c.Repetitions {
 		var phase benchworkload.VisitorResult
-		err := reportPhase(progress, fmt.Sprintf("staging window %d/%d", index+1, c.Repetitions), c.Duration, func() error {
+		byURL, observe := newURLVisitorResults(urls)
+		err := reportPhase(progress, fmt.Sprintf("server window %d/%d", index+1, c.Repetitions), c.Duration, func() error {
 			var err error
 			phase, err = visitor.Run(ctx, benchworkload.VisitorConfig{
 				Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
+				OnResult: observe,
 			}, urls)
 			return err
 		})
 		result.Steady = append(result.Steady, phase)
+		result.SteadyByURL = append(result.SteadyByURL, byURL)
+		if summaryErr := completeURLVisitorResults(urls, phase.Scheduled, byURL); summaryErr != nil {
+			return result, errors.Join(err, summaryErr)
+		}
 		if err != nil {
 			return result, err
 		}
-		for _, stream := range held {
-			if !stream.Alive() {
-				return result, errors.New("held visitor stream ended during steady traffic")
-			}
+		if err := visitorWindowError(phase, held); err != nil {
+			return result, fmt.Errorf("server visitor window %d: %w", index+1, err)
 		}
 	}
 	return result, nil
+}
+
+func visitorWindowError(result benchworkload.VisitorResult, held []*benchworkload.HeldStream) error {
+	err := result.Err()
+	for index, stream := range held {
+		if !stream.Alive() {
+			err = errors.Join(err, fmt.Errorf("held visitor stream %d ended during steady traffic", index))
+		}
+	}
+	return err
+}
+
+func newURLVisitorResults(urls []string) (map[string]*urlVisitorResult, func(benchworkload.RequestResult)) {
+	results := make(map[string]*urlVisitorResult, len(urls))
+	for _, publicURL := range urls {
+		results[publicURL] = new(urlVisitorResult)
+	}
+	// Visitor.Run serializes callbacks from its workers.
+	observe := func(row benchworkload.RequestResult) {
+		summary := results[row.URL]
+		if row.QueueExpired {
+			summary.QueueExpired++
+		} else {
+			summary.Started++
+			if row.Error == "" {
+				summary.Successes++
+			} else {
+				summary.Failures++
+				if row.Timeout {
+					summary.Timeouts++
+				}
+			}
+		}
+		if row.Error != "" && summary.FirstFailure == nil {
+			summary.FirstFailure = &row
+		}
+	}
+	return results, observe
+}
+
+func completeURLVisitorResults(urls []string, scheduled int, results map[string]*urlVisitorResult) error {
+	perURL, remainder := scheduled/len(urls), scheduled%len(urls)
+	for index, publicURL := range urls {
+		summary := results[publicURL]
+		summary.Scheduled = perURL
+		if index < remainder {
+			summary.Scheduled++
+		}
+		summary.Missed = summary.Scheduled - summary.Started - summary.QueueExpired
+		if summary.Missed < 0 {
+			return fmt.Errorf("public URL %s has more completed requests than scheduled", publicURL)
+		}
+	}
+	return nil
 }
 
 func waitForPublicURLDNS(ctx context.Context, publicURLs []string, lookup func(context.Context, string) ([]net.IPAddr, error)) error {
@@ -415,8 +513,9 @@ func (c reportCommand) run(stdout io.Writer) error {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return err
 	}
-	if result.SchemaVersion != 1 || result.Plan.Server != stagingServer {
-		return errors.New("invalid staging benchmark result")
+	server, err := clientstate.CanonicalServer(result.Plan.Server)
+	if result.SchemaVersion != 1 && result.SchemaVersion != 2 || err != nil || server != result.Plan.Server {
+		return errors.New("invalid benchmark result")
 	}
 	return printResult(stdout, result)
 }
@@ -436,8 +535,21 @@ func printResult(stdout io.Writer, result benchmarkResult) error {
 		return err
 	}
 	for index, phase := range result.Steady {
-		if _, err := fmt.Fprintf(stdout, "staging %d: %d/%d successful; p95 %s\n", index+1, phase.Successes, phase.Scheduled, p95(&phase)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "server %d: %d/%d successful; p95 %s\n", index+1, phase.Successes, phase.Scheduled, p95(&phase)); err != nil {
 			return err
+		}
+		if index < len(result.SteadyByURL) {
+			for _, publicURL := range result.PublicURLInfo {
+				summary := result.SteadyByURL[index][publicURL.PublicURL]
+				if summary == nil {
+					continue
+				}
+				if _, err := fmt.Fprintf(stdout, "  %s %s %s: %d/%d successful; %d missed; %d timed out\n",
+					publicURL.PublicURL, publicURL.PublicURLID, publicURL.Transport,
+					summary.Successes, summary.Scheduled, summary.Missed, summary.Timeouts); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if result.Error != "" {

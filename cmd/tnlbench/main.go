@@ -11,14 +11,14 @@ import (
 )
 
 type benchmarkCLI struct {
-	Plan   planCommand   `cmd:"" help:"Describe a local workload against staging without making changes."`
-	Run    runCommand    `cmd:"" help:"Run an approved local workload against the staging tnl server."`
-	Report reportCommand `cmd:"" help:"Show the results of a local staging workload."`
+	Plan   planCommand   `cmd:"" help:"Describe a deployed workload without making changes."`
+	Run    runCommand    `cmd:"" help:"Run an approved local workload against a tnl server."`
+	Report reportCommand `cmd:"" help:"Show the results of a deployed workload."`
 }
 
 func main() {
 	var commands benchmarkCLI
-	parsed := kong.Parse(&commands, kong.Name("tnlbench"), kong.Description("Measure the staging tnl server from a local publisher and visitor."))
+	parsed := kong.Parse(&commands, kong.Name("tnlbench"), kong.Description("Measure a tnl server from a local publisher and visitor."))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var err error

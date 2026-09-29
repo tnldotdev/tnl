@@ -1,5 +1,5 @@
 // Package benchworkload contains the publisher and visitor workloads shared by
-// local runtime tests and staging benchmarks. Runners own setup and cleanup.
+// local runtime tests and deployed benchmarks. Runners own setup and cleanup.
 package benchworkload
 
 import (

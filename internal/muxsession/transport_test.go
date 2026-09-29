@@ -1,6 +1,7 @@
 package muxsession
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -14,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,191 @@ import (
 )
 
 type pairFactory func(*testing.T) (Session, Session)
+
+// The local equivalent of Fly's basic UDP listener survives a bounded amount
+// of packet loss while held streams and fresh responses share a QUIC session.
+func TestQUICHeldAndFreshStreamsWithPacketLoss(t *testing.T) {
+	serverTLS, clientTLS := testTLSConfigs(t)
+	serverTLS, err := transportTLSConfig(serverTLS, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Close()
+	impaired := &impairedQUICPacketConn{PacketConn: packet}
+	transport := &quic.Transport{Conn: impaired}
+	defer transport.Close()
+	listener, err := transport.Listen(serverTLS, quicConfig(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	accepted := make(chan *quic.Conn, 1)
+	acceptErrors := make(chan error, 1)
+	go func() {
+		connection, err := listener.Accept(ctx)
+		if err != nil {
+			acceptErrors <- err
+			return
+		}
+		accepted <- connection
+	}()
+	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
+		Address: packet.LocalAddr().String(), ServerName: "relay.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var server Session
+	select {
+	case conn := <-accepted:
+		server = &quicSession{connection: conn}
+	case err := <-acceptErrors:
+		t.Fatal(err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	defer server.Close()
+	impaired.enabled.Store(true)
+
+	const held, fresh = 4, 100
+	response := bytes.Repeat([]byte("r"), 4096)
+	serverErrors := make(chan error, fresh+held)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		var workers sync.WaitGroup
+		defer workers.Wait()
+		for range held + fresh {
+			stream, err := server.AcceptStream(ctx)
+			if err != nil {
+				serverErrors <- err
+				return
+			}
+			workers.Go(func() {
+				defer stream.Close()
+				_ = stream.SetDeadline(time.Now().Add(15 * time.Second))
+				kind := make([]byte, 1)
+				if _, err := io.ReadFull(stream, kind); err != nil {
+					serverErrors <- err
+					return
+				}
+				if kind[0] == 'h' {
+					_, _ = io.Copy(io.Discard, stream)
+					return
+				}
+				request := make([]byte, len(response))
+				if _, err := io.ReadFull(stream, request); err != nil {
+					serverErrors <- err
+					return
+				}
+				if _, err := stream.Write(response); err != nil {
+					serverErrors <- err
+					return
+				}
+				if err := stream.CloseWrite(); err != nil {
+					serverErrors <- err
+				}
+			})
+		}
+	}()
+	heldStreams := make([]Stream, held)
+	for index := range heldStreams {
+		stream, err := client.OpenStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		if _, err := stream.Write([]byte("h")); err != nil {
+			t.Fatal(err)
+		}
+		heldStreams[index] = stream
+	}
+	clientErrors := make(chan error, fresh)
+	var clients sync.WaitGroup
+	sem := make(chan struct{}, 32)
+	start := time.Now()
+	for index := range fresh {
+		at := start.Add(time.Duration(index) * 10 * time.Millisecond)
+		if delay := time.Until(at); delay > 0 {
+			time.Sleep(delay)
+		}
+		clients.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			stream, err := client.OpenStream(ctx)
+			if err != nil {
+				clientErrors <- err
+				return
+			}
+			defer stream.Close()
+			_ = stream.SetDeadline(time.Now().Add(15 * time.Second))
+			if _, err := stream.Write(append([]byte("f"), response...)); err != nil {
+				clientErrors <- err
+				return
+			}
+			if err := stream.CloseWrite(); err != nil {
+				clientErrors <- err
+				return
+			}
+			got := make([]byte, len(response))
+			if _, err := io.ReadFull(stream, got); err != nil {
+				clientErrors <- err
+				return
+			}
+			if !bytes.Equal(got, response) {
+				clientErrors <- errors.New("incorrect QUIC stream response")
+			}
+		})
+	}
+	clients.Wait()
+	for _, stream := range heldStreams {
+		if _, err := stream.Write([]byte("h")); err != nil {
+			t.Errorf("held stream ended: %v", err)
+		}
+		_ = stream.CloseWrite()
+	}
+	select {
+	case <-serverDone:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	close(clientErrors)
+	for err := range clientErrors {
+		t.Error(err)
+	}
+	close(serverErrors)
+	for err := range serverErrors {
+		t.Error(err)
+	}
+	if impaired.dropped.Load() == 0 {
+		t.Fatal("packet loss was not exercised")
+	}
+}
+
+type impairedQUICPacketConn struct {
+	net.PacketConn
+	enabled atomic.Bool
+	packets atomic.Uint64
+	dropped atomic.Uint64
+}
+
+func (c *impairedQUICPacketConn) WriteTo(p []byte, address net.Addr) (int, error) {
+	if c.enabled.Load() {
+		time.Sleep(2 * time.Millisecond)
+		if c.packets.Add(1)%60 == 0 {
+			c.dropped.Add(1)
+			return len(p), nil
+		}
+	}
+	return c.PacketConn.WriteTo(p, address)
+}
 
 func TestQUICConnectorKeepsIdleSessionAlive(t *testing.T) {
 	const idleTimeout = time.Second

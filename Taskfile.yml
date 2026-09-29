@@ -330,14 +330,12 @@ tasks:
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
 
   go:bench:plan:
-    desc: Describe a local workload against the staging tnl server without creating resources
-    dotenv: [.env.bench]
+    desc: Describe a local workload against an explicit tnl server without creating resources
     cmds:
       - go run ./cmd/tnlbench plan
 
   go:bench:run:
-    desc: Run an explicitly approved local benchmark against staging
-    dotenv: [.env.bench]
+    desc: Run an explicitly approved benchmark against the selected tnl server
     cmds:
       - |
         set -eu
@@ -347,8 +345,7 @@ tasks:
         "$build_dir/tnlbench" run
 
   go:bench:report:
-    desc: Display results from a local staging benchmark
-    dotenv: [.env.bench]
+    desc: Display results from a deployed benchmark
     cmds:
       - go run ./cmd/tnlbench report
 

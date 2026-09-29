@@ -127,7 +127,11 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
-	if auth.Discovery.ManagedDeploymentDomain != config.Domain {
+	managedDomain := auth.Discovery.ManagedDeploymentDomain
+	if managedDomain == "" {
+		return nil, errors.New("server has no managed deployment domain for benchmark public URLs")
+	}
+	if config.Domain != "" && managedDomain != config.Domain {
 		return nil, errors.New("configured domain differs from control discovery")
 	}
 	identity, err := auth.Authority.IdentityContext(ctx)
@@ -154,7 +158,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	}
 	var domain authorityv1.Domain
 	for _, candidate := range domains.Domains {
-		if candidate.Kind == authorityv1.Managed && candidate.State == authorityv1.DomainStateReady && candidate.CanonicalDomain == config.Domain {
+		if candidate.Kind == authorityv1.Managed && candidate.State == authorityv1.DomainStateReady && candidate.CanonicalDomain == managedDomain {
 			domain = candidate
 			break
 		}
