@@ -42,6 +42,9 @@ type Config struct {
 	DNSAutomation               bool
 	Metrics                     *observability.Metrics
 	Route53CredentialsReadiness func(context.Context) error
+	ControlReadiness            func() error
+	IngressReadiness            func() error
+	RelayReadiness              func() error
 }
 
 // Store is the stored state used by the control API.
@@ -151,24 +154,46 @@ func (h *handler) GetHealth(response http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *handler) GetReadiness(response http.ResponseWriter, request *http.Request) {
-	database := controlv1.ReadinessResponseChecksDatabaseOk
-	result := controlv1.ReadinessResponseStatusReady
-	code := http.StatusOK
+	readiness := controlv1.ReadinessResponse{Status: controlv1.ReadinessResponseStatusReady}
+	readiness.Checks.Database = controlv1.ReadinessResponseChecksDatabaseOk
+	ready := true
 	if h.readiness == nil || h.readiness(request.Context()) != nil {
-		database = controlv1.ReadinessResponseChecksDatabaseFailed
-		result = controlv1.ReadinessResponseStatusNotReady
-		code = http.StatusServiceUnavailable
+		readiness.Checks.Database = controlv1.ReadinessResponseChecksDatabaseFailed
+		ready = false
 	}
-	readiness := controlv1.ReadinessResponse{Status: result}
-	readiness.Checks.Database = database
+	readiness.Checks.Control = controlv1.ReadinessResponseChecksControlOk
+	if h.config.ControlReadiness == nil || h.config.ControlReadiness() != nil {
+		readiness.Checks.Control = controlv1.ReadinessResponseChecksControlFailed
+		ready = false
+	}
+	if h.config.IngressReadiness != nil {
+		status := controlv1.ReadinessResponseChecksIngressOk
+		if h.config.IngressReadiness() != nil {
+			status = controlv1.ReadinessResponseChecksIngressFailed
+			ready = false
+		}
+		readiness.Checks.Ingress = &status
+	}
+	if h.config.RelayReadiness != nil {
+		status := controlv1.ReadinessResponseChecksRelayOk
+		if h.config.RelayReadiness() != nil {
+			status = controlv1.ReadinessResponseChecksRelayFailed
+			ready = false
+		}
+		readiness.Checks.Relay = &status
+	}
 	if h.config.Route53CredentialsReadiness != nil {
 		credentials := controlv1.ReadinessResponseChecksRoute53CredentialsOk
 		if h.config.Route53CredentialsReadiness(request.Context()) != nil {
 			credentials = controlv1.ReadinessResponseChecksRoute53CredentialsFailed
-			readiness.Status = controlv1.ReadinessResponseStatusNotReady
-			code = http.StatusServiceUnavailable
+			ready = false
 		}
 		readiness.Checks.Route53Credentials = &credentials
+	}
+	code := http.StatusOK
+	if !ready {
+		readiness.Status = controlv1.ReadinessResponseStatusNotReady
+		code = http.StatusServiceUnavailable
 	}
 	writeJSON(response, code, readiness)
 }

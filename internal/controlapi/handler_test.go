@@ -26,7 +26,10 @@ func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
 }
 
 func TestHealthAndReadiness(t *testing.T) {
-	cfg := Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}
+	cfg := Config{
+		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		ControlReadiness: func() error { return nil },
+	}
 	ready := new(bool)
 	handler := testHandler(t, cfg, nil, nil, func(context.Context) error {
 		if !*ready {
@@ -53,6 +56,12 @@ func TestHealthAndReadiness(t *testing.T) {
 	if readiness.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unready status = %d", readiness.Code)
 	}
+	var unreadyBody controlv1.ReadinessResponse
+	if err := json.Unmarshal(readiness.Body.Bytes(), &unreadyBody); err != nil ||
+		unreadyBody.Checks.Database != controlv1.ReadinessResponseChecksDatabaseFailed ||
+		unreadyBody.Checks.Control != controlv1.ReadinessResponseChecksControlOk {
+		t.Fatalf("unready checks = %#v, %v", unreadyBody, err)
+	}
 	*ready = true
 	readiness = httptest.NewRecorder()
 	handler.ServeHTTP(readiness, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
@@ -60,8 +69,65 @@ func TestHealthAndReadiness(t *testing.T) {
 		t.Fatalf("ready status = %d", readiness.Code)
 	}
 	var readyBody controlv1.ReadinessResponse
-	if err := json.Unmarshal(readiness.Body.Bytes(), &readyBody); err != nil || readyBody.Checks.Route53Credentials != nil {
+	if err := json.Unmarshal(readiness.Body.Bytes(), &readyBody); err != nil ||
+		readyBody.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk ||
+		readyBody.Checks.Control != controlv1.ReadinessResponseChecksControlOk ||
+		readyBody.Checks.Ingress != nil || readyBody.Checks.Relay != nil || readyBody.Checks.Route53Credentials != nil {
 		t.Fatalf("readiness without Route 53 = %#v, %v", readyBody, err)
+	}
+}
+
+func TestReadinessReportsRoleFailures(t *testing.T) {
+	var controlErr, ingressErr, relayErr error
+	cfg := Config{
+		ControlReadiness: func() error { return controlErr },
+		IngressReadiness: func() error { return ingressErr },
+		RelayReadiness:   func() error { return relayErr },
+	}
+	handler := testHandler(t, cfg, nil, nil, func(context.Context) error { return nil })
+	for _, test := range []struct {
+		name                             string
+		controlErr, ingressErr, relayErr error
+		code                             int
+		control                          controlv1.ReadinessResponseChecksControl
+		ingress                          controlv1.ReadinessResponseChecksIngress
+		relay                            controlv1.ReadinessResponseChecksRelay
+	}{
+		{"ready", nil, nil, nil, http.StatusOK, "ok", "ok", "ok"},
+		{"control", errors.New("private listener unavailable"), nil, nil, http.StatusServiceUnavailable, "failed", "ok", "ok"},
+		{"ingress", nil, errors.New("ingress lease unavailable"), nil, http.StatusServiceUnavailable, "ok", "failed", "ok"},
+		{"relay", nil, nil, errors.New("relay lease unavailable"), http.StatusServiceUnavailable, "ok", "ok", "failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controlErr, ingressErr, relayErr = test.controlErr, test.ingressErr, test.relayErr
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+			var body controlv1.ReadinessResponse
+			wantStatus := controlv1.ReadinessResponseStatusReady
+			if test.code != http.StatusOK {
+				wantStatus = controlv1.ReadinessResponseStatusNotReady
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != test.code ||
+				body.Status != wantStatus || body.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk ||
+				body.Checks.Control != test.control ||
+				body.Checks.Ingress == nil || *body.Checks.Ingress != test.ingress ||
+				body.Checks.Relay == nil || *body.Checks.Relay != test.relay {
+				t.Fatalf("role readiness: status=%d body=%#v decode=%v", response.Code, body, err)
+			}
+		})
+	}
+}
+
+func TestReadinessRequiresControlCheck(t *testing.T) {
+	handler := testHandler(t, Config{}, nil, nil, func(context.Context) error { return nil })
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+	var body controlv1.ReadinessResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusServiceUnavailable ||
+		body.Status != controlv1.ReadinessResponseStatusNotReady ||
+		body.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk ||
+		body.Checks.Control != controlv1.ReadinessResponseChecksControlFailed {
+		t.Fatalf("missing control check: status=%d body=%#v decode=%v", response.Code, body, err)
 	}
 }
 
@@ -69,6 +135,7 @@ func TestReadinessReportsRoute53CredentialFailure(t *testing.T) {
 	credentialsReady := false
 	cfg := Config{
 		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		ControlReadiness: func() error { return nil },
 		Route53CredentialsReadiness: func(context.Context) error {
 			if !credentialsReady {
 				return errors.New("web identity credentials unavailable")
@@ -91,7 +158,8 @@ func TestReadinessReportsRoute53CredentialFailure(t *testing.T) {
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
 		var body controlv1.ReadinessResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != test.code || body.Status != test.status ||
-			body.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk || body.Checks.Route53Credentials == nil || *body.Checks.Route53Credentials != test.dns {
+			body.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk || body.Checks.Control != controlv1.ReadinessResponseChecksControlOk ||
+			body.Checks.Route53Credentials == nil || *body.Checks.Route53Credentials != test.dns {
 			t.Fatalf("Route 53 readiness: status=%d body=%#v decode=%v", response.Code, body, err)
 		}
 	}

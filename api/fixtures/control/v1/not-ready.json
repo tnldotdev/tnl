@@ -1,1 +1,1 @@
-{ "status": "not_ready", "checks": { "database": "failed" } }
+{ "status": "not_ready", "checks": { "database": "failed", "control": "ok" } }

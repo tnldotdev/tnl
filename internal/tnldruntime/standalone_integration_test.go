@@ -91,6 +91,20 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		health.Status != controlv1.HealthResponseStatusOk {
 		t.Fatalf("control health = %s, %#v, %v", response.Status, health, err)
 	}
+	readinessResponse, err := client.Get("https://control.tnl.test/v1/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readinessResponse.Body.Close()
+	var readiness controlv1.ReadinessResponse
+	if err := json.NewDecoder(readinessResponse.Body).Decode(&readiness); err != nil ||
+		readinessResponse.StatusCode != http.StatusOK || readiness.Status != controlv1.ReadinessResponseStatusReady ||
+		readiness.Checks.Database != controlv1.ReadinessResponseChecksDatabaseOk ||
+		readiness.Checks.Control != controlv1.ReadinessResponseChecksControlOk ||
+		readiness.Checks.Ingress == nil || *readiness.Checks.Ingress != controlv1.ReadinessResponseChecksIngressOk ||
+		readiness.Checks.Relay == nil || *readiness.Checks.Relay != controlv1.ReadinessResponseChecksRelayOk {
+		t.Fatalf("standalone readiness = %s, %#v, %v", readinessResponse.Status, readiness, err)
+	}
 	var relayServices, relayLeases, ingressLeases int
 	if err := inspect.QueryRowContext(integrationOperationContext(t), `
 		SELECT

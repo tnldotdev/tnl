@@ -26,17 +26,17 @@ paths:
   /v1/ready:
     get:
       operationId: getReadiness
-      summary: Confirm that control and its database are ready
+      summary: Confirm that the tnld role is ready to serve
       security: []
       responses:
         "200":
-          description: Control is ready
+          description: The tnld role is ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
         "503":
-          description: Control is not ready
+          description: The tnld role is not ready
           content:
             application/json:
               schema:
@@ -648,10 +648,22 @@ components:
         checks:
           type: object
           additionalProperties: false
-          required: [database]
+          required: [database, control]
           properties:
             database:
               type: string
+              enum: [ok, failed]
+            control:
+              type: string
+              description: Control listeners and public control certificate are ready.
+              enum: [ok, failed]
+            ingress:
+              type: string
+              description: Present in standalone; checks the ingress lease, routing table, and listener.
+              enum: [ok, failed]
+            relay:
+              type: string
+              description: Present in standalone; checks both relay services and their listeners.
               enum: [ok, failed]
             route53_credentials:
               type: string

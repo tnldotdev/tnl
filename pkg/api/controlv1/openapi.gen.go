@@ -362,6 +362,24 @@ func (e PublisherConnectionState) Valid() bool {
 	}
 }
 
+// Defines values for ReadinessResponseChecksControl.
+const (
+	ReadinessResponseChecksControlFailed ReadinessResponseChecksControl = "failed"
+	ReadinessResponseChecksControlOk     ReadinessResponseChecksControl = "ok"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseChecksControl enum.
+func (e ReadinessResponseChecksControl) Valid() bool {
+	switch e {
+	case ReadinessResponseChecksControlFailed:
+		return true
+	case ReadinessResponseChecksControlOk:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessResponseChecksDatabase.
 const (
 	ReadinessResponseChecksDatabaseFailed ReadinessResponseChecksDatabase = "failed"
@@ -374,6 +392,42 @@ func (e ReadinessResponseChecksDatabase) Valid() bool {
 	case ReadinessResponseChecksDatabaseFailed:
 		return true
 	case ReadinessResponseChecksDatabaseOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReadinessResponseChecksIngress.
+const (
+	ReadinessResponseChecksIngressFailed ReadinessResponseChecksIngress = "failed"
+	ReadinessResponseChecksIngressOk     ReadinessResponseChecksIngress = "ok"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseChecksIngress enum.
+func (e ReadinessResponseChecksIngress) Valid() bool {
+	switch e {
+	case ReadinessResponseChecksIngressFailed:
+		return true
+	case ReadinessResponseChecksIngressOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReadinessResponseChecksRelay.
+const (
+	ReadinessResponseChecksRelayFailed ReadinessResponseChecksRelay = "failed"
+	ReadinessResponseChecksRelayOk     ReadinessResponseChecksRelay = "ok"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseChecksRelay enum.
+func (e ReadinessResponseChecksRelay) Valid() bool {
+	switch e {
+	case ReadinessResponseChecksRelayFailed:
+		return true
+	case ReadinessResponseChecksRelayOk:
 		return true
 	default:
 		return false
@@ -759,7 +813,15 @@ type PublisherConnectionState string
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
 	Checks struct {
+		// Control Control listeners and public control certificate are ready.
+		Control  ReadinessResponseChecksControl  `json:"control"`
 		Database ReadinessResponseChecksDatabase `json:"database"`
+
+		// Ingress Present in standalone; checks the ingress lease, routing table, and listener.
+		Ingress *ReadinessResponseChecksIngress `json:"ingress,omitempty"`
+
+		// Relay Present in standalone; checks both relay services and their listeners.
+		Relay *ReadinessResponseChecksRelay `json:"relay,omitempty"`
 
 		// Route53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
 		Route53Credentials *ReadinessResponseChecksRoute53Credentials `json:"route53_credentials,omitempty"`
@@ -767,8 +829,17 @@ type ReadinessResponse struct {
 	Status ReadinessResponseStatus `json:"status"`
 }
 
+// ReadinessResponseChecksControl Control listeners and public control certificate are ready.
+type ReadinessResponseChecksControl string
+
 // ReadinessResponseChecksDatabase defines model for ReadinessResponse.Checks.Database.
 type ReadinessResponseChecksDatabase string
+
+// ReadinessResponseChecksIngress Present in standalone; checks the ingress lease, routing table, and listener.
+type ReadinessResponseChecksIngress string
+
+// ReadinessResponseChecksRelay Present in standalone; checks both relay services and their listeners.
+type ReadinessResponseChecksRelay string
 
 // ReadinessResponseChecksRoute53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
 type ReadinessResponseChecksRoute53Credentials string
@@ -1136,7 +1207,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetReadiness Confirm that control and its database are ready
+	// GetReadiness Confirm that the tnld role is ready to serve
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1662,7 +1733,7 @@ func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRu
 	return c.Client.Do(req)
 }
 
-// GetReadiness Confirm that control and its database are ready
+// GetReadiness Confirm that the tnld role is ready to serve
 //
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3139,7 +3210,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
 
-	// GetReadinessWithResponse Confirm that control and its database are ready
+	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4861,7 +4932,7 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Contex
 	return ParseMarkPublishRunReadyResponse(rsp)
 }
 
-// GetReadinessWithResponse Confirm that control and its database are ready
+// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -5906,7 +5977,7 @@ type ServerInterface interface {
 	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 	// (POST /v1/publish-runs/{publish_run_id}/ready)
 	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// GetReadiness Confirm that control and its database are ready
+	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
 	// CreateDNSAuthority Create a DNS authority for one claimed domain

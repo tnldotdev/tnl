@@ -63,12 +63,18 @@ func newPublicAPIHandler(
 	httpClient *http.Client,
 	database *controlstate.Database,
 	metrics *observability.Metrics,
+	d *daemon,
 	route53Readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
 	controlConfig.Route53CredentialsReadiness = route53Readiness
+	controlConfig.ControlReadiness = func() error { return d.readyControl(cfg.Role, time.Now()) }
+	if cfg.Role == tnldconfig.RoleStandalone {
+		controlConfig.IngressReadiness = func() error { return d.readyIngress(time.Now()) }
+		controlConfig.RelayReadiness = func() error { return d.readyRelays(cfg.Role, time.Now()) }
+	}
 	mux, err := controlapi.NewHandler(
 		controlConfig, database, database, database.Readiness,
 	)
