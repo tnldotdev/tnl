@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
@@ -148,8 +148,8 @@ func testIntegrationViteRejected(t *testing.T, server *integrationBinaryStandalo
 		t.Fatal("tnl dev did not exit after route creation was rejected")
 	}
 	assertIntegrationBinaryProcessResult(t, f.dev)
-	if !strings.Contains(f.dev.output.String(), controlclient.ErrUnavailable.Error()) {
-		t.Fatalf("missing control provisioning error:\n%s", f.dev.output.String())
+	if !strings.Contains(f.dev.output.String(), string(diagnostic.ServerUnavailable)) {
+		t.Fatalf("missing server-unavailable diagnostic:\n%s", f.dev.output.String())
 	}
 	f.assertCleanup(t)
 }
