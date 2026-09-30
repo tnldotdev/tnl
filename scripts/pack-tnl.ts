@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import * as z from "zod";
 import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
 import { packageManifestSchema, type PackedPackage } from "./npm-artifacts.ts";
+import { assertReleaseVersion } from "./release-version.ts";
 import { parseJSON } from "./validation.ts";
 
 const releaseMetadataSchema = z.object({ version: z.string(), commit: z.string() });
@@ -59,7 +60,7 @@ const artifacts = await readJson(
   path.join(root, "dist", "artifacts.json"),
   z.array(artifactSchema),
 );
-assertValidVersion(metadata.version);
+assertReleaseVersion(metadata.version);
 if (expectedVersion !== undefined) {
   assert.equal(
     metadata.version,
@@ -310,20 +311,6 @@ function exactlyOne<T>(values: readonly T[], description: string): T {
   const [value] = values;
   assert(value !== undefined, `missing ${description}`);
   return value;
-}
-
-function assertValidVersion(version: string): void {
-  assert.equal(typeof version, "string", "GoReleaser version must be a string");
-  const match = version.match(
-    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
-  );
-  assert(match, `GoReleaser version is not npm-compatible SemVer: ${version}`);
-  for (const identifier of match[4]?.split(".") ?? []) {
-    assert(
-      !/^[0-9]+$/.test(identifier) || identifier === "0" || !identifier.startsWith("0"),
-      `numeric prerelease identifier has a leading zero: ${identifier}`,
-    );
-  }
 }
 
 function sha256(value: Uint8Array): string {

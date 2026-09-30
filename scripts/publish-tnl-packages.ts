@@ -12,6 +12,7 @@ import {
   packageManifestSchema,
   type PackedPackage,
 } from "./npm-artifacts.ts";
+import { compareReleaseVersions } from "./release-version.ts";
 import { parseJSON, parseValue } from "./validation.ts";
 
 const registryPackageSchema = z.object({
@@ -64,7 +65,7 @@ for (const package_ of packages) {
   const taggedVersion = registry?.["dist-tags"]?.[distTag];
   if (typeof taggedVersion === "string") {
     assert(
-      compareVersions(taggedVersion, expectedVersion) <= 0,
+      compareReleaseVersions(taggedVersion, expectedVersion) <= 0,
       `${package_.name} ${distTag} already points to newer version ${taggedVersion}`,
     );
   }
@@ -125,56 +126,4 @@ async function registryPackage(
   }
   assert(response.ok, `npm registry returned ${response.status} for ${packageName}`);
   return parseValue(await response.json(), registryPackageSchema, "npm registry response");
-}
-
-function compareVersions(left: string, right: string): number {
-  const parsedLeft = parseVersion(left);
-  const parsedRight = parseVersion(right);
-  for (const index of [0, 1, 2] as const) {
-    if (parsedLeft.release[index] !== parsedRight.release[index]) {
-      return parsedLeft.release[index] < parsedRight.release[index] ? -1 : 1;
-    }
-  }
-  if (parsedLeft.prerelease.length === 0 || parsedRight.prerelease.length === 0) {
-    return parsedLeft.prerelease.length === parsedRight.prerelease.length
-      ? 0
-      : parsedLeft.prerelease.length === 0
-        ? 1
-        : -1;
-  }
-  const length = Math.max(parsedLeft.prerelease.length, parsedRight.prerelease.length);
-  for (let index = 0; index < length; index += 1) {
-    const leftIdentifier = parsedLeft.prerelease[index];
-    const rightIdentifier = parsedRight.prerelease[index];
-    if (leftIdentifier === undefined || rightIdentifier === undefined) {
-      return leftIdentifier === rightIdentifier ? 0 : leftIdentifier === undefined ? -1 : 1;
-    }
-    if (leftIdentifier === rightIdentifier) {
-      continue;
-    }
-    const leftNumeric = /^[0-9]+$/.test(leftIdentifier);
-    const rightNumeric = /^[0-9]+$/.test(rightIdentifier);
-    if (leftNumeric && rightNumeric) {
-      return Number(leftIdentifier) < Number(rightIdentifier) ? -1 : 1;
-    }
-    if (leftNumeric !== rightNumeric) {
-      return leftNumeric ? -1 : 1;
-    }
-    return leftIdentifier < rightIdentifier ? -1 : 1;
-  }
-  return 0;
-}
-
-function parseVersion(value: string): {
-  release: readonly [number, number, number];
-  prerelease: string[];
-} {
-  const match = value.match(
-    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
-  );
-  assert(match, `invalid npm version ${value}`);
-  return {
-    release: [Number(match[1]), Number(match[2]), Number(match[3])],
-    prerelease: match[4]?.split(".") ?? [],
-  };
 }

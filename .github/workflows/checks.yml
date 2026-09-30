@@ -316,19 +316,6 @@ jobs:
           test -x "dist/tnl_${TARGET}/tnl"
           test -x "dist/tnld_${TARGET}/tnld"
 
-  release-snapshot:
-    name: Release snapshot
-    if: github.event_name == 'pull_request' && always()
-    needs: release-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Verify release checks passed
-        env:
-          RESULT: ${{ needs.release-build.result }}
-        run: test "$RESULT" = success
-
   container:
     name: Container
     runs-on: ubuntu-latest

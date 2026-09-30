@@ -1,25 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
-import {
-  npmPackageMetadataSchema,
-  packageManifestSchema,
-  type PackageManifest,
-  type PackedPackage,
-} from "./npm-artifacts.ts";
+import { npmPackageMetadataSchema } from "./npm-artifacts.ts";
 import { parseJSON } from "./validation.ts";
 
-const execFileAsync = promisify(execFile);
-const packageDirectoryArgument = process.argv[2];
-assert(packageDirectoryArgument, "usage: node scripts/verify-tnl-install.ts PACKAGE_DIRECTORY");
-
-const packageDirectory = path.resolve(packageDirectoryArgument);
+const directoryArgument = process.argv[2];
+assert(directoryArgument, "usage: node scripts/verify-tnl-install.ts PACKAGE_DIRECTORY");
+const packageDirectory = path.resolve(directoryArgument);
 const metadata = parseJSON(
   await readFile(path.join(packageDirectory, "tnl-npm-packages.json"), "utf8"),
   npmPackageMetadataSchema,
@@ -29,194 +21,88 @@ const target = nativeTargets.find(
   ({ platform, architecture }) => platform === process.platform && architecture === process.arch,
 );
 assert(target, `unsupported installation target ${process.platform}-${process.arch}`);
-assert.equal(
-  metadata.packages.filter((entry) => entry.name === target.packageName).length,
-  1,
-  `expected exactly one ${process.platform}-${process.arch} native package`,
-);
+const launcher = metadata.packages.filter((entry) => entry.name === "@tnldotdev/tnl");
+const native = metadata.packages.filter((entry) => entry.name === target.packageName);
+assert.equal(launcher.length, 1, "expected one launcher package");
+assert.equal(native.length, 1, `expected one ${target.packageName} package`);
+assert(launcher[0]?.kind === "launcher" && native[0]?.kind === "native");
 
-const registry = await startRegistry();
-try {
-  for (const packageManager of ["npm", "pnpm"] as const) {
-    await verifyPackageManager(packageManager, registry.url);
-  }
-} finally {
-  await registry.close();
-}
-
-async function verifyPackageManager(
-  packageManager: "npm" | "pnpm",
-  registryURL: string,
-): Promise<void> {
-  const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${packageManager}-consumer-`));
+for (const manager of ["npm", "pnpm"] as const) {
+  const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${manager}-consumer-`));
   try {
+    // packing checks the launcher dependency map; install the matching native tarball offline.
     await writeFile(
       path.join(consumer, "package.json"),
-      `${JSON.stringify(
-        {
-          dependencies: { "@tnldotdev/tnl": metadata.version },
-          private: true,
+      JSON.stringify({
+        private: true,
+        dependencies: {
+          "@tnldotdev/tnl": `file:${path.join(packageDirectory, launcher[0].tarball)}`,
         },
-        null,
-        2,
-      )}\n`,
+        optionalDependencies: {
+          [native[0].name]: `file:${path.join(packageDirectory, native[0].tarball)}`,
+        },
+      }),
     );
-    if (packageManager === "npm") {
-      await run(
-        "npm",
-        [
-          "install",
-          "--cache",
-          path.join(consumer, ".npm-cache"),
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-          "--registry",
-          registryURL,
-        ],
-        consumer,
-      );
-    } else {
-      await run(
-        "pnpm",
-        [
-          "install",
-          "--ignore-scripts",
-          "--registry",
-          registryURL,
-          "--store-dir",
-          path.join(consumer, ".pnpm-store"),
-        ],
-        consumer,
-      );
-    }
-
-    const executable = path.join(consumer, "node_modules", ".bin", "tnl");
-    const { stdout } = await run(executable, ["version"], consumer);
+    const args =
+      manager === "npm"
+        ? [
+            "install",
+            "--offline",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--cache",
+            path.join(consumer, ".cache"),
+          ]
+        : [
+            "install",
+            "--offline",
+            "--ignore-scripts",
+            "--store-dir",
+            path.join(consumer, ".store"),
+          ];
+    await run(manager, args, consumer);
+    const { stdout } = await run(
+      path.join(consumer, "node_modules", ".bin", "tnl"),
+      ["version"],
+      consumer,
+    );
     assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
-    await writeFile(
-      path.join(consumer, "verify-config.mjs"),
-      `import assert from "node:assert/strict";
-import { defineConfig } from "@tnldotdev/tnl/config";
-const config = { tunnel: { allowAllIPs: true } };
-assert.equal(defineConfig(config), config);
-`,
-    );
-    await run(process.execPath, ["verify-config.mjs"], consumer);
-    await writeFile(
-      path.join(consumer, "verify-integrations.mjs"),
-      `const [{ tnl: runtime }, { withTnl }, { default: tnl }] = await Promise.all([
-  import("@tnldotdev/tnl"),
-  import("@tnldotdev/tnl/next"),
-  import("@tnldotdev/tnl/vite"),
-]);
-if (runtime.port !== 3000 || runtime.services !== undefined || runtime.dev !== false || typeof runtime.register !== "function") throw new Error("invalid root runtime outside development");
-if (typeof withTnl !== "function") throw new Error("missing Next.js integration");
-if (typeof tnl !== "function") throw new Error("missing Vite integration");
-`,
-    );
-    await run(process.execPath, ["verify-integrations.mjs"], consumer);
     await assert.rejects(
       () => readFile(path.join(consumer, "node_modules", ".bin", "tnld")),
       /ENOENT/,
+    );
+    await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+      const [{ tnl }, { defineConfig }, { withTnl }, { default: vite }] = await Promise.all([
+        import("@tnldotdev/tnl"), import("@tnldotdev/tnl/config"),
+        import("@tnldotdev/tnl/next"), import("@tnldotdev/tnl/vite"),
+      ]);
+      const config = { tunnel: { allowAllIPs: true } };
+      if (tnl.port !== 3000 || tnl.services !== undefined || tnl.dev !== false || typeof tnl.register !== "function" ||
+          defineConfig(config) !== config || typeof withTnl !== "function" || typeof vite !== "function") {
+        throw new Error("release package exports are invalid");
+      }
+    `,
+      ],
+      consumer,
     );
   } finally {
     await rm(consumer, { force: true, recursive: true });
   }
 }
 
-async function startRegistry() {
-  const packages = new Map<
-    string,
-    { entry: PackedPackage; manifest: PackageManifest; tarballPathname: string }
-  >();
-  const tarballs = new Map<string, string>();
-  for (const entry of metadata.packages) {
-    const tarballPath = path.join(packageDirectory, entry.tarball);
-    const { stdout } = await execFileAsync("tar", ["-xOzf", tarballPath, "package/package.json"], {
-      maxBuffer: 1024 * 1024,
-    });
-    const manifest = parseJSON(stdout, packageManifestSchema, "packed manifest");
-    assert.equal(manifest.name, entry.name);
-    assert.equal(manifest.version, metadata.version);
-    const tarballPathname = `/tarballs/${entry.tarball}`;
-    packages.set(entry.name, { entry, manifest, tarballPathname });
-    tarballs.set(tarballPathname, tarballPath);
-  }
-
-  const server = createServer(async (request, response) => {
-    try {
-      const url = new URL(request.url ?? "/", "http://registry.invalid");
-      const tarball = tarballs.get(url.pathname);
-      if (tarball !== undefined) {
-        response.setHeader("Content-Type", "application/octet-stream");
-        response.end(await readFile(tarball));
-        return;
-      }
-
-      const packageName = decodeURIComponent(url.pathname.slice(1));
-      const package_ = packages.get(packageName);
-      if (package_ === undefined) {
-        const upstream = await fetch(new URL(request.url ?? "/", "https://registry.npmjs.org"));
-        response.statusCode = upstream.status;
-        const contentType = upstream.headers.get("content-type");
-        if (contentType !== null) {
-          response.setHeader("Content-Type", contentType);
-        }
-        response.end(Buffer.from(await upstream.arrayBuffer()));
-        return;
-      }
-      const address = server.address();
-      assert(typeof address === "object" && address !== null);
-      const versionManifest = {
-        ...package_.manifest,
-        dist: {
-          integrity: package_.entry.integrity,
-          tarball: `http://127.0.0.1:${address.port}${package_.tarballPathname}`,
-        },
-      };
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          name: packageName,
-          "dist-tags": { latest: metadata.version },
-          versions: { [metadata.version]: versionManifest },
-        }),
-      );
-    } catch (error) {
-      response.statusCode = 500;
-      response.end(error instanceof Error ? error.message : String(error));
-    }
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  assert(typeof address === "object" && address !== null);
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
-  };
-}
-
-async function run(command: string, arguments_: readonly string[], cwd: string) {
+async function run(command: string, args: readonly string[], cwd: string) {
   try {
-    return await execFileAsync(command, arguments_, {
-      cwd,
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    return await promisify(execFile)(command, args, { cwd, maxBuffer: 10 * 1024 * 1024 });
   } catch (error) {
     if (typeof error === "object" && error !== null) {
-      if ("stdout" in error && error.stdout) {
-        process.stdout.write(String(error.stdout));
-      }
-      if ("stderr" in error && error.stderr) {
-        process.stderr.write(String(error.stderr));
-      }
+      if ("stdout" in error && error.stdout) process.stdout.write(String(error.stdout));
+      if ("stderr" in error && error.stderr) process.stderr.write(String(error.stderr));
     }
     throw error;
   }
