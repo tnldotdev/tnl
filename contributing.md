@@ -79,6 +79,9 @@ mise exec -- pnpm --filter @tnldotdev/tnl build
 mise exec -- pnpm exec vitest run packages/tnl/vite.test.ts
 ```
 
+Run `mise exec -- task js:check` to build once and run the JavaScript checks
+used in CI, including package verification.
+
 Keep the package root safe to import in a browser. The public exports live in
 `packages/tnl/package.json`; the private development socket is not an extension
 API. Write npm runtime code and tooling in TypeScript. Validate external data

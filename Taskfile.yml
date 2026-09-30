@@ -354,6 +354,16 @@ tasks:
     cmds:
       - pnpm build
 
+  js:check:
+    desc: Build once and run JavaScript checks
+    cmds:
+      - task: js:build
+      - pnpm typecheck:run
+      - pnpm test:run
+      - task: js:lint
+      - task: js:format-check
+      - task: js:pack
+
   js:pack:
     cmds:
       - pnpm run pack

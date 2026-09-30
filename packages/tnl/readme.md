@@ -6,9 +6,9 @@ or newer. The package selects a native binary through optional dependencies;
 it does not install the `tnld` server.
 
 ```console
-pnpm add -D @tnldotdev/tnl@next
-pnpm exec tnl init
-pnpm exec tnl dev
+npm install -D @tnldotdev/tnl@next
+npx tnl init
+npx tnl dev
 ```
 
 `tnl init` sets up missing project and framework configuration and lists any
