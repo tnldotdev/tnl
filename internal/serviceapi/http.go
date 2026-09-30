@@ -2,6 +2,7 @@
 package serviceapi
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +46,12 @@ func DecodeJSON(response http.ResponseWriter, request *http.Request, destination
 		return false
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, MaximumRequestBytes)
-	if err := httpjson.Decode(json.NewDecoder(request.Body), destination); err != nil {
+	reader := bufio.NewReader(request.Body)
+	if !startsWithJSONObject(reader) {
+		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must be one JSON object matching the service schema")
+		return false
+	}
+	if err := httpjson.Decode(json.NewDecoder(reader), destination); err != nil {
 		detail := "Request body must be one JSON object matching the service schema"
 		if errors.Is(err, httpjson.ErrTrailingContent) {
 			detail = "Request body must contain exactly one JSON value"
@@ -54,6 +60,21 @@ func DecodeJSON(response http.ResponseWriter, request *http.Request, destination
 		return false
 	}
 	return true
+}
+
+func startsWithJSONObject(reader *bufio.Reader) bool {
+	for {
+		character, err := reader.ReadByte()
+		if err != nil {
+			return false
+		}
+		if character == '{' {
+			return reader.UnreadByte() == nil
+		}
+		if character != ' ' && character != '\t' && character != '\r' && character != '\n' {
+			return false
+		}
+	}
 }
 
 func WriteJSON(response http.ResponseWriter, status int, value any) {
@@ -75,6 +96,43 @@ func WriteProblemError(response http.ResponseWriter, problem *ProblemError) {
 	}{
 		Type: problem.Type, Title: problem.Title, Status: problem.Status, Detail: problem.Detail,
 	})
+}
+
+// AuthenticateClusterRequest applies the private API's cache and authentication
+// policy before dispatching a request to a role-specific router.
+func AuthenticateClusterRequest(response http.ResponseWriter, request *http.Request, secrets BearerSecrets) bool {
+	response.Header().Set("Cache-Control", "no-store")
+	if secrets.Authenticate(request.Header) {
+		return true
+	}
+	response.Header().Set("WWW-Authenticate", "Bearer")
+	WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
+	return false
+}
+
+// WriteServiceError handles the shared private API error boundary. Callers
+// supply only the role-specific detail for unexpected failures.
+func WriteServiceError(
+	response http.ResponseWriter,
+	request *http.Request,
+	err error,
+	report func(error),
+	detail string,
+) bool {
+	if err == nil {
+		return false
+	}
+	if request.Context().Err() != nil {
+		return true
+	}
+	var problem *ProblemError
+	if errors.As(err, &problem) {
+		WriteProblemError(response, problem)
+		return true
+	}
+	report(err)
+	WriteProblem(response, http.StatusInternalServerError, "internal", detail)
+	return true
 }
 
 func ValidIdentifiers(values ...string) bool {

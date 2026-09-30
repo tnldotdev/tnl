@@ -72,10 +72,7 @@ func NewHandler(config Config) (http.Handler, error) {
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	response.Header().Set("Cache-Control", "no-store")
-	if !h.clusterSecrets.Authenticate(request.Header) {
-		response.Header().Set("WWW-Authenticate", "Bearer")
-		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
+	if !serviceapi.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
 		return
 	}
 	h.mux.ServeHTTP(response, request)
@@ -178,20 +175,7 @@ func (h *handler) observeRecovery(
 }
 
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
-	if err == nil {
-		return false
-	}
-	if request.Context().Err() != nil {
-		return true
-	}
-	var problem *serviceapi.ProblemError
-	if errors.As(err, &problem) {
-		serviceapi.WriteProblemError(response, problem)
-		return true
-	}
-	h.service.report(err)
-	serviceapi.WriteProblem(response, http.StatusInternalServerError, "internal", "The ingress service request failed")
-	return true
+	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The ingress service request failed")
 }
 
 // storeProblem is shared by HTTP and standalone adapters. Role controllers see

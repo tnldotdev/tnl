@@ -1,7 +1,9 @@
 package serviceapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,12 +20,15 @@ func TestDecodeJSONPolicy(t *testing.T) {
 		problem, detail         string
 	}{
 		{"object", "application/json", object, 0, "", ""},
+		{"leading whitespace", "application/json", " \n" + object, 0, "", ""},
 		{"charset", "application/json; charset=utf-8", object, 0, "", ""},
 		{"at limit", "application/json", object + strings.Repeat(" ", MaximumRequestBytes-len(object)), 0, "", ""},
 		{"missing type", "", object, 415, "unsupported_media_type", "Content-Type must be application/json"},
 		{"wrong type", "text/plain", object, 415, "unsupported_media_type", "Content-Type must be application/json"},
 		{"malformed type", "application/json; charset", object, 415, "unsupported_media_type", "Content-Type must be application/json"},
 		{"unknown field", "application/json", `{"other":7}`, 400, "invalid_json", "Request body must be one JSON object matching the service schema"},
+		{"null", "application/json", `null`, 400, "invalid_json", "Request body must be one JSON object matching the service schema"},
+		{"array", "application/json", `[]`, 400, "invalid_json", "Request body must be one JSON object matching the service schema"},
 		{"malformed", "application/json", `{`, 400, "invalid_json", "Request body must be one JSON object matching the service schema"},
 		{"wrong value type", "application/json", `{"value":"seven"}`, 400, "invalid_json", "Request body must be one JSON object matching the service schema"},
 		{"second value", "application/json", object + `{}`, 400, "invalid_json", "Request body must contain exactly one JSON value"},
@@ -50,6 +55,76 @@ func TestDecodeJSONPolicy(t *testing.T) {
 			assertProblem(t, response, test.status, test.problem, test.detail)
 		})
 	}
+}
+
+func TestAuthenticateClusterRequest(t *testing.T) {
+	const secret = "private-cluster-secret-012345678901"
+	secrets, err := NewBearerSecrets(secret, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, authorization string
+		accepted            bool
+	}{
+		{"authenticated", "Bearer " + secret, true},
+		{"missing", "", false},
+		{"wrong scheme", "Basic " + secret, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/internal/v1/relays", nil)
+			request.Header.Set("Authorization", test.authorization)
+			response := httptest.NewRecorder()
+			if accepted := AuthenticateClusterRequest(response, request, secrets); accepted != test.accepted {
+				t.Fatalf("authenticated = %t", accepted)
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("cache policy = %q", response.Header().Get("Cache-Control"))
+			}
+			if test.accepted {
+				if response.Code != http.StatusOK || response.Body.Len() != 0 {
+					t.Fatalf("authentication wrote a response: %d, %s", response.Code, response.Body.String())
+				}
+				return
+			}
+			if response.Header().Get("WWW-Authenticate") != "Bearer" {
+				t.Fatalf("challenge header = %q", response.Header().Get("WWW-Authenticate"))
+			}
+			assertProblem(t, response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
+		})
+	}
+}
+
+func TestWriteServiceErrorBoundary(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/ingresses", nil)
+	failure := errors.New("database failed")
+	var reported error
+	report := func(err error) { reported = err }
+	response := httptest.NewRecorder()
+	if WriteServiceError(response, request, nil, report, "failed") || reported != nil || response.Body.Len() != 0 {
+		t.Fatal("successful service call wrote an error")
+	}
+
+	canceled, cancel := context.WithCancel(request.Context())
+	cancel()
+	response = httptest.NewRecorder()
+	if !WriteServiceError(response, request.WithContext(canceled), failure, report, "failed") ||
+		reported != nil || response.Body.Len() != 0 {
+		t.Fatal("canceled request wrote or reported an error")
+	}
+
+	response = httptest.NewRecorder()
+	problem := NewProblemError(http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
+	if !WriteServiceError(response, request, problem, report, "failed") || reported != nil {
+		t.Fatal("known service problem was not forwarded")
+	}
+	assertProblem(t, response, http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
+
+	response = httptest.NewRecorder()
+	if !WriteServiceError(response, request, failure, report, "failed") || !errors.Is(reported, failure) {
+		t.Fatal("unexpected failure was not reported")
+	}
+	assertProblem(t, response, http.StatusInternalServerError, "internal", "failed")
 }
 
 func assertProblem(t *testing.T, response *httptest.ResponseRecorder, status int, kind, detail string) {
