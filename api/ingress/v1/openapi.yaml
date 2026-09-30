@@ -412,7 +412,6 @@ components:
           enum: [allow_all, allowlist]
         allowed_ip_prefixes:
           type: array
-          maxItems: 64
           uniqueItems: true
           items:
             type: string

@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	maxResponseBytes       = 64 << 10
+	maxResponseBytes       = 1 << 20
 	defaultRequestTimeout  = 20 * time.Second
 	certificateCallTimeout = 150 * time.Second
 )

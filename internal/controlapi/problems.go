@@ -60,7 +60,11 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
-	request.Body = http.MaxBytesReader(response, request.Body, 64<<10)
+	return decodeJSONLimited(response, request, target, 64<<10)
+}
+
+func decodeJSONLimited(response http.ResponseWriter, request *http.Request, target any, limit int64) error {
+	request.Body = http.MaxBytesReader(response, request.Body, limit)
 	return httpjson.Decode(json.NewDecoder(request.Body), target)
 }
 

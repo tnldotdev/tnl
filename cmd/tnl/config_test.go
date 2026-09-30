@@ -129,6 +129,54 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 }
 
+func TestProviderFlagsReplaceConfiguredProvidersAndCombineWithIPs(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"publish", "--allow-provider", "github", "--allow-ip", "198.51.100.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTunnelCLIUnits(parsed, &flags)
+	target := config.Target("3000")
+	root := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Tunnel:  &config.Tunnel{AllowProviders: []string{"stripe"}},
+		Publish: &config.Publish{Target: &target},
+	}}}
+	if err := root.applyPublish(&flags.Publish); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Publish.AllowAllIPs || !reflect.DeepEqual(flags.Publish.AllowProvider, []string{"github"}) ||
+		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
+		t.Fatalf("provider and IP flags = %#v", flags.Publish.tunnelFlags)
+	}
+	all := true
+	publicFlags := tunnelFlags{AllowProvider: []string{"github"}}
+	applyTunnelConfiguration(&publicFlags, &config.Tunnel{AllowAllIPs: &all})
+	if publicFlags.AllowAllIPs || !reflect.DeepEqual(publicFlags.AllowProvider, []string{"github"}) {
+		t.Fatalf("CLI provider did not override configured allow-all: %#v", publicFlags)
+	}
+}
+
+func TestProviderFlagsRejectUnknownDuplicateAndPublicConflicts(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flags tunnelFlags
+	}{
+		{"unknown", tunnelFlags{AllowProvider: []string{"unknown"}}},
+		{"duplicate", tunnelFlags{AllowProvider: []string{"stripe", "stripe"}}},
+		{"public", tunnelFlags{AllowAllIPs: true, AllowProvider: []string{"github"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateTunnelFlags(test.flags); err == nil {
+				t.Fatalf("invalid provider flags accepted: %#v", test.flags)
+			}
+		})
+	}
+}
+
 func TestProjectConfigurationSetsConfiguredCommandDirectory(t *testing.T) {
 	directory := t.TempDir()
 	command := []string{"vite"}

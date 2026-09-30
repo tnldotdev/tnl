@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/webhookips"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -23,40 +25,73 @@ func (l *testClientIPLookup) ClientIP(context.Context) (controlv1.ClientIPRespon
 
 func TestResolveIPPolicyDefaultsToCurrentIPAndAddsExplicitPrefixes(t *testing.T) {
 	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
-	policy, current, err := resolveIPPolicy(t.Context(), lookup, []string{"198.51.100.8/24"}, false)
+	policy, err := resolveIPPolicy(t.Context(), lookup, []string{"198.51.100.8/24"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"192.0.2.4/32", "198.51.100.0/24"}
-	if current != "192.0.2.4" || !reflect.DeepEqual(policy, want) || lookup.calls != 1 {
-		t.Fatalf("policy = %#v, current = %q, calls = %d", policy, current, lookup.calls)
+	if policy.current != "192.0.2.4" || !reflect.DeepEqual(policy.prefixes, want) || lookup.calls != 1 {
+		t.Fatalf("policy = %#v, calls = %d", policy, lookup.calls)
 	}
 }
 
 func TestResolveIPPolicyDoesNotDuplicateExplicitCurrentIP(t *testing.T) {
 	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
-	policy, current, err := resolveIPPolicy(t.Context(), lookup, []string{"192.0.2.4/32"}, false)
+	policy, err := resolveIPPolicy(t.Context(), lookup, []string{"192.0.2.4/32"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"192.0.2.4/32"}
-	if current != "192.0.2.4" || !reflect.DeepEqual(policy, want) || lookup.calls != 1 {
-		t.Fatalf("policy = %#v, current = %q, calls = %d", policy, current, lookup.calls)
+	if policy.current != "192.0.2.4" || !reflect.DeepEqual(policy.prefixes, want) || lookup.calls != 1 {
+		t.Fatalf("policy = %#v, calls = %d", policy, lookup.calls)
 	}
 }
 
 func TestResolveIPPolicyPublicDoesNotLookUpCurrentIP(t *testing.T) {
 	lookup := &testClientIPLookup{err: errors.New("must not be called")}
-	policy, current, err := resolveIPPolicy(t.Context(), lookup, nil, true)
-	if err != nil || policy == nil || len(policy) != 0 || current != "" || lookup.calls != 0 {
-		t.Fatalf("policy = %#v, current = %q, calls = %d, error = %v", policy, current, lookup.calls, err)
+	policy, err := resolveIPPolicy(t.Context(), lookup, nil, nil, true)
+	if err != nil || policy.prefixes == nil || len(policy.prefixes) != 0 || policy.current != "" || lookup.calls != 0 {
+		t.Fatalf("policy = %#v, calls = %d, error = %v", policy, lookup.calls, err)
 	}
 }
 
 func TestResolveIPPolicyFailsWhenCurrentIPCannotBeResolved(t *testing.T) {
 	lookup := &testClientIPLookup{err: errors.New("unavailable")}
-	if _, _, err := resolveIPPolicy(t.Context(), lookup, nil, false); err == nil {
+	if _, err := resolveIPPolicy(t.Context(), lookup, nil, nil, false); err == nil {
 		t.Fatal("current-IP lookup failure was accepted")
+	}
+}
+
+func TestResolveIPPolicyCombinesProvidersAndExplicitIPs(t *testing.T) {
+	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
+	policy, err := resolveIPPolicyWithSources(t.Context(), lookup, []string{"192.0.2.4", "198.51.100.1/24"},
+		[]string{"stripe", "github"}, false,
+		func(_ context.Context, names []string) ([]webhookips.Source, error) {
+			if !slices.Equal(names, []string{"stripe", "github"}) {
+				t.Fatalf("selected providers = %v", names)
+			}
+			return []webhookips.Source{
+				{Name: "github", Prefixes: []string{"198.51.100.0/24", "2001:db8::/64"}},
+				{Name: "stripe", Prefixes: []string{"203.0.113.6/32"}},
+			}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.0.2.4/32", "198.51.100.0/24", "2001:db8::/64", "203.0.113.6/32"}
+	if !slices.Equal(policy.prefixes, want) || len(policy.sources) != 2 || policy.current != "192.0.2.4" {
+		t.Fatalf("resolved policy = %#v", policy)
+	}
+}
+
+func TestResolveIPPolicyFailsWithoutProviderData(t *testing.T) {
+	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
+	_, err := resolveIPPolicyWithSources(t.Context(), lookup, nil, []string{"stripe"}, false,
+		func(context.Context, []string) ([]webhookips.Source, error) {
+			return nil, errors.New("stripe source unavailable")
+		})
+	if err == nil || lookup.calls != 0 {
+		t.Fatalf("provider error = %v, current-IP lookup calls = %d", err, lookup.calls)
 	}
 }
 

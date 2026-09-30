@@ -53,12 +53,13 @@ type Service struct {
 }
 
 type Tunnel struct {
-	Host         *string  `json:"host,omitempty" yaml:"host,omitempty"`
-	Subdomain    *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
-	AllowIP      []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"maxItems=63,uniqueItems=true"`
-	AllowAllIPs  *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
-	Ephemeral    *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	RequestLimit *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
+	Host           *string  `json:"host,omitempty" yaml:"host,omitempty"`
+	Subdomain      *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
+	AllowIP        []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
+	AllowProviders []string `json:"allow_providers,omitempty" yaml:"allow_providers,omitempty" jsonschema:"uniqueItems=true"`
+	AllowAllIPs    *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
+	Ephemeral      *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	RequestLimit   *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
 }
 
 type Publish struct {

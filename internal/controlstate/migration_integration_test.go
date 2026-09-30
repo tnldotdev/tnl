@@ -15,7 +15,7 @@ import (
 )
 
 func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
-	for _, initialVersion := range []int{1, 2, 3} {
+	for _, initialVersion := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("v%d", initialVersion), func(t *testing.T) {
 			testControlSchemaUpgrade(t, initialVersion)
 		})
@@ -53,6 +53,13 @@ func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
 		}
 		previous["00003_dns_challenge_changes.sql"] = &fstest.MapFile{Data: changes}
 	}
+	if initialVersion >= 4 {
+		cleanup, err := migrationFiles.ReadFile("migrations/00004_acme_cleanup_work.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous["00004_acme_cleanup_work.sql"] = &fstest.MapFile{Data: cleanup}
+	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, previous,
 		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
 	if err != nil {
@@ -61,9 +68,8 @@ func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if initialVersion == 3 {
-		// The fourth migration only changes an index, so both the pre- and
-		// post-migration schema must remain usable by the same runtime.
+	if initialVersion >= 3 {
+		// later migrations leave existing runtime queries usable across the upgrade.
 		active, err := Open(t.Context(), url, testStorageKey, "")
 		if err != nil {
 			t.Fatal(err)
