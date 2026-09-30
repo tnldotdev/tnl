@@ -2,7 +2,6 @@ package tnldruntime
 
 import (
 	"context"
-	"crypto/x509"
 	"fmt"
 	"log"
 	"net/http"
@@ -171,14 +170,7 @@ func (d *daemon) registerControlCertificateMetrics(metrics *observability.Metric
 		metrics.RegisterControlCertificate(d.controlTLSManager.EarliestCertificateExpiry)
 		return
 	}
-	if d.controlTLS == nil || len(d.controlTLS.Certificates) == 0 {
-		return
-	}
-	leaf := d.controlTLS.Certificates[0].Leaf
-	if leaf == nil && len(d.controlTLS.Certificates[0].Certificate) > 0 {
-		leaf, _ = x509.ParseCertificate(d.controlTLS.Certificates[0].Certificate[0])
-	}
-	if leaf != nil {
-		metrics.RegisterControlCertificate(func() time.Time { return leaf.NotAfter })
+	if expires, found := firstCertificateExpiry(d.controlTLS); found {
+		metrics.RegisterControlCertificate(func() time.Time { return expires })
 	}
 }

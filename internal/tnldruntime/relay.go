@@ -3,7 +3,6 @@ package tnldruntime
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -175,13 +174,9 @@ func (d *daemon) startRelayRuntime(
 	if runtimeConfig.transportTLS == nil {
 		return nil, errors.New("relay TLS certificate is not configured")
 	}
-	if runtimeConfig.metrics != nil && len(runtimeConfig.transportTLS.Certificates) > 0 {
-		leaf := runtimeConfig.transportTLS.Certificates[0].Leaf
-		if leaf == nil && len(runtimeConfig.transportTLS.Certificates[0].Certificate) > 0 {
-			leaf, _ = x509.ParseCertificate(runtimeConfig.transportTLS.Certificates[0].Certificate[0])
-		}
-		if leaf != nil {
-			runtimeConfig.metrics.SetRelayCertificateExpiry(runtimeConfig.relayID, leaf.NotAfter)
+	if runtimeConfig.metrics != nil {
+		if expires, found := firstCertificateExpiry(runtimeConfig.transportTLS); found {
+			runtimeConfig.metrics.SetRelayCertificateExpiry(runtimeConfig.relayID, expires)
 		}
 	}
 	if runtimeConfig.certificateChanged != nil && runtimeConfig.metrics != nil {

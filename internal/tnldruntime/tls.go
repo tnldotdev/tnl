@@ -2,8 +2,10 @@ package tnldruntime
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/controltls"
@@ -80,4 +82,19 @@ func relayTLSConfig(cfg tnldconfig.Config, fallback *tls.Config) (*tls.Config, e
 		return nil, nil
 	}
 	return fallback.Clone(), nil
+}
+
+func firstCertificateExpiry(config *tls.Config) (time.Time, bool) {
+	if config == nil || len(config.Certificates) == 0 {
+		return time.Time{}, false
+	}
+	certificate := config.Certificates[0]
+	leaf := certificate.Leaf
+	if leaf == nil && len(certificate.Certificate) > 0 {
+		leaf, _ = x509.ParseCertificate(certificate.Certificate[0])
+	}
+	if leaf == nil {
+		return time.Time{}, false
+	}
+	return leaf.NotAfter, true
 }
