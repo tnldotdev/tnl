@@ -280,6 +280,8 @@ WITH finalizable AS (
             AND runs.started_at < buckets.bucket_end
             AND runs.observed_through < buckets.bucket_end
       )
+    ORDER BY buckets.bucket_start, buckets.bucket_id
+    LIMIT 256
     FOR UPDATE OF buckets
 )
 UPDATE control.public_url_usage_buckets AS buckets
