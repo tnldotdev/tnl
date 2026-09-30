@@ -164,7 +164,7 @@ func configuredProjectService(
 		ephemeral = effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
 	}
 	if hostname == "" && subdomain == "" && !ephemeral {
-		subdomain = projectconfig.ServiceWorktreeLabel(service, worktree.Label)
+		subdomain = projectconfig.ServiceWorktreeLabel(service, worktree)
 	}
 	hostname, domain, _, err := resolvePublishHostname(hostname, subdomain, current)
 	if err != nil {

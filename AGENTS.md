@@ -73,14 +73,14 @@ mutation counters; public URL counters are publish run numbers.
 
 ## projects and client state
 
-| Term                      | Definition                                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                        |
-| **project service**       | A named local service in project configuration, with optional settings that override project defaults.              |
-| **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                 |
-| **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development. |
-| **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                            |
-| **worktree label**        | A DNS-safe label derived from the project worktree and client state for use in default public URL hostnames.        |
+| Term                      | Definition                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                             |
+| **project service**       | A named local service in project configuration, with optional settings that override project defaults.                   |
+| **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                      |
+| **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development.      |
+| **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                 |
+| **worktree label**        | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames. |
 
 ## addresses and dns
 
@@ -282,6 +282,7 @@ operational procedures and current capability limits in
 
 # development workflow
 
+- Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
 - Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.

@@ -123,10 +123,10 @@ npx tnl dev api
 
 These will have separate URLs:
 
-| service | URL                                                     |
-| ------- | ------------------------------------------------------- |
-| `web`   | `https://web-example-abcd1234.ecstatic-penguin.tnl.dev` |
-| `api`   | `https://api-example-abcd1234.ecstatic-penguin.tnl.dev` |
+| service | URL                                                   |
+| ------- | ----------------------------------------------------- |
+| `web`   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev` |
+| `api`   | `https://api-example-k7n2p9.ecstatic-penguin.tnl.dev` |
 
 Use the API URL assigned to this project in the frontend:
 
@@ -134,7 +134,7 @@ Use the API URL assigned to this project in the frontend:
 import { tnl } from "@tnldotdev/tnl";
 
 const apiURL = tnl.services?.api?.url;
-// https://api-example-abcd1234.ecstatic-penguin.tnl.dev
+// https://api-example-k7n2p9.ecstatic-penguin.tnl.dev
 ```
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
@@ -161,10 +161,15 @@ npx tnl dev api
 
 The same frontend is now running from two checkouts:
 
-| worktree | frontend URL                                             |
-| -------- | -------------------------------------------------------- |
-| `main`   | `https://web-example-abcd1234.ecstatic-penguin.tnl.dev`  |
-| `perf`   | `https://web-checkout-e5f6a7b8.ecstatic-penguin.tnl.dev` |
+| checkout  | frontend public URL                                        |
+| --------- | ---------------------------------------------------------- |
+| primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
+| `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
+
+The default name includes the service and project, plus the linked worktree
+directory when present, followed by a short ID. Changing branches in the same
+checkout keeps its public URL; moving the checkout or changing client state
+changes its ID.
 
 For Next.js and Vite, there is no port bookkeeping. If another worktree already
 uses the preferred port, the framework can choose another and `tnl` follows the
@@ -188,7 +193,7 @@ npx tnl domain list
 Delegate the subdomain with the NS records. Then, dev URLs will look like:
 
 ```text
-https://web-example-abcd1234.chase.dev.example.com
+https://web-example-k7n2p9.chase.dev.example.com
 ```
 
 [Use a custom domain](https://tnl.dev/docs/domains).

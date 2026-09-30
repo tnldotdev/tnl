@@ -40,7 +40,7 @@ ${generated.trim()}
 /** The Git worktree or project directory that contains tnl.config.ts. */
 export interface TnlWorktree {
   readonly isGit: boolean;
-  /** DNS-safe worktree label derived from this worktree and client state. */
+  /** DNS-safe project/worktree label derived from this checkout and client state. */
   readonly label: string;
   readonly name: string;
   readonly root: string;

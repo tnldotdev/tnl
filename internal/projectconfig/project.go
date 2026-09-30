@@ -31,7 +31,7 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	}
 	project := Project{
 		Selection:                  selection,
-		Worktree:                   ApplyWorktreeHashSalt(worktree, salt),
+		Worktree:                   ApplyWorktreeHashSalt(worktree, worktree.Root, salt),
 		Root:                       worktree.Root,
 		ServiceDirectories:         make(map[string]string),
 		RelativeServiceDirectories: make(map[string]string),
@@ -45,7 +45,7 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	if err != nil {
 		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
-	project.Worktree = ApplyWorktreeHashSalt(project.Worktree, salt)
+	project.Worktree = ApplyWorktreeHashSalt(project.Worktree, project.Root, salt)
 	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
 		project.Config, err = loadTypeScript(ctx, selection.Path, cwd, project.Worktree)
 	} else {
