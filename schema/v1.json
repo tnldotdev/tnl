@@ -75,7 +75,14 @@
               },
               "then": {
                 "not": {
-                  "required": ["allow_ip"]
+                  "anyOf": [
+                    {
+                      "required": ["allow_ip"]
+                    },
+                    {
+                      "required": ["allow_providers"]
+                    }
+                  ]
                 }
               }
             }
@@ -94,9 +101,17 @@
                 "type": "string"
               },
               "type": "array",
-              "maxItems": 63,
               "uniqueItems": true,
               "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+            },
+            "allow_providers": {
+              "items": {
+                "type": "string",
+                "enum": ["github", "stripe"]
+              },
+              "type": "array",
+              "uniqueItems": true,
+              "description": "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts."
             },
             "allow_all_ips": {
               "type": "boolean",
@@ -157,7 +172,14 @@
                     },
                     "then": {
                       "not": {
-                        "required": ["allow_ip"]
+                        "anyOf": [
+                          {
+                            "required": ["allow_ip"]
+                          },
+                          {
+                            "required": ["allow_providers"]
+                          }
+                        ]
                       }
                     }
                   }
@@ -176,9 +198,17 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 63,
                     "uniqueItems": true,
                     "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                  },
+                  "allow_providers": {
+                    "items": {
+                      "type": "string",
+                      "enum": ["github", "stripe"]
+                    },
+                    "type": "array",
+                    "uniqueItems": true,
+                    "description": "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts."
                   },
                   "allow_all_ips": {
                     "type": "boolean",

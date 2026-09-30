@@ -60,7 +60,7 @@ func (h *handler) ListPublicURLs(response http.ResponseWriter, request *http.Req
 
 func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Request, _ controlv1.CreatePublicURLParams) {
 	var body controlv1.CreatePublicURLRequest
-	if err := decodeJSON(response, request, &body); err != nil {
+	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -132,7 +132,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		Target            *string   `json:"target"`
 		AllowedIPPrefixes *[]string `json:"allowed_ip_prefixes"`
 	}
-	if err := decodeJSON(response, request, &body); err != nil || body.Target == nil || body.AllowedIPPrefixes == nil {
+	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.Target == nil || body.AllowedIPPrefixes == nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

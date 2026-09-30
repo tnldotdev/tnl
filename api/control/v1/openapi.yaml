@@ -871,7 +871,6 @@ components:
           $ref: "#/components/schemas/PublicURLLifecycleState"
         allowed_ip_prefixes:
           type: array
-          maxItems: 64
           uniqueItems: true
           items:
             type: string
@@ -927,7 +926,6 @@ components:
           $ref: "#/components/schemas/PublicURLScope"
         allowed_ip_prefixes:
           type: array
-          maxItems: 64
           uniqueItems: true
           items:
             type: string
@@ -948,7 +946,6 @@ components:
           pattern: "^http://"
         allowed_ip_prefixes:
           type: array
-          maxItems: 64
           uniqueItems: true
           items:
             type: string
