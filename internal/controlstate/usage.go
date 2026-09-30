@@ -35,8 +35,8 @@ var (
 	ErrPublicURLUsageDeliveryInvalid   = errors.New("controlstate: public URL usage delivery work is invalid")
 )
 
-// IngressUsageReport contains cumulative usage for one ingress process, route
-// version, and time bucket.
+// IngressUsageReport contains cumulative usage for one ingress process, public URL,
+// publish run number, and time bucket.
 type IngressUsageReport struct {
 	PublicURLID               string
 	PublishRunNumber          uint64

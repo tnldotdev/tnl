@@ -30,7 +30,7 @@ func TestHostnameLookupUsesCurrentTeamAuthorizationAndOneLookup(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &hostnameLookupStore{err: test.lookupErr}
-			authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), readErr: test.readErr}
+			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), readErr: test.readErr}
 			h := &handler{store: store, authorizer: authorizer}
 			request := httptest.NewRequest(http.MethodGet, "/v1/public-urls?"+test.query, nil)
 			request.Header.Set("Authorization", "Bearer current-token")

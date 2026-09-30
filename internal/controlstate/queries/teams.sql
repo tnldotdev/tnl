@@ -155,9 +155,9 @@ WHERE t.id = sqlc.arg(team_id)
 FOR UPDATE OF t, actor;
 
 -- Local authority mutations lock the team before identities, memberships,
--- domains, DNS authorities, and routes. Authorization is rechecked under this
+-- domains, DNS authorities, and public URLs. Authorization is rechecked under this
 -- transaction-held guard; hosted teams never require fabricated local rows.
--- Queue writers with the session readers using a transaction advisory lock:
+-- Queue writers with the publish run readers using a transaction advisory lock:
 -- PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
 -- name: LockLocalTeamForMutation :one
 WITH guard AS MATERIALIZED (
@@ -169,8 +169,8 @@ WHERE teams.id = sqlc.arg(team_id)
   AND teams.deleted_at IS NULL
 FOR NO KEY UPDATE OF teams;
 
--- Session creation reads authority under this guard before locking its route.
--- Different routes may start together; team/role/domain mutations must wait.
+-- Publish run creation reads authority under this guard before locking its public URL.
+-- Different public URLs may start together; team/role/domain mutations must wait.
 -- Callers must not upgrade this guard by writing the team later in the transaction.
 -- name: LockLocalTeamForSession :one
 WITH guard AS MATERIALIZED (

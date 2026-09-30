@@ -1,6 +1,6 @@
 package controlstate
 
-// PublicURLScope identifies whether a route belongs to one membership or a team.
+// PublicURLScope identifies whether a public URL belongs to one membership or a team.
 type PublicURLScope string
 
 const (
@@ -8,7 +8,7 @@ const (
 	PublicURLScopeShared PublicURLScope = "shared"
 )
 
-// PublicURLLifecycleState is the stored state of a route.
+// PublicURLLifecycleState is the stored state of a public URL.
 type PublicURLLifecycleState string
 
 const (

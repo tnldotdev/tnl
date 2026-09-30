@@ -26,8 +26,8 @@ const maximumExpiredPublishRunBatch = 100
 
 var (
 	ErrPublicURLNotFound         = errors.New("controlstate: public URL not found")
-	ErrRouteNotEnabled           = errors.New("controlstate: public URL is not enabled")
-	ErrRouteCredential           = errors.New("controlstate: route credential is invalid")
+	ErrPublicURLNotEnabled       = errors.New("controlstate: public URL is not enabled")
+	ErrPublicURLCredential       = errors.New("controlstate: public URL credential is invalid")
 	ErrPublicURLAuthority        = errors.New("controlstate: route authority is stale")
 	ErrPublishRunConflict        = errors.New("controlstate: public URL already has a live session")
 	ErrPublishRunIdempotency     = errors.New("controlstate: publish-run idempotency conflict")
@@ -214,7 +214,7 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: read idempotent session: %w", err)
 	}
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
-		return PublishRunSetup{}, ErrRouteNotEnabled
+		return PublishRunSetup{}, ErrPublicURLNotEnabled
 	}
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
 		return PublishRunSetup{}, ErrPublicURLMutationStale
@@ -231,7 +231,7 @@ func (d *Database) createPublishRun(
 	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
-			ExpiresAt: timestamptz(now.Add(ephemeralRouteGracePeriod)), PublicURLID: route.ID,
+			ExpiresAt: timestamptz(now.Add(ephemeralPublicURLGracePeriod)), PublicURLID: route.ID,
 		}); err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: renew ephemeral public_url: %w", err)
 		}
@@ -249,7 +249,7 @@ func (d *Database) createPublishRun(
 		request.RetrySecret, request.PublicURLID+"\x00"+request.IdempotencyKey,
 	)
 	if err != nil {
-		return PublishRunSetup{}, ErrRouteCredential
+		return PublishRunSetup{}, ErrPublicURLCredential
 	}
 	membershipID := pgtype.Text{}
 	if request.MembershipID != "" {
@@ -428,7 +428,7 @@ func loadPublishRunSetup(
 	token, tokenID, tokenHash, err := credentials.DerivePublishRunToken(retrySecret, retryContext)
 	if err != nil || tokenID.String() != session.PublishRunTokenID ||
 		!credentials.SecretHashMatches(session.PublishRunTokenDigest, tokenHash) {
-		return PublishRunSetup{}, ErrRouteCredential
+		return PublishRunSetup{}, ErrPublicURLCredential
 	}
 	return loadPublishRunSetupWithToken(ctx, queries, token, session)
 }
@@ -532,7 +532,7 @@ func validatePublishRunRequest(
 		return errors.New("controlstate: publish-run authority issuer is invalid")
 	}
 	if len(request.RetrySecret) < 32 {
-		return ErrRouteCredential
+		return ErrPublicURLCredential
 	}
 	if _, ok := positiveInt64(request.PolicyRevision); !ok {
 		return errors.New("controlstate: publish-run policy revision must be positive")

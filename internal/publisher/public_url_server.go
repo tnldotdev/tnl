@@ -64,7 +64,7 @@ type PublicURLServer struct {
 
 type denialContextKey struct{}
 
-// NewPublicURLServer creates a publisher route server served by publisher connections.
+// NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
@@ -73,7 +73,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
-			return nil, errors.New("publisher: certificate plan does not cover route")
+			return nil, errors.New("publisher: certificate plan does not cover public URL")
 		}
 	}
 	handler, err := localproxy.New(config.Target, hostname, config.RequestLimit, config.OnTargetFailure)

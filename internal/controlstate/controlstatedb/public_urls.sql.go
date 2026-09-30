@@ -1048,7 +1048,7 @@ WHERE id = $1
 FOR NO KEY UPDATE
 `
 
-// Serialize creators without blocking session and audit foreign-key checks.
+// Serialize creators without blocking publish run and audit foreign-key checks.
 func (q *Queries) LockPublicURLCreator(ctx context.Context, identityID string) (string, error) {
 	row := q.db.QueryRow(ctx, lockPublicURLCreator, identityID)
 	var id string

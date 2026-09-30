@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-func TestRunEphemeralRouteCleanupDrainsAvailableBatches(t *testing.T) {
+func TestRunEphemeralPublicURLCleanupDrainsAvailableBatches(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	calls := 0
-	store := ephemeralRouteStoreFunc(func(_ context.Context, _ time.Time) (int, error) {
+	store := ephemeralPublicURLStoreFunc(func(_ context.Context, _ time.Time) (int, error) {
 		calls++
 		if calls == 1 {
 			return 1, nil
@@ -17,7 +17,7 @@ func TestRunEphemeralRouteCleanupDrainsAvailableBatches(t *testing.T) {
 		cancel()
 		return 0, nil
 	})
-	if err := runEphemeralRouteCleanup(ctx, store, nil); err != nil {
+	if err := runEphemeralPublicURLCleanup(ctx, store, nil); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -25,15 +25,15 @@ func TestRunEphemeralRouteCleanupDrainsAvailableBatches(t *testing.T) {
 	}
 }
 
-func TestRunEphemeralRouteCleanupStopsAfterCanceledBatch(t *testing.T) {
+func TestRunEphemeralPublicURLCleanupStopsAfterCanceledBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	calls := 0
-	store := ephemeralRouteStoreFunc(func(context.Context, time.Time) (int, error) {
+	store := ephemeralPublicURLStoreFunc(func(context.Context, time.Time) (int, error) {
 		calls++
 		cancel()
 		return 1, nil
 	})
-	if err := runEphemeralRouteCleanup(ctx, store, nil); err != nil {
+	if err := runEphemeralPublicURLCleanup(ctx, store, nil); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
@@ -41,8 +41,8 @@ func TestRunEphemeralRouteCleanupStopsAfterCanceledBatch(t *testing.T) {
 	}
 }
 
-type ephemeralRouteStoreFunc func(context.Context, time.Time) (int, error)
+type ephemeralPublicURLStoreFunc func(context.Context, time.Time) (int, error)
 
-func (f ephemeralRouteStoreFunc) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now time.Time) (int, error) {
+func (f ephemeralPublicURLStoreFunc) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now time.Time) (int, error) {
 	return f(ctx, now)
 }

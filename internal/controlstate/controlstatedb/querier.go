@@ -18,7 +18,7 @@ type Querier interface {
 	// A crash in between retains excess data, never an advertised but missing suffix.
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
-	// The caller holds the ingress/run, route/session and existing bucket guards.
+	// The caller holds the ingress/run, public URL/publish run and existing bucket guards.
 	// Dependencies make the immutable report, aggregate delta and denial update
 	// one ordered write command. The caller checks insertion/aggregation and any
 	// nonzero denial delta, rolling back all writes if a required step was rejected.
@@ -185,7 +185,7 @@ type Querier interface {
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
 	// Lock only public URLs, never publish runs first: heartbeat and closure take
 	// the public URL before the run. The partial expiration index finds candidates;
-	// SKIP LOCKED lets other controls and active publishers keep their route locks.
+	// SKIP LOCKED lets other controls and active publishers keep their public URL locks.
 	LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error)
 	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
@@ -197,21 +197,21 @@ type Querier interface {
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
 	LockLocalPublicURLTeamForMutation(ctx context.Context, publicUrlID string) (string, error)
 	// Local authority mutations lock the team before identities, memberships,
-	// domains, DNS authorities, and routes. Authorization is rechecked under this
+	// domains, DNS authorities, and public URLs. Authorization is rechecked under this
 	// transaction-held guard; hosted teams never require fabricated local rows.
-	// Queue writers with the session readers using a transaction advisory lock:
+	// Queue writers with the publish run readers using a transaction advisory lock:
 	// PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
 	LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error)
-	// Session creation reads authority under this guard before locking its route.
-	// Different routes may start together; team/role/domain mutations must wait.
+	// Publish run creation reads authority under this guard before locking its public URL.
+	// Different public URLs may start together; team/role/domain mutations must wait.
 	// Callers must not upgrade this guard by writing the team later in the transaction.
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
 	LockPublicURLCreationControl(ctx context.Context) (bool, error)
-	// Serialize creators without blocking session and audit foreign-key checks.
+	// Serialize creators without blocking publish run and audit foreign-key checks.
 	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
-	// Session operations serialize route mutations but never change the route's
+	// Publish run operations serialize public URL mutations but never change the public URL's
 	// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
 	// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
 	LockPublicURLForRun(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
@@ -219,9 +219,9 @@ type Querier interface {
 	LockPublicURLRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlPublicUrlRecoveryEpisode, error)
 	LockPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	LockPublishRunCreationControl(ctx context.Context) (bool, error)
-	// Acquire the immutable route reference before the session, in one round trip.
+	// Acquire the immutable public URL reference before the publish run, in one round trip.
 	// Read the bucket in a LATER statement: a competing ingress may create it while
-	// this statement waits for the session lock, after this statement's snapshot.
+	// this statement waits for the publish run lock, after this statement's snapshot.
 	LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
 	// Acquire the reservation guard before service guards and rows, in one command.
@@ -271,7 +271,7 @@ type Querier interface {
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	// A failed ready connection can keep its existing service reservation. This
 	// atomic ready -> assigned transition has zero counter delta and needs only the
-	// caller's route/session locks, not placement's global/service/lease guards.
+	// caller's public URL/publish run locks, not placement's global/service/lease guards.
 	// Check failure and eligible service capacity in the statement snapshot. A
 	// concurrent lease/configuration change may invalidate the returned assignment,
 	// just as one immediately after commit can; claim checks the exact current lease
@@ -307,7 +307,7 @@ type Querier interface {
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
-	// Cleanup-only coordination; no route, reservation, service, lease, or clock locks.
+	// Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)

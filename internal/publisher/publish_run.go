@@ -44,7 +44,7 @@ func runSession(
 	ready func() error,
 ) (result error) {
 	if setup.PublicUrl.Id == "" || setup.PublishRun.Id == "" || setup.PublishRun.PublishRunNumber <= 0 || setup.PublishRunToken == "" {
-		return errors.New("publisher: server returned incomplete session setup")
+		return errors.New("publisher: server returned incomplete publish run setup")
 	}
 	if err := validateRouteIdentity(setup.PublicUrl, config); err != nil {
 		return err
@@ -82,7 +82,7 @@ func runSession(
 		cancelProvisioning()
 		<-provisioningDone
 	}()
-	// Refresh before setup consumes the session, then continue heartbeats in the background.
+	// refresh before setup consumes the publish run, then continue heartbeats in the background.
 	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
 		sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, setup.PublishRun.ExpiresAt,
 	)
@@ -126,7 +126,7 @@ func runSession(
 	if err := route.Start(); err != nil {
 		return err
 	}
-	// Stop admitting work on session cancellation, but retain transports until HTTP drains.
+	// stop admitting work on publish run cancellation, but retain transports until HTTP drains.
 	transportCtx, cancelTransports := context.WithCancel(context.WithoutCancel(parentCtx))
 	stopAdmissions := context.AfterFunc(sessionCtx, func() {
 		route.stopAdmissions()
@@ -178,7 +178,7 @@ func runSession(
 		}
 	}()
 	heartbeatDone := make(chan error, 1)
-	cleanup := sessionCleanup{
+	cleanup := publishRunCleanup{
 		parentCtx: parentCtx, sessionCtx: sessionCtx,
 		cancelSession: cancelSession, cancelTransports: cancelTransports,
 		connections: connections, route: route, config: config, setup: setup, version: version,
@@ -248,10 +248,10 @@ func runSession(
 	return runCertificateRenewals(ctx, config, setup, route, state, material)
 }
 
-// sessionCleanup owns the teardown after the route and connection manager have
+// publishRunCleanup owns the teardown after the public URL and connection manager have
 // started. A normal parent cancellation drains before transport cancellation;
 // a heartbeat or certificate failure closes transports immediately.
-type sessionCleanup struct {
+type publishRunCleanup struct {
 	parentCtx, sessionCtx context.Context
 	cancelSession         context.CancelCauseFunc
 	cancelTransports      context.CancelFunc
@@ -265,7 +265,7 @@ type sessionCleanup struct {
 	heartbeatStarted      bool
 }
 
-func (s *sessionCleanup) finish(result error) error {
+func (s *publishRunCleanup) finish(result error) error {
 	s.cancelSession(nil)
 	if s.heartbeatStarted && s.parentCtx.Err() != nil &&
 		errors.Is(context.Cause(s.sessionCtx), context.Cause(s.parentCtx)) &&
@@ -288,7 +288,7 @@ func (s *sessionCleanup) finish(result error) error {
 	return result
 }
 
-func (s *sessionCleanup) drain(result error) error {
+func (s *publishRunCleanup) drain(result error) error {
 	if errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded) {
 		result = nil
 	}

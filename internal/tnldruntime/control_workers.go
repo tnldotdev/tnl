@@ -38,8 +38,8 @@ func (d *daemon) startControlWorkers(
 	d.start("expire saved publish runs", func() error {
 		return runExpiredPublishRunCleanup(lifetime, database, metrics)
 	})
-	d.start("clean up ephemeral routes", func() error {
-		return runEphemeralRouteCleanup(lifetime, database, metrics)
+	d.start("clean up ephemeral public URLs", func() error {
+		return runEphemeralPublicURLCleanup(lifetime, database, metrics)
 	})
 	d.start("clean up routing history", func() error {
 		return runRoutingHistoryCleanup(lifetime, database, metrics)

@@ -74,7 +74,7 @@ func (o *publishOutput) provisioning(hostname string, publishRunNumber uint64) e
 	}
 	return writeHumanTransition(
 		o.stderr, o.command, "provisioning", hostname,
-		"certificate and publisher connections", o.target, "waiting for route readiness",
+		"certificate and publisher connections", o.target, "waiting for public URL readiness",
 	)
 }
 
@@ -205,7 +205,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				return err
 			}
 			if openErr != nil {
-				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "route remains ready",
+				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 					clioutput.Fields(
 						clioutput.Field{Label: "URL", Value: url},
 						clioutput.Field{Label: "reason", Value: openErr.Error()},
@@ -219,7 +219,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	if o.mode != "human" && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openURL(url); err != nil {
-			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "route remains ready",
+			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 				clioutput.Fields(
 					clioutput.Field{Label: "URL", Value: url},
 					clioutput.Field{Label: "reason", Value: err.Error()},
@@ -338,7 +338,7 @@ func boundedOutputError(err error) string {
 // totals.
 func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
 	switch event.Type {
-	case publisher.EventRouteAssigned:
+	case publisher.EventPublicURLAssigned:
 		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
 	case publisher.EventProvisioning:
 		if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {

@@ -64,7 +64,7 @@ type Config struct {
 type EventType string
 
 const (
-	EventRouteAssigned       EventType = "route"
+	EventPublicURLAssigned   EventType = "route" // preserve the existing internal event value.
 	EventProvisioning        EventType = "provisioning"
 	EventProvisioningStalled EventType = "provisioning_stalled"
 	EventReady               EventType = "ready"
@@ -144,7 +144,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			}
 		}()
 	}
-	if err := observe(config, Event{Type: EventRouteAssigned, PublicURLID: publicURLID, Hostname: route.CanonicalHostname}); err != nil {
+	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: route.CanonicalHostname}); err != nil {
 		return err
 	}
 	for {
@@ -230,14 +230,14 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope ||
 		route.Ephemeral != config.Ephemeral {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
-			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
+			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 		}
 	} else if route.MembershipId != nil {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested route"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
 	return nil
 }

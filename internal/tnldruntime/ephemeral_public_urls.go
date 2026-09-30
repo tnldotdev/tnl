@@ -8,17 +8,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-const ephemeralRouteCleanupInterval = 30 * time.Second
+const ephemeralPublicURLCleanupInterval = 30 * time.Second
 
-type ephemeralRouteStore interface {
+type ephemeralPublicURLStore interface {
 	DeleteExpiredEphemeralPublicURLs(context.Context, time.Time) (int, error)
 }
 
-func runEphemeralRouteCleanup(ctx context.Context, store ephemeralRouteStore, metrics *observability.Metrics) error {
-	return runBatchCleanup(ctx, ephemeralRouteCleanupInterval, store.DeleteExpiredEphemeralPublicURLs, func(deleted int, err error) {
+func runEphemeralPublicURLCleanup(ctx context.Context, store ephemeralPublicURLStore, metrics *observability.Metrics) error {
+	return runBatchCleanup(ctx, ephemeralPublicURLCleanupInterval, store.DeleteExpiredEphemeralPublicURLs, func(deleted int, err error) {
 		metrics.ObserveCleanup("ephemeral_public_urls", deleted, false, err)
 		if err != nil && ctx.Err() == nil {
-			log.Printf("ephemeral route cleanup: %v", err)
+			log.Printf("ephemeral public URL cleanup: %v", err)
 		}
 	})
 }

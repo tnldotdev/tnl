@@ -34,7 +34,7 @@ type Document struct {
 type TNL struct {
 	Server   *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
 	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Team ID or unambiguous display name used by this project."`
-	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default route and tunnel settings."`
+	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
 	Services Services `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional project-setting overrides."`
@@ -58,7 +58,7 @@ type Tunnel struct {
 	AllowIP      []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"maxItems=63,uniqueItems=true"`
 	AllowAllIPs  *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral    *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	RequestLimit *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades. Defaults to 500."`
+	RequestLimit *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
 }
 
 type Publish struct {

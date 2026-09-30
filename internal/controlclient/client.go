@@ -115,7 +115,7 @@ func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1
 			return routes, nil
 		}
 		if len(page.PublicUrls) == 0 || *page.NextCursor == cursor {
-			return nil, errors.New("controlclient: invalid route cursor")
+			return nil, errors.New("controlclient: invalid public URL cursor")
 		}
 		cursor = *page.NextCursor
 	}

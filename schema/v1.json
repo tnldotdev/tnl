@@ -96,7 +96,7 @@
               "type": "array",
               "maxItems": 63,
               "uniqueItems": true,
-              "description": "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically."
+              "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
             },
             "allow_all_ips": {
               "type": "boolean",
@@ -104,18 +104,18 @@
             },
             "ephemeral": {
               "type": "boolean",
-              "description": "Remove the route when this tunnel stops."
+              "description": "Remove the public URL when this tunnel stops."
             },
             "request_limit": {
               "type": "integer",
               "minimum": 1,
-              "description": "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+              "description": "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
               "default": 500
             }
           },
           "additionalProperties": false,
           "type": "object",
-          "description": "Default route and tunnel settings."
+          "description": "Default public URL and tunnel settings."
         },
         "publish": {
           "$ref": "#/$defs/Publish"
@@ -178,7 +178,7 @@
                     "type": "array",
                     "maxItems": 63,
                     "uniqueItems": true,
-                    "description": "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically."
+                    "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
                   },
                   "allow_all_ips": {
                     "type": "boolean",
@@ -186,12 +186,12 @@
                   },
                   "ephemeral": {
                     "type": "boolean",
-                    "description": "Remove the route when this tunnel stops."
+                    "description": "Remove the public URL when this tunnel stops."
                   },
                   "request_limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+                    "description": "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
                     "default": 500
                   }
                 },

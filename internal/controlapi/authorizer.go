@@ -33,10 +33,10 @@ type publicURLReadPrincipal struct {
 
 type publicURLAuthorizer interface {
 	authorization.Authorizer
-	AuthorizeRouteReads(context.Context, string) (publicURLReadPrincipal, error)
+	AuthorizePublicURLReads(context.Context, string) (publicURLReadPrincipal, error)
 }
 
-func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
+func (a localAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
 	principal, err := a.store.AuthenticateAccessToken(
 		ctx, credentials.AccessToken(accessToken), a.sourceRevision, time.Now(),
 	)
@@ -154,7 +154,7 @@ type externalPrincipalStore interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
-func (a hostedAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
+func (a hostedAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
 	identity, err := a.client.IdentityContextWithAccessToken(ctx, credentials.AccessToken(accessToken))
 	if err != nil {
 		return publicURLReadPrincipal{}, hostedAuthorizationError(err)
@@ -345,7 +345,7 @@ func (h *handler) authorizeRouteReads(
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
 		return publicURLReadPrincipal{}, false
 	}
-	principal, err := h.authorizer.AuthorizeRouteReads(request.Context(), token)
+	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), token)
 	switch {
 	case errors.Is(err, authorization.ErrUnauthenticated):
 		writeBearerProblem(response)
@@ -353,7 +353,7 @@ func (h *handler) authorizeRouteReads(
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		log.Printf("authorize route reads request_id=%s: %v", requestID, err)
+		log.Printf("authorize public URL reads request_id=%s: %v", requestID, err)
 	default:
 		return principal, true
 	}

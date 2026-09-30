@@ -1,5 +1,5 @@
 -- name: LockPublicURLForRun :one
--- Session operations serialize route mutations but never change the route's
+-- Publish run operations serialize public URL mutations but never change the public URL's
 -- identity. Let usage's KEY SHARE references coexist; overlapping usage pages
 -- can otherwise starve a waiting heartbeat's stronger UPDATE lock.
 SELECT *
@@ -21,7 +21,7 @@ WHERE public_url_id = sqlc.arg(public_url_id)
 
 -- Lock only public URLs, never publish runs first: heartbeat and closure take
 -- the public URL before the run. The partial expiration index finds candidates;
--- SKIP LOCKED lets other controls and active publishers keep their route locks.
+-- SKIP LOCKED lets other controls and active publishers keep their public URL locks.
 -- name: LockExpiredPublishRunPublicURLs :many
 SELECT routes.*
 FROM control.publish_runs AS sessions
@@ -145,7 +145,7 @@ RETURNING *;
 
 -- A failed ready connection can keep its existing service reservation. This
 -- atomic ready -> assigned transition has zero counter delta and needs only the
--- caller's route/session locks, not placement's global/service/lease guards.
+-- caller's public URL/publish run locks, not placement's global/service/lease guards.
 -- Check failure and eligible service capacity in the statement snapshot. A
 -- concurrent lease/configuration change may invalidate the returned assignment,
 -- just as one immediately after commit can; claim checks the exact current lease

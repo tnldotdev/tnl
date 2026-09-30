@@ -45,7 +45,7 @@ func (h *handler) ListPublicURLs(response http.ResponseWriter, request *http.Req
 		page, err = h.store.ListAuthorizedPublicURLs(request.Context(), teamID, query.Get("cursor"))
 	}
 	if err != nil {
-		writeControlStateProblem(response, "list routes", err)
+		writeControlStateProblem(response, "list public URLs", err)
 		return
 	}
 	body := controlv1.PublicURLPage{PublicUrls: make([]controlv1.PublicURL, len(page.PublicURLs))}
@@ -117,7 +117,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		Ephemeral:       ephemeral,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create route", err)
+		writeControlStateProblem(response, "create public URL", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, publicURLResponse(route))
@@ -149,9 +149,9 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
-	route, err := h.store.GetRouteForAuthorization(request.Context(), string(publicURLID))
+	route, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "read route for update", err)
+		writeControlStateProblem(response, "read public URL for update", err)
 		return
 	}
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
@@ -164,14 +164,14 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
-	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedRouteUpdateRequest{
+	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLUpdateRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
 		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "update route", err)
+		writeControlStateProblem(response, "update public URL", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, publicURLResponse(updated))
@@ -182,9 +182,9 @@ func (h *handler) GetPublicURL(response http.ResponseWriter, request *http.Reque
 	if !ok {
 		return
 	}
-	route, err := h.store.GetRouteForAuthorization(request.Context(), string(publicURLID))
+	route, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "get route", err)
+		writeControlStateProblem(response, "get public URL", err)
 		return
 	}
 	if _, authorized := principal.teamIDs[route.TeamID]; !authorized {
@@ -203,9 +203,9 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
-	route, err := h.store.GetRouteForAuthorization(request.Context(), string(publicURLID))
+	route, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "read route for deletion", err)
+		writeControlStateProblem(response, "read public URL for deletion", err)
 		return
 	}
 	allowedIPPrefixes := make([]string, len(route.AllowedIPPrefixes))
@@ -222,12 +222,12 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
-	if err := h.store.DeleteAuthorizedPublicURL(request.Context(), controlstate.AuthorizedRouteDeleteRequest{
+	if err := h.store.DeleteAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLDeleteRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now()); err != nil {
-		writeControlStateProblem(response, "delete route", err)
+		writeControlStateProblem(response, "delete public URL", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -248,9 +248,9 @@ func (h *handler) CreatePublishRun(
 		return
 	}
 	idempotencyKey := request.Header.Get("Idempotency-Key")
-	route, err := h.store.GetRouteForSessionAuthorization(request.Context(), string(publicURLID), idempotencyKey)
+	route, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
 	if err != nil {
-		writeControlStateProblem(response, "read route for session", err)
+		writeControlStateProblem(response, "read public URL for publish run", err)
 		return
 	}
 	allowedIPPrefixes := make([]string, len(route.AllowedIPPrefixes))
@@ -302,7 +302,7 @@ func (h *handler) CreatePublishRun(
 		writeControlStateProblem(response, "create publish run", err)
 		return
 	}
-	route, err = h.store.GetRouteForAuthorization(request.Context(), route.ID)
+	route, err = h.store.GetPublicURLForAuthorization(request.Context(), route.ID)
 	if err != nil {
 		writeControlStateProblem(response, "read created publish run", err)
 		return

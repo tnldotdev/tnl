@@ -795,7 +795,7 @@ func authorizationIdentifier(authorization acmeclient.Authorization) string {
 
 func validateRouteOrder(order acmeclient.Order, identifiers []string) error {
 	if order.URL == "" || order.Status == "" || order.Finalize == "" {
-		return errors.New("certificates: route ACME order is incomplete")
+		return errors.New("certificates: public URL ACME order is incomplete")
 	}
 	actual := make([]string, len(order.Identifiers))
 	for index, identifier := range order.Identifiers {

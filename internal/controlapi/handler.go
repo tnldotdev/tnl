@@ -1,4 +1,4 @@
-// Package controlapi serves the control API and authorizes route operations.
+// Package controlapi serves the control API and authorizes public URL operations.
 package controlapi
 
 import (
@@ -53,10 +53,10 @@ type Store interface {
 	ListAuthorizedPublicURLs(context.Context, string, string) (controlstate.PublicURLPage, error)
 	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
 	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
-	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.PublicURL, error)
-	GetRouteForAuthorization(context.Context, string) (controlstate.PublicURL, error)
-	GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.PublicURL, error)
-	DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
+	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLUpdateRequest, time.Time) (controlstate.PublicURL, error)
+	GetPublicURLForAuthorization(context.Context, string) (controlstate.PublicURL, error)
+	GetPublicURLForPublishRunAuthorization(context.Context, string, string) (controlstate.PublicURL, error)
+	DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLDeleteRequest, time.Time) error
 	CreatePublishRun(context.Context, controlstate.PublishRunRequest, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
 	PublishRunAuthentication(context.Context, string, uint64, credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error)
 	HeartbeatPublishRun(context.Context, controlstate.PublishRunAuthentication, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)

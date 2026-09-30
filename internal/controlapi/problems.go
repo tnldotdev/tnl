@@ -30,14 +30,14 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	case errors.Is(err, controlstate.ErrPublicURLConflict):
 		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "public URL hostname is unavailable")
 	case errors.Is(err, controlstate.ErrPublishRunOpen):
-		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "route has an open publish run")
-	case errors.Is(err, controlstate.ErrRouteNotEnabled):
+		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "public URL has an open publish run")
+	case errors.Is(err, controlstate.ErrPublicURLNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
 	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency),
 		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale),
 		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
 		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):
-		writeProblem(response, http.StatusConflict, controlv1.Conflict, "route state conflict")
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL state conflict")
 	case errors.Is(err, controlstate.ErrCertificateIssuanceInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid certificate issuance request")
 	case errors.Is(err, controlstate.ErrCertificateIssuanceNotFound):
@@ -46,7 +46,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate issuance state conflict")
 	case errors.Is(err, controlstate.ErrCertificateChallengeNotReady):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate challenge state conflict")
-	case errors.Is(err, controlstate.ErrRouteCredential), errors.Is(err, controlstate.ErrPublishRunCredential):
+	case errors.Is(err, controlstate.ErrPublicURLCredential), errors.Is(err, controlstate.ErrPublishRunCredential):
 		writeBearerProblem(response)
 	case errors.Is(err, controlstate.ErrPublicURLCreationGated), errors.Is(err, controlstate.ErrPublishRunCreationGated),
 		errors.Is(err, controlstate.ErrCertificateIssuanceGated):

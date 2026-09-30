@@ -105,7 +105,7 @@ const tryLockIngressRoutingHistoryCleanup = `-- name: TryLockIngressRoutingHisto
 SELECT pg_try_advisory_xact_lock(hashtextextended('tnl:routing-history-cleanup', 0))
 `
 
-// Cleanup-only coordination; no route, reservation, service, lease, or clock locks.
+// Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
 func (q *Queries) TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, tryLockIngressRoutingHistoryCleanup)
 	var pg_try_advisory_xact_lock bool

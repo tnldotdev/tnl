@@ -10,7 +10,7 @@ export interface TnlConfig {
    */
   team?: string;
   /**
-   * Default route and tunnel settings.
+   * Default public URL and tunnel settings.
    */
   tunnel?: {
     /**
@@ -22,7 +22,7 @@ export interface TnlConfig {
      */
     subdomain?: string;
     /**
-     * Remove the route when this tunnel stops.
+     * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
     /**
@@ -30,13 +30,13 @@ export interface TnlConfig {
      */
     allowAllIPs?: boolean;
     /**
-     * Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.
+     * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
      *
      * @maxItems 63
      */
     allowIP?: string[];
     /**
-     * Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.
+     * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
      */
     requestLimit?: number;
   };
@@ -73,7 +73,7 @@ export interface TnlConfig {
              */
             subdomain?: string;
             /**
-             * Remove the route when this tunnel stops.
+             * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
             /**
@@ -81,13 +81,13 @@ export interface TnlConfig {
              */
             allowAllIPs?: boolean;
             /**
-             * Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
              *
              * @maxItems 63
              */
             allowIP?: string[];
             /**
-             * Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.
+             * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
              */
             requestLimit?: number;
           };

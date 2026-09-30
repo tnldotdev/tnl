@@ -269,7 +269,7 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
-	current, err := database.GetRouteForAuthorization(t.Context(), route.ID)
+	current, err := database.GetPublicURLForAuthorization(t.Context(), route.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

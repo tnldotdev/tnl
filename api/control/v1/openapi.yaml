@@ -174,7 +174,7 @@ paths:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "201":
-          description: PublicURL session and two publisher connection assignments
+          description: Publish run and two publisher connection assignments
           content:
             application/json:
               schema:
@@ -260,7 +260,7 @@ paths:
         - $ref: "#/components/parameters/PublishRunID"
       responses:
         "204":
-          description: PublicURL session closed
+          description: Publish run closed
         default:
           $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/certificate-issuances:

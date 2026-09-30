@@ -24,8 +24,8 @@ var (
 
 const transactionRollbackTimeout = 5 * time.Second
 
-// PublishRunNotReadyError reports the prerequisites checked under the route
-// session lock. It does not contain credentials or certificate material.
+// PublishRunNotReadyError reports the prerequisites checked under the public URL
+// and publish run locks. It does not contain credentials or certificate material.
 type PublishRunNotReadyError struct {
 	CertificateInstalled          bool
 	ReadyPublisherConnectionCount int
@@ -174,7 +174,7 @@ func (d *Database) MarkPublishRunReady(
 	return publishRunLifecycle(session, connections, routingTableRevision, publicURLEntryRevision), nil
 }
 
-// IngressRoutingTableProjection is the stored route view used by ingress.
+// IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
 	PublishRunID         string                                   `json:"publish_run_id"`
 	PublicURLID          string                                   `json:"public_url_id"`
@@ -308,7 +308,7 @@ func (d *Database) HeartbeatPublishRun(
 	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
-			ExpiresAt: timestamptz(now.Add(ephemeralRouteGracePeriod)), PublicURLID: route.ID,
+			ExpiresAt: timestamptz(now.Add(ephemeralPublicURLGracePeriod)), PublicURLID: route.ID,
 		}); err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: heartbeat publish run: renew ephemeral public_url: %w", err)
 		}

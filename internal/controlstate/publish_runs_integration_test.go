@@ -56,7 +56,7 @@ func TestIntegrationPublishRunCreation(t *testing.T) {
 	if _, err := database.CreatePublishRun(t.Context(), changed, now, 30*time.Second, time.Minute); !errors.Is(err, ErrPublicURLAuthority) {
 		t.Fatalf("stale authority: %v", err)
 	}
-	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), AuthorizedRouteUpdateRequest{
+	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), AuthorizedPublicURLUpdateRequest{
 		PublicURLID: request.PublicURLID, TeamID: request.TeamID, ActingIdentityID: request.ActingIdentityID,
 		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 1, ExpectedMutationRevision: 2,
 	}, now); !errors.Is(err, ErrPublishRunOpen) {
@@ -279,7 +279,7 @@ func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.
 		t.Fatalf("heartbeat = %#v, %v", heartbeat, err)
 	}
 	route, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
-	if err != nil || route.ExpiresAt == nil || !route.ExpiresAt.Equal(heartbeatAt.Add(ephemeralRouteGracePeriod)) {
+	if err != nil || route.ExpiresAt == nil || !route.ExpiresAt.Equal(heartbeatAt.Add(ephemeralPublicURLGracePeriod)) {
 		t.Fatalf("renewed ephemeral route = %#v, %v", route, err)
 	}
 	earlier, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt.Add(-time.Second), 10*time.Second, time.Minute)

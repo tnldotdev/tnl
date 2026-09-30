@@ -128,7 +128,7 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET policy_revision = 2, updated_at = $2 WHERE id = $1`, route.TeamID, now); err != nil {
 		t.Fatal(err)
 	}
-	update := AuthorizedRouteUpdateRequest{PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
+	update := AuthorizedPublicURLUpdateRequest{PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
 		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 2, ExpectedMutationRevision: route.MutationRevision}
 	updated, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now)
 	if err != nil || updated.Target != update.Target || updated.PolicyRevision != 2 || !reflect.DeepEqual(updated.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) || updated.TeamID != route.TeamID || updated.DomainID != route.DomainID || updated.MembershipID != route.MembershipID || updated.CanonicalHostname != route.CanonicalHostname || updated.PublicURLScope != route.PublicURLScope {
@@ -166,7 +166,7 @@ func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 	request := builtinRouteRequest(t, database, now)
 	request.Ephemeral = true
 	route, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || !route.Ephemeral || route.ExpiresAt == nil || !route.ExpiresAt.Equal(now.Add(ephemeralRouteGracePeriod)) {
+	if err != nil || !route.Ephemeral || route.ExpiresAt == nil || !route.ExpiresAt.Equal(now.Add(ephemeralPublicURLGracePeriod)) {
 		t.Fatalf("ephemeral route = %#v, %v", route, err)
 	}
 	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), route.ExpiresAt.Add(-time.Microsecond)); err != nil || count != 0 {

@@ -121,7 +121,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||
 			request.Target == "" || request.AllowedIPPrefixes == nil {
-			return Digest{}, invalid("route update bindings are required")
+			return Digest{}, invalid("public URL update bindings are required")
 		}
 		value = struct {
 			AllowedIPPrefixes         []string `json:"allowed_ip_prefixes"`
@@ -166,7 +166,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 		}
 	case OperationPublicURLDelete:
 		if request.PublicURLID == "" {
-			return Digest{}, invalid("route ID is required")
+			return Digest{}, invalid("public URL ID is required")
 		}
 		value = struct {
 			PublicURLID string `json:"public_url_id"`
@@ -236,7 +236,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 func ValidateTarget(target string) error {
 	canonical, err := localproxy.NormalizeTarget(target)
 	if err != nil || canonical != target {
-		return invalid("invalid route target")
+		return invalid("invalid public URL target")
 	}
 	return nil
 }

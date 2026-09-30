@@ -21,19 +21,19 @@ import (
 )
 
 const (
-	publicURLPageSize                 = 100
-	ephemeralRouteGracePeriod         = 2 * time.Minute
-	maximumExpiredEphemeralRouteBatch = 100
+	publicURLPageSize                     = 100
+	ephemeralPublicURLGracePeriod         = 2 * time.Minute
+	maximumExpiredEphemeralPublicURLBatch = 100
 )
 
 var (
 	ErrPublicURLAccess        = errors.New("controlstate: public URL access denied")
 	ErrPublicURLConflict      = errors.New("controlstate: public URL hostname is already in use")
 	ErrPublicURLCreationGated = errors.New("controlstate: public URL creation is disabled")
-	ErrPublicURLIdempotency   = errors.New("controlstate: route idempotency conflict")
-	ErrPublicURLInvalid       = errors.New("controlstate: route request is invalid")
-	ErrPublishRunOpen         = errors.New("controlstate: route has an open publish run")
-	ErrPublicURLMutationStale = errors.New("controlstate: authorized route state changed")
+	ErrPublicURLIdempotency   = errors.New("controlstate: public URL idempotency conflict")
+	ErrPublicURLInvalid       = errors.New("controlstate: public URL request is invalid")
+	ErrPublishRunOpen         = errors.New("controlstate: public URL has an open publish run")
+	ErrPublicURLMutationStale = errors.New("controlstate: authorized public URL state changed")
 )
 
 type PublicURL struct {
@@ -77,7 +77,7 @@ type CreatePublicURLRequest struct {
 	Ephemeral             bool
 }
 
-type AuthorizedRouteUpdateRequest struct {
+type AuthorizedPublicURLUpdateRequest struct {
 	PublicURLID              string
 	TeamID                   string
 	ActingIdentityID         string
@@ -88,7 +88,7 @@ type AuthorizedRouteUpdateRequest struct {
 	ExpectedMutationRevision uint64
 }
 
-type AuthorizedRouteDeleteRequest struct {
+type AuthorizedPublicURLDeleteRequest struct {
 	PublicURLID              string
 	TeamID                   string
 	ActingIdentityID         string
@@ -227,10 +227,10 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 
 func (d *Database) UpdateAuthorizedPublicURL(
 	ctx context.Context,
-	request AuthorizedRouteUpdateRequest,
+	request AuthorizedPublicURLUpdateRequest,
 	now time.Time,
 ) (result PublicURL, retErr error) {
-	prefixes, err := validateAuthorizedRouteUpdateRequest(request)
+	prefixes, err := validateAuthorizedPublicURLUpdateRequest(request)
 	if err != nil {
 		return PublicURL{}, err
 	}
@@ -268,7 +268,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: lock public_url: %w", err)
 	}
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
-		return PublicURL{}, ErrRouteNotEnabled
+		return PublicURL{}, ErrPublicURLNotEnabled
 	}
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
 		return PublicURL{}, ErrPublicURLMutationStale
@@ -344,7 +344,7 @@ func (d *Database) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now tim
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 	routes, err := queries.LockExpiredEphemeralPublicURLs(ctx, controlstatedb.LockExpiredEphemeralPublicURLsParams{
-		Now: timestamptz(now), BatchSize: maximumExpiredEphemeralRouteBatch,
+		Now: timestamptz(now), BatchSize: maximumExpiredEphemeralPublicURLBatch,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: delete expired ephemeral public_urls: lock public_urls: %w", err)
@@ -481,18 +481,18 @@ func (d *Database) GetPublicURL(ctx context.Context, identityID, publicURLID str
 }
 
 func (d *Database) DeletePublicURL(ctx context.Context, identityID, publicURLID string, now time.Time) (retErr error) {
-	return d.deletePublicURL(ctx, AuthorizedRouteDeleteRequest{PublicURLID: publicURLID, ActingIdentityID: identityID}, now)
+	return d.deletePublicURL(ctx, AuthorizedPublicURLDeleteRequest{PublicURLID: publicURLID, ActingIdentityID: identityID}, now)
 }
 
 func (d *Database) DeleteAuthorizedPublicURL(
 	ctx context.Context,
-	request AuthorizedRouteDeleteRequest,
+	request AuthorizedPublicURLDeleteRequest,
 	now time.Time,
 ) error {
 	return d.deletePublicURL(ctx, request, now)
 }
 
-func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedRouteDeleteRequest, now time.Time) (retErr error) {
+func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublicURLDeleteRequest, now time.Time) (retErr error) {
 	identityID := request.ActingIdentityID
 	publicURLID := request.PublicURLID
 	if !validStateText(identityID) || !validStateText(publicURLID) {
@@ -790,7 +790,7 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 	return prefixes, nil
 }
 
-func validateAuthorizedRouteUpdateRequest(request AuthorizedRouteUpdateRequest) ([]netip.Prefix, error) {
+func validateAuthorizedPublicURLUpdateRequest(request AuthorizedPublicURLUpdateRequest) ([]netip.Prefix, error) {
 	for _, value := range []string{request.PublicURLID, request.TeamID, request.ActingIdentityID, request.Target} {
 		if !validStateText(value) {
 			return nil, ErrPublicURLInvalid
@@ -812,7 +812,7 @@ func ephemeralRouteExpiry(ephemeral bool, now time.Time) pgtype.Timestamptz {
 	if !ephemeral {
 		return pgtype.Timestamptz{}
 	}
-	return timestamptz(now.Add(ephemeralRouteGracePeriod))
+	return timestamptz(now.Add(ephemeralPublicURLGracePeriod))
 }
 
 func authorizeRouteCreation(

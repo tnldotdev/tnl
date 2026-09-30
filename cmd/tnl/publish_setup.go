@@ -194,7 +194,7 @@ func resolvePublishHostname(
 	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
 		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
-		return "", authorityv1.Domain{}, "", errors.New("shared routes require a team administrator or owner")
+		return "", authorityv1.Domain{}, "", errors.New("shared public URLs require a team administrator or owner")
 	}
 	return hostname, domain, publicURLScope, nil
 }

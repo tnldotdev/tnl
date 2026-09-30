@@ -77,15 +77,15 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 	return result, nil
 }
 
-// GetRouteForAuthorization returns stored route data for an authority request.
+// GetPublicURLForAuthorization returns stored public URL data for an authority request.
 // Callers must not expose the result before the authority approves it.
-func (d *Database) GetRouteForAuthorization(ctx context.Context, publicURLID string) (PublicURL, error) {
+func (d *Database) GetPublicURLForAuthorization(ctx context.Context, publicURLID string) (PublicURL, error) {
 	return d.getPublicURLForAuthorization(ctx, publicURLID, "")
 }
 
-// GetRouteForSessionAuthorization returns the publish run number from an earlier
-// matching publish-run request, or the next version for a new request.
-func (d *Database) GetRouteForSessionAuthorization(
+// GetPublicURLForPublishRunAuthorization returns the publish run number from an earlier
+// matching publish run request, or the next number for a new request.
+func (d *Database) GetPublicURLForPublishRunAuthorization(
 	ctx context.Context,
 	publicURLID, idempotencyKey string,
 ) (PublicURL, error) {
@@ -109,7 +109,7 @@ func (d *Database) getPublicURLForAuthorization(ctx context.Context, publicURLID
 		return PublicURL{}, ErrPublicURLNotFound
 	}
 	if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: get route for authorization: %w", err)
+		return PublicURL{}, fmt.Errorf("controlstate: get public URL for authorization: %w", err)
 	}
 	result := publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,

@@ -39,7 +39,7 @@ func TestIntegrationHostedPolicyRevocation(t *testing.T) {
 		sessions[name] = setup
 	}
 	routeC := routes["c"]
-	update := AuthorizedRouteUpdateRequest{PublicURLID: routeC.ID, TeamID: team, ActingIdentityID: identity, Target: routeC.Target, AllowedIPPrefixes: []string{}, AuthorityIssuer: issuer, PolicyRevision: 6, ExpectedMutationRevision: routeC.MutationRevision}
+	update := AuthorizedPublicURLUpdateRequest{PublicURLID: routeC.ID, TeamID: team, ActingIdentityID: identity, Target: routeC.Target, AllowedIPPrefixes: []string{}, AuthorityIssuer: issuer, PolicyRevision: 6, ExpectedMutationRevision: routeC.MutationRevision}
 	routeC, err = database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)

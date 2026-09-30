@@ -425,7 +425,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					case "session":
 						_, err = database.CreatePublishRun(ctx, fixture.sessionRequest, now, time.Hour, time.Hour)
 					case "update":
-						_, err = database.UpdateAuthorizedPublicURL(ctx, AuthorizedRouteUpdateRequest{
+						_, err = database.UpdateAuthorizedPublicURL(ctx, AuthorizedPublicURLUpdateRequest{
 							PublicURLID: fixture.route.ID, TeamID: fixture.route.TeamID, ActingIdentityID: fixture.member.IdentityID,
 							Target: "http://127.0.0.1:3001", AllowedIPPrefixes: []string{},
 							PolicyRevision: uint64(fixture.route.PolicyRevision), ExpectedMutationRevision: fixture.route.MutationRevision,
@@ -453,7 +453,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 				case "session":
 					want = ErrPublicURLAuthority
 				case "update":
-					want = ErrRouteNotEnabled
+					want = ErrPublicURLNotEnabled
 					if mutation == "role" {
 						want = ErrPublicURLAccess
 					}
@@ -704,7 +704,7 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 			t.Fatal(err)
 		}
 	}
-	current, err := database.GetRouteForAuthorization(ctx, route.ID)
+	current, err := database.GetPublicURLForAuthorization(ctx, route.ID)
 	if err != nil || current.LifecycleState != PublicURLLifecycleSuspended {
 		t.Fatalf("revocation missed concurrent public_url: %#v, %v", current, err)
 	}
@@ -738,7 +738,7 @@ func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 			}
 		}
 	}
-	count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralRouteGracePeriod))
+	count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralPublicURLGracePeriod))
 	if err != nil || count != 2 {
 		t.Fatalf("mixed enabled/suspended expiry batch = %d, %v; want 2", count, err)
 	}
@@ -750,7 +750,7 @@ func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 	`).Scan(&deleted, &audited); err != nil || deleted != 2 || audited != 2 {
 		t.Fatalf("deleted/audited batch = %d/%d, %v; want 2/2", deleted, audited, err)
 	}
-	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralRouteGracePeriod)); err != nil || count != 0 {
+	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), now.Add(ephemeralPublicURLGracePeriod)); err != nil || count != 0 {
 		t.Fatalf("repeated expiry batch = %d, %v", count, err)
 	}
 }

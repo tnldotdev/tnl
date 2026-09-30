@@ -187,7 +187,7 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
 		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
 	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
-		return http.StatusConflict, "recovery_episode_stale", "The route recovery episode is no longer current"
+		return http.StatusConflict, "recovery_episode_stale", "The public URL recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
 		return http.StatusBadRequest, "invalid_usage_report", "The ingress usage report is invalid"
 	case errors.Is(err, controlstate.ErrIngressUsagePublicURLNotFound):

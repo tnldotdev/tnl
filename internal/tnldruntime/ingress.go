@@ -176,7 +176,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
-				log.Printf("ingress route %q: %v", hostname, err)
+				log.Printf("ingress public URL %q: %v", hostname, err)
 				return ingress.PublicURL{}, "invalid_projection"
 			}
 			return route, ""
@@ -188,7 +188,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			backends, err := forwarder.Backends(entry)
 			if err != nil {
-				log.Printf("ingress challenge route %q: %v", hostname, err)
+				log.Printf("ingress challenge public URL %q: %v", hostname, err)
 				return nil, "invalid_projection"
 			}
 			return backends, ""

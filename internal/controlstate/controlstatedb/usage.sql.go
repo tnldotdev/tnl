@@ -171,7 +171,7 @@ type ApplyIngressUsageReportRow struct {
 	PolicyDenialsUpdated bool
 }
 
-// The caller holds the ingress/run, route/session and existing bucket guards.
+// The caller holds the ingress/run, public URL/publish run and existing bucket guards.
 // Dependencies make the immutable report, aggregate delta and denial update
 // one ordered write command. The caller checks insertion/aggregation and any
 // nonzero denial delta, rolling back all writes if a required step was rejected.
@@ -825,9 +825,9 @@ type LockPublishRunForUsageParams struct {
 	PublicURLID      string
 }
 
-// Acquire the immutable route reference before the session, in one round trip.
+// Acquire the immutable public URL reference before the publish run, in one round trip.
 // Read the bucket in a LATER statement: a competing ingress may create it while
-// this statement waits for the session lock, after this statement's snapshot.
+// this statement waits for the publish run lock, after this statement's snapshot.
 func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error) {
 	row := q.db.QueryRow(ctx, lockPublishRunForUsage, arg.PublishRunNumber, arg.PublicURLID)
 	var i ControlPublishRun

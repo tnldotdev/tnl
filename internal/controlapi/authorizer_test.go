@@ -142,7 +142,7 @@ func TestHostedAuthorizerUsesCurrentAuthorityMembershipsForRouteReads(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := (hostedAuthorizer{client: client}).AuthorizeRouteReads(t.Context(), "opaque-user-token")
+	principal, err := (hostedAuthorizer{client: client}).AuthorizePublicURLReads(t.Context(), "opaque-user-token")
 	if err != nil {
 		t.Fatal(err)
 	}

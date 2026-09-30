@@ -115,13 +115,13 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("subdomain", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the current namespace."})
 	properties.Set("allow_ip", &jsonschema.Schema{
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, MaxItems: integerPointer(63), UniqueItems: true,
-		Description: "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.",
+		Description: "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.",
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
-	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the route when this tunnel stops."})
+	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
 	properties.Set("request_limit", &jsonschema.Schema{
 		Type: "integer", Minimum: "1", Default: localproxy.DefaultRequestLimit,
-		Description: "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+		Description: "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
 	})
 	allowAllProperties := jsonschema.NewProperties()
 	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})

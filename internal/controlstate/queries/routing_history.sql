@@ -18,7 +18,7 @@ SET retained_after_revision = GREATEST(retained_after_revision, sqlc.arg(revisio
 WHERE singleton = true AND current_revision >= sqlc.arg(revision)::bigint
 RETURNING retained_after_revision;
 
--- Cleanup-only coordination; no route, reservation, service, lease, or clock locks.
+-- Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
 -- name: TryLockIngressRoutingHistoryCleanup :one
 SELECT pg_try_advisory_xact_lock(hashtextextended('tnl:routing-history-cleanup', 0));
 
