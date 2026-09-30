@@ -1,8 +1,47 @@
-# Canonical Terms
+# writing and documentation
 
-Use these terms consistently in code, APIs, CLI help, and documentation.
+Write for a developer trying to do something or understand a specific boundary.
+Lead with the result, show a command or example when useful, then link to more
+detail. The [README](README.md) is the model for public introductions.
 
-## System And Roles
+Use everyday words unless a technical term makes an important distinction;
+explain the term when the reader needs it. Name the component doing the work and
+qualify claims:
+
+- Write “Run `tnl dev` to give your local app an HTTPS URL,” not “Leverage tnl’s
+  seamless workflow to expose your application.”
+- Write “Ingress may try another connected relay before sending the first visitor
+  byte,” not “Traffic is intelligently rerouted.”
+- Write “By default, only your current IP is allowed to visit the public URL,”
+  not “Your app is completely private.”
+
+Keep the voice lowercase, spare, concrete, practical, and understated. Avoid
+hype and unnecessary jargon. Start public guides with what the reader can do;
+in maintainer docs, explain the relevant boundary. In diagnostics, say what
+failed and what to do next. Follow the CLI output rules below for presentation.
+
+Use lowercase documentation filenames and headings. Write `url` in lowercase
+in branded headings and page titles; use the canonical `public URL` in prose.
+Write code-comment prose in lowercase too, preserving the exact case of
+identifiers and literal values. Keep `AGENTS.md` and `SKILL.md` uppercase for
+agent discovery.
+
+Public product, client, and operator docs live in the sibling `../tnl.dev`
+repository, under `apps/accounts/src/content/docs/`. The repository README and
+npm package README link there. Keep contributor, maintainer, and benchmark docs
+with this code. Update the relevant docs alongside behavior changes.
+
+# canonical terms
+
+Use these terms consistently in code, APIs, CLI help, and documentation. Write
+the product and binaries as lowercase `tnl` and `tnld` in prose; preserve case
+in identifiers such as `TNLD_*` environment variables. Do not introduce old
+names such as _route_ for a saved public URL, _gateway_ for a relay, or _link_
+for a publisher connection. Never introduce `Core` as a tnl architectural term;
+name the specific role or API instead. Reserve `generation` for internal
+mutation counters; public URL counters are publish run numbers.
+
+## system and roles
 
 | Term                   | Definition                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -21,7 +60,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **built-in authority** | The authority API served by control or standalone for login, sessions, teams, memberships, invitations, and domains.                               |
 | **external authority** | A separately deployed authority API that makes authentication and authorization decisions for a tnl server.                                        |
 
-## People And Local Processes
+## people and local processes
 
 | Term              | Definition                                                                        |
 | ----------------- | --------------------------------------------------------------------------------- |
@@ -32,7 +71,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
 | **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
 
-## Projects And Client State
+## projects and client state
 
 | Term                      | Definition                                                                                                          |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -43,7 +82,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                            |
 | **worktree label**        | A DNS-safe label derived from the project worktree and client state for use in default public URL hostnames.        |
 
-## Addresses And DNS
+## addresses and dns
 
 | Term                       | Definition                                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -56,7 +95,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **relay address**          | The stable public hostname and port a publisher uses to establish a publisher connection through one relay service. |
 | **internal relay address** | The internal hostname and port ingress uses to forward visitor connections to a relay.                              |
 
-## Public URLs And Publish Runs
+## public urls and publish runs
 
 | Term                             | Definition                                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -75,7 +114,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **policy revision**              | The authority policy version recorded when a public URL operation is authorized.                            |
 | **public URL mutation revision** | An ever-increasing counter changed whenever editable public URL state changes.                              |
 
-## Publisher Connections
+## publisher connections
 
 | Term                                | Definition                                                                                         |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -91,7 +130,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
 | **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
 
-## Visitor Connections
+## visitor connections
 
 | Term                      | Definition                                                                                                      |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -102,7 +141,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **retry boundary**        | The first visitor byte sent to a relay. Ingress may try another relay before this point but never afterward.    |
 | **PROXY v2 metadata**     | The original visitor source and destination information created once by ingress and preserved to the publisher. |
 
-## Process Coordination
+## process coordination
 
 | Term                                | Definition                                                                                                           |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -120,7 +159,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **recovery episode**                | The time from an unexpected publisher connection loss until a visitor again receives a publisher byte.               |
 | **public URL recovery observation** | Control's recorded measurement that closes one recovery episode.                                                     |
 
-## Internal Security
+## internal security
 
 | Term                            | Definition                                                                                                                   |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -137,7 +176,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **relay transport certificate** | The exact-hostname WebPKI certificate shared by a relay service and managed by control.                                      |
 | **relay transport TLS**         | Server-authenticated TLS on a relay address using the relay transport certificate.                                           |
 
-## Teams And Domains
+## teams and domains
 
 | Term                               | Definition                                                                                               |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -159,14 +198,14 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **maintenance control**            | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance. |
 | **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                 |
 
-## Public URL Usage
+## public url usage
 
 | Term                          | Definition                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
 | **public URL usage receiver** | An external HTTPS service that accepts public URL usage bucket reports from control.                  |
 | **visitor network estimate**  | An approximate count of distinct visitor IPv4 /32 or IPv6 /64 networks for one public URL and bucket. |
 
-## Machine Field Names
+## machine field names
 
 | Concept                         | Field                             |
 | ------------------------------- | --------------------------------- |
@@ -197,87 +236,16 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | Transport                       | `transport`                       |
 | Cluster secret                  | `cluster_secret`                  |
 
-## Retired And Replaced Terms
+# cli human output
 
-| Retired term                  | Replacement                                                  |
-| ----------------------------- | ------------------------------------------------------------ |
-| route (saved object)          | public URL                                                   |
-| route ID                      | public URL ID                                                |
-| route session                 | publish run                                                  |
-| route session ID              | publish run ID                                               |
-| route version                 | publish run number                                           |
-| route session token           | publish run token                                            |
-| route mutation revision       | public URL mutation revision                                 |
-| route certificate             | public URL certificate                                       |
-| route TLS                     | visitor TLS                                                  |
-| route usage                   | public URL usage                                             |
-| gateway                       | relay                                                        |
-| ingress gateway               | ingress                                                      |
-| gateway fleet                 | No dedicated term; say "available relay processes"           |
-| gateway pool                  | relay service                                                |
-| gateway lease                 | relay lease                                                  |
-| gateway ID                    | relay ID                                                     |
-| gateway boot ID               | relay process run ID                                         |
-| gateway lease epoch           | relay lease revision                                         |
-| gateway link                  | publisher connection                                         |
-| publisher link                | publisher connection                                         |
-| publisher tunnel              | publisher connection or tunnel, depending on context         |
-| link ID                       | publisher connection ID                                      |
-| link slot                     | connection slot                                              |
-| link assignment               | connection assignment                                        |
-| assignment revision           | connection assignment revision                               |
-| link owner                    | connected relay                                              |
-| usable link                   | ready publisher connection                                   |
-| route attachment              | publisher connection                                         |
-| publisher attachment          | publish run                                                  |
-| publisher lease               | publish run or its expiration, depending on context          |
-| carrier                       | transport                                                    |
-| carrier hostname              | relay address                                                |
-| private endpoint              | internal relay address                                       |
-| private forwarding            | internal forwarding                                          |
-| gateway-to-gateway forwarding | Removed                                                      |
-| route directory               | ingress routing table                                        |
-| route DNS                     | public URL DNS                                               |
-| public front door             | ingress address                                              |
-| control address               | control hostname                                             |
-| fencing                       | stale-state checks                                           |
-| fence                         | Name the specific identity or revision being checked         |
-| boot ID                       | process run ID                                               |
-| lease epoch                   | lease revision                                               |
-| relay map                     | Removed                                                      |
-| relay region                  | Removed                                                      |
-| relay provider                | Removed                                                      |
-| edge                          | ingress or control, depending on the old responsibility      |
-| worker                        | relay or publisher connection handling, depending on context |
-| service CA                    | Removed                                                      |
-| service mTLS                  | cluster authentication                                       |
-| service enrollment            | Removed                                                      |
-| service enrollment token      | cluster secret                                               |
-| service certificate           | Removed                                                      |
-| relay service certificate     | relay transport certificate                                  |
-| public relay certificate      | relay transport certificate                                  |
-| trust bundle                  | system trust roots                                           |
-| bootstrap management token    | login token                                                  |
-| hosted authority              | external authority                                           |
+In introductory diagrams and user-facing CLI output, label the local process
+`tnl`. Use **publisher** when its architectural or protocol role matters; do
+not rename machine fields such as `publisher_connection_id`.
 
-- Never introduce `Core` as a tnl architectural term. Use tnl server, `tnld` process, control API, control, ingress, relay, or external authority as appropriate.
-- In prose, always write the product and binaries as lowercase `tnl` and `tnld`. Use uppercase only where required by case-sensitive identifiers such as `TNLD_*` environment variables.
-- Reserve `generation` for internal mutation counters; public URL counters are publish run numbers.
-
-# Brand Identity
-
-Brand identity: lowercase, spare, concrete, practical, and understated.
-Developer-to-developer language with little hype or ornament.
-In branded headings and page titles, write `url` in lowercase.
-
-# CLI Human Output
-
-In user-facing CLI diagrams and introductory documentation, label the local
-process `tnl`. Reserve **publisher** for architectural and protocol distinctions
-from other `tnl` commands and the local service; do not rename machine fields
-such as `publisher_connection_id`.
-
-Human-readable output from `tnl`, including diagnostics, uses the shared ASCII diagram renderer. The renderer and its tests are the source of truth for layout, width, wrapping, escaping, and frame syntax. Command handlers provide semantic content only and must not construct borders, rails, padding, or connectors.
+Human-readable `tnl` output, including diagnostics, uses the shared ASCII
+diagram renderer. The renderer and its tests define layout, width, wrapping,
+escaping, and frame syntax. Command handlers provide semantic content only;
+they must not construct borders, rails, padding, or connectors.
 
 Frames follow this general form:
 
@@ -291,34 +259,28 @@ Frames follow this general form:
 
 - Use short, lowercase, concrete states and ASCII-only frame syntax. Use `v` for healthy flow and `x` for the exact failure boundary.
 - Keep human output deterministic and at most 72 columns. Do not truncate meaningful values or emit ANSI control sequences.
-- Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values, and generated help remains unframed.
+- Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values; generated help remains unframed.
 - Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Preserve `tnl dev` child output unchanged.
 - Render errors once at the top level through the same renderer. Preserve stable diagnostic codes, help URLs, HTTP behavior, and HTML negotiation.
 - `tnl publish` and `tnl dev` share one tunnel presentation.
 - Do not use the diagram renderer for `tnld`. Its commands retain exact raw values, silent successes, and compact one-line operational logs and errors.
 - Never include secrets in diagrams or logs.
 
-# Development Workflow
+# codebase and contracts
 
-- Use lowercase documentation filenames and headings. Keep `AGENTS.md` and
-  `SKILL.md` uppercase for automatic agent discovery.
-- Keep public product, client, and operator documentation on `tnl.dev`; the
-  repository README and npm package README link there. Keep contributor,
-  maintainer, and benchmark documentation with the code.
-- When changing behavior, update the relevant documentation in the same work:
-  public docs in the sibling `../tnl.dev/apps/accounts/src/content/docs/`, and
-  contributor, maintainer, or benchmark docs in this repository.
+`cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and
+`cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and
+`tnld`. Follow [contributor architecture](docs/maintainers/architecture.md)
+for runtime invariants, trust boundaries, and package/API ownership. Put
+operational procedures and current capability limits in
+[self-hosting](https://tnl.dev/docs/self-hosting).
 
-# Tests and Benchmarks
+- The five HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, and `api/public-url-usage/v1/openapi.yaml`. They generate committed models, clients, and strict server interfaces under `pkg/api/*`. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
+- `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
+- PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
+- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require a minimum schema version. Keep migrations backward compatible with all control and standalone processes still serving traffic; add schema before switching its users and remove old schema only after those users have stopped.
 
-- Routine tests cover deterministic invariants without external infrastructure.
-- Integration tests use the smallest real setup needed to verify a boundary.
-- Runtime tests use one separated local topology and default to small smoke workloads.
-- Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
-- Local and deployed benchmarks share publisher, visitor, and measurement implementations.
-- Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
-
-# Development Commands
+# development workflow
 
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
 - Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
@@ -331,19 +293,16 @@ Frames follow this general form:
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
 - Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
 
-# Architecture
+# tests and benchmarks
 
-- `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
-- Follow [contributor architecture](docs/maintainers/architecture.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [self-hosting](https://tnl.dev/docs/self-hosting).
+- Routine tests cover deterministic invariants without external infrastructure.
+- Integration tests use the smallest real setup needed to verify a boundary.
+- Runtime tests use one separated local topology and default to small smoke workloads.
+- Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
+- Local and deployed benchmarks share publisher, visitor, and measurement implementations.
+- Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
 
-# Contracts and State
-
-- The five HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, and `api/public-url-usage/v1/openapi.yaml`. They generate committed models, clients, and strict server interfaces under `pkg/api/*`. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
-- `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
-- PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
-- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving controls and standalone processes accept only pooled `TNLD_DATABASE_URL` and require a minimum schema version. Keep migrations backward compatible with all control and standalone processes still serving traffic; add schema before switching its users and remove old schema only after those users have stopped.
-
-# Operational Safety
+# operational safety and releases
 
 - The local stack order is `task local:up`, `task local:trust`, then `task local:login`. `local:trust` modifies the macOS login keychain; `local:down` preserves state, while `local:reset` removes trust, containers, volumes, and `.local`.
 - When AWS SSO expires, prefer `mise exec -- aws sso login --profile <profile> --no-browser --use-device-code`. If terminal output is buffered while the command polls, run it in the background with a private temporary log outside the repo and promptly give the user the prefilled `.../#/device?user_code=...` URL printed by AWS CLI. After approval, verify with `mise exec -- aws sts get-caller-identity --profile <profile>`; do not store the code in the repo or bypass authentication.
@@ -351,4 +310,4 @@ Frames follow this general form:
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
-- Release archives and native npm packages must retain all required dependency license and legal files; see `contributing.md`.
+- Release archives and native npm packages must retain all required dependency license and legal files; see [contributing.md](contributing.md).
