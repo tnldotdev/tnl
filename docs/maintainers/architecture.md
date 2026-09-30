@@ -94,6 +94,16 @@ copy bytes without replay
 After the first visitor byte is sent to a relay, any failure closes that visitor
 connection. Live visitor connections are never replayed or migrated.
 
+`internal/ingress/ingress.go` owns inspection and private-service handoff.
+`internal/ingress/visitor.go` resolves a public URL or an exact challenge, applies
+policy and admission, then opens a publisher stream. The open stage may try
+another connected relay after a failed PROXY header write or a ClientHello
+write that sent zero visitor bytes. It returns a committed stream as soon as a
+visitor byte is sent; the copy stage owns that stream until close, even if the
+rest of ClientHello cannot be written. A denied visitor uses separate admission
+and may complete TLS at the publisher for an HTTPS 403; a challenge never falls
+back to ordinary public URL lookup.
+
 ## understand public urls and publishing
 
 ```text

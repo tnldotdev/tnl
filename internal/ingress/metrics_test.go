@@ -11,8 +11,8 @@ import (
 func TestVisitorLookupFailureIsCountedOnce(t *testing.T) {
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	_, address := startIngress(t, Config{
-		Metrics:          metrics,
-		LookupWithReason: func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
+		Metrics: metrics,
+		Lookup:  func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
 	})
 	visitor := ingressClient(t, address, "missing.example", "")
 	if err := visitor.Handshake(); err == nil {
