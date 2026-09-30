@@ -166,10 +166,9 @@ The same frontend is now running from two checkouts:
 | primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
 | `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
 
-The default name includes the service and project, plus the linked worktree
-directory when present, followed by a short ID. Changing branches in the same
-checkout keeps its public URL; moving the checkout or changing client state
-changes its ID.
+`tnl` names the public URL after the service and project. A linked worktree adds
+its directory name, such as `perf`. The short ending keeps names distinct.
+Switching branches does not change the URL.
 
 For Next.js and Vite, there is no port bookkeeping. If another worktree already
 uses the preferred port, the framework can choose another and `tnl` follows the
