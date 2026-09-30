@@ -11,18 +11,18 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestSameConnectionAssignmentIgnoresLifecycleState(t *testing.T) {
-	assigned := controlv1.ConnectionAssignment{
-		ConnectionAssignmentRevision:           1,
-		ConnectionSlot:                         1,
-		PublisherConnectionCredential:          "credential",
-		PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute),
-		PublisherConnectionId:                  "connection_1",
-		RelayAddress:                           "relay.example:443",
-		RelayServiceId:                         "relay_service_1",
-		State:                                  controlv1.PublisherConnectionStateAssigned,
-		TlsServerName:                          "relay.example",
+func publisherTestAssignment(slot int, expiresAt time.Time) controlv1.ConnectionAssignment {
+	return controlv1.ConnectionAssignment{
+		ConnectionAssignmentRevision: 1, ConnectionSlot: slot,
+		PublisherConnectionCredential: "credential", PublisherConnectionCredentialExpiresAt: expiresAt,
+		PublisherConnectionId: "connection_" + string(rune('0'+slot)),
+		RelayAddress:          "relay.example:443", RelayServiceId: "relay_service_" + string(rune('0'+slot)),
+		State: controlv1.PublisherConnectionStateAssigned, TlsServerName: "relay.example",
 	}
+}
+
+func TestSameConnectionAssignmentIgnoresLifecycleState(t *testing.T) {
+	assigned := publisherTestAssignment(1, time.Now().Add(time.Minute))
 	ready := assigned
 	ready.State = controlv1.PublisherConnectionStateReady
 	if !sameConnectionAssignment(assigned, ready) {
@@ -35,22 +35,30 @@ func TestSameConnectionAssignmentIgnoresLifecycleState(t *testing.T) {
 	}
 }
 
-func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
-	assignment := func(slot int, expiresAt time.Time) controlv1.ConnectionAssignment {
-		return controlv1.ConnectionAssignment{
-			ConnectionAssignmentRevision: 1, ConnectionSlot: slot,
-			PublisherConnectionCredential: "credential", PublisherConnectionCredentialExpiresAt: expiresAt,
-			PublisherConnectionId: "connection_" + string(rune('0'+slot)),
-			RelayAddress:          "relay.example:443", RelayServiceId: "relay_service_" + string(rune('0'+slot)),
-			State: controlv1.PublisherConnectionStateAssigned, TlsServerName: "relay.example",
-		}
+func TestConnectionLifecycleStateUpdateDoesNotRestartSlot(t *testing.T) {
+	assigned := publisherTestAssignment(1, time.Now().Add(time.Minute))
+	manager := &publisherConnectionManager{changed: make(chan struct{})}
+	current := &managedPublisherConnection{assignment: assigned, phase: connectionAwaitingReplacement}
+	manager.connections[1] = current
+	other := publisherTestAssignment(0, assigned.PublisherConnectionCredentialExpiresAt)
+	manager.connections[0] = &managedPublisherConnection{assignment: other}
+	ready := assigned
+	ready.State = controlv1.PublisherConnectionStateReady
+	if err := manager.Update([]controlv1.ConnectionAssignment{other, ready}); err != nil {
+		t.Fatal(err)
 	}
+	if manager.connections[1] != current {
+		t.Fatal("a lifecycle-state update restarted the same publisher connection assignment")
+	}
+}
+
+func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
 	now := time.Now()
 	old := [publisherConnectionCount]*managedPublisherConnection{}
 	canceled := [publisherConnectionCount]chan struct{}{make(chan struct{}), make(chan struct{})}
 	for slot := range publisherConnectionCount {
 		var once bool
-		old[slot] = &managedPublisherConnection{assignment: assignment(slot, now.Add(time.Minute)), cancel: func() {
+		old[slot] = &managedPublisherConnection{assignment: publisherTestAssignment(slot, now.Add(time.Minute)), cancel: func() {
 			if !once {
 				once = true
 				close(canceled[slot])
@@ -69,7 +77,7 @@ func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
 	}
 	defer manager.Close()
 	replacements := []controlv1.ConnectionAssignment{
-		assignment(0, now.Add(time.Minute)), assignment(1, now.Add(-time.Second)),
+		publisherTestAssignment(0, now.Add(time.Minute)), publisherTestAssignment(1, now.Add(-time.Second)),
 	}
 	replacements[0].PublisherConnectionId = "connection_new"
 	replacements[0].ConnectionAssignmentRevision++
@@ -171,7 +179,7 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 	default:
 		t.Fatal("stale TLS/TCP session remained open")
 	}
-	if replacement.ready || replacement.session != nil {
+	if replacement.phase != connectionConnecting || replacement.session != nil {
 		t.Fatal("stale TLS/TCP session mutated the replacement connection")
 	}
 }
@@ -198,6 +206,56 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 func TestQUICLossPrefersTCPOnNextAssignment(t *testing.T) {
 	t.Run("publisher detects loss first", func(t *testing.T) { testQUICReplacement(t, false) })
 	t.Run("control replaces assignment first", func(t *testing.T) { testQUICReplacement(t, true) })
+}
+
+func TestExpiredAssignmentWaitsForReplacement(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: "http://127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		return nil, errors.New("relay unavailable")
+	})
+	manager, err := newPublisherConnectionManager(ctx, publisherConnectionManagerConfig{
+		QUICConnector: connector, TCPConnector: connector, ReconnectDelay: 10 * time.Millisecond,
+	}, route, "publish_run_1", "public_url_1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	assignments := make([]controlv1.ConnectionAssignment, publisherConnectionCount)
+	expiresAt := time.Now().Add(250 * time.Millisecond)
+	for slot := range assignments {
+		assignments[slot] = publisherTestAssignment(slot, expiresAt)
+	}
+	if err := manager.Update(assignments); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		manager.mu.Lock()
+		waiting := manager.connections[0].phase == connectionAwaitingReplacement &&
+			manager.connections[1].phase == connectionAwaitingReplacement
+		changed := manager.changed
+		manager.mu.Unlock()
+		if waiting {
+			break
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			t.Fatal("expired assignments did not stop reconnecting")
+		}
+	}
+	waitCtx, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stop()
+	if err := manager.WaitReady(waitCtx, 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired assignments became ready: %v", err)
+	}
 }
 
 func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
@@ -253,7 +311,7 @@ func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
 		}
 		for {
 			manager.mu.Lock()
-			failed := !manager.connections[0].ready && manager.connections[0].session == nil
+			failed := manager.connections[0].phase == connectionAwaitingReplacement && manager.connections[0].session == nil
 			changed := manager.changed
 			manager.mu.Unlock()
 			if failed {
@@ -264,6 +322,11 @@ func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
 			case <-ctx.Done():
 				t.Fatal("QUIC publisher connection did not report its mid-connection failure")
 			}
+		}
+		select {
+		case <-quicSlotZero:
+			t.Fatal("failed publisher connection reconnected before a new assignment")
+		default:
 		}
 	}
 	assignments[0].ConnectionAssignmentRevision++
