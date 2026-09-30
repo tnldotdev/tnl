@@ -86,18 +86,17 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("public URL DNS challenge cleanup did not start")
 	}
+	// finalizing can finish before the publisher's next poll; readiness must not
+	// wait for DNS challenge cleanup to finish.
+	ready := fixture.waitReady(t, handle)
 	select {
 	case issuance := <-finalizing:
 		if issuance.CertificatePem != nil || issuance.NotBefore != nil || issuance.NotAfter != nil {
 			t.Fatalf("finalizing issuance exposed certificate material: %#v", issuance)
 		}
-	case <-handle.done:
-		t.Fatalf("publisher stopped during public URL DNS challenge cleanup: %v", handle.result())
-	case <-time.After(10 * time.Second):
-		t.Fatal("publisher did not observe the finalizing certificate issuance")
+	default:
 	}
 	release()
-	ready := fixture.waitReady(t, handle)
 	assertIntegrationPublishedPublicURL(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
 	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, false)
