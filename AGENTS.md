@@ -305,6 +305,9 @@ Frames follow this general form:
 - Keep public product, client, and operator documentation on `tnl.dev`; the
   repository README and npm package README link there. Keep contributor,
   maintainer, and benchmark documentation with the code.
+- When changing behavior, update the relevant documentation in the same work:
+  public docs in the sibling `../tnl.dev/apps/accounts/src/content/docs/`, and
+  contributor, maintainer, or benchmark docs in this repository.
 
 # Tests and Benchmarks
 

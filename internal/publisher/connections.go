@@ -28,6 +28,8 @@ type managedPublisherConnection struct {
 	assignment controlv1.ConnectionAssignment
 	cancel     context.CancelFunc
 	session    *tunnel.Session
+	transport  tunnel.Transport
+	preferTCP  bool
 	ready      bool
 }
 
@@ -102,11 +104,14 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 		if current != nil && sameConnectionAssignment(current.assignment, assignment) {
 			continue
 		}
+		// A relay can replace a QUIC claim before the publisher notices its
+		// transport failure. Prefer TCP for the replacement in either case.
+		preferTCP := current != nil && (current.preferTCP || current.ready && current.transport == tunnel.TransportQUIC)
 		if current != nil {
 			current.cancel()
 		}
 		connectionCtx, cancel := context.WithCancel(m.ctx)
-		managed := &managedPublisherConnection{assignment: assignment, cancel: cancel}
+		managed := &managedPublisherConnection{assignment: assignment, cancel: cancel, preferTCP: preferTCP}
 		m.connections[slot] = managed
 		m.wg.Add(1)
 		go m.run(connectionCtx, slot, managed)
@@ -224,16 +229,17 @@ func (m *publisherConnectionManager) run(
 		PublisherConnection: &ref,
 	}
 	for time.Now().Before(assignment.PublisherConnectionCredentialExpiresAt) {
+		quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
+			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
+		}, Transport: tunnel.TransportQUIC}
+		tcp := tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
+			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
+		}, Transport: tunnel.TransportTLSTCP}
+		if managed.preferTCP {
+			quic, tcp = tcp, quic
+		}
 		session, transport, err := tunnel.Race(
-			ctx,
-			tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
-				Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-			}, Transport: tunnel.TransportQUIC},
-			tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
-				Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-			}, Transport: tunnel.TransportTLSTCP},
-			m.config.FallbackDelay,
-			hello,
+			ctx, quic, tcp, m.config.FallbackDelay, hello,
 		)
 		if err == nil {
 			if !m.setSession(slot, managed, session, transport) {
@@ -241,7 +247,7 @@ func (m *publisherConnectionManager) run(
 				return
 			}
 			err = m.route.ServePublisherConnection(ctx, session, ref)
-			m.clearSession(slot, managed)
+			m.clearSession(slot, managed, transport == tunnel.TransportQUIC && err != nil && ctx.Err() == nil)
 			_ = session.Close()
 			if err != nil && ctx.Err() == nil {
 				m.config.Report(fmt.Errorf("publisher: publisher connection %s closed: %w", assignment.PublisherConnectionId, err))
@@ -278,7 +284,9 @@ func (m *publisherConnectionManager) setSession(
 		return false
 	}
 	managed.session = session
+	managed.transport = transport
 	if transport == tunnel.TransportTLSTCP {
+		managed.preferTCP = false
 		m.fallbackOnce.Do(func() { close(m.fallback) })
 	}
 	managed.ready = true
@@ -286,11 +294,12 @@ func (m *publisherConnectionManager) setSession(
 	return true
 }
 
-func (m *publisherConnectionManager) clearSession(slot int, managed *managedPublisherConnection) {
+func (m *publisherConnectionManager) clearSession(slot int, managed *managedPublisherConnection, failedQUIC bool) {
 	m.mu.Lock()
 	if m.connections[slot] == managed {
 		managed.session = nil
 		managed.ready = false
+		managed.preferTCP = failedQUIC
 		m.signalLocked()
 	}
 	m.mu.Unlock()

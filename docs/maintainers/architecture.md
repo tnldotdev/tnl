@@ -126,6 +126,11 @@ public URL serving while the publisher replaces the other.
 
 Publishers try QUIC first. After a short delay, they also try TLS/TCP with yamux
 and keep the first authenticated transport that completes.
+If a claimed QUIC publisher connection fails, the publisher waits for control's
+replacement connection assignment. That slot tries TLS/TCP first, with QUIC as
+the second candidate if TCP cannot connect. A later replacement returns to
+QUIC-first after TCP recovery. The failed connection's visitor streams end;
+they cannot resume on the new transport.
 
 ## separate the trust boundaries
 

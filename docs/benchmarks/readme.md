@@ -47,18 +47,19 @@ seconds. `BENCH_PUBLIC_URLS`, `BENCH_FRESH_CONNECTIONS_PER_SECOND`,
 `BENCH_REPETITIONS` select the workload. `BENCH_TRANSPORT` defaults to `mixed`;
 `quic` and `tcp` isolate one publisher transport, while `mixed` alternates
 forced QUIC and TLS/TCP public URLs. `auto` uses the normal publisher connection
-race and records when TLS/TCP is selected for any connection; it does not move
-existing visitor streams if QUIC later stalls. Larger workloads or a transport
-other than `mixed` require `BENCH_SUITE=target` and separate approval. Results
-include public URL IDs, transports, and per-URL visitor counts so server logs
-can be correlated with failures. Activation failures retain any ready public
-URLs and a bounded set of publisher events and connection errors; the result
-counts omitted observations. Record the location and network conditions
-of the local machine alongside results. The direct loopback baseline tests
-generator headroom, while the selected server measurement includes the public
-network and local publisher path. Large capacity and fault sweeps remain
-explicit opt-in local Docker workloads, described in
-[local workloads](local-workloads.md).
+race and records when TLS/TCP is selected for a publisher connection. After an
+established QUIC connection fails, its replacement assignment tries TLS/TCP
+first; existing visitor streams do not move or replay. Larger workloads or a
+transport other than `mixed` require `BENCH_SUITE=target` and separate
+approval. Results include public URL IDs, transports, and per-URL visitor
+counts so server logs can be correlated with failures. Activation failures
+retain any ready public URLs and a bounded set of publisher events and
+connection errors; the result counts omitted observations. Record the location
+and network conditions of the local machine alongside results. The direct
+loopback baseline tests generator headroom, while the selected server
+measurement includes the public network and local publisher path. Large
+capacity and fault sweeps remain explicit opt-in local Docker workloads,
+described in [local workloads](local-workloads.md).
 
 `BENCH_VISITOR_NETWORK=tcp4` limits public visitor connections to IPv4.
 `BENCH_VISITOR_INTERFACE` optionally binds only those visitor sockets to the

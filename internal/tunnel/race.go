@@ -32,9 +32,9 @@ type candidateResult struct {
 	terminal  bool
 }
 
-// Race starts QUIC first, then starts the fallback after fallbackDelay. The first
-// connection accepted by tunnelv1 wins; completing TLS alone is not enough. A
-// duplicate claim waits for an already-running sibling; other permanent
+// Race starts the primary candidate, then the fallback after fallbackDelay.
+// The first connection accepted by tunnelv1 wins; completing TLS alone is not
+// enough. A duplicate claim waits for an already-running sibling; other permanent
 // handshake rejections stop both attempts. Race only chooses the publisher
 // connection transport. It does not retry visitor streams.
 func Race(

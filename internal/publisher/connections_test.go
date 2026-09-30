@@ -194,3 +194,108 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 		t.Fatal("TLS/TCP connection became ready before publishing fallback")
 	}
 }
+
+func TestQUICLossPrefersTCPOnNextAssignment(t *testing.T) {
+	t.Run("publisher detects loss first", func(t *testing.T) { testQUICReplacement(t, false) })
+	t.Run("control replaces assignment first", func(t *testing.T) { testQUICReplacement(t, true) })
+}
+
+func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: "http://127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+
+	quicSlotZero := make(chan *certificateTestTransport, 3)
+	quic := muxsession.ConnectorFunc(func(_ context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+		transport := &certificateTestTransport{done: make(chan struct{})}
+		if endpoint.Address == "relay-0.example:443" {
+			quicSlotZero <- transport
+		}
+		return transport, nil
+	})
+	tcp := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		return &certificateTestTransport{done: make(chan struct{})}, nil
+	})
+	manager, err := newPublisherConnectionManager(ctx, publisherConnectionManagerConfig{
+		QUICConnector: quic, TCPConnector: tcp, FallbackDelay: time.Second, ReconnectDelay: time.Second,
+	}, route, "publish_run_1", "public_url_1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	assignments := make([]controlv1.ConnectionAssignment, publisherConnectionCount)
+	for slot := range assignments {
+		assignments[slot] = controlv1.ConnectionAssignment{
+			ConnectionAssignmentRevision: 1, ConnectionSlot: slot,
+			PublisherConnectionCredential: "credential", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute),
+			PublisherConnectionId: "connection_" + string(rune('0'+slot)),
+			RelayAddress:          "relay-" + string(rune('0'+slot)) + ".example:443",
+			RelayServiceId:        "relay_service_" + string(rune('0'+slot)),
+			State:                 controlv1.PublisherConnectionStateAssigned, TlsServerName: "relay.example",
+		}
+	}
+	if err := manager.Update(assignments); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.WaitReady(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	initialQUIC := <-quicSlotZero
+	if !controlReplacedFirst {
+		if err := initialQUIC.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			manager.mu.Lock()
+			failed := !manager.connections[0].ready && manager.connections[0].session == nil
+			changed := manager.changed
+			manager.mu.Unlock()
+			if failed {
+				break
+			}
+			select {
+			case <-changed:
+			case <-ctx.Done():
+				t.Fatal("QUIC publisher connection did not report its mid-connection failure")
+			}
+		}
+	}
+	assignments[0].ConnectionAssignmentRevision++
+	assignments[0].PublisherConnectionId = "connection_replacement"
+	if err := manager.Update(assignments); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.WaitReady(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-manager.Fallback():
+	default:
+		t.Fatal("TLS/TCP replacement did not report transport fallback")
+	}
+	select {
+	case <-quicSlotZero:
+		t.Fatal("replacement tried QUIC before TLS/TCP")
+	default:
+	}
+	// A later replacement must return to the ordinary QUIC-first policy.
+	assignments[0].ConnectionAssignmentRevision++
+	assignments[0].PublisherConnectionId = "connection_after_recovery"
+	if err := manager.Update(assignments); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.WaitReady(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-quicSlotZero:
+	default:
+		t.Fatal("publisher kept preferring TLS/TCP after recovery")
+	}
+}
