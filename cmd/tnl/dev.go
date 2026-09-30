@@ -137,7 +137,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			flags.Host = service.Hostname
 		}
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
 	}
@@ -205,12 +205,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	output.setFramework(framework)
-	output.setIPPolicy(policy)
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	if policy.current != "" {
-		if err := output.currentIP(policy.current); err != nil {
+	if currentIP != "" {
+		if err := output.currentIP(currentIP); err != nil {
 			return err
 		}
 	}
@@ -218,7 +217,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
 	go func() {
-		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig := services.config(target, allowedIPPrefixes, flags.requestLimit())
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, currentFramework, func(event publisher.Event) error {
 			return handlePublisherEvent(publishCtx, tunnel, output, event)

@@ -18,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -39,12 +38,6 @@ type publisherServices struct {
 
 type clientIPLookup interface {
 	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
-}
-
-type resolvedIPPolicy struct {
-	prefixes []string
-	current  string
-	sources  []webhookips.Source
 }
 
 func authenticatePublisher(
@@ -70,58 +63,34 @@ func resolveIPPolicy(
 	ctx context.Context,
 	control clientIPLookup,
 	allowedIPPrefixes []string,
-	providers []string,
 	public bool,
-) (resolvedIPPolicy, error) {
-	return resolveIPPolicyWithSources(ctx, control, allowedIPPrefixes, providers, public, webhookips.Resolve)
-}
-
-func resolveIPPolicyWithSources(
-	ctx context.Context,
-	control clientIPLookup,
-	allowedIPPrefixes, providers []string,
-	public bool,
-	resolve func(context.Context, []string) ([]webhookips.Source, error),
-) (resolvedIPPolicy, error) {
+) ([]string, string, error) {
 	if public {
-		return resolvedIPPolicy{prefixes: []string{}}, nil
+		return []string{}, "", nil
+	}
+	if len(allowedIPPrefixes) > authorization.MaxIPPrefixes-1 {
+		return nil, "", errors.New("at most 63 explicit IP prefixes may be allowed")
 	}
 	canonical, err := authorization.CanonicalizeIPPrefixes(allowedIPPrefixes)
 	if err != nil {
-		return resolvedIPPolicy{}, fmt.Errorf("invalid allowed IP prefix: %w", err)
-	}
-	sources, err := resolve(ctx, providers)
-	if err != nil {
-		return resolvedIPPolicy{}, err
-	}
-	seen := make(map[string]bool, len(canonical))
-	for _, prefix := range canonical {
-		seen[prefix] = true
-	}
-	for _, source := range sources {
-		for _, prefix := range source.Prefixes {
-			if !seen[prefix] {
-				canonical = append(canonical, prefix)
-				seen[prefix] = true
-			}
-		}
+		return nil, "", fmt.Errorf("invalid allowed IP prefix: %w", err)
 	}
 	current, err := control.ClientIP(ctx)
 	if err != nil {
-		return resolvedIPPolicy{}, fmt.Errorf("read current IP: %w", err)
+		return nil, "", fmt.Errorf("read current IP: %w", err)
 	}
 	address, err := netip.ParseAddr(current.Ip)
 	if err != nil || address.Zone() != "" {
-		return resolvedIPPolicy{}, errors.New("control returned an invalid current IP")
+		return nil, "", errors.New("control returned an invalid current IP")
 	}
 	address = address.Unmap()
 	currentIP := address.String()
 	currentPrefix := netip.PrefixFrom(address, address.BitLen()).String()
-	if !seen[currentPrefix] {
+	if !slices.Contains(canonical, currentPrefix) {
 		canonical = append(canonical, currentPrefix)
+		slices.Sort(canonical)
 	}
-	slices.Sort(canonical)
-	return resolvedIPPolicy{prefixes: canonical, current: currentIP, sources: sources}, nil
+	return canonical, currentIP, nil
 }
 
 func preparePublisherServices(

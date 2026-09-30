@@ -145,9 +145,6 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"target":                 {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
 		"ip":                     {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":              {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
-		"unknown provider":       {`{"version":1,"tnl":{"tunnel":{"allow_providers":["other"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [other]\n", "not a supported webhook IP provider"},
-		"duplicate provider":     {`{"version":1,"tnl":{"tunnel":{"allow_providers":["github","github"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [github, github]\n", "is duplicated"},
-		"public with providers":  {`{"version":1,"tnl":{"tunnel":{"allow_all_ips":true,"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_all_ips: true\n    allow_providers: [stripe]\n", "cannot be combined"},
 	} {
 		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {
 			t.Run(name+"/"+extension, func(t *testing.T) {

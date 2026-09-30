@@ -98,37 +98,6 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 	}
 }
 
-func TestUpdateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
-		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
-		PolicyRevision: 3, MutationRevision: 4,
-	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
-		ActingRole: "owner", PublicURLMembershipID: "membership_1", PolicyRevision: 3,
-		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
-	}}
-	prefixes := make([]string, 4096)
-	for index := range prefixes {
-		prefixes[index] = netip.PrefixFrom(netip.AddrFrom4([4]byte{198, 18, byte(index >> 8), byte(index)}), 32).String()
-	}
-	body, err := json.Marshal(controlv1.UpdatePublicURLRequest{
-		Target: "http://127.0.0.1:3000", AllowedIpPrefixes: prefixes,
-	})
-	if err != nil || len(body) <= 64<<10 {
-		t.Fatalf("large policy request body = %d bytes, %v", len(body), err)
-	}
-	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(string(body)))
-	request.Header.Set("Authorization", "Bearer access-token")
-	response := httptest.NewRecorder()
-	(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
-	if response.Code != http.StatusOK || len(store.update.AllowedIPPrefixes) != len(prefixes) || len(response.Body.Bytes()) <= 64<<10 {
-		t.Fatalf("large policy update: status = %d, stored = %d, response = %d bytes", response.Code, len(store.update.AllowedIPPrefixes), len(response.Body.Bytes()))
-	}
-}
-
 func TestUpdateRouteRequiresCompleteDesiredState(t *testing.T) {
 	for _, test := range []struct{ name, body string }{
 		{"missing IP policy", `{"target":"http://127.0.0.1:4000"}`},
@@ -474,32 +443,6 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 		if request.AccessToken != "exact-access-token" || request.Operation != authorization.OperationPublicURLCreate || !slices.Equal(request.AllowedIPPrefixes, want.AllowedIPPrefixes) {
 			t.Fatalf("authorization = %#v", request)
 		}
-	}
-}
-
-func TestCreateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
-	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "public_url_created", CanonicalHostname: "demo.example"}}
-	authorizer := &recordingAuthorizer{decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1",
-		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member", PolicyRevision: 9,
-	}}
-	prefixes := make([]string, 4096)
-	for index := range prefixes {
-		prefixes[index] = netip.PrefixFrom(netip.AddrFrom4([4]byte{198, 18, byte(index >> 8), byte(index)}), 32).String()
-	}
-	body, err := json.Marshal(controlv1.CreatePublicURLRequest{
-		TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
-		PublicUrlScope: controlv1.Member, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes,
-	})
-	if err != nil || len(body) <= 64<<10 {
-		t.Fatalf("large create request body = %d bytes, %v", len(body), err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(string(body)))
-	request.Header.Set("Authorization", "Bearer access-token")
-	response := httptest.NewRecorder()
-	(&handler{store: store, authorizer: authorizer}).CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
-	if response.Code != http.StatusCreated || len(store.requests) != 1 || len(store.requests[0].AllowedIPPrefixes) != len(prefixes) {
-		t.Fatalf("large policy create: status = %d, stored = %d", response.Code, len(store.requests))
 	}
 }
 

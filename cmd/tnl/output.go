@@ -53,15 +53,8 @@ type publishOutput struct {
 	command               string
 	target                string
 	current               string
-	providers             []providerCount
-	allowedPrefixCount    int
 	framework             string
 	openURL               func(string) error
-}
-
-type providerCount struct {
-	name  string
-	count int
 }
 
 type reportedError struct{ err error }
@@ -197,16 +190,6 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
 			}
-			for _, provider := range o.providers {
-				fields = append(fields, clioutput.Field{
-					Label: provider.name + " webhook IPs", Value: countState(provider.count, "prefix", "prefixes"),
-				})
-			}
-			if len(o.providers) != 0 {
-				fields = append(fields, clioutput.Field{
-					Label: "allowed IP prefixes", Value: fmt.Sprint(o.allowedPrefixCount),
-				})
-			}
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
 			}
@@ -245,16 +228,6 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 		}
 	}
 	return nil
-}
-
-func (o *publishOutput) setIPPolicy(policy resolvedIPPolicy) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.providers = make([]providerCount, 0, len(policy.sources))
-	for _, source := range policy.sources {
-		o.providers = append(o.providers, providerCount{name: source.Name, count: len(source.Prefixes)})
-	}
-	o.allowedPrefixCount = len(policy.prefixes)
 }
 
 func (o *publishOutput) currentIP(ip string) error {

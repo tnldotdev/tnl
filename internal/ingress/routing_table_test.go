@@ -2,8 +2,6 @@ package ingress
 
 import (
 	"errors"
-	"fmt"
-	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -85,41 +83,6 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 				t.Fatalf("table revision = %d, initialized = %t", revision, initialized)
 			}
 		})
-	}
-}
-
-func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
-	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	entry := forwardingTestEntry(now, "relay.example:443")
-	entry.CanonicalHostname = "route.example"
-	entry.PolicyRevision = 1
-	entry.IpPolicy = ingressv1.Allowlist
-	for index := range 256 {
-		entry.AllowedIpPrefixes = append(entry.AllowedIpPrefixes, fmt.Sprintf("2001:db8:%x::/48", index))
-	}
-	event := ingressv1.IngressRoutingTableEvent{
-		RoutingTableRevision: 1, Kind: ingressv1.PublicUrlUpsert,
-		PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
-		CanonicalHostname: entry.CanonicalHostname, EntryRevision: 1,
-		Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
-	}
-	var table RoutingTable
-	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{
-		ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{event},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := table.Lookup(entry.CanonicalHostname, now)
-	if !ok || len(got.AllowedIpPrefixes) != 256 {
-		t.Fatalf("large routing table entry = %t, %d prefixes", ok, len(got.AllowedIpPrefixes))
-	}
-	prefixes := make([]netip.Prefix, len(got.AllowedIpPrefixes))
-	for index, value := range got.AllowedIpPrefixes {
-		prefixes[index] = netip.MustParsePrefix(value)
-	}
-	if !ipAllowed(netip.MustParseAddr("2001:db8:ff::1"), prefixes) ||
-		ipAllowed(netip.MustParseAddr("2001:db8:100::1"), prefixes) {
-		t.Fatal("large routing table IP policy matched the wrong source")
 	}
 }
 

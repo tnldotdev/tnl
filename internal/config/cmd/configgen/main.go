@@ -16,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 func main() {
@@ -115,17 +114,8 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("host", &jsonschema.Schema{Type: "string", Description: "Complete public URL hostname to publish."})
 	properties.Set("subdomain", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the current namespace."})
 	properties.Set("allow_ip", &jsonschema.Schema{
-		Type: "array", Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true,
+		Type: "array", Items: &jsonschema.Schema{Type: "string"}, MaxItems: integerPointer(63), UniqueItems: true,
 		Description: "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.",
-	})
-	providerNames := webhookips.Names()
-	providerValues := make([]any, len(providerNames))
-	for index, name := range providerNames {
-		providerValues[index] = name
-	}
-	properties.Set("allow_providers", &jsonschema.Schema{
-		Type: "array", Items: &jsonschema.Schema{Type: "string", Enum: providerValues}, UniqueItems: true,
-		Description: "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.",
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
@@ -140,10 +130,8 @@ func tunnelSchema() *jsonschema.Schema {
 		AllOf: []*jsonschema.Schema{
 			{Not: &jsonschema.Schema{Required: []string{"host", "subdomain"}}},
 			{
-				If: &jsonschema.Schema{Properties: allowAllProperties, Required: []string{"allow_all_ips"}},
-				Then: &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-					{Required: []string{"allow_ip"}}, {Required: []string{"allow_providers"}},
-				}}},
+				If:   &jsonschema.Schema{Properties: allowAllProperties, Required: []string{"allow_all_ips"}},
+				Then: &jsonschema.Schema{Not: &jsonschema.Schema{Required: []string{"allow_ip"}}},
 			},
 		},
 	}

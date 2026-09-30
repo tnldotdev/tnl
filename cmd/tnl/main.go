@@ -42,14 +42,13 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
-	Team          string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host          string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current namespace."`
-	Subdomain     string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current namespace."`
-	AllowIP       []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
-	AllowProvider []string `name:"allow-provider" help:"Allow webhook IPs from stripe or github. Repeat for each provider."`
-	AllowAllIPs   bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
-	Ephemeral     bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	RequestLimit  *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	Team         string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
+	Host         string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current namespace."`
+	Subdomain    string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current namespace."`
+	AllowIP      []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
+	AllowAllIPs  bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
+	Ephemeral    bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	RequestLimit *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
 
 	allowAllIPsFromCLI bool
 	ephemeralFromCLI   bool
@@ -388,7 +387,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	host, subdomain, allowIP, allowProvider, allowAllIPs, ephemeral := false, false, false, false, false, false
+	host, subdomain, allowIP, allowAllIPs, ephemeral := false, false, false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
@@ -400,8 +399,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			subdomain = true
 		case "allow-ip":
 			allowIP = true
-		case "allow-provider":
-			allowProvider = true
 		case "allow-all-ips":
 			allowAllIPs = true
 		case "ephemeral":
@@ -421,7 +418,7 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		if subdomain && !host {
 			tunnel.Host = ""
 		}
-		if (allowIP || allowProvider) && !allowAllIPs {
+		if allowIP && !allowAllIPs {
 			tunnel.AllowAllIPs = false
 		}
 	}

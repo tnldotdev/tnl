@@ -13,6 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
+const MaxIPPrefixes = 64
+
 type Operation string
 
 const (
@@ -185,8 +187,11 @@ func CanonicalizeIPPrefixes(values []string) ([]string, error) {
 	if values == nil {
 		return nil, nil
 	}
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	if len(values) > MaxIPPrefixes {
+		return nil, invalid("too many IP prefixes")
+	}
+	result := make([]string, 0, min(len(values), MaxIPPrefixes))
+	seen := make(map[string]struct{}, min(len(values), MaxIPPrefixes))
 	for _, value := range values {
 		prefix, err := canonicalIPPrefix(value)
 		if err != nil {

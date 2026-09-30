@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -191,8 +190,11 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 				return errors.New("tunnel.subdomain must be one lowercase ASCII DNS label")
 			}
 		}
-		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && (tunnel.AllowIP != nil || tunnel.AllowProviders != nil) {
-			return errors.New("tunnel.allow_all_ips cannot be combined with tunnel.allow_ip or tunnel.allow_providers")
+		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
+			return errors.New("tunnel.allow_all_ips and tunnel.allow_ip are mutually exclusive")
+		}
+		if len(tunnel.AllowIP) > 63 {
+			return errors.New("tunnel.allow_ip may contain at most 63 entries")
 		}
 		seen := make(map[string]struct{}, len(tunnel.AllowIP))
 		for _, value := range tunnel.AllowIP {
@@ -204,16 +206,6 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 				return fmt.Errorf("tunnel.allow_ip value %q is duplicated", value)
 			}
 			seen[canonical[0]] = struct{}{}
-		}
-		seenProviders := make(map[string]bool, len(tunnel.AllowProviders))
-		for _, provider := range tunnel.AllowProviders {
-			if !webhookips.Valid(provider) {
-				return fmt.Errorf("tunnel.allow_providers value %q is not a supported webhook IP provider", provider)
-			}
-			if seenProviders[provider] {
-				return fmt.Errorf("tunnel.allow_providers value %q is duplicated", provider)
-			}
-			seenProviders[provider] = true
 		}
 	}
 	if publish != nil && publish.Target != nil {

@@ -31,12 +31,10 @@ export interface TnlConfig {
     allowAllIPs?: boolean;
     /**
      * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+     *
+     * @maxItems 63
      */
     allowIP?: string[];
-    /**
-     * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
-     */
-    allowProviders?: ("github" | "stripe")[];
     /**
      * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
      */
@@ -84,12 +82,10 @@ export interface TnlConfig {
             allowAllIPs?: boolean;
             /**
              * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             *
+             * @maxItems 63
              */
             allowIP?: string[];
-            /**
-             * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
-             */
-            allowProviders?: ("github" | "stripe")[];
             /**
              * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
              */

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +16,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	path := filepath.Join(directory, "tnl.config.ts")
 	source := `export default async ({cwd, env, worktree}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
-  tunnel: {subdomain: worktree.label, requestLimit: 750, allowProviders: ["stripe", "github"]},
+  tunnel: {subdomain: worktree.label, requestLimit: 750},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {api: {directory: "apps/api", dev: {startupTimeout: "45s"}}},
@@ -34,7 +33,6 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Subdomain == nil ||
 		*value.Tunnel.Subdomain != worktree.Label ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
-		!slices.Equal(value.Tunnel.AllowProviders, []string{"stripe", "github"}) ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
 		value.Dev == nil || value.Dev.StartupTimeout == nil || value.Dev.StartupTimeout.Value() != 30*time.Second ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
@@ -46,10 +44,9 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 
 func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 	for field, source := range map[string]string{
-		"version":         `export default {version: 1};`,
-		"tnld":            `export default {tnld: {mode: "relay"}};`,
-		"allow_ip":        `export default {tunnel: {allow_ip: ["192.0.2.1"]}};`,
-		"allow_providers": `export default {tunnel: {allow_providers: ["github", "stripe"]}};`,
+		"version":  `export default {version: 1};`,
+		"tnld":     `export default {tnld: {mode: "relay"}};`,
+		"allow_ip": `export default {tunnel: {allow_ip: ["192.0.2.1"]}};`,
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.config.ts")
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {

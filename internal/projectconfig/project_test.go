@@ -3,7 +3,6 @@ package projectconfig
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
@@ -60,34 +59,6 @@ tnl:
 	}
 	if _, err := project.EffectiveService("missing"); err == nil {
 		t.Fatal("missing service was accepted")
-	}
-}
-
-func TestServiceProviderOverridesAndAllowAllIPs(t *testing.T) {
-	all := true
-	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{AllowProviders: []string{"stripe"}, AllowIP: []string{"192.0.2.1"}},
-		Services: config.Services{
-			"api":    {Tunnel: &config.Tunnel{AllowProviders: []string{"github"}}},
-			"none":   {Tunnel: &config.Tunnel{AllowProviders: []string{}}},
-			"public": {Tunnel: &config.Tunnel{AllowAllIPs: &all}},
-		},
-	}}
-	for _, test := range []struct {
-		name string
-		want []string
-		all  bool
-	}{
-		{"api", []string{"github"}, false},
-		{"none", []string{}, false},
-		{"public", nil, true},
-	} {
-		effective, err := project.EffectiveService(test.name)
-		if err != nil || effective.Tunnel == nil || !slices.Equal(effective.Tunnel.AllowProviders, test.want) ||
-			(effective.Tunnel.AllowProviders == nil) != (test.want == nil) ||
-			(effective.Tunnel.AllowAllIPs != nil && *effective.Tunnel.AllowAllIPs) != test.all {
-			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
-		}
 	}
 }
 
