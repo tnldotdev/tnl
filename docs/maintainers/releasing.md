@@ -9,9 +9,8 @@ do not replace the skill's gates.
 
 ## prepare release infrastructure
 
-Require approval for the `release` GitHub environment. Add a
-`HOMEBREW_TAP_TOKEN` to the `homebrew` environment with read and write access to
-`tnldotdev/homebrew-tap` contents.
+Add a `HOMEBREW_TAP_TOKEN` to the `homebrew` environment with read and write
+access to `tnldotdev/homebrew-tap` contents.
 
 Before the first release, enable immutable releases, tag protection, GitHub
 Packages, and artifact attestations.
@@ -31,7 +30,10 @@ git push origin v0.1.0
 The tag must be signed, annotated, verified by GitHub, and point directly to a
 commit on `main`. Never move or reuse a release tag.
 
-After environment approval, the workflow:
+The release workflow also checks that Checks and Integration passed for that
+commit before publishing.
+
+The workflow then:
 
 - builds archives and SPDX SBOMs;
 - signs the checksum manifest and container image;
