@@ -131,16 +131,16 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			// Reuse the server harness for real visitor TLS and byte forwarding.
 			before, after := newTLSBackend(t), newTLSBackend(t)
 			firstAttempt := newFailAfterProxyBackend(t, 0)
-			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (PublicURL, bool) {
+			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (PublicURL, string) {
 				entry, ok := controller.Lookup(host, now())
 				if !ok {
-					return PublicURL{}, false
+					return PublicURL{}, "not_found"
 				}
 				backends := []routebackend.Backend{before}
 				if entry.PolicyRevision > 1 {
 					backends = []routebackend.Backend{firstAttempt, after}
 				}
-				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends}, true
+				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends}, ""
 			}})
 			advance(expires.Add(-time.Nanosecond))
 			if _, ok := controller.Lookup("route.example", now()); !ok {

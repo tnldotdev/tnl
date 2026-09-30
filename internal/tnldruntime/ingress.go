@@ -169,7 +169,7 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	ingressConfig := ingress.Config{
-		LookupWithReason: func(hostname string) (ingress.PublicURL, string) {
+		Lookup: func(hostname string) (ingress.PublicURL, string) {
 			entry, reason := controller.LookupWithReason(hostname, time.Now())
 			if reason != "" {
 				return ingress.PublicURL{}, reason

@@ -62,7 +62,7 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 		config.MaxConnections = 8
 	}
 	if config.Lookup == nil {
-		config.Lookup = func(string) (PublicURL, bool) { return PublicURL{}, false }
+		config.Lookup = func(string) (PublicURL, string) { return PublicURL{}, "not_found" }
 	}
 	server, err := New(listener, config)
 	if err != nil {
@@ -125,8 +125,11 @@ func exchangePing(t *testing.T, c *tls.Conn) {
 }
 
 func publicURLConfig(backends ...routebackend.Backend) Config {
-	return Config{Lookup: func(host string) (PublicURL, bool) {
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends}, host == "route.example"
+	return Config{Lookup: func(host string) (PublicURL, string) {
+		if host != "route.example" {
+			return PublicURL{}, "not_found"
+		}
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends}, ""
 	}}
 }
 

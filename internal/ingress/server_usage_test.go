@@ -57,8 +57,8 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	backend := newTLSBackend(t, "acme-tls/1")
 	var opened atomic.Bool
 	config := Config{
-		Lookup: func(string) (PublicURL, bool) {
-			return PublicURL{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
+		Lookup: func(string) (PublicURL, string) {
+			return PublicURL{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, ""
 		},
 		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
 			if host != "route.example" {
@@ -96,7 +96,7 @@ func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
 	metrics := new(testMetrics)
 	_, address := startIngress(t, Config{
 		Metrics: metrics,
-		Lookup:  func(string) (PublicURL, bool) { return PublicURL{}, false },
+		Lookup:  func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
 		LookupChallenge: func(string) ([]routebackend.Backend, string) {
 			return nil, "missing"
 		},
@@ -117,9 +117,12 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, bool) {
+	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, string) {
 		lookups.Add(1)
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
+		if host != "route.example" {
+			return PublicURL{}, "not_found"
+		}
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, ""
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
@@ -178,9 +181,12 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	usage := newUsageRecorder()
 	config := Config{
 		RequireProxyHeader: true, MaxDeniedConnections: 2, OpenUsage: usage.Open,
-		Lookup: func(host string) (PublicURL, bool) {
+		Lookup: func(host string) (PublicURL, string) {
+			if host != "route.example" {
+				return PublicURL{}, "not_found"
+			}
 			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend},
-				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
+				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, ""
 		},
 	}
 	_, address := startIngress(t, config)

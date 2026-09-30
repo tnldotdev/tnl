@@ -136,7 +136,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 	saved, saveErr := w.store.SaveRelayCertificateOrderWork(ctx, work, completedAt)
 	if saveErr != nil {
 		if w.config.Observer != nil && ctx.Err() == nil {
-			w.config.Observer.ObserveCertificateIteration("relay", stage, "save_failed", time.Since(started))
+			w.config.Observer.ObserveCertificateIteration("relay", string(stage), "save_failed", time.Since(started))
 		}
 		return true, saveErr
 	}
@@ -147,7 +147,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		} else if err != nil {
 			outcome = "retry"
 		}
-		w.config.Observer.ObserveCertificateIteration("relay", stage, outcome, time.Since(started))
+		w.config.Observer.ObserveCertificateIteration("relay", string(stage), outcome, time.Since(started))
 		if stage != saved.State {
 			switch saved.State {
 			case "cleaning":
@@ -419,23 +419,15 @@ func (w *RelayWorker) applyOrder(work *controlstate.RelayCertificateOrderWork, o
 	if err := validateRelayOrder(order, work.TLSServerName); err != nil {
 		return err
 	}
+	if work.State != controlstate.RelayCertificatePending && work.State != controlstate.RelayCertificateAuthorizing && work.State != controlstate.RelayCertificateReadyToFinalize {
+		return terminalf("cannot apply ACME order status in state %q", work.State)
+	}
+	stage, availableAt, err := acmeOrderProgress(order.Status, now, order.RetryAfter, w.config.PollInterval)
+	if err != nil {
+		return err
+	}
 	work.OrderURL, work.FinalizeURL, work.CertificateURL = order.URL, order.Finalize, order.Certificate
-	switch order.Status {
-	case "pending":
-		work.State = "authorizing"
-	case "ready":
-		work.State = "ready_to_finalize"
-	case "processing", "valid":
-		work.State = "finalizing"
-	case "invalid":
-		return terminalf("ACME order became invalid")
-	default:
-		return fmt.Errorf("certificates: unknown relay order status %q", order.Status)
-	}
-	work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
-	if work.State == "ready_to_finalize" || order.Status == "valid" {
-		work.AvailableAt = now
-	}
+	work.State, work.AvailableAt = controlstate.RelayCertificateOrderState(stage), availableAt
 	return nil
 }
 

@@ -151,3 +151,38 @@ expired challenge from exposing an older upsert.
 
 Routing retention must preserve the current challenge event until it is safely
 superseded.
+
+## advance certificate work
+
+`internal/controlstate` owns the saved order and authorization states. A worker
+claims one order, advances it, and saves it only while its lease, work epoch,
+and order revision still match. Each saved authorization has its own revision.
+The Go state types name the same values that PostgreSQL stores.
+
+Public URL certificate work has two stages that can advance independently:
+
+| Work          | Progression                                                                                          | Other outcomes                      |
+| ------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Order         | `pending` → `authorizing` → `ready_to_finalize` → `finalizing` → `waiting_for_install` → `installed` | `failed` or `canceled`              |
+| Authorization | `presenting` → `presented` → `validating` → `valid` → `complete`                                     | `cleaning`, `failed`, or `canceled` |
+
+An ACME response may skip or revisit the intermediate order stages. The worker
+checks the complete authorization set before saving discovery. It presents all
+pending challenges before checking propagation or asking the CA to validate
+any one of them. Control changes TLS-ALPN authorizations from `presenting` to
+`presented` only after publishing their challenge; the worker checks ingress
+routing readiness again before accepting the challenge at the CA.
+
+An issued public URL certificate becomes available at `waiting_for_install`,
+even when DNS cleanup remains. For a DNS authorization, `valid` → `cleaning`
+persists cleanup intent before the provider call; `cleaning` → `complete`
+records its completion. A retry can repeat cleanup. Wildcard and exact-name
+authorizations sharing one DNS name are reconciled together. Reused valid
+authorizations with no new challenge start at `complete`.
+
+Relay certificate work has one authorization per order. It advances through
+`pending`, `authorizing`, `presenting`, `presented`, `validating`,
+`ready_to_finalize`, and `finalizing`. Successful issuance enters `cleaning`
+before `complete`; a failed issuance with a presented challenge enters
+`failed_cleaning` before `failed`. Control installs relay transport material
+only when the order reaches `complete`.

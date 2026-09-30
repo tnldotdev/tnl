@@ -25,9 +25,9 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	var ordinaryLookups atomic.Int32
 	config := Config{
 		MaxConnections: 1,
-		Lookup: func(string) (PublicURL, bool) {
+		Lookup: func(string) (PublicURL, string) {
 			ordinaryLookups.Add(1)
-			return PublicURL{}, false
+			return PublicURL{}, "not_found"
 		},
 		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
 			if host != "route.example" || !active.Load() {
@@ -260,7 +260,7 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 		defer upstream.Close()
 		defer origin.Close()
 		server, err := New(listener, Config{MaxConnections: 1,
-			Lookup: func(string) (PublicURL, bool) { return PublicURL{}, false },
+			Lookup: func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
 			LookupChallenge: func(string) ([]routebackend.Backend, string) {
 				return []routebackend.Backend{singleBackend{upstream}}, ""
 			}})

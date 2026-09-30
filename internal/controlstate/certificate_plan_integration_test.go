@@ -415,7 +415,7 @@ func TestIntegrationCertificateInstallMaterial(t *testing.T) {
 					changed := work.NotAfter.Add(time.Hour)
 					work.NotAfter = &changed
 				case "failed", "canceled":
-					work.State = name
+					work.State = ACMEOrderState(name)
 				case "wrong_key", "extra_identity", "wrong_eku":
 					leafBlock, rest := decodeTestPEM(t, work.CertificatePEM, "CERTIFICATE")
 					caBlock, _ := decodeTestPEM(t, rest, "CERTIFICATE")

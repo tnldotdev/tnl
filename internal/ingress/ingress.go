@@ -3,7 +3,6 @@
 package ingress
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,11 +14,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/streamcopy"
 )
 
 const defaultOpenTimeout = 10 * time.Second
@@ -38,13 +35,9 @@ type PublicURL struct {
 	Backends          []routebackend.Backend
 }
 
-type LookupFunc func(string) (PublicURL, bool)
-
-// LookupWithReason returns a fixed reason on failure; it must not return a
-// hostname, identifier, or error string as the reason.
-type LookupWithReasonFunc func(string) (PublicURL, string)
-
-type BackendLookupFunc func(string) ([]routebackend.Backend, bool)
+// LookupFunc returns an empty reason for a current public URL. failure reasons
+// are fixed labels, never hostnames, identifiers, or error text.
+type LookupFunc func(string) (PublicURL, string)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -72,7 +65,6 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
-	LookupWithReason                LookupWithReasonFunc
 	LookupChallenge                 func(string) ([]routebackend.Backend, string)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
@@ -118,7 +110,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || config.Lookup == nil && config.LookupWithReason == nil {
+	if listener == nil || config.Lookup == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -281,279 +273,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.transfer(public)
 		return nil
 	}
-	var route PublicURL
-	var backends []routebackend.Backend
-	var ok bool
-	var challengeReason string
-	challenge := hello.ACMETLSALPN
-	visitorOutcome := "lookup_missing"
-	visitorStarted := time.Now()
-	if !challenge && s.config.Metrics != nil {
-		defer func() { s.config.Metrics.ObserveVisitor(visitorOutcome) }()
-	}
-	// An ALPN claim alone cannot authorize challenge forwarding. Require an
-	// exact, currently live challenge from control; never fall back to a route.
-	if challenge {
-		if s.config.LookupChallenge == nil {
-			if s.config.Metrics != nil {
-				s.config.Metrics.IncChallengeRejection("unconfigured")
-			}
-			return nil
-		}
-		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
-	} else {
-		if s.config.LookupWithReason != nil {
-			var reason string
-			route, reason = s.config.LookupWithReason(hello.ServerName)
-			ok = reason == ""
-			switch reason {
-			case "ingress_unavailable":
-				visitorOutcome = "lookup_unavailable"
-			case "invalid_projection":
-				visitorOutcome = "invalid_projection"
-			}
-		} else {
-			route, ok = s.config.Lookup(hello.ServerName)
-		}
-		backends = route.Backends
-	}
-	if challengeReason != "" || (!challenge && !ok) || len(backends) == 0 {
-		if !challenge && ok {
-			visitorOutcome = "lookup_unavailable"
-		}
-		if challenge && s.config.Metrics != nil {
-			if challengeReason == "" {
-				challengeReason = "unavailable"
-			}
-			s.config.Metrics.IncChallengeRejection(challengeReason)
-		}
-		return nil
-	}
-	var usage UsageConnection
-	if !challenge && s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.PublishRunNumber, source.Addr(), time.Now().UTC())
-		if usage != nil {
-			defer func() { usage.Close(time.Now().UTC()) }()
-		}
-	}
-	denied := !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes)
-	if denied {
-		visitorOutcome = "policy_denied"
-		if usage != nil {
-			usage.PolicyDenied(time.Now().UTC())
-		}
-	}
-	kind, key := visitorConnection, route.ID
-	if challenge {
-		kind, key = challengeConnection, hello.ServerName
-	} else if denied {
-		kind = deniedConnection
-	}
-	release, rejected := s.admitClass(kind, key)
-	if release == nil {
-		s.rejectCapacity(rejected)
-		if !challenge && !denied {
-			visitorOutcome = "capacity_denied"
-			if rejected == "draining" {
-				visitorOutcome = "draining"
-			}
-		}
-		if usage != nil {
-			usage.CapacityDenied(time.Now().UTC())
-		}
-		return nil
-	}
-	defer release()
-	var challengeDeadline time.Time
-	if challenge {
-		challengeDeadline = time.Now().Add(challengeConnectionTimeout)
-		if err := public.SetDeadline(challengeDeadline); err != nil {
-			return err
-		}
-	}
-
-	if usage != nil {
-		usage.VisitorStreamOpening(time.Now().UTC())
-	}
-	streamOpened := false
-	if usage != nil {
-		defer func() {
-			if !streamOpened {
-				usage.VisitorStreamOpenFailed(time.Now().UTC())
-			}
-		}()
-	}
-	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
-	if err != nil {
-		return fmt.Errorf("ingress: encode proxy header: %w", err)
-	}
-	visitorConnectionID, err := opaqueid.New(visitorConnectionIDPrefix)
-	if err != nil {
-		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
-	}
-	openTimeout := s.config.OpenTimeout
-	if challenge {
-		openTimeout = min(openTimeout, time.Until(challengeDeadline))
-	} else if denied {
-		openTimeout = min(openTimeout, 2*time.Second)
-	}
-	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
-	defer cancel()
-	var (
-		stream       net.Conn
-		committed    int64
-		committedErr error
-		lastErr      error
-		opened       bool
-	)
-	// Rotate only ordinary visitors. Challenge forwarding retains control's
-	// connection order and still has its own bounded retry path.
-	firstBackend := 0
-	if !challenge && len(backends) > 1 {
-		firstBackend = int((s.nextBackend.Add(1) - 1) % uint64(len(backends)))
-	}
-	for attempt := range backends {
-		index := (firstBackend + attempt) % len(backends)
-		backend := backends[index]
-		if err := openCtx.Err(); err != nil {
-			lastErr = errors.Join(lastErr, err)
-			break
-		}
-		if backend == nil {
-			lastErr = errors.New("ingress: route backend is nil")
-			continue
-		}
-		attemptCtx, stopAttempt := backendAttemptContext(openCtx, len(backends)-attempt)
-		started := time.Now()
-		var candidate net.Conn
-		var openErr error
-		if denied {
-			if denialBackend, ok := backend.(routebackend.DenialBackend); ok {
-				candidate, openErr = denialBackend.OpenDenied(attemptCtx, visitorConnectionID)
-			} else {
-				openErr = errors.New("ingress: backend does not support denied connections")
-			}
-		} else {
-			candidate, openErr = backend.Open(attemptCtx, visitorConnectionID)
-		}
-		if openErr != nil {
-			stopAttempt()
-			s.observeAttempt(attempt, openErr, started)
-			s.observeRelayAttempt(backend, "open_failed")
-			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
-			continue
-		}
-		if usage != nil && !opened {
-			usage.VisitorStreamOpened(time.Now().UTC())
-			opened = true
-		}
-		if !s.trackBackend(candidate) {
-			_ = candidate.Close()
-			stopAttempt()
-			cancel()
-			return net.ErrClosed
-		}
-		written, writeErr := writeSetup(attemptCtx, candidate, header, hello.Prefix)
-		stopAttempt()
-		s.observeAttempt(attempt, writeErr, started)
-		if writeErr != nil && written == 0 {
-			s.observeRelayAttempt(backend, "setup_failed")
-			lastErr = errors.Join(writeErr, s.releaseBackend(candidate))
-			continue
-		}
-		if writeErr != nil {
-			s.observeRelayAttempt(backend, "committed_failed")
-		} else {
-			s.observeRelayAttempt(backend, "committed")
-		}
-		stream = candidate
-		committed = written
-		committedErr = writeErr
-		break
-	}
-	cancel()
-	if !challenge && s.config.Metrics != nil {
-		s.config.Metrics.ObserveVisitorOpen(stream != nil && committedErr == nil, time.Since(visitorStarted))
-	}
-	if stream == nil {
-		if !denied {
-			visitorOutcome = "open_failed"
-		}
-		if lastErr == nil {
-			lastErr = errors.New("ingress: route has no usable backend")
-		}
-		s.reportForwardingFailure(challenge, route, visitorConnectionID, "no_backend", len(backends))
-		return lastErr
-	}
-	defer s.releaseBackend(stream)
-	if usage != nil {
-		usage.StreamOpened(time.Now().UTC())
-		usage.AddIngress(committed, time.Now().UTC())
-		streamOpened = true
-	}
-	if s.config.Metrics != nil {
-		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", committed)
-	}
-	if committedErr != nil {
-		if !denied {
-			visitorOutcome = "committed_failed"
-		}
-		s.reportForwardingFailure(challenge, route, visitorConnectionID, "committed_write", len(backends))
-		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", committed, committedErr)
-	}
-	if challenge {
-		if err := stream.SetDeadline(challengeDeadline); err != nil {
-			return err
-		}
-	}
-	replayed := &readerConn{Conn: public, reader: hello.Remainder}
-	var observeIngress, observeEgress func(int64)
-	if usage != nil {
-		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
-	}
-	if usage != nil || !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
-		var recoveryOnce sync.Once
-		observeEgress = func(bytes int64) {
-			now := time.Now().UTC()
-			if usage != nil {
-				usage.AddEgress(bytes, now)
-			}
-			if !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
-				recoveryOnce.Do(func() {
-					s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, now)
-				})
-			}
-		}
-	}
-	result, err := streamcopy.CopyObserved(replayed, stream, observeIngress, observeEgress)
-	if !denied {
-		visitorOutcome = "forwarded"
-		if err != nil {
-			visitorOutcome = "committed_failed"
-		}
-	}
-	if s.config.Metrics != nil {
-		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
-		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)
-	}
-	return err
-}
-
-func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome string) {
-	if s.config.Metrics == nil {
-		return
-	}
-	slot := "unknown"
-	if selected, ok := backend.(interface{ connectionSlot() string }); ok {
-		slot = selected.connectionSlot()
-	}
-	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
-}
-
-func (s *Server) reportForwardingFailure(challenge bool, route PublicURL, visitorID, reason string, attempts int) {
-	if !challenge && s.config.OnForwardingFailure != nil {
-		s.config.OnForwardingFailure(route.ID, route.PublishRunNumber, visitorID, reason, attempts)
-	}
+	return s.forward(public, source, destination, hello)
 }
 
 func (s *Server) handoff(
@@ -684,50 +404,6 @@ func (s *Server) closeConnections() {
 	}
 }
 
-func backendAttemptContext(ctx context.Context, remaining int) (context.Context, context.CancelFunc) {
-	if remaining <= 1 {
-		return context.WithCancel(ctx)
-	}
-	deadline, _ := ctx.Deadline()
-	// Reserve a share for each alternate even under a short overall deadline.
-	return context.WithTimeout(ctx, min(alternateAttemptTimeout, time.Until(deadline)/time.Duration(remaining)))
-}
-
-func (s *Server) observeAttempt(index int, err error, started time.Time) {
-	if s.config.Observer == nil {
-		return
-	}
-	s.config.Observer.ObserveOperation("IngressBackendAttempt", err, time.Since(started))
-	if index != 0 {
-		s.config.Observer.ObserveOperation("IngressFallback", err, time.Since(started))
-	}
-}
-
-// Only PROXY metadata and a zero-byte ClientHello failure can be retried.
-// Stop and join the interrupt before clearing deadlines for the live stream.
-func writeSetup(ctx context.Context, connection net.Conn, header, prefix []byte) (written int64, err error) {
-	deadline, _ := ctx.Deadline()
-	if err = connection.SetDeadline(deadline); err != nil {
-		return
-	}
-	done := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { _ = connection.SetDeadline(time.Now()); close(done) })
-	defer func() {
-		if !stop() {
-			<-done
-		}
-		err = errors.Join(err, ctx.Err(), connection.SetDeadline(time.Time{}))
-	}()
-	if err = writeAll(connection, header); err != nil {
-		return 0, fmt.Errorf("ingress: write proxy header: %w", err)
-	}
-	written, err = writeAllCount(connection, prefix)
-	if err != nil {
-		err = fmt.Errorf("ingress: write ClientHello: %w", err)
-	}
-	return
-}
-
 type readerConn struct {
 	net.Conn
 	reader io.Reader
@@ -784,13 +460,4 @@ func ipAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {
 	return &net.TCPAddr{IP: net.IP(endpoint.Addr().AsSlice()), Port: int(endpoint.Port())}
-}
-
-func writeAll(writer io.Writer, data []byte) error {
-	_, err := writeAllCount(writer, data)
-	return err
-}
-
-func writeAllCount(writer io.Writer, data []byte) (int64, error) {
-	return io.Copy(writer, bytes.NewReader(data))
 }

@@ -39,9 +39,9 @@ func TestRelayWorkerDNSFailureDoesNotAdvance(t *testing.T) {
 				}
 				worker := &RelayWorker{config: RelayConfig{DNSChallenges: dns, PollInterval: time.Second}}
 				api := &acmeStub{}
-				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: phase, TLSServerName: "relay-a.example.test", ChallengeURL: "https://acme.example.test/challenge/1"}
+				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: controlstate.RelayCertificateOrderState(phase), TLSServerName: "relay-a.example.test", ChallengeURL: "https://acme.example.test/challenge/1"}
 				err := worker.advance(t.Context(), api, &work, now)
-				if (err != nil) != unavailable || work.State != phase || api.acceptedChallenge != "" {
+				if (err != nil) != unavailable || work.State != controlstate.RelayCertificateOrderState(phase) || api.acceptedChallenge != "" {
 					t.Fatalf("DNS failure: error %v, state %q, accepted %q", err, work.State, api.acceptedChallenge)
 				}
 				if !unavailable && !work.AvailableAt.Equal(now.Add(time.Second)) {
@@ -63,7 +63,7 @@ func TestRelayWorkerCleanupFailurePreservesCertificateAndRetry(t *testing.T) {
 				now := time.Now().UTC().Truncate(time.Second)
 				csr, certificate := testCertificate(t, "relay-a.example.test", now)
 				renewAt := now.Add(30 * time.Minute)
-				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: phase, TLSServerName: "relay-a.example.test", CSRDER: csr, ChallengeURL: "https://acme.example.test/challenge/1", Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"}}
+				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: controlstate.RelayCertificateOrderState(phase), TLSServerName: "relay-a.example.test", CSRDER: csr, ChallengeURL: "https://acme.example.test/challenge/1", Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"}}
 				if phase == "cleaning" {
 					notBefore, notAfter := now.Add(-time.Minute), now.Add(time.Hour)
 					work.CertificatePEM, work.RenewAt = certificate, &renewAt
@@ -90,7 +90,7 @@ func TestRelayWorkerCleanupFailurePreservesCertificateAndRetry(t *testing.T) {
 					}
 					return
 				}
-				if err != nil || store.saves != 1 || store.saved.State != phase || store.saved.LastError == "" || !store.saved.AvailableAt.After(now) || !bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) {
+				if err != nil || store.saves != 1 || store.saved.State != controlstate.RelayCertificateOrderState(phase) || store.saved.LastError == "" || !store.saved.AvailableAt.After(now) || !bytes.Equal(store.saved.CertificatePEM, work.CertificatePEM) {
 					t.Fatalf("cleanup failure: error %v, work %#v", err, store.saved)
 				}
 				if phase == "cleaning" && (store.saved.RenewAt == nil || !store.saved.RenewAt.Equal(renewAt)) {
@@ -100,9 +100,9 @@ func TestRelayWorkerCleanupFailurePreservesCertificateAndRetry(t *testing.T) {
 				if _, err := worker.processOne(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				wantState, wantAvailable := "failed", now.Add(time.Hour)
+				wantState, wantAvailable := controlstate.RelayCertificateFailed, now.Add(time.Hour)
 				if phase == "cleaning" {
-					wantState, wantAvailable = "complete", renewAt
+					wantState, wantAvailable = controlstate.RelayCertificateComplete, renewAt
 				}
 				if store.saved.State != wantState || !store.saved.AvailableAt.Equal(wantAvailable) {
 					t.Fatalf("cleanup retry %#v", store.saved)
