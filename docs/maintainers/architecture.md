@@ -206,6 +206,11 @@ Framework integrations receive browser-safe metadata and a private local socket.
 They never receive control access tokens. They remain inactive during builds and
 previews.
 
+Go validates project metadata before writing `.tnl/project.json`. The TypeScript
+package validates it again when reading it or receiving a `tnl dev` assignment.
+Both validators use the shared hostname and project metadata fixtures under
+`api/fixtures/`; the `tnl dev` wire fixture covers requests and assignments.
+
 ## preserve the core invariants
 
 - Control is the only source of durable runtime state.

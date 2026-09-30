@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "configuration": { "protocol": 1, "framework": "vite" },
+  "invalidConfiguration": { "protocol": 1, "framework": "Next" },
+  "target": { "protocol": 1, "framework": "vite", "target": "http://127.0.0.2:5174" },
+  "invalidTarget": { "protocol": 1, "framework": "vite", "target": "http://192.0.2.1:5174" },
+  "invalidAssignmentOverride": { "unexpected": true },
+  "assignment": {
+    "protocol": 1,
+    "tunnelID": "tunnel_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "service": "api",
+    "namespace": "member.example",
+    "hostname": "api.member.example",
+    "publicURL": "https://api.member.example",
+    "project": {
+      "namespace": "member.example",
+      "dev": true,
+      "services": {
+        "api": {
+          "namespace": "member.example",
+          "hostname": "api.member.example",
+          "url": "https://api.member.example"
+        }
+      }
+    }
+  }
+}
