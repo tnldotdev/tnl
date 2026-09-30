@@ -84,8 +84,10 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 		if _, err := source.accessToken(ctx, config.ForceLogin, ""); err != nil {
 			return nil, err
 		}
-		if err := config.State.SaveServer(ctx, resolved.serverEndpoint); err != nil {
-			return nil, err
+		if source.loggedIn {
+			if err := config.State.SaveServer(ctx, resolved.serverEndpoint); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -178,6 +180,7 @@ type tokenSource struct {
 	config        Config
 	store         *clientstate.Store
 	explicit      string
+	loggedIn      bool
 }
 
 func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken string) (string, error) {
@@ -205,6 +208,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		stored.AccessExpiresAt.After(now.Add(refreshSafetyMargin)) {
 		return stored.AccessToken, nil
 	}
+	rejectedOldRefresh := false
 	if found && !s.config.ForceLogin && refreshUsable(stored, now) {
 		refreshed, refreshErr := refreshSession(ctx, s.control, stored)
 		if refreshErr == nil {
@@ -219,13 +223,21 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		if !refreshRejected(refreshErr) {
 			return "", refreshErr
 		}
+		rejectedOldRefresh = true
 	}
 	issued, err := s.login(ctx)
 	if err != nil {
 		return "", err
 	}
 	if found {
-		if err := revokeSession(ctx, s.control, stored, s.store); err != nil &&
+		var revokeErr error
+		if rejectedOldRefresh {
+			// Do not retry a refresh token already rejected by the authority.
+			revokeErr = s.control.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
+		} else {
+			revokeErr = revokeSession(ctx, s.control, stored, s.store)
+		}
+		if err := revokeErr; err != nil &&
 			!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
 			primary := fmt.Errorf("revoke previous control session: %w", err)
 			return "", errors.Join(primary, cleanupIssuedSession(ctx, s.control, issued))
@@ -235,6 +247,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", errors.Join(err, cleanupIssuedSession(ctx, s.control, issued))
 	}
 	s.config.ForceLogin = false
+	s.loggedIn = true
 	return issued.AccessToken, nil
 }
 

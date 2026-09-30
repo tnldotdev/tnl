@@ -255,6 +255,38 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 	}
 }
 
+func TestAuthenticateRejectedRefreshDoesNotRetryItDuringOldSessionRevocation(t *testing.T) {
+	old := storedSession(issuedSession(t))
+	old.AccessExpiresAt = time.Now().UTC().Add(-time.Hour)
+	issued := issuedSession(t)
+	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	refreshes, issuedLogouts := 0, 0
+	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/v1/auth/refresh":
+			refreshes++
+			return problemResponse(http.StatusBadRequest, "invalid_request"), nil
+		case "/v1/auth/token":
+			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/logout":
+			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
+				return problemResponse(http.StatusUnauthorized, "unauthenticated"), nil
+			}
+			issuedLogouts++
+			return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+		default:
+			return nil, errors.New("unexpected request: " + request.URL.Path)
+		}
+	})
+	f.save(t, old)
+	f.config.LoginToken = func() (credentials.LoginToken, error) { return "login-input", nil }
+	client, err := Authenticate(t.Context(), f.config)
+	if err != nil || client == nil || refreshes != 1 || issuedLogouts != 0 {
+		t.Fatalf("replacement login = %v, refreshes = %d, issued logouts = %d", err, refreshes, issuedLogouts)
+	}
+	f.assertSession(t, storedSession(issued))
+}
+
 func TestSavedSessionAuthorityMismatchDoesNotSendCredentials(t *testing.T) {
 	for _, logout := range []bool{false, true} {
 		t.Run(map[bool]string{false: "authenticate", true: "logout"}[logout], func(t *testing.T) {
@@ -530,6 +562,25 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
 				t.Fatal("authentication mutated the caller's HTTP client")
 			}
 		})
+	}
+}
+
+func TestAuthenticateReusingSessionPreservesSelectedServer(t *testing.T) {
+	old := storedSession(issuedSession(t))
+	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
+		return nil, errors.New("unexpected request: " + request.URL.Path)
+	})
+	f.save(t, old)
+	const selected = "https://previous-control.example"
+	if err := f.config.State.SaveServer(t.Context(), selected); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Authenticate(t.Context(), f.config); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := f.config.State.SavedServer(t.Context())
+	if err != nil || !found || got != selected {
+		t.Fatalf("selected server changed on session reuse: %q, %t, %v", got, found, err)
 	}
 }
 

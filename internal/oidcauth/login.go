@@ -170,14 +170,19 @@ func authorizationCodeLogin(
 	})
 	callbackServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	serveError := make(chan error, 1)
+	serveDone := make(chan struct{})
 	go func() {
+		defer close(serveDone)
 		err := callbackServer.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
 		serveError <- err
 	}()
-	defer callbackServer.Close()
+	defer func() {
+		_ = callbackServer.Close()
+		<-serveDone
+	}()
 	if err := writePrompt(output, prompt, Prompt{URL: authorizationURL}); err != nil {
 		return nil, err
 	}
