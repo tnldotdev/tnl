@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { parseJSON } from "./validation.ts";
 
 const root = new URL("../docs/benchmarks/", import.meta.url);
 const dataURL = new URL("data/local-capacity.json", root);
@@ -43,7 +44,7 @@ const dataSchema = z.object({
   ),
 });
 
-const data = dataSchema.parse(JSON.parse(await readFile(dataURL, "utf8")) as unknown);
+const data = parseJSON(await readFile(dataURL, "utf8"), dataSchema, "local capacity data");
 for (const row of data.bandwidth) {
   const meetsDeadline = row.elapsed_seconds <= 31;
   if (row.elapsed_seconds < 30 || row.passed !== meetsDeadline) {

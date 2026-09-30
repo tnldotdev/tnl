@@ -1,35 +1,23 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import * as z from "zod";
+import { parseJSON } from "./validation.ts";
 
 const root = resolve(import.meta.dirname, "..");
-const catalog = JSON.parse(
+const catalog = parseJSON(
   readFileSync(resolve(root, "internal/diagnostic/catalog.json"), "utf8"),
-) as unknown;
-if (
-  typeof catalog !== "object" ||
-  catalog === null ||
-  !("schema_version" in catalog) ||
-  catalog.schema_version !== 1 ||
-  !("diagnostics" in catalog) ||
-  !Array.isArray(catalog.diagnostics)
-) {
-  throw new Error("invalid diagnostic catalog");
-}
+  z.object({
+    schema_version: z.literal(1),
+    diagnostics: z.array(z.object({ code: z.string().regex(/^TNL_[A-Z]+(?:_[A-Z]+)*$/) })),
+  }),
+  "diagnostic catalog",
+);
 
 const acronyms = new Set(["IP", "URL", "DNS"]);
 const codes = new Set<string>();
 const symbols = new Set<string>();
-const lines = catalog.diagnostics.map((entry: unknown) => {
-  if (
-    typeof entry !== "object" ||
-    entry === null ||
-    !("code" in entry) ||
-    typeof entry.code !== "string" ||
-    !/^TNL_[A-Z]+(?:_[A-Z]+)*$/.test(entry.code)
-  ) {
-    throw new Error("invalid diagnostic code");
-  }
+const lines = catalog.diagnostics.map((entry) => {
   const code = entry.code;
   const symbol = code
     .slice(4)

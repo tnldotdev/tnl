@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "vitest";
 import { applyFault, type FaultRuntime } from "./runtime-faults.ts";
+import { netemOptions } from "./runtime-network.ts";
 
 function faultRuntime(overrides: Partial<FaultRuntime>): FaultRuntime {
   return {
@@ -71,4 +74,35 @@ test("a partial blackhole restores applied rules and retains cleanup failures", 
   });
   assert.deepEqual(commands, ["-I tcp", "-I udp", "-D tcp"]);
   assert.deepEqual(events, []);
+});
+
+test("network impairment inputs reject malformed or out-of-range values", () => {
+  assert.deepEqual(netemOptions("latency", "20ms", undefined, "7"), ["delay", "10ms", "seed", "7"]);
+  assert.deepEqual(netemOptions("packet-loss", undefined, "0.1", "0"), ["loss", "random", "0.1%"]);
+  assert.throws(
+    () => netemOptions("latency", "20ms", undefined, "not-a-number"),
+    /invalid netem seed/,
+  );
+  assert.throws(() => netemOptions("packet-loss", undefined, "bogus", "0"), /LOSS/);
+  assert.throws(
+    () => netemOptions("latency", "20ms", undefined, "4294967296"),
+    /invalid netem seed/,
+  );
+});
+
+test("a malformed blackhole packet count cannot pass the fault check", async () => {
+  const results = mkdtempSync(join(tmpdir(), "tnl-runtime-fault-"));
+  try {
+    const runtime = faultRuntime({
+      results,
+      compose: (args) => (args.includes("-L") ? "invalid 0 0 DROP tnl-runtime-fault" : ""),
+    });
+    await assert.rejects(applyFault("forwarding-blackhole", runtime), (error: unknown) => {
+      assert(error instanceof AggregateError);
+      assert.match(String(error.errors[0]), /blackhole rule dropped no packets/);
+      return true;
+    });
+  } finally {
+    rmSync(results, { recursive: true, force: true });
+  }
 });

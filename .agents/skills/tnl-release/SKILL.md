@@ -88,3 +88,6 @@ The root release workflow publishes the archives, image, Homebrew formula,
 Do not create separate npm tags. Verify all five npm versions and the package's
 public subpaths after the workflow completes. Diagnose a failed workflow instead
 of publishing manually.
+
+After verifying the release, use the `tnl-release-check` skill to qualify
+staging before production promotion and to check production after deployment.

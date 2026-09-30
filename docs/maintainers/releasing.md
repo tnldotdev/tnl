@@ -47,6 +47,9 @@ with archive checksums and updates the tap using `scripts/update-homebrew.ts`.
 
 CI publishes artifacts and images. It does not deploy production.
 
+Use [deployed release checks](release-checks.md) after publication: require
+staging to pass before promotion and check production after deployment.
+
 ## bootstrap npm once
 
 The launcher package exposes the client, configuration types, and framework

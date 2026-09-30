@@ -1,5 +1,12 @@
-// Target only the transport under experiment; control, DNS, and resource
-// collection keep their ordinary paths. Each returned endpoint owns its qdisc.
+// target only the transport under experiment; control, DNS, and resource
+// collection keep their ordinary paths. each returned endpoint owns its qdisc.
+import * as z from "zod";
+
+const pathSchema = z.enum(["forwarding", "publisher"]);
+const rttSchema = z.enum(["20ms", "50ms", "100ms"]);
+const lossSchema = z.enum(["0.1", "1"]);
+const seedSchema = z.coerce.number().pipe(z.int().min(0).max(0xffffffff));
+
 export type ImpairmentScenario = "latency" | "packet-loss";
 export type NetworkPath = "forwarding" | "publisher";
 export const publisherServices = [
@@ -26,10 +33,12 @@ export function impairmentEndpoints(
   ingresses: readonly ("ingress-a" | "ingress-b")[],
   activePublishers: readonly (typeof publisherServices)[number][],
 ): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
-  if (path !== "forwarding" && path !== "publisher") throw new Error("invalid network path");
-  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : activePublishers;
-  const port = path === "forwarding" ? "8443" : "443";
-  const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
+  const selected = pathSchema.safeParse(path);
+  if (!selected.success) throw new Error("invalid network path");
+  const sources: readonly RuntimeService[] =
+    selected.data === "forwarding" ? ingresses : activePublishers;
+  const port = selected.data === "forwarding" ? "8443" : "443";
+  const protocols = selected.data === "forwarding" ? ["6"] : ["6", "17"];
   const forwards = sources.map((service): ImpairmentEndpoint => ({ service, filters: [] }));
   const first = forwards[0];
   if (!first) throw new Error("network path requires a source");
@@ -84,15 +93,16 @@ export function netemOptions(
 ): string[] {
   let options: string[];
   if (scenario === "latency") {
-    if (rtt !== "20ms" && rtt !== "50ms" && rtt !== "100ms")
-      throw new Error("RTT must be 20ms, 50ms, or 100ms");
-    options = ["delay", `${Number.parseInt(rtt, 10) / 2}ms`];
+    const parsed = rttSchema.safeParse(rtt);
+    if (!parsed.success) throw new Error("RTT must be 20ms, 50ms, or 100ms");
+    options = ["delay", `${Number.parseInt(parsed.data, 10) / 2}ms`];
   } else if (scenario === "packet-loss") {
-    if (![0.1, 1].includes(Number(loss))) throw new Error("LOSS must be 0.1 or 1 percent");
-    options = ["loss", "random", `${loss}%`];
+    const parsed = lossSchema.safeParse(loss);
+    if (!parsed.success) throw new Error("LOSS must be 0.1 or 1 percent");
+    options = ["loss", "random", `${parsed.data}%`];
   } else throw new Error("invalid impairment scenario");
-  if (!Number.isSafeInteger(Number(seed)) || Number(seed) < 0 || Number(seed) > 0xffffffff)
-    throw new Error("invalid netem seed");
-  if (Number(seed) !== 0) options.push("seed", String(seed));
+  const parsedSeed = seedSchema.safeParse(seed);
+  if (!parsedSeed.success) throw new Error("invalid netem seed");
+  if (parsedSeed.data !== 0) options.push("seed", String(parsedSeed.data));
   return options;
 }

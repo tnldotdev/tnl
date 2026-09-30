@@ -53,6 +53,7 @@ export type FaultRuntime = {
 };
 
 const qdiscsSchema = z.array(z.looseObject({ kind: z.string(), packets: z.optional(z.number()) }));
+const droppedPacketsSchema = z.string().regex(/^\d+$/).transform(Number).pipe(z.int().positive());
 
 // restore every owned mutation even when setup or evidence collection fails.
 // keep the original failure alongside cleanup failures.
@@ -169,7 +170,9 @@ export async function applyFault(scenario: Fault, runtime: FaultRuntime): Promis
         const dropped = counters.split("\n").filter((line) => line.includes("tnl-runtime-fault"));
         if (
           dropped.length !== rulesPerService ||
-          dropped.some((line) => Number(line.trim().split(/\s+/)[0]) <= 0)
+          dropped.some(
+            (line) => !droppedPacketsSchema.safeParse(line.trim().split(/\s+/)[0]).success,
+          )
         )
           throw new Error(`${service} blackhole rule dropped no packets`);
       }
