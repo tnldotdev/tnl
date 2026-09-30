@@ -112,6 +112,16 @@ describe("development context", () => {
     });
   });
 
+  test("does not borrow project metadata across a nested Git worktree boundary", async () => {
+    const root = await temporaryDirectory("tnl-ancestor-project-");
+    await mkdir(path.join(root, ".tnl"));
+    await writeFile(path.join(root, ".tnl", "project.json"), JSON.stringify(testProjectDocument()));
+    const nested = path.join(root, "nested");
+    await mkdir(nested);
+    await writeFile(path.join(nested, ".git"), "gitdir: /tmp/nested-worktree\n");
+    expect(discoverProject(nested)).toBeNull();
+  });
+
   test("accepts only the complete final protocol environment", () => {
     expect(() => readDevelopmentContext({ TNL_DEV_PROTOCOL: "2" })).toThrow(
       /unsupported tnl dev protocol/,

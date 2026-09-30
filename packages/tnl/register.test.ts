@@ -49,6 +49,23 @@ test("closes a Node listener when registration is refused", async () => {
   });
 });
 
+test("stops waiting when a Node listener closes before listening", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const { tnl } = await import("@tnldotdev/tnl");
+    const server = createServer();
+    const registration = tnl.register(server);
+    server.close(() => {});
+    await expect(
+      Promise.race([
+        registration,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("registration hung")), 250)),
+      ]),
+    ).rejects.toThrow(/closed before listening/);
+    expect(bootstrap.requests).toHaveLength(0);
+  });
+});
+
 test("keeps Hono's Node server in control of its own HTTP listener", async () => {
   const bootstrap = await startTestBootstrap();
   await withProcessEnvironment(bootstrap.environment, async () => {

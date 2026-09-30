@@ -45,8 +45,11 @@ export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextCo
     }
 
     const allowedDevOrigins = nextConfig.allowedDevOrigins ?? [];
-    if (!Array.isArray(allowedDevOrigins)) {
-      throw new Error("Next.js allowedDevOrigins must be an array when used with tnl");
+    if (
+      !Array.isArray(allowedDevOrigins) ||
+      !allowedDevOrigins.every((origin) => typeof origin === "string")
+    ) {
+      throw new Error("Next.js allowedDevOrigins must be an array of strings when used with tnl");
     }
     const target = nextTarget(process.env);
     const assignment = await requestTunnelAssignment("next", development.bootstrap);

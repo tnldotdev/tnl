@@ -119,6 +119,18 @@ describe("tnl", () => {
     });
   });
 
+  test("rejects non-string allowed hosts before requesting an assignment", async () => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      await expect(
+        runConfigHook(tnl(), {
+          server: { allowedHosts: ["existing.example", 42] as unknown as string[] },
+        }),
+      ).rejects.toThrow(/allowedHosts/);
+    });
+    expect(bootstrap.requests).toHaveLength(0);
+  });
+
   test("preserves listener and cleanup failures when registration cannot start", async () => {
     const bootstrap = await startTestBootstrap();
     const plugin = tnl();
@@ -149,6 +161,29 @@ describe("tnl", () => {
       closeError,
     ]);
     expect(failure.cause).toBe(failure.errors[0]);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("rejects a restart that moves the registered development target", async () => {
+    const bootstrap = await startTestBootstrap();
+    const plugin = tnl();
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      await runConfigHook(plugin, {});
+    });
+    let port = 5200;
+    const close = vi.fn(async () => {});
+    const server = {
+      close,
+      httpServer: { address: () => ({ address: "127.0.0.1", port }) },
+      listen: vi.fn(async () => undefined),
+    };
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer !== "function") throw new Error("missing Vite server hook");
+    configureServer.call({} as never, server as never);
+    await server.listen();
+    expect(bootstrap.requests[1]?.body).toMatchObject({ target: "http://127.0.0.1:5200" });
+    port = 5201;
+    await expect(server.listen()).rejects.toThrow(/listener changed after registration/);
     expect(close).toHaveBeenCalledOnce();
   });
 });

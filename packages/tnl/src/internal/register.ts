@@ -3,6 +3,7 @@ import {
   canonicalLoopbackTarget,
   readDevelopmentContext,
   registerLocalTarget,
+  registrationTimeoutMilliseconds,
   requestTunnelAssignment,
 } from "./dev.js";
 
@@ -19,8 +20,10 @@ export interface NodeHTTPServer {
   address(): unknown;
   once(event: "listening", listener: () => void): unknown;
   once(event: "error", listener: (error: Error) => void): unknown;
+  once(event: "close", listener: () => void): unknown;
   off(event: "listening", listener: () => void): unknown;
   off(event: "error", listener: (error: Error) => void): unknown;
+  off(event: "close", listener: () => void): unknown;
   close(callback?: (error?: Error) => void): unknown;
   closeAllConnections?(): void;
 }
@@ -70,16 +73,32 @@ async function listeningTarget(server: LocalHTTPServer): Promise<`http://${strin
   }
   if (server.address() === null) {
     await new Promise<void>((resolve, reject) => {
-      const onListening = () => {
+      let timer: ReturnType<typeof setTimeout>;
+      const cleanup = () => {
+        clearTimeout(timer);
+        server.off("listening", onListening);
         server.off("error", onError);
+        server.off("close", onClose);
+      };
+      const onListening = () => {
+        cleanup();
         resolve();
       };
       const onError = (error: Error) => {
-        server.off("listening", onListening);
+        cleanup();
         reject(error);
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error("Node listener closed before listening"));
       };
       server.once("listening", onListening);
       server.once("error", onError);
+      server.once("close", onClose);
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Node listener did not start before registration timed out"));
+      }, registrationTimeoutMilliseconds);
     });
   }
   const address = server.address();

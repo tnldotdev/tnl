@@ -19,7 +19,7 @@ import {
 const protocolVersion = "1";
 const maximumDocumentBytes = 64 * 1024;
 const maximumResponseBytes = 64 * 1024;
-const registrationTimeoutMilliseconds = 10 * 60 * 1000;
+export const registrationTimeoutMilliseconds: number = 10 * 60 * 1000;
 type TnlDevOperation = "configuration" | "target registration";
 
 export type TnlDevEnvironment = Readonly<Record<string, string | undefined>>;
@@ -173,6 +173,15 @@ export function discoverProject(cwd: string): ProjectDiscovery | null {
       if (!isMissing(error)) {
         throw error;
       }
+    }
+
+    // A nested repository or Git worktree must not inherit an unrelated
+    // ancestor's browser-safe project metadata.
+    try {
+      fs.lstatSync(path.join(directory, ".git"));
+      return null;
+    } catch (error) {
+      if (!isMissing(error)) throw error;
     }
 
     const parent = path.dirname(directory);

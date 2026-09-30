@@ -59,6 +59,12 @@ describe("root runtime", () => {
     expect(Object.isFrozen(runtime?.services.api)).toBe(true);
   });
 
+  test("does not expose inherited properties as project services", () => {
+    const runtime = parseRuntimePayload(JSON.stringify({ ...project, dev: true }));
+    expect(Object.getPrototypeOf(runtime?.services)).toBeNull();
+    expect(runtime?.services.constructor).toBeUndefined();
+  });
+
   test("uses an ephemeral listener under tnl dev and honors a forced port", async () => {
     vi.stubEnv("TNL_DEV_PROTOCOL", "1");
     vi.stubEnv("TNL_DEV_PORT", undefined);

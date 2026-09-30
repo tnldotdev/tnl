@@ -26,6 +26,21 @@ const developmentPhase = "phase-development-server";
 const context: NextConfigContext = { defaultConfig: {} };
 
 describe("withTnl", () => {
+  test("rejects non-string development origins before requesting an assignment", async () => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+      async () => {
+        await expect(
+          withTnl({ allowedDevOrigins: ["existing.example", 42] as unknown as string[] })(
+            developmentPhase,
+            context,
+          ),
+        ).rejects.toThrow(/allowedDevOrigins/);
+      },
+    );
+    expect(bootstrap.requests).toHaveLength(0);
+  });
   test("preserves builds and development without generated metadata", async () => {
     const config = { reactStrictMode: true };
     const wrapped = withTnl(config);

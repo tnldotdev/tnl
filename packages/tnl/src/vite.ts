@@ -16,14 +16,14 @@ export default function tnl(...arguments_: never[]): Plugin {
     throw new Error("tnl() does not accept tunnel options; use project configuration");
   }
   let assignment: TnlTunnelAssignment | null = null;
-  let localPortRegistered = false;
+  let registeredTarget: string | null = null;
   return {
     name: "tnl",
     enforce: "post",
     apply: "serve",
     async config(userConfig = {}, configEnvironment) {
       assignment = null;
-      localPortRegistered = false;
+      registeredTarget = null;
       if (configEnvironment.command !== "serve" || configEnvironment.isPreview === true) {
         return undefined;
       }
@@ -74,19 +74,20 @@ export default function tnl(...arguments_: never[]): Plugin {
         } catch (error) {
           return await closeAfterFailure(server.close.bind(server), error);
         }
-        if (localPortRegistered) {
-          return listening;
-        }
         try {
           const address = server.httpServer?.address();
           if (address === null || address === undefined || typeof address === "string") {
             throw new Error("Vite did not report its listening port to tnl dev");
           }
-          await registerLocalTarget(
-            configured,
-            canonicalLoopbackTarget(address.address, address.port),
-          );
-          localPortRegistered = true;
+          const target = canonicalLoopbackTarget(address.address, address.port);
+          if (registeredTarget !== null) {
+            if (registeredTarget !== target) {
+              throw new Error("Vite listener changed after registration with tnl dev");
+            }
+            return listening;
+          }
+          await registerLocalTarget(configured, target);
+          registeredTarget = target;
         } catch (error) {
           return await closeAfterFailure(server.close.bind(server), error);
         }
@@ -128,7 +129,13 @@ function addAllowedHost(
 }
 
 function validateAllowedHosts(value: string[] | true | undefined): void {
-  if (value !== undefined && value !== true && !Array.isArray(value)) {
-    throw new Error("Vite server.allowedHosts must be an array or true when used with tnl");
+  if (
+    value !== undefined &&
+    value !== true &&
+    (!Array.isArray(value) || !value.every((host) => typeof host === "string"))
+  ) {
+    throw new Error(
+      "Vite server.allowedHosts must be an array of strings or true when used with tnl",
+    );
   }
 }

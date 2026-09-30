@@ -28,7 +28,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     throw new Error(`${description} may contain at most ${maximumServices} services`);
   }
 
-  const services: Record<string, ProjectServiceMetadata> = {};
+  const services: Record<string, ProjectServiceMetadata> = Object.create(null);
   const hostnames = new Set<string>();
   for (const [name, value] of entries) {
     if (!validServiceName(name)) {
