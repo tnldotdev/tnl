@@ -71,7 +71,7 @@ function renameProperties(value: unknown, mappings: Readonly<Record<string, stri
   if (value === null || typeof value !== "object") {
     return;
   }
-  const object = value as Record<string, unknown>;
+  const object = parseValue(value, schemaObject, "schema node");
   if (object.properties !== undefined) {
     const properties = parseValue(object.properties, schemaObject, "schema properties");
     for (const [staticName, typeScriptName] of Object.entries(mappings)) {
@@ -86,7 +86,9 @@ function renameProperties(value: unknown, mappings: Readonly<Record<string, stri
     const required = parseValue(object.required, z.array(z.string()), "required schema fields");
     object.required = required.map((name) => mappings[name] ?? name);
   }
-  for (const child of Object.values(object)) {
+  // zod parses a copy; apply the validated changes to the schema being walked.
+  Object.assign(value, object);
+  for (const child of Object.values(value)) {
     renameProperties(child, mappings);
   }
 }

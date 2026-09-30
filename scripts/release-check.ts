@@ -7,60 +7,75 @@ import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import * as z from "zod";
+import { parseJSON, parseValue } from "./validation.ts";
 
-type Options = {
-  server: string;
-  team: string;
-  stateDir: string;
-  tnlBinary: string;
-  version: string;
-  claimedDomain: string;
-};
+const optionsSchema = z.object({
+  server: z
+    .url()
+    .refine(
+      (server) => new URL(server).protocol === "https:" && new URL(server).origin === server,
+      "server must be a canonical HTTPS origin",
+    ),
+  team: z.string().min(1),
+  stateDir: z.string().refine(isAbsolute, "state directory must be absolute"),
+  tnlBinary: z.string().refine(isAbsolute, "tnl binary path must be absolute"),
+  version: z.string().min(1),
+  claimedDomain: z.union([
+    z.literal(""),
+    z.string().regex(/^(?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  ]),
+});
+type Options = z.infer<typeof optionsSchema>;
 
 type Ready = { url: string; publishRunNumber: number; tunnelID: string };
 
-function object(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("invalid tnl JSON object");
-  }
-  return value as Record<string, unknown>;
-}
+const publishEventSchema = z.looseObject({
+  schema_version: z.literal(1),
+  type: z.string(),
+  code: z.string().optional(),
+  message: z.string().optional(),
+});
+const readySchema = publishEventSchema.extend({
+  type: z.literal("ready"),
+  url: z.url(),
+  tunnel_id: z.string().min(1),
+  publish_run_number: z.int().positive(),
+});
+const statusSchema = z.object({
+  tunnels: z.array(
+    z.object({
+      tunnel_id: z.string(),
+      server: z.string(),
+      public_url_id: z.string().optional(),
+    }),
+  ),
+});
+const visitorSchema = z.object({ host: z.string(), nonce: z.string() });
 
 export function readyEvent(line: string): Ready | undefined {
-  const event: unknown = JSON.parse(line);
-  const value = object(event);
-  if (value.schema_version !== 1 || typeof value.type !== "string") {
-    throw new Error("invalid tnl publish event");
+  const event = parseJSON(line, publishEventSchema, "tnl publish event");
+  if (event.type === "error") {
+    throw new Error(`tnl publish: ${event.code ?? event.message ?? "unknown error"}`);
   }
-  if (value.type === "error") {
-    throw new Error(`tnl publish: ${String(value.code ?? value.message ?? "unknown error")}`);
-  }
-  if (value.type !== "ready") return undefined;
-  if (
-    typeof value.url !== "string" ||
-    typeof value.tunnel_id !== "string" ||
-    !Number.isSafeInteger(value.publish_run_number) ||
-    (value.publish_run_number as number) < 1
-  ) {
-    throw new Error("invalid tnl ready event");
-  }
+  if (event.type !== "ready") return undefined;
+  const ready = parseValue(event, readySchema, "tnl ready event");
   return {
-    url: value.url,
-    tunnelID: value.tunnel_id,
-    publishRunNumber: value.publish_run_number as number,
+    url: ready.url,
+    tunnelID: ready.tunnel_id,
+    publishRunNumber: ready.publish_run_number,
   };
 }
 
 export function publicURLID(snapshot: unknown, tunnelID: string, server: string): string {
-  const tunnels = object(snapshot).tunnels;
-  if (!Array.isArray(tunnels)) throw new Error("invalid tnl status result");
-  const tunnel = tunnels
-    .map((value: unknown) => object(value))
-    .find((value) => value.tunnel_id === tunnelID && value.server === server);
-  if (typeof tunnel?.public_url_id !== "string" || tunnel.public_url_id === "") {
+  const { tunnels } = parseValue(snapshot, statusSchema, "tnl status result");
+  const id = tunnels.find(
+    (value) => value.tunnel_id === tunnelID && value.server === server,
+  )?.public_url_id;
+  if (!id) {
     throw new Error("tnl status has no public URL ID for this tunnel");
   }
-  return tunnel.public_url_id;
+  return id;
 }
 
 function options(args: string[]): { mode: "plan" | "run"; config: Options } {
@@ -80,29 +95,18 @@ function options(args: string[]): { mode: "plan" | "run"; config: Options } {
   if (positionals.length !== 1 || (mode !== "plan" && mode !== "run")) {
     throw new Error("usage: release-check.ts plan|run [flags]");
   }
-  const config: Options = {
-    server: values.server ?? "",
-    team: values.team ?? "",
-    stateDir: values["state-dir"] ?? "",
-    tnlBinary: values["tnl-binary"] ?? "",
-    version: values.version ?? "",
-    claimedDomain: values["claimed-domain"] ?? "",
-  };
-  const url = new URL(config.server);
-  if (
-    url.protocol !== "https:" ||
-    url.origin !== config.server ||
-    !config.team ||
-    !config.version ||
-    !isAbsolute(config.stateDir) ||
-    !isAbsolute(config.tnlBinary) ||
-    (config.claimedDomain &&
-      !/^(?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.claimedDomain))
-  ) {
-    throw new Error(
-      "provide a canonical HTTPS server, team, version, absolute state/binary paths, and ready claimed domain",
-    );
-  }
+  const config = parseValue(
+    {
+      server: values.server ?? "",
+      team: values.team ?? "",
+      stateDir: values["state-dir"] ?? "",
+      tnlBinary: values["tnl-binary"] ?? "",
+      version: values.version ?? "",
+      claimedDomain: values["claimed-domain"] ?? "",
+    },
+    optionsSchema,
+    "release check options",
+  );
   return { mode, config };
 }
 
@@ -191,8 +195,7 @@ export async function visit(url: string, nonce: string): Promise<void> {
       continue;
     }
     if (response.status !== 200) throw new Error(`visitor HTTP ${response.status}`);
-    const body: unknown = await response.json();
-    const value = object(body);
+    const value = parseValue(await response.json(), visitorSchema, "local service response");
     if (value.host !== parsed.host || value.nonce !== nonce)
       throw new Error("visitor reached the wrong local service");
     return;
@@ -278,14 +281,18 @@ async function main(): Promise<void> {
     await check("generated ephemeral URL", ["--ephemeral"]);
     const savedFlags = [`--subdomain=${label}`];
     const first = await check("saved public URL", savedFlags, (ready) => {
-      const status: unknown = JSON.parse(
+      const status = parseJSON(
         cli(config, cwd, "status", "--all", "--output=json", `--state-dir=${config.stateDir}`),
+        statusSchema,
+        "tnl status result",
       );
       savedID = publicURLID(status, ready.tunnelID, config.server);
     });
     const second = await check("republished public URL", savedFlags, (ready) => {
-      const status: unknown = JSON.parse(
+      const status = parseJSON(
         cli(config, cwd, "status", "--all", "--output=json", `--state-dir=${config.stateDir}`),
+        statusSchema,
+        "tnl status result",
       );
       if (
         publicURLID(status, ready.tunnelID, config.server) !== savedID ||
