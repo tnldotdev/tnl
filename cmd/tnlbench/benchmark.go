@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,22 +27,25 @@ import (
 )
 
 type workloadOptions struct {
-	Suite            string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
-	Server           string        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
-	Transport        string        `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp,auto" help:"Forced cohorts or normal QUIC/TLS-TCP selection."`
-	VisitorNetwork   string        `name:"visitor-network" env:"BENCH_VISITOR_NETWORK" default:"tcp" enum:"tcp,tcp4,tcp6" help:"Network used by public visitor TCP sockets."`
-	VisitorInterface string        `name:"visitor-interface" env:"BENCH_VISITOR_INTERFACE" help:"Local interface whose IPv4 address is used by public visitors only."`
-	PublicURLs       int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Public URLs to publish."`
-	FreshRate        int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Offered visitor requests per second."`
-	HeldStreams      int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
-	Concurrency      int           `name:"concurrency" env:"BENCH_CONCURRENCY" default:"128" help:"Concurrent visitor request workers."`
-	QueueSlots       int           `name:"queue-slots" env:"BENCH_QUEUE_SLOTS" default:"8" help:"Waiting visitor request slots."`
-	PayloadBytes     int           `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" default:"32768" help:"Verified response bytes."`
-	Repetitions      int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows."`
-	Warmup           time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Time before measuring."`
-	Duration         time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Length of each measurement window."`
-	StateDir         string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing login for the selected server."`
-	ResultsRoot      string        `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Result directory."`
+	Suite                       string        `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
+	Server                      string        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
+	Transport                   string        `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp,auto" help:"Forced cohorts or normal QUIC/TLS-TCP selection."`
+	QUICDisablePathMTUDiscovery bool          `name:"quic-disable-path-mtu-discovery" env:"BENCH_QUIC_DISABLE_PATH_MTU_DISCOVERY" help:"Disable publisher QUIC path-MTU discovery for a diagnostic run."`
+	QUICQlog                    bool          `name:"quic-qlog" env:"BENCH_QUIC_QLOG" help:"Record publisher QUIC qlogs in the benchmark result directory."`
+	QUICKeepAlive               time.Duration `name:"quic-keepalive" env:"BENCH_QUIC_KEEPALIVE" help:"Publisher QUIC keepalive period override for a diagnostic run."`
+	VisitorNetwork              string        `name:"visitor-network" env:"BENCH_VISITOR_NETWORK" default:"tcp" enum:"tcp,tcp4,tcp6" help:"Network used by public visitor TCP sockets."`
+	VisitorInterface            string        `name:"visitor-interface" env:"BENCH_VISITOR_INTERFACE" help:"Local interface whose IPv4 address is used by public visitors only."`
+	PublicURLs                  int           `name:"public-urls" env:"BENCH_PUBLIC_URLS" default:"4" help:"Public URLs to publish."`
+	FreshRate                   int           `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" default:"16" help:"Offered visitor requests per second."`
+	HeldStreams                 int           `name:"held-streams" env:"BENCH_HELD_STREAMS" default:"4" help:"Held visitor streams."`
+	Concurrency                 int           `name:"concurrency" env:"BENCH_CONCURRENCY" default:"128" help:"Concurrent visitor request workers."`
+	QueueSlots                  int           `name:"queue-slots" env:"BENCH_QUEUE_SLOTS" default:"8" help:"Waiting visitor request slots."`
+	PayloadBytes                int           `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" default:"32768" help:"Verified response bytes."`
+	Repetitions                 int           `name:"repetitions" env:"BENCH_REPETITIONS" default:"1" help:"Measurement windows."`
+	Warmup                      time.Duration `name:"warmup" env:"BENCH_WARMUP" default:"5s" help:"Time before measuring."`
+	Duration                    time.Duration `name:"duration" env:"BENCH_DURATION" default:"10s" help:"Length of each measurement window."`
+	StateDir                    string        `name:"state-dir" env:"BENCH_STATE_DIR" type:"path" help:"Client state with an existing login for the selected server."`
+	ResultsRoot                 string        `name:"results-root" env:"BENCH_RESULTS_ROOT" default:"bench-results" type:"path" help:"Result directory."`
 }
 
 type benchmarkPlan struct {
@@ -51,19 +56,22 @@ type benchmarkPlan struct {
 }
 
 type workloadSummary struct {
-	Suite            string        `json:"suite"`
-	Transport        string        `json:"transport"`
-	VisitorNetwork   string        `json:"visitor_network"`
-	VisitorInterface string        `json:"visitor_interface,omitempty"`
-	PublicURLs       int           `json:"public_urls"`
-	FreshRate        int           `json:"fresh_connections_per_second"`
-	HeldStreams      int           `json:"held_streams"`
-	Concurrency      int           `json:"concurrency"`
-	QueueSlots       int           `json:"queue_slots"`
-	PayloadBytes     int           `json:"payload_bytes"`
-	Repetitions      int           `json:"repetitions"`
-	Warmup           time.Duration `json:"warmup"`
-	Duration         time.Duration `json:"duration"`
+	Suite                       string        `json:"suite"`
+	Transport                   string        `json:"transport"`
+	QUICDisablePathMTUDiscovery bool          `json:"quic_disable_path_mtu_discovery,omitempty"`
+	QUICQlog                    bool          `json:"quic_qlog,omitempty"`
+	QUICKeepAlive               time.Duration `json:"quic_keepalive,omitempty"`
+	VisitorNetwork              string        `json:"visitor_network"`
+	VisitorInterface            string        `json:"visitor_interface,omitempty"`
+	PublicURLs                  int           `json:"public_urls"`
+	FreshRate                   int           `json:"fresh_connections_per_second"`
+	HeldStreams                 int           `json:"held_streams"`
+	Concurrency                 int           `json:"concurrency"`
+	QueueSlots                  int           `json:"queue_slots"`
+	PayloadBytes                int           `json:"payload_bytes"`
+	Repetitions                 int           `json:"repetitions"`
+	Warmup                      time.Duration `json:"warmup"`
+	Duration                    time.Duration `json:"duration"`
 }
 
 func (c workloadOptions) plan() (benchmarkPlan, error) {
@@ -83,6 +91,9 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 	if c.VisitorNetwork != "tcp" && c.VisitorNetwork != "tcp4" && c.VisitorNetwork != "tcp6" {
 		return benchmarkPlan{}, errors.New("visitor network must be tcp, tcp4, or tcp6")
 	}
+	if c.QUICKeepAlive < 0 || c.QUICKeepAlive > 0 && (c.QUICKeepAlive < time.Second || c.QUICKeepAlive > time.Minute) {
+		return benchmarkPlan{}, errors.New("QUIC keepalive must be zero or between 1s and 1m")
+	}
 	if c.VisitorInterface != "" {
 		if c.VisitorNetwork == "tcp6" {
 			return benchmarkPlan{}, errors.New("a selected visitor interface requires IPv4 visitor sockets")
@@ -98,7 +109,7 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
 	return benchmarkPlan{SchemaVersion: 2, ReadOnly: true, Server: server,
-		Workload: workloadSummary{Suite: c.Suite, Transport: c.Transport, VisitorNetwork: c.VisitorNetwork, VisitorInterface: c.VisitorInterface, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
+		Workload: workloadSummary{Suite: c.Suite, Transport: c.Transport, QUICDisablePathMTUDiscovery: c.QUICDisablePathMTUDiscovery, QUICQlog: c.QUICQlog, QUICKeepAlive: c.QUICKeepAlive, VisitorNetwork: c.VisitorNetwork, VisitorInterface: c.VisitorInterface, PublicURLs: c.PublicURLs, FreshRate: c.FreshRate,
 			HeldStreams: c.HeldStreams, Concurrency: c.Concurrency, QueueSlots: c.QueueSlots,
 			PayloadBytes: c.PayloadBytes, Repetitions: c.Repetitions, Warmup: c.Warmup, Duration: c.Duration}}, nil
 }
@@ -118,6 +129,15 @@ func (c planCommand) run(stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Benchmark plan (READ ONLY)\nServer: %s\nGenerators: local publisher and visitor\n", plan.Server)
 	fmt.Fprintf(stdout, "Publisher transport: %s\n", c.Transport)
+	if c.QUICDisablePathMTUDiscovery {
+		fmt.Fprintln(stdout, "Publisher QUIC path-MTU discovery: disabled")
+	}
+	if c.QUICQlog {
+		fmt.Fprintln(stdout, "Publisher QUIC qlog: enabled")
+	}
+	if c.QUICKeepAlive > 0 {
+		fmt.Fprintf(stdout, "Publisher QUIC keepalive: %s\n", c.QUICKeepAlive)
+	}
 	fmt.Fprintf(stdout, "Visitor network: %s", c.VisitorNetwork)
 	if c.VisitorInterface != "" {
 		fmt.Fprintf(stdout, " via %s", c.VisitorInterface)
@@ -149,29 +169,82 @@ func (c runCommand) validate() (benchmarkPlan, error) {
 }
 
 type benchmarkResult struct {
-	SchemaVersion int                            `json:"schema_version"`
-	RunID         string                         `json:"run_id"`
-	Plan          benchmarkPlan                  `json:"plan"`
-	StartedAt     time.Time                      `json:"started_at"`
-	FinishedAt    time.Time                      `json:"finished_at"`
-	Status        string                         `json:"status"`
-	Error         string                         `json:"error,omitempty"`
-	PublicURLs    []string                       `json:"public_urls,omitempty"`
-	PublicURLInfo []benchmarkPublicURL           `json:"public_url_info,omitempty"`
-	Fallbacks     []benchmarkTransportFallback   `json:"transport_fallbacks,omitempty"`
-	Direct        benchworkload.VisitorResult    `json:"direct_baseline"`
-	Steady        []benchworkload.VisitorResult  `json:"steady"`
-	SteadyByURL   []map[string]*urlVisitorResult `json:"steady_by_public_url,omitempty"`
-	CleanupExact  bool                           `json:"cleanup_exact"`
-	CleanupStatus string                         `json:"cleanup_status"`
-	Generator     generatorResult                `json:"generator"`
+	SchemaVersion int                             `json:"schema_version"`
+	RunID         string                          `json:"run_id"`
+	Plan          benchmarkPlan                   `json:"plan"`
+	StartedAt     time.Time                       `json:"started_at"`
+	FinishedAt    time.Time                       `json:"finished_at"`
+	Status        string                          `json:"status"`
+	Error         string                          `json:"error,omitempty"`
+	PublicURLs    []string                        `json:"public_urls,omitempty"`
+	PublicURLInfo []benchmarkPublicURL            `json:"public_url_info,omitempty"`
+	Fallbacks     []benchmarkTransportFallback    `json:"transport_fallbacks,omitempty"`
+	Observations  []benchmarkPublisherObservation `json:"publisher_observations,omitempty"`
+	Dropped       int                             `json:"publisher_observations_dropped,omitempty"`
+	Direct        benchworkload.VisitorResult     `json:"direct_baseline"`
+	Steady        []benchworkload.VisitorResult   `json:"steady"`
+	SteadyByURL   []map[string]*urlVisitorResult  `json:"steady_by_public_url,omitempty"`
+	CleanupExact  bool                            `json:"cleanup_exact"`
+	CleanupStatus string                          `json:"cleanup_status"`
+	Generator     generatorResult                 `json:"generator"`
 }
 
 type benchmarkPublicURL struct {
+	Index       int           `json:"index"`
 	PublicURL   string        `json:"public_url"`
 	PublicURLID string        `json:"public_url_id"`
 	Transport   string        `json:"transport"`
 	Activation  time.Duration `json:"activation"`
+}
+
+type benchmarkPublisherObservation struct {
+	Index       int       `json:"index"`
+	PublicURLID string    `json:"public_url_id,omitempty"`
+	At          time.Time `json:"at"`
+	Kind        string    `json:"kind"`
+	Detail      string    `json:"detail,omitempty"`
+}
+
+const maxPublisherObservations = 64
+
+type publisherObservationRecorder struct {
+	mu      sync.Mutex
+	events  []benchmarkPublisherObservation
+	dropped int
+}
+
+func (r *publisherObservationRecorder) add(event benchmarkPublisherObservation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.events) == maxPublisherObservations {
+		oldest := 0
+		for index, previous := range r.events {
+			if previous.Kind == "error" {
+				oldest = index
+				break
+			}
+		}
+		copy(r.events[oldest:], r.events[oldest+1:])
+		r.events[len(r.events)-1] = event
+		r.dropped++
+		return
+	}
+	r.events = append(r.events, event)
+}
+
+func (r *publisherObservationRecorder) Observe(index int, event publisher.Event) error {
+	r.add(benchmarkPublisherObservation{Index: index, PublicURLID: event.PublicURLID, At: time.Now().UTC(), Kind: string(event.Type)})
+	return nil
+}
+
+func (r *publisherObservationRecorder) Report(index int, err error) {
+	r.add(benchmarkPublisherObservation{Index: index, At: time.Now().UTC(), Kind: "error", Detail: err.Error()})
+}
+
+func (r *publisherObservationRecorder) Snapshot() ([]benchmarkPublisherObservation, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]benchmarkPublisherObservation(nil), r.events...), r.dropped
 }
 
 type benchmarkTransportFallback struct {
@@ -236,6 +309,23 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 		return err
 	}
 	resultPath := filepath.Join(dir, "result.json")
+	if c.QUICQlog {
+		qlogDir := filepath.Join(dir, "quic")
+		if err := os.Mkdir(qlogDir, 0o700); err != nil {
+			return err
+		}
+		previous, found := os.LookupEnv("QLOGDIR")
+		if err := os.Setenv("QLOGDIR", qlogDir); err != nil {
+			return err
+		}
+		defer func() {
+			if found {
+				_ = os.Setenv("QLOGDIR", previous)
+			} else {
+				_ = os.Unsetenv("QLOGDIR")
+			}
+		}()
+	}
 	initial := benchmarkResult{SchemaVersion: 2, RunID: filepath.Base(dir), Plan: plan,
 		StartedAt: time.Now().UTC(), Status: "running", CleanupStatus: "not_needed"}
 	if err := writeJSON(resultPath, initial); err != nil {
@@ -301,11 +391,20 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	fmt.Fprintf(progress, "tnlbench: connecting to %s\n", plan.Server)
 	fallbacks := &transportFallbackRecorder{}
 	defer func() { result.Fallbacks = fallbacks.Snapshot() }()
+	observations := &publisherObservationRecorder{}
+	defer func() { result.Observations, result.Dropped = observations.Snapshot() }()
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
 		Server: plan.Server, StateRoot: stateDir, Target: origin.URL,
 		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "run-"), Ephemeral: true,
-		Transport: c.Transport, RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},
-		Observe:  fallbacks.Observe,
+		Transport: c.Transport, QUICDisablePathMTUDiscovery: c.QUICDisablePathMTUDiscovery, QUICQlog: c.QUICQlog, QUICKeepAlive: c.QUICKeepAlive,
+		RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},
+		Observe: func(index int, event publisher.Event) error {
+			if err := fallbacks.Observe(index, event); err != nil {
+				return err
+			}
+			return observations.Observe(index, event)
+		},
+		Report:   observations.Report,
 		Parallel: 4, StartParallel: 4,
 		ReadyTimeout: 5 * time.Minute, StopTimeout: 10 * time.Second,
 	})
@@ -347,26 +446,11 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		publicURLs, err = group.Start(ctx, indexes)
 		return err
 	})
+	urls := recordReadyPublicURLs(&result, publicURLs, c.Transport, c.PublicURLs)
+	if checkpointErr := checkpoint(result); checkpointErr != nil {
+		return result, errors.Join(err, checkpointErr)
+	}
 	if err != nil {
-		return result, err
-	}
-	urls := make([]string, c.PublicURLs)
-	result.PublicURLInfo = make([]benchmarkPublicURL, c.PublicURLs)
-	for _, publicURL := range publicURLs {
-		urls[publicURL.Index] = publicURL.Ready.PublicURL
-		transport := c.Transport
-		if transport == "tcp" || transport == "mixed" && publicURL.Index%2 != 0 {
-			transport = string(tunnel.TransportTLSTCP)
-		} else if transport == "quic" || transport == "mixed" {
-			transport = string(tunnel.TransportQUIC)
-		}
-		result.PublicURLInfo[publicURL.Index] = benchmarkPublicURL{
-			PublicURL: publicURL.Ready.PublicURL, PublicURLID: publicURL.Ready.PublicURLID,
-			Transport: transport, Activation: publicURL.Activation,
-		}
-	}
-	result.PublicURLs = urls
-	if err := checkpoint(result); err != nil {
 		return result, err
 	}
 	for _, publicURL := range urls {
@@ -429,6 +513,28 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		}
 	}
 	return result, nil
+}
+
+func recordReadyPublicURLs(result *benchmarkResult, ready []benchworkload.PublishedPublicURL, transport string, count int) []string {
+	urls := make([]string, count)
+	for _, publicURL := range ready {
+		urls[publicURL.Index] = publicURL.Ready.PublicURL
+		selected := transport
+		if selected == "tcp" || selected == "mixed" && publicURL.Index%2 != 0 {
+			selected = string(tunnel.TransportTLSTCP)
+		} else if selected == "quic" || selected == "mixed" {
+			selected = string(tunnel.TransportQUIC)
+		}
+		result.PublicURLInfo = append(result.PublicURLInfo, benchmarkPublicURL{
+			Index: publicURL.Index, PublicURL: publicURL.Ready.PublicURL, PublicURLID: publicURL.Ready.PublicURLID,
+			Transport: selected, Activation: publicURL.Activation,
+		})
+	}
+	slices.SortFunc(result.PublicURLInfo, func(a, b benchmarkPublicURL) int { return cmp.Compare(a.Index, b.Index) })
+	for _, publicURL := range result.PublicURLInfo {
+		result.PublicURLs = append(result.PublicURLs, publicURL.PublicURL)
+	}
+	return urls
 }
 
 func visitorWindowError(result benchworkload.VisitorResult, held []*benchworkload.HeldStream) error {

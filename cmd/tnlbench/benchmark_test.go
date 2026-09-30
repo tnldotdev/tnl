@@ -54,6 +54,22 @@ func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	if plan, err := options.plan(); err != nil || plan.Workload.Transport != "auto" {
 		t.Fatalf("target auto plan = %+v, %v", plan, err)
 	}
+	options.QUICDisablePathMTUDiscovery = true
+	if plan, err := options.plan(); err != nil || !plan.Workload.QUICDisablePathMTUDiscovery {
+		t.Fatalf("target QUIC path-MTU plan = %+v, %v", plan, err)
+	}
+	options.QUICQlog = true
+	if plan, err := options.plan(); err != nil || !plan.Workload.QUICQlog {
+		t.Fatalf("target QUIC qlog plan = %+v, %v", plan, err)
+	}
+	options.QUICKeepAlive = 5 * time.Second
+	if plan, err := options.plan(); err != nil || plan.Workload.QUICKeepAlive != 5*time.Second {
+		t.Fatalf("target QUIC keepalive plan = %+v, %v", plan, err)
+	}
+	options.QUICKeepAlive = 500 * time.Millisecond
+	if _, err := options.plan(); err == nil {
+		t.Fatal("accepted subsecond QUIC keepalive")
+	}
 	options = smokeOptions()
 	options.Server = "https://control.tnl.dev/"
 	if plan, err := options.plan(); err != nil || plan.Server != "https://control.tnl.dev" {
@@ -107,6 +123,30 @@ func TestAutoTransportReportsFallbacksWithoutMislabelingPublicURLs(t *testing.T)
 	var output bytes.Buffer
 	if err := printResult(&output, result); err != nil || !strings.Contains(output.String(), "public_url_a auto: 1/1 successful") || !strings.Contains(output.String(), "auto: 2 TLS/TCP selection events") {
 		t.Fatalf("auto report = %q, %v", output.String(), err)
+	}
+}
+
+func TestFailedActivationKeepsReadyPublicURLsAndBoundedPublisherErrors(t *testing.T) {
+	ready := []benchworkload.PublishedPublicURL{
+		{Index: 3, Ready: publisher.Event{PublicURL: "https://third.example", PublicURLID: "public_url_3"}},
+		{Index: 1, Ready: publisher.Event{PublicURL: "https://first.example", PublicURLID: "public_url_1"}},
+	}
+	var result benchmarkResult
+	urls := recordReadyPublicURLs(&result, ready, "mixed", 4)
+	if len(result.PublicURLs) != 2 || result.PublicURLs[0] != urls[1] || result.PublicURLs[1] != urls[3] ||
+		urls[0] != "" || urls[2] != "" || result.PublicURLInfo[0].Index != 1 || result.PublicURLInfo[0].Transport != "tls-tcp" {
+		t.Fatalf("partial activation lost ready URLs: %+v, urls=%v", result.PublicURLInfo, urls)
+	}
+	recorder := &publisherObservationRecorder{}
+	if err := recorder.Observe(0, publisher.Event{Type: publisher.EventProvisioning, PublicURLID: "public_url_0"}); err != nil {
+		t.Fatal(err)
+	}
+	for range maxPublisherObservations {
+		recorder.Report(0, errors.New("QUIC timeout"))
+	}
+	observed, dropped := recorder.Snapshot()
+	if len(observed) != maxPublisherObservations || dropped != 1 || observed[0].PublicURLID != "public_url_0" || observed[len(observed)-1].Detail != "QUIC timeout" {
+		t.Fatalf("publisher diagnostics: count=%d dropped=%d latest=%+v", len(observed), dropped, observed[len(observed)-1])
 	}
 }
 

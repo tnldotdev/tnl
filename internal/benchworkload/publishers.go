@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -29,9 +31,12 @@ type PublisherConfig struct {
 	RelayTLS                                      *tls.Config
 	AllowedIPPrefixes                             []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
-	Transport    string
-	Parallel     int
-	RequestLimit int
+	Transport                   string
+	QUICDisablePathMTUDiscovery bool
+	QUICQlog                    bool
+	QUICKeepAlive               time.Duration
+	Parallel                    int
+	RequestLimit                int
 	// StartParallel overrides Parallel for activation only; shutdown stays bounded separately.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -39,6 +44,7 @@ type PublisherConfig struct {
 	OnFailure                 func()
 	OnActivationFailure       func(index int)
 	Observe                   func(int, publisher.Event) error
+	Report                    func(index int, err error)
 }
 
 type PublishedPublicURL struct {
@@ -178,10 +184,21 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			Ephemeral:    config.Ephemeral,
 			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
-			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS},
+			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
 			FallbackDelay: 250 * time.Millisecond},
 	}, nil
+}
+
+func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Duration) muxsession.QUICConfig {
+	if !disablePathMTUDiscovery && !trace && keepAlive == 0 {
+		return muxsession.QUICConfig{}
+	}
+	config := &quic.Config{DisablePathMTUDiscovery: disablePathMTUDiscovery, KeepAlivePeriod: keepAlive}
+	if trace {
+		config.Tracer = qlog.DefaultConnectionTracer
+	}
+	return muxsession.QUICConfig{Config: config}
 }
 
 func (g *Publishers) Failures() <-chan error { return g.failures }
@@ -209,6 +226,11 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 			prefix = "tnlbench"
 		}
 		cfg.Hostname = fmt.Sprintf("%s-r%06d.%s", prefix, index, g.namespace)
+		if g.config.Report != nil {
+			cfg.Logf = func(format string, args ...any) {
+				g.config.Report(index, fmt.Errorf(format, args...))
+			}
+		}
 		transport := g.config.Transport
 		if transport == "mixed" {
 			if index%2 == 0 {

@@ -18,6 +18,7 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 		defer cancel()
 		var captured bool
 		failedIndex := -1
+		reportedIndex := -1
 		group := &Publishers{ctx: ctx, cancel: cancel, namespace: "test", failures: make(chan error, 1), config: PublisherConfig{Parallel: 1, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, OnFailure: func() {
 			if ctx.Err() != nil {
 				t.Error("canceled before failure snapshot")
@@ -28,10 +29,17 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 				t.Error("canceled before failed publisher was identified")
 			}
 			failedIndex = index
+		}, Report: func(index int, err error) {
+			if err.Error() != "connection timeout" {
+				t.Errorf("reported error = %v", err)
+			}
+			reportedIndex = index
 		}}}
 		group.run = func(ctx context.Context, c publisher.Config) error {
 			if strings.Contains(c.Hostname, "r000000") {
 				_ = c.Observe(publisher.Event{Type: publisher.EventReady})
+			} else {
+				c.Logf("%v", errors.New("connection timeout"))
 			}
 			<-ctx.Done()
 			return ctx.Err()
@@ -44,7 +52,25 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 		if _, err := group.Stop(t.Context(), []int{0, 1}); err != nil {
 			t.Fatal(err)
 		}
+		if reportedIndex != 1 {
+			t.Fatalf("publisher error reported for index %d, want 1", reportedIndex)
+		}
 	})
+}
+
+func TestPublisherQUICPathMTUDiagnosticOverridesDefault(t *testing.T) {
+	if config := benchmarkQUICConfig(false, false, 0); config.Config != nil {
+		t.Fatalf("default publisher QUIC configuration changed: %+v", config.Config)
+	}
+	if config := benchmarkQUICConfig(true, false, 0); config.Config == nil || !config.Config.DisablePathMTUDiscovery {
+		t.Fatalf("benchmark did not disable QUIC path-MTU discovery: %+v", config.Config)
+	}
+	if config := benchmarkQUICConfig(false, true, 0); config.Config == nil || config.Config.Tracer == nil || config.Config.DisablePathMTUDiscovery {
+		t.Fatalf("QUIC tracing changed transport settings: %+v", config.Config)
+	}
+	if config := benchmarkQUICConfig(false, true, 5*time.Second); config.Config == nil || config.Config.KeepAlivePeriod != 5*time.Second || config.Config.Tracer == nil || config.Config.DisablePathMTUDiscovery {
+		t.Fatalf("QUIC keepalive diagnostic changed other settings: %+v", config.Config)
+	}
 }
 
 func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
