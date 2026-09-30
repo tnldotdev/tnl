@@ -34,7 +34,7 @@ type RelayCertificateOrderWork struct {
 	PrivateKeyPEM          []byte
 	CSRDER                 []byte
 	CSRDigest              [32]byte
-	State                  string
+	State                  RelayCertificateOrderState
 	OrderRevision          uint64
 	OrderURL               string
 	FinalizeURL            string
@@ -205,7 +205,7 @@ func (d *Database) SaveRelayCertificateOrderWork(
 		return RelayCertificateOrderWork{}, fmt.Errorf("controlstate: save relay certificate work: lock service: %w", err)
 	}
 	row, err := queries.SaveRelayCertificateOrderWork(ctx, controlstatedb.SaveRelayCertificateOrderWorkParams{
-		State: work.State, OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
+		State: string(work.State), OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
 		CertificateUrl: nullableText(work.CertificateURL), AuthorizationUrl: nullableText(work.AuthorizationURL),
 		AuthorizationExpiresAt: nullableTime(work.AuthorizationExpiresAt),
 		ChallengeUrl:           nullableText(work.ChallengeURL), ChallengeToken: nullableText(work.ChallengeToken),
@@ -326,7 +326,7 @@ func (d *Database) relayCertificateOrderWork(
 	}
 	work := RelayCertificateOrderWork{
 		ID: row.ID, Account: account, RelayServiceID: row.RelayServiceID, TLSServerName: row.TlsServerName,
-		PrivateKeyPEM: privateKey, CSRDER: slices.Clone(row.CsrDer), State: row.State,
+		PrivateKeyPEM: privateKey, CSRDER: slices.Clone(row.CsrDer), State: RelayCertificateOrderState(row.State),
 		OrderRevision: uint64(row.OrderRevision), OrderURL: row.OrderUrl.String, FinalizeURL: row.FinalizeUrl.String,
 		CertificateURL: row.CertificateUrl.String, AuthorizationURL: row.AuthorizationUrl.String,
 		AuthorizationExpiresAt: optionalTime(row.AuthorizationExpiresAt),
@@ -337,6 +337,9 @@ func (d *Database) relayCertificateOrderWork(
 		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, WorkerID: row.WorkOwner.String,
 		WorkEpoch: uint64(row.WorkEpoch), WorkExpiresAt: row.WorkExpiresAt.Time,
 	}
+	if !work.State.valid() {
+		return RelayCertificateOrderWork{}, errors.New("controlstate: invalid relay certificate order state")
+	}
 	copy(work.CSRDigest[:], row.CsrDigest)
 	if len(row.ChallengeDigest) == 32 {
 		copy(work.ChallengeDigest[:], row.ChallengeDigest)
@@ -345,10 +348,7 @@ func (d *Database) relayCertificateOrderWork(
 }
 
 func validateRelayCertificateOrderWork(work RelayCertificateOrderWork) error {
-	validState := work.State == "pending" || work.State == "authorizing" || work.State == "presenting" ||
-		work.State == "presented" || work.State == "validating" || work.State == "ready_to_finalize" ||
-		work.State == "finalizing" || work.State == "cleaning" || work.State == "failed_cleaning" ||
-		work.State == "complete" || work.State == "failed"
+	validState := work.State.valid()
 	hasChallenge := work.ChallengeURL != "" || work.ChallengeToken != "" || work.ChallengeDigest != ([32]byte{}) ||
 		work.PresentationReference != ""
 	challengeComplete := validStateText(work.AuthorizationURL) && validStateText(work.ChallengeURL) &&

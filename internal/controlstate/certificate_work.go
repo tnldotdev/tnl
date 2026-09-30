@@ -24,7 +24,7 @@ type ACMEAuthorizationWork struct {
 	ChallengeToken        string
 	ChallengeDigest       [32]byte
 	PresentationReference string
-	State                 string
+	State                 ACMEAuthorizationState
 	Revision              uint64
 	Attempts              uint64
 	AvailableAt           time.Time
@@ -49,7 +49,7 @@ type ACMEOrderWork struct {
 	ChallengeMethod        string
 	CSRDER                 []byte
 	CSRDigest              [32]byte
-	State                  string
+	State                  ACMEOrderState
 	OrderRevision          uint64
 	OrderURL               string
 	FinalizeURL            string
@@ -192,7 +192,7 @@ func (d *Database) SaveACMEOrderWork(
 	defer rollback(ctx, tx, "save ACME order work", &retErr)()
 	queries := controlstatedb.New(tx)
 	order, err := queries.SaveACMEOrderWork(ctx, controlstatedb.SaveACMEOrderWorkParams{
-		State: work.State, OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
+		State: string(work.State), OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
 		CertificateUrl: nullableText(work.CertificateURL), CertificatePem: slices.Clone(work.CertificatePEM),
 		NotBefore: nullableTime(work.NotBefore), NotAfter: nullableTime(work.NotAfter), RenewAt: nullableTime(work.RenewAt),
 		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError),
@@ -226,7 +226,7 @@ func (d *Database) SaveACMEOrderWork(
 			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: nullableText(authorization.ChallengeType),
 			ChallengeUrl: nullableText(authorization.ChallengeURL), ChallengeToken: nullableText(authorization.ChallengeToken),
 			ChallengeDigest: challengeDigest, PresentationReference: nullableText(authorization.PresentationReference),
-			State:                 authorization.State,
+			State:                 string(authorization.State),
 			AuthorizationRevision: positive(max(authorization.Revision, 1)), Attempts: nonnegative(authorization.Attempts),
 			AvailableAt: timestamptz(authorization.AvailableAt), PresentedAt: nullableTime(authorization.PresentedAt),
 			ValidatedAt: nullableTime(authorization.ValidatedAt), CleanupCompletedAt: nullableTime(authorization.CleanupCompletedAt),
@@ -293,13 +293,16 @@ func acmeOrderWork(
 		ID: order.ID, Account: account, PublishRunID: order.PublishRunID,
 		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
-		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: order.State,
+		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: ACMEOrderState(order.State),
 		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,
 		CertificateURL: order.CertificateUrl.String, CertificatePEM: slices.Clone(order.CertificatePem),
 		Attempts: uint64(order.Attempts), AvailableAt: order.AvailableAt.Time, LastError: order.LastError.String,
 		CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
 		WorkerID: order.WorkOwner.String, WorkEpoch: uint64(order.WorkEpoch), WorkExpiresAt: order.WorkExpiresAt.Time,
 		Authorizations: make([]ACMEAuthorizationWork, len(authorizations)),
+	}
+	if !work.State.valid() {
+		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order state")
 	}
 	copy(work.CSRDigest[:], order.CsrDigest)
 	work.NotBefore = optionalTime(order.NotBefore)
@@ -316,7 +319,7 @@ func acmeOrderWork(
 			ID: authorization.ID, Identifier: authorization.Identifier, AuthorizationURL: authorization.AuthorizationUrl,
 			ChallengeType: authorization.ChallengeType.String, ChallengeURL: authorization.ChallengeUrl.String,
 			ChallengeToken: authorization.ChallengeToken.String, PresentationReference: authorization.PresentationReference.String,
-			State:    authorization.State,
+			State:    ACMEAuthorizationState(authorization.State),
 			Revision: uint64(authorization.AuthorizationRevision), Attempts: uint64(authorization.Attempts),
 			AvailableAt: authorization.AvailableAt.Time, PresentedAt: optionalTime(authorization.PresentedAt),
 			ValidatedAt: optionalTime(authorization.ValidatedAt), CleanupCompletedAt: optionalTime(authorization.CleanupCompletedAt),
@@ -338,9 +341,7 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 	_, attemptsOK := nonnegativeInt64(work.Attempts)
 	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !workEpochOK || !orderRevisionOK || !attemptsOK ||
 		work.WorkExpiresAt.IsZero() ||
-		work.State != "pending" && work.State != "authorizing" && work.State != "ready_to_finalize" &&
-			work.State != "finalizing" && work.State != "waiting_for_install" && work.State != "installed" &&
-			work.State != "failed" && work.State != "canceled" ||
+		!work.State.valid() ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
 	}
@@ -366,7 +367,7 @@ func validateACMEAuthorizationWork(authorization ACMEAuthorizationWork) error {
 	_, revisionOK := nonnegativeInt64(authorization.Revision)
 	_, attemptsOK := nonnegativeInt64(authorization.Attempts)
 	if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
-		!revisionOK || !attemptsOK || authorization.State == "" || authorization.AvailableAt.IsZero() ||
+		!revisionOK || !attemptsOK || !authorization.State.valid() || authorization.AvailableAt.IsZero() ||
 		len(authorization.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
 	}

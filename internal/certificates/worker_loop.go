@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -73,6 +74,25 @@ func pollAt(now time.Time, interval time.Duration, retryAfter time.Time) time.Ti
 		return retryAfter.UTC()
 	}
 	return result
+}
+
+// acmeOrderProgress translates the ca's status into the next local issuance
+// stage. callers own their stored state and any stage-specific side effects.
+func acmeOrderProgress(status string, now, retryAfter time.Time, interval time.Duration) (controlstate.ACMEOrderState, time.Time, error) {
+	switch status {
+	case "pending":
+		return controlstate.ACMEOrderAuthorizing, pollAt(now, interval, retryAfter), nil
+	case "ready":
+		return controlstate.ACMEOrderReadyToFinalize, now, nil
+	case "processing":
+		return controlstate.ACMEOrderFinalizing, pollAt(now, interval, retryAfter), nil
+	case "valid":
+		return controlstate.ACMEOrderFinalizing, now, nil
+	case "invalid":
+		return "", time.Time{}, terminalf("ACME order became invalid")
+	default:
+		return "", time.Time{}, fmt.Errorf("certificates: unknown ACME order status %q", status)
+	}
 }
 
 func truncateError(err error) string {
