@@ -70,8 +70,9 @@ mise exec -- go test ./internal/tunnel
 
 ### test the javascript package
 
-`pnpm test` and `pnpm typecheck` build first. Their `:run` variants and direct
-Vitest runs reuse an existing build. For one focused test:
+All TypeScript tests use Vitest. `pnpm test` and `pnpm typecheck` build first.
+Their `:run` variants and direct Vitest runs reuse an existing build. For one
+focused test:
 
 ```console
 mise exec -- pnpm --filter @tnldotdev/tnl build

@@ -43,9 +43,11 @@ export default defineConfig(({ mode }) => ({
     globals: false,
     hookTimeout: 10_000,
     include: [
+      "scripts/runtime-faults.test.ts",
       "packages/tnl/test-helper.test.ts",
       "packages/tnl/bun.test.ts",
       "packages/tnl/internal-dev.test.ts",
+      "packages/tnl/launcher.test.ts",
       "packages/tnl/next.test.ts",
       "packages/tnl/register.test.ts",
       "packages/tnl/runtime.test.ts",

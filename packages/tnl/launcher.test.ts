@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { onTestFinished, test } from "vitest";
 import { nativePackageName, resolveNativeBinary } from "./dist/internal/launcher.js";
 import { nativeTargets } from "./dist/internal/native-targets.js";
 
@@ -51,9 +51,9 @@ test("catalog matches independent targets and native manifests", () => {
   }
 });
 
-test("native binary resolution preserves installation checks", (t) => {
+test("native binary resolution preserves installation checks", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "tnl-launcher-test-"));
-  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  onTestFinished(() => rmSync(directory, { force: true, recursive: true }));
   const manifestPath = path.join(directory, "package.json");
   const options = {
     platform: "linux",
@@ -98,9 +98,9 @@ test("native binary resolution preserves installation checks", (t) => {
   assert.equal(resolveNativeBinary(options), binary);
 });
 
-test("launcher emits one safe line for a manifest value containing control characters", (t) => {
+test("launcher emits one safe line for a manifest value containing control characters", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "tnl-launcher-output-test-"));
-  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  onTestFinished(() => rmSync(directory, { force: true, recursive: true }));
   const internalDirectory = path.join(directory, "dist", "internal");
   const binDirectory = path.join(directory, "dist", "bin");
   mkdirSync(internalDirectory, { recursive: true });
