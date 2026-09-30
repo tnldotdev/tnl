@@ -181,8 +181,12 @@ func TestRegisterComposesAuthorityAndControlRoutesOnOneMux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(mux, Config{}, store); err != nil {
+	routes, err := Register(mux, Config{}, store)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !routes.Matches("GET /v1/teams") || routes.Matches("GET /v1/health") {
+		t.Fatalf("registered authority routes = %v", routes)
 	}
 
 	health := httptest.NewRecorder()

@@ -55,30 +55,50 @@ type handler struct {
 
 var _ authorityv1.ServerInterface = (*handler)(nil)
 
-// Register adds the built-in authority API routes to mux.
-func Register(mux *http.ServeMux, cfg Config, store Store) error {
+// Routes contains the patterns registered by the built-in authority API.
+type Routes map[string]struct{}
+
+// Matches reports whether the authority registered this router pattern.
+func (routes Routes) Matches(pattern string) bool {
+	_, ok := routes[pattern]
+	return ok
+}
+
+type routeRegistrar struct {
+	*http.ServeMux
+	routes Routes
+}
+
+func (r routeRegistrar) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	r.ServeMux.HandleFunc(pattern, handler)
+	r.routes[pattern] = struct{}{}
+}
+
+// Register adds the built-in authority API routes to mux and returns their patterns.
+func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	h := &handler{config: cfg, store: store}
 	if cfg.LoginToken != "" {
 		var err error
 		h.loginVerifier, err = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
 		if err != nil {
-			return fmt.Errorf("authorityapi: configure login token: %w", err)
+			return nil, fmt.Errorf("authorityapi: configure login token: %w", err)
 		}
 		h.loginSourceRevision = h.loginVerifier.SourceRevision()
 	}
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 	}
+	routes := make(Routes)
 	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
-		BaseRouter: mux, ErrorHandlerFunc: parameterError,
+		BaseRouter: routeRegistrar{ServeMux: mux, routes: routes}, ErrorHandlerFunc: parameterError,
 	})
-	return nil
+	return routes, nil
 }
 
 // NewHandler constructs a standalone HTTP handler for the built-in authority API.
 func NewHandler(cfg Config, store Store) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
-	if err := Register(mux, cfg, store); err != nil {
+	if _, err := Register(mux, cfg, store); err != nil {
 		return nil, err
 	}
 	mux.HandleFunc("/", notFound)

@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityapi"
@@ -81,6 +80,7 @@ func newPublicAPIHandler(
 	if err != nil {
 		return nil, err
 	}
+	var authorityRoutes authorityapi.Routes
 	if cfg.AuthorityEndpoint == "" {
 		var verifier oidcauth.Verifier
 		if cfg.OIDCEnabled() {
@@ -92,21 +92,25 @@ func newPublicAPIHandler(
 				return nil, err
 			}
 		}
-		if err := authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier), database); err != nil {
+		authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier), database)
+		if err != nil {
 			return nil, err
 		}
 	}
-	// Classify by fixed API prefixes, never by an identity or path parameter.
-	// The router sets r.Pattern for matched routes, including binding errors.
+	controlObserved := metrics.APIRequests("control", mux)
+	authorityObserved := metrics.APIRequests("authority", mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		surface := "control"
-		for _, prefix := range []string{"/v1/auth/", "/v1/identity", "/v1/teams", "/v1/invitations/", "/v1/service/authorize"} {
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				surface = "authority"
-				break
+		if matchedAPIPattern(r, func(candidate *http.Request) string {
+			_, pattern := mux.Handler(candidate)
+			if authorityRoutes.Matches(pattern) {
+				return pattern
 			}
+			return ""
+		}) != "" {
+			authorityObserved.ServeHTTP(w, r)
+			return
 		}
-		metrics.APIRequests(surface, mux).ServeHTTP(w, r)
+		controlObserved.ServeHTTP(w, r)
 	}), nil
 }
 
@@ -155,20 +159,7 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	if err != nil {
 		return err
 	}
-	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case strings.HasPrefix(request.URL.Path, "/internal/v1/ingresses/"):
-			request.Pattern = matchedPrivatePattern(ingressHandler, request)
-			metrics.APIRequests("private_ingress", ingressHandler).ServeHTTP(response, request)
-		case strings.HasPrefix(request.URL.Path, "/internal/v1/relays/"),
-			strings.HasPrefix(request.URL.Path, "/internal/v1/relay-services/"),
-			strings.HasPrefix(request.URL.Path, "/internal/v1/publisher-connections/"):
-			request.Pattern = matchedPrivatePattern(relayHandler, request)
-			metrics.APIRequests("private_relay", relayHandler).ServeHTTP(response, request)
-		default:
-			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found")
-		}
-	})
+	handler := privateControlHandler(ingressHandler, relayHandler, metrics)
 	listener, err := net.Listen("tcp", settings.listen)
 	if err != nil {
 		return fmt.Errorf("listen for private control API: %w", err)
@@ -178,6 +169,47 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	d.start("serve private control API", func() error { return serveTLS(d.privateControlServer, listener) })
 	log.Printf("private control API listening on %s", listener.Addr())
 	return nil
+}
+
+func privateControlHandler(ingressHandler, relayHandler http.Handler, metrics *observability.Metrics) http.Handler {
+	ingressObserved := metrics.APIRequests("private_ingress", ingressHandler)
+	relayObserved := metrics.APIRequests("private_relay", relayHandler)
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Cache-Control", "no-store")
+		switch {
+		case matchedAPIPattern(request, func(candidate *http.Request) string {
+			return matchedPrivatePattern(ingressHandler, candidate)
+		}) != "":
+			request.Pattern = matchedPrivatePattern(ingressHandler, request)
+			ingressObserved.ServeHTTP(response, request)
+		case matchedAPIPattern(request, func(candidate *http.Request) string {
+			return matchedPrivatePattern(relayHandler, candidate)
+		}) != "":
+			request.Pattern = matchedPrivatePattern(relayHandler, request)
+			relayObserved.ServeHTTP(response, request)
+		default:
+			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found")
+		}
+	})
+}
+
+// matchedAPIPattern also probes known HTTP methods when the router reports a
+// method mismatch, so the owning API still handles authentication and fallback.
+func matchedAPIPattern(request *http.Request, match func(*http.Request) string) string {
+	if pattern := match(request); pattern != "" && pattern != "/" {
+		return pattern
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if method == request.Method {
+			continue
+		}
+		candidate := *request
+		candidate.Method = method
+		if pattern := match(&candidate); pattern != "" && pattern != "/" {
+			return pattern
+		}
+	}
+	return ""
 }
 
 func matchedPrivatePattern(handler http.Handler, request *http.Request) string {
