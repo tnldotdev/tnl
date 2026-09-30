@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 const (
@@ -93,11 +94,12 @@ func observeDNS(observer DNSObserver, kind, phase string, started time.Time, rea
 }
 
 type Worker struct {
-	store    Store
-	provider Provider
-	verifier DNSVerifier
-	config   Config
-	now      func() time.Time
+	store         Store
+	provider      Provider
+	verifier      DNSVerifier
+	config        Config
+	now           func() time.Time
+	publicURLNext bool
 }
 
 func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*Worker, error) {
@@ -129,30 +131,45 @@ func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-timer.C:
-		}
-		operationCtx, cancel := context.WithTimeout(ctx, w.config.OperationTimeout)
-		found, err := w.processOne(operationCtx)
-		cancel()
-		if err != nil && ctx.Err() == nil {
-			w.config.Logger.Error("DNS controller iteration failed", "error", err)
-		}
-		delay := time.Duration(0)
-		if !found || err != nil {
-			delay = w.config.PollInterval
-		}
-		timer.Reset(delay)
-	}
+	return workerloop.Run(ctx, workerloop.Config{
+		OperationTimeout: w.config.OperationTimeout,
+		IdleInterval:     w.config.PollInterval,
+		Process:          w.processOne,
+		OnError: func(err error) {
+			if ctx.Err() == nil {
+				w.config.Logger.Error("DNS controller iteration failed", "error", err)
+			}
+		},
+	})
 }
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
+	if w.publicURLNext {
+		found, err := w.processPublicURL(ctx, now)
+		if found || err != nil {
+			w.publicURLNext = false
+			return found, err
+		}
+		found, err = w.processAuthority(ctx, now)
+		if found || err != nil {
+			w.publicURLNext = true
+		}
+		return found, err
+	}
+	found, err := w.processAuthority(ctx, now)
+	if found || err != nil {
+		w.publicURLNext = true
+		return found, err
+	}
+	found, err = w.processPublicURL(ctx, now)
+	if found || err != nil {
+		w.publicURLNext = false
+	}
+	return found, err
+}
+
+func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, error) {
 	started := time.Now()
 	work, found, err := w.store.ClaimDNSAuthorityWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if ctx.Err() == nil {
@@ -161,33 +178,37 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if found {
-		initial := work.State
-		advanceStarted := time.Now()
-		advanceErr := w.advance(ctx, &work, now)
-		if advanceErr != nil {
-			if ctx.Err() != nil {
-				return true, ctx.Err()
-			}
-			w.applyFailure(&work, advanceErr, w.now())
+	if !found {
+		return false, nil
+	}
+	initial := work.State
+	advanceStarted := time.Now()
+	advanceErr := w.advance(ctx, &work, now)
+	if advanceErr != nil {
+		if ctx.Err() != nil {
+			return true, ctx.Err()
 		}
-		started = time.Now()
-		saved, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now())
-		if ctx.Err() == nil {
-			observeDNS(w.config.Observer, "authority", "save", started, true, err)
-		}
-		if err != nil {
-			return true, err
-		}
-		if ctx.Err() == nil {
-			observeDNS(w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
-		}
-		if w.config.Observer != nil && initial != saved.State {
-			w.config.Observer.ObserveDNSTransition("authority", saved.State)
-		}
-		return true, nil
+		w.applyFailure(&work, advanceErr, w.now())
 	}
 	started = time.Now()
+	saved, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now())
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "authority", "save", started, true, err)
+	}
+	if err != nil {
+		return true, err
+	}
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
+	}
+	if w.config.Observer != nil && initial != saved.State {
+		w.config.Observer.ObserveDNSTransition("authority", saved.State)
+	}
+	return true, nil
+}
+
+func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (bool, error) {
+	started := time.Now()
 	route, found, err := w.store.ClaimDNSPublicURLWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if ctx.Err() == nil {
 		observeDNS(w.config.Observer, "public_url", "claim", started, found, err)

@@ -122,6 +122,15 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 		Name: aws.String(dnsName(publicURLOwnerName(record.CanonicalHostname))), Type: types.RRTypeTxt, TTL: aws.Int64(60),
 		ResourceRecords: []types.ResourceRecord{{Value: aws.String(publicURLOwnerValue(record.PublicURLID))}},
 	}}
+	client.changes = nil
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) != 0 {
+		t.Fatalf("unchanged public URL DNS submitted changes: %+v, %v", client.changes, err)
+	}
+	record.IngressIPv4Addresses = []string{"192.0.2.11"}
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) == 0 {
+		t.Fatalf("changed public URL DNS did not submit changes: %+v, %v", client.changes, err)
+	}
+	client.changes = nil
 	if _, err := provider.RemovePublicURL(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}

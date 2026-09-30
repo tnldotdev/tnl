@@ -16,6 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 	"github.com/tnldotdev/tnl/pkg/api/publicurlusagev1"
 )
 
@@ -120,26 +121,16 @@ func New(store Store, config Config) (*Worker, error) {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-timer.C:
-		}
-		operationCtx, cancel := context.WithTimeout(ctx, w.config.OperationTimeout)
-		found, err := w.process(operationCtx)
-		cancel()
-		if err != nil && ctx.Err() == nil {
-			w.config.Logger.Error("public URL usage worker iteration failed", "error", err)
-		}
-		delay := time.Duration(0)
-		if !found || err != nil {
-			delay = w.config.PollInterval
-		}
-		timer.Reset(delay)
-	}
+	return workerloop.Run(ctx, workerloop.Config{
+		OperationTimeout: w.config.OperationTimeout,
+		IdleInterval:     w.config.PollInterval,
+		Process:          w.process,
+		OnError: func(err error) {
+			if ctx.Err() == nil {
+				w.config.Logger.Error("public URL usage worker iteration failed", "error", err)
+			}
+		},
+	})
 }
 
 func (w *Worker) process(ctx context.Context) (bool, error) {
@@ -160,13 +151,7 @@ func (w *Worker) process(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	work, err := w.store.ClaimPublicURLUsageDeliveries(ctx, w.config.WorkerID, maximumBatchItems, now, w.config.LeaseDuration)
-	if err != nil {
-		w.observeWork("claim", err)
-	} else if len(work) == 0 {
-		w.observeEmptyClaim()
-	} else {
-		w.observeWork("claim", nil)
-	}
+	w.observeClaim(len(work) != 0, err)
 	if err != nil || len(work) == 0 {
 		return false, err
 	}
@@ -332,10 +317,17 @@ func (w *Worker) observeWork(phase string, err error) {
 	w.config.Observer.ObserveUsageWork(phase, outcome)
 }
 
-func (w *Worker) observeEmptyClaim() {
-	if w.config.Observer != nil {
-		w.config.Observer.ObserveUsageWork("claim", "empty")
+func (w *Worker) observeClaim(found bool, err error) {
+	if w.config.Observer == nil {
+		return
 	}
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	} else if !found {
+		outcome = "empty"
+	}
+	w.config.Observer.ObserveUsageWork("claim", outcome)
 }
 
 func (w *Worker) addItems(result string, count int) {

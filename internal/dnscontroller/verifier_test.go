@@ -1,8 +1,10 @@
 package dnscontroller
 
 import (
+	"errors"
 	"net"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -115,15 +117,27 @@ func verifierDNS(t *testing.T, respond func(string, *dns.Msg) *dns.Msg) string {
 
 func verifierDNSHandler(t *testing.T, handler dns.Handler) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	var listener net.Listener
+	var packet net.PacketConn
+	for range 10 {
+		var err error
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet, err = net.ListenPacket("udp", listener.Addr().String())
+		if err == nil {
+			break
+		}
+		_ = listener.Close()
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			t.Fatal(err)
+		}
+	}
+	if packet == nil {
+		t.Fatal("could not reserve the same TCP and UDP port for the DNS fixture")
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	packet, err := net.ListenPacket("udp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = packet.Close() })
 	for _, server := range []*dns.Server{{Listener: listener, Handler: handler}, {PacketConn: packet, Handler: handler}} {
 		started, done := make(chan struct{}), make(chan error, 1)

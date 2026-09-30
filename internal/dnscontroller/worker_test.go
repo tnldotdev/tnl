@@ -37,6 +37,25 @@ func TestWorkerCreatesAndVerifiesClaimedZone(t *testing.T) {
 	}
 }
 
+func TestWorkerDoesNotStarvePublicURLWorkBehindAuthorityBacklog(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	store := &dnsStoreStub{work: testDNSWork(now), publicURLWork: claimedRouteWork(now)}
+	worker := testDNSWorker(t, store, &providerStub{zone: Zone{ID: "ZMANAGED"}}, &verifierStub{publicURLVerified: true}, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "claimed.example.test", "ZMANAGED"
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("first authority iteration = %t, %v", found, err)
+	}
+	// Control can always have another claimable authority. The other queue
+	// must still make progress while authority work remains available.
+	store.work = testDNSWork(now)
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("second iteration = %t, %v", found, err)
+	}
+	if store.publicURLSaves != 1 {
+		t.Fatalf("public URL work was starved: %d saves", store.publicURLSaves)
+	}
+}
+
 func TestWorkerWaitsForSafeRelease(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := testDNSWork(now)

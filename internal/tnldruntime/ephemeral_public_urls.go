@@ -15,21 +15,10 @@ type ephemeralRouteStore interface {
 }
 
 func runEphemeralRouteCleanup(ctx context.Context, store ephemeralRouteStore, metrics *observability.Metrics) error {
-	ticker := time.NewTicker(ephemeralRouteCleanupInterval)
-	defer ticker.Stop()
-	for {
-		deleted, err := store.DeleteExpiredEphemeralPublicURLs(ctx, time.Now())
+	return runBatchCleanup(ctx, ephemeralRouteCleanupInterval, store.DeleteExpiredEphemeralPublicURLs, func(deleted int, err error) {
 		metrics.ObserveCleanup("ephemeral_public_urls", deleted, false, err)
 		if err != nil && ctx.Err() == nil {
 			log.Printf("ephemeral route cleanup: %v", err)
 		}
-		if err == nil && deleted > 0 {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-	}
+	})
 }

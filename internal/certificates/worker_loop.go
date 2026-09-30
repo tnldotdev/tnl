@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 	"unicode/utf8"
+
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 const (
@@ -53,26 +55,16 @@ func runWorkerLoop(
 	operationTimeout, idleInterval time.Duration,
 	failureMessage string,
 ) error {
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-timer.C:
-		}
-		operationCtx, cancel := context.WithTimeout(ctx, operationTimeout)
-		found, err := worker.processOne(operationCtx)
-		cancel()
-		if err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error(failureMessage, "error", err)
-		}
-		delay := time.Duration(0)
-		if !found || err != nil {
-			delay = idleInterval
-		}
-		timer.Reset(delay)
-	}
+	return workerloop.Run(ctx, workerloop.Config{
+		OperationTimeout: operationTimeout,
+		IdleInterval:     idleInterval,
+		Process:          worker.processOne,
+		OnError: func(err error) {
+			if !errors.Is(err, context.Canceled) {
+				logger.Error(failureMessage, "error", err)
+			}
+		},
+	})
 }
 
 func pollAt(now time.Time, interval time.Duration, retryAfter time.Time) time.Time {

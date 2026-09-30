@@ -25,6 +25,22 @@ func TestRunEphemeralRouteCleanupDrainsAvailableBatches(t *testing.T) {
 	}
 }
 
+func TestRunEphemeralRouteCleanupStopsAfterCanceledBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	calls := 0
+	store := ephemeralRouteStoreFunc(func(context.Context, time.Time) (int, error) {
+		calls++
+		cancel()
+		return 1, nil
+	})
+	if err := runEphemeralRouteCleanup(ctx, store, nil); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("cleanup continued after cancellation: %d calls", calls)
+	}
+}
+
 type ephemeralRouteStoreFunc func(context.Context, time.Time) (int, error)
 
 func (f ephemeralRouteStoreFunc) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now time.Time) (int, error) {

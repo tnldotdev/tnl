@@ -55,6 +55,11 @@ func (p *Route53Provider) PublishPublicURL(ctx context.Context, record PublicURL
 	if !ownerExists && len(addressRecords) != 0 {
 		return Zone{}, terminalf("public URL hostname already has unowned address records")
 	}
+	if ownerExists && aws.ToInt64(owner.TTL) == 60 &&
+		addressRecordMatches(addressRecords[types.RRTypeA], record.IngressIPv4Addresses) &&
+		addressRecordMatches(addressRecords[types.RRTypeAaaa], record.IngressIPv6Addresses) {
+		return zone, nil
+	}
 	action := types.ChangeActionCreate
 	if ownerExists {
 		action = types.ChangeActionUpsert
@@ -569,6 +574,23 @@ func simpleRecordSet(name string, recordType types.RRType, values []string) *typ
 	return &types.ResourceRecordSet{
 		Name: aws.String(dnsName(name)), Type: recordType, TTL: aws.Int64(60), ResourceRecords: records,
 	}
+}
+
+func addressRecordMatches(existing *types.ResourceRecordSet, desired []string) bool {
+	if len(desired) == 0 {
+		return existing == nil
+	}
+	if !plainRecordSet(existing) || aws.ToInt64(existing.TTL) != 60 || len(existing.ResourceRecords) != len(desired) {
+		return false
+	}
+	actual := make([]string, len(existing.ResourceRecords))
+	for index, value := range existing.ResourceRecords {
+		actual[index] = aws.ToString(value.Value)
+	}
+	want := slices.Clone(desired)
+	slices.Sort(actual)
+	slices.Sort(want)
+	return slices.Equal(actual, want)
 }
 
 func plainRecordSet(record *types.ResourceRecordSet) bool {
