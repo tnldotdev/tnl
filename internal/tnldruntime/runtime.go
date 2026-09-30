@@ -4,27 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/route53"
-	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/controltls"
-	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publicurlusageworker"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -47,8 +39,8 @@ type daemon struct {
 	clusterSecrets         serviceapi.BearerSecrets
 	relayClientTLS         *tls.Config
 	cancel                 context.CancelFunc
-	done                   chan error
-	forwarded              sync.WaitGroup
+	componentDone          chan error
+	components             sync.WaitGroup
 }
 
 // Serve runs one configured tnld process until its context is canceled.
@@ -92,7 +84,7 @@ func serveWithRelayClientTLS(
 	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &daemon{
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
-		relayClientTLS: relayClientTLS, cancel: cancel, done: make(chan error, 32), startedAt: time.Now().UTC(),
+		relayClientTLS: relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
 	}
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
 
@@ -120,148 +112,8 @@ func serveWithRelayClientTLS(
 	}
 
 	if cfg.Role.RunsControl() {
-		database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious)
-		if err != nil {
+		if err := d.startControlWorkers(ctx, lifetime, cfg, acmeHTTPClient, metrics); err != nil {
 			return err
-		}
-		d.database = database
-		database.Instrument(metrics)
-		metrics.RegisterDatabase(database.PrometheusMetrics)
-		d.forward("expire saved publish runs", runAsync(func() error {
-			return runExpiredPublishRunCleanup(lifetime, database, metrics)
-		}))
-		d.forward("clean up ephemeral routes", runAsync(func() error {
-			return runEphemeralRouteCleanup(lifetime, database, metrics)
-		}))
-		d.forward("clean up routing history", runAsync(func() error {
-			return runRoutingHistoryCleanup(lifetime, database, metrics)
-		}))
-		if err := database.CompleteStorageKeyRotation(ctx); err != nil {
-			return fmt.Errorf("rotate stored secrets: %w", err)
-		}
-		if cfg.StorageKeyPrevious != "" {
-			log.Printf("stored secrets re-encrypted with the current storage key")
-		}
-		var dnsProvider *dnscontroller.Route53Provider
-		var dnsVerifier *dnscontroller.AuthoritativeVerifier
-		var routeDNSChallenges certificates.PublicURLDNSChallenges
-		var relayDNSChallenges certificates.RelayDNSChallenges
-		dnsConfig := dnscontroller.Config{
-			ManagedDomain: cfg.ManagedDomain(), ManagedZoneID: cfg.Route53ManagedZoneID,
-			IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
-			Observer: metrics,
-		}
-		if cfg.DNSProviderEnabled() {
-			awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
-			if err != nil {
-				return fmt.Errorf("load Route 53 configuration: %w", err)
-			}
-			d.route53Credentials = awsConfig.Credentials
-			dnsProvider, err = dnscontroller.NewRoute53Provider(route53.NewFromConfig(awsConfig))
-			if err != nil {
-				return err
-			}
-			dnsVerifier, err = dnscontroller.NewAuthoritativeVerifier(cfg.DNSServer)
-			if err != nil {
-				return err
-			}
-			if cfg.DNSAutomationEnabled() {
-				routeDNSChallenges, err = dnscontroller.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
-				if err != nil {
-					return err
-				}
-			}
-			if cfg.RelayCertificateAutomationEnabled() {
-				manager, managerErr := dnscontroller.NewRelayChallengeManager(
-					database, dnsProvider, dnsVerifier, cfg.ServerDomain, cfg.Route53ServerZoneID,
-				)
-				if managerErr != nil {
-					return managerErr
-				}
-				manager.SetObserver(metrics)
-				relayDNSChallenges = manager
-			}
-		}
-		if cfg.ACMEEnabled() {
-			account, err := database.EnsureACMEAccount(ctx, cfg.ACMEDirectoryURL, cfg.ACMEEmail, time.Now())
-			if err != nil {
-				return err
-			}
-			account, err = certificates.ReconcileACMEAccount(
-				ctx, database, acmeHTTPClient, account, cfg.ACMEAcceptTerms, time.Now(),
-			)
-			if err != nil {
-				return err
-			}
-			for index := range cfg.PublicURLCertificateWorkers {
-				publicURLWorkerID, err := opaqueid.New("public_url_certificate_worker_")
-				if err != nil {
-					return fmt.Errorf("create public URL certificate worker identity: %w", err)
-				}
-				publicURLWorker, err := certificates.NewPublicURLWorker(database, certificates.PublicURLConfig{
-					WorkerID: publicURLWorkerID, Profile: cfg.ACMEProfile,
-					HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges, Observer: metrics,
-				})
-				if err != nil {
-					return err
-				}
-				d.forward(fmt.Sprintf("run public URL certificate worker %d", index+1), runAsync(func() error { return publicURLWorker.Run(lifetime) }))
-			}
-			if relayDNSChallenges != nil {
-				relayWorkerID, err := opaqueid.New("relay_certificate_worker_")
-				if err != nil {
-					return fmt.Errorf("create relay certificate worker identity: %w", err)
-				}
-				relayWorker, err := certificates.NewRelayWorker(database, certificates.RelayConfig{
-					WorkerID: relayWorkerID, AccountID: account.ID, Profile: cfg.ACMEProfile,
-					HTTPClient: acmeHTTPClient, DNSChallenges: relayDNSChallenges, Observer: metrics,
-				})
-				if err != nil {
-					return err
-				}
-				d.forward("run relay certificate worker", runAsync(func() error { return relayWorker.Run(lifetime) }))
-			}
-			d.controlTLS, d.controlTLSManager, err = controlTLSConfig(controlTLSSettingsFrom(cfg), database, account, acmeHTTPClient)
-			if err != nil {
-				return err
-			}
-		}
-		if cfg.PublicURLUsageURL != "" {
-			workerID, err := opaqueid.New("public_url_usage_worker_")
-			if err != nil {
-				return fmt.Errorf("create public URL usage worker identity: %w", err)
-			}
-			worker, err := publicurlusageworker.New(database, publicurlusageworker.Config{
-				WorkerID: workerID, Endpoint: cfg.PublicURLUsageURL, Token: cfg.PublicURLUsageToken,
-				Observer: metrics,
-			})
-			if err != nil {
-				return err
-			}
-			d.forward("run public URL usage worker", runAsync(func() error { return worker.Run(lifetime) }))
-		}
-		if cfg.DNSAutomationEnabled() {
-			workerID, err := opaqueid.New("dns_worker_")
-			if err != nil {
-				return fmt.Errorf("create DNS worker identity: %w", err)
-			}
-			dnsConfig.WorkerID = workerID
-			worker, err := dnscontroller.New(database, dnsProvider, dnsVerifier, dnsConfig)
-			if err != nil {
-				return err
-			}
-			d.forward("run DNS controller", runAsync(func() error { return worker.Run(lifetime) }))
-		}
-	}
-	if d.controlTLSManager != nil {
-		metrics.RegisterControlCertificate(d.controlTLSManager.EarliestCertificateExpiry)
-	} else if d.controlTLS != nil && len(d.controlTLS.Certificates) > 0 {
-		leaf := d.controlTLS.Certificates[0].Leaf
-		if leaf == nil && len(d.controlTLS.Certificates[0].Certificate) > 0 {
-			leaf, _ = x509.ParseCertificate(d.controlTLS.Certificates[0].Certificate[0])
-		}
-		if leaf != nil {
-			metrics.RegisterControlCertificate(func() time.Time { return leaf.NotAfter })
 		}
 	}
 
@@ -328,9 +180,9 @@ func serveWithRelayClientTLS(
 		}
 	}
 	if d.controlTLSManager != nil {
-		d.forward("manage public control certificate", runAsync(func() error {
+		d.start("manage public control certificate", func() error {
 			return d.controlTLSManager.Run(lifetime)
-		}))
+		})
 	}
 	if metricsListener != nil {
 		handler := observability.ProcessHandler(metrics.Handler(), func() bool {
@@ -341,12 +193,12 @@ func serveWithRelayClientTLS(
 		server := observability.Serve(metricsListener, withDatabaseDiagnostics(handler, d.database))
 		metricsListener = nil
 		d.metricsServer = server
-		d.forward("serve observability", server.Done())
+		d.start("serve observability", func() error { return <-server.Done() })
 	}
 	select {
 	case <-ctx.Done():
 		return nil
-	case err := <-d.done:
+	case err := <-d.componentDone:
 		return err
 	}
 }
@@ -443,23 +295,24 @@ func runtimeCapacity(name string, value int64) (int, error) {
 	return converted, nil
 }
 
-func (d *daemon) forward(name string, source <-chan error) {
-	d.forwarded.Add(1)
-	go func() {
-		defer d.forwarded.Done()
-		err := <-source
+// start supervises a component for the process lifetime. Only its first exit
+// determines the result of Serve; shutdown joins every component, including
+// those that exit after the result has been selected.
+func (d *daemon) start(name string, run func() error) {
+	d.components.Go(func() {
+		err := run()
 		if err != nil {
 			err = fmt.Errorf("%s: %w", name, err)
 		}
-		d.done <- err
-	}()
+		select {
+		case d.componentDone <- err:
+		default:
+		}
+	})
 }
 
-func runAsync(run func() error) <-chan error {
-	done := make(chan error, 1)
-	go func() {
-		done <- run()
-		close(done)
-	}()
-	return done
+// background tracks work that can complete without ending the process, such
+// as draining a relay after control updates its lease.
+func (d *daemon) background(run func()) {
+	d.components.Go(run)
 }

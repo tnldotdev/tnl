@@ -125,11 +125,13 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	}
 	runtime.tcpListener = tcpListener
 	runtime.udpListener = udpListener
-	d.forward("serve TLS/TCP publisher connections", serveTLSYamuxSessions(
-		ctx, tcpListener, runtime.transportTLS,
-		muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept,
-	))
-	d.forward("serve QUIC publisher connections", serveQUICSessions(ctx, udpListener, runtime.publisher.Accept))
+	d.start("serve TLS/TCP publisher connections", func() error {
+		return serveTLSYamuxSessions(ctx, tcpListener, runtime.transportTLS,
+			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept)
+	})
+	d.start("serve QUIC publisher connections", func() error {
+		return serveQUICSessions(ctx, udpListener, runtime.publisher.Accept)
+	})
 	log.Printf("relay publisher TCP listening on %s", tcpListener.Addr())
 	log.Printf("relay publisher UDP listening on %s", udpListener.Addr())
 	return nil
@@ -224,12 +226,12 @@ func (d *daemon) startRelayRuntime(
 			if !previous.Draining && current.Draining && current.DrainDeadline != nil {
 				deadline := *current.DrainDeadline
 				runtime.drainOnce.Do(func() {
-					go func() {
+					d.background(func() {
 						ctx, cancel := context.WithDeadline(context.Background(), deadline)
 						defer cancel()
 						_ = runtime.registry.Drain(ctx)
 						_ = runtime.registry.Close()
-					}()
+					})
 				})
 			}
 			previousState, currentState := relayLeaseMetricState(previous), relayLeaseMetricState(current)
@@ -303,11 +305,11 @@ func (d *daemon) startRelayRuntime(
 	runtime.transportTLS = runtimeConfig.transportTLS
 	d.relays = append(d.relays, runtime)
 
-	d.forward("run relay control", runAsync(func() error { return controller.Run(ctx) }))
-	d.forward("serve internal forwarding", serveTLSYamuxSessions(
-		ctx, runtimeConfig.internalListener, runtimeConfig.transportTLS,
-		muxsession.TLSYamuxConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.Accept,
-	))
+	d.start("run relay control", func() error { return controller.Run(ctx) })
+	d.start("serve internal forwarding", func() error {
+		return serveTLSYamuxSessions(ctx, runtimeConfig.internalListener, runtimeConfig.transportTLS,
+			muxsession.TLSYamuxConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.Accept)
+	})
 	log.Printf("relay internal forwarding listening on %s", runtimeConfig.internalListener.Addr())
 	return runtime, nil
 }
@@ -342,54 +344,50 @@ func serveTLSYamuxSessions(
 	tlsConfig *tls.Config,
 	transportConfig muxsession.TLSYamuxConfig,
 	accept sessionAcceptFunc,
-) <-chan error {
-	return runAsync(func() error {
-		var active sync.WaitGroup
-		defer active.Wait()
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-					return nil
-				}
-				return err
+) error {
+	var active sync.WaitGroup
+	defer active.Wait()
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return nil
 			}
-			active.Go(func() {
-				setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
-				transport, err := muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
-				cancel()
-				if err == nil {
-					err = accept(ctx, transport)
-				}
-				if err != nil && ctx.Err() == nil {
-					log.Printf("relay TLS/TCP session: %v", err)
-				}
-			})
+			return err
 		}
-	})
+		active.Go(func() {
+			setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
+			transport, err := muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
+			cancel()
+			if err == nil {
+				err = accept(ctx, transport)
+			}
+			if err != nil && ctx.Err() == nil {
+				log.Printf("relay TLS/TCP session: %v", err)
+			}
+		})
+	}
 }
 
 func serveQUICSessions(
 	ctx context.Context,
 	listener *muxsession.QUICListener,
 	accept sessionAcceptFunc,
-) <-chan error {
-	return runAsync(func() error {
-		var active sync.WaitGroup
-		defer active.Wait()
-		for {
-			transport, err := listener.Accept(ctx)
-			if err != nil {
-				if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, muxsession.ErrClosed) {
-					return nil
-				}
-				return err
+) error {
+	var active sync.WaitGroup
+	defer active.Wait()
+	for {
+		transport, err := listener.Accept(ctx)
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, muxsession.ErrClosed) {
+				return nil
 			}
-			active.Go(func() {
-				if err := accept(ctx, transport); err != nil && ctx.Err() == nil {
-					log.Printf("relay QUIC session: %v", err)
-				}
-			})
+			return err
 		}
-	})
+		active.Go(func() {
+			if err := accept(ctx, transport); err != nil && ctx.Err() == nil {
+				log.Printf("relay QUIC session: %v", err)
+			}
+		})
+	}
 }

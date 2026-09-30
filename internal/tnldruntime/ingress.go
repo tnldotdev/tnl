@@ -219,9 +219,9 @@ func (d *daemon) startIngressRuntime(
 	runtime.server = server
 	publicServer = server
 	d.ingresses = append(d.ingresses, runtime)
-	d.forward("run ingress control", runAsync(func() error { return controller.Run(ctx) }))
-	d.forward("report ingress usage", runAsync(func() error { return usage.Run(ctx) }))
-	d.forward("serve public ingress", runAsync(server.Serve))
+	d.start("run ingress control", func() error { return controller.Run(ctx) })
+	d.start("report ingress usage", func() error { return usage.Run(ctx) })
+	d.start("serve public ingress", server.Serve)
 	log.Printf("public ingress listening on %s", runtimeConfig.listener.Addr())
 	return nil
 }

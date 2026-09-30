@@ -118,13 +118,13 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			}
 		}
 	}
-	forwardedDone := make(chan struct{})
+	componentsDone := make(chan struct{})
 	go func() {
-		d.forwarded.Wait()
-		close(forwardedDone)
+		d.components.Wait()
+		close(componentsDone)
 	}()
 	select {
-	case <-forwardedDone:
+	case <-componentsDone:
 	case <-cleanupCtx.Done():
 		result = errors.Join(result, fmt.Errorf("wait for process components: %w", cleanupCtx.Err()))
 	}

@@ -121,7 +121,7 @@ func (d *daemon) startControl(listenAddress string, requireProxyHeader bool, han
 	if requireProxyHeader {
 		publicListener = controlProxyListener{Listener: listener}
 	}
-	d.forward("serve control API", serveTLS(d.controlServer, publicListener))
+	d.start("serve control API", func() error { return serveTLS(d.controlServer, publicListener) })
 	log.Printf("control API listening on %s", listener.Addr())
 	return nil
 }
@@ -175,7 +175,7 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	}
 	d.privateControlListener = listener
 	d.privateControlServer = controlHTTPServer(handler, d.controlTLS)
-	d.forward("serve private control API", serveTLS(d.privateControlServer, listener))
+	d.start("serve private control API", func() error { return serveTLS(d.privateControlServer, listener) })
 	log.Printf("private control API listening on %s", listener.Addr())
 	return nil
 }
@@ -195,14 +195,12 @@ func controlHTTPServer(handler http.Handler, tlsConfig *tls.Config) *http.Server
 	}
 }
 
-func serveTLS(server *http.Server, listener net.Listener) <-chan error {
-	return runAsync(func() error {
-		err := server.ServeTLS(listener, "", "")
-		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		return err
-	})
+func serveTLS(server *http.Server, listener net.Listener) error {
+	err := server.ServeTLS(listener, "", "")
+	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 func newPrivateServiceHTTPClient(base *http.Client, clusterSecret, dialAddress string) (*http.Client, error) {

@@ -81,7 +81,7 @@ func (d *daemon) startStandalone(
 	relayListener := newConnectionListener(publicListener.Addr())
 	d.controlListener = controlListener
 	d.controlServer = controlHTTPServer(controlHandler, d.controlTLS)
-	d.forward("serve control API", serveTLS(d.controlServer, controlListener))
+	d.start("serve control API", func() error { return serveTLS(d.controlServer, controlListener) })
 
 	transportTLS := settings.relayTransportTLS
 	var certificateChanged func(relayv1.RelayTransportCertificate) error
@@ -156,11 +156,13 @@ func (d *daemon) startStandalone(
 	}
 	d.relays[0].tcpListener = relayListener
 	d.relays[0].udpListener = udpListener
-	d.forward("serve TLS/TCP publisher connections", serveTLSYamuxSessions(
-		ctx, relayListener, transportTLS,
-		muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, publisher.Accept,
-	))
-	d.forward("serve QUIC publisher connections", serveQUICSessions(ctx, udpListener, publisher.Accept))
+	d.start("serve TLS/TCP publisher connections", func() error {
+		return serveTLSYamuxSessions(ctx, relayListener, transportTLS,
+			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, publisher.Accept)
+	})
+	d.start("serve QUIC publisher connections", func() error {
+		return serveQUICSessions(ctx, udpListener, publisher.Accept)
+	})
 
 	ingressClient, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{
 		Store: d.database, LeaseDuration: settings.ingressLeaseDuration,
