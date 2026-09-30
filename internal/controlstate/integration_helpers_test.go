@@ -16,6 +16,7 @@ const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func newDisposableControlStateDatabaseURL(t *testing.T, suffix string) string {
 	t.Helper()
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	return testutil.NewDisposablePostgresDatabaseURL(t, "controlstate_"+suffix)
 }
 

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
@@ -10,7 +10,8 @@ if (separator === -1 || separator === process.argv.length - 1) {
 
 const root = path.resolve(import.meta.dirname, "..");
 const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
-const container = `tnl-test-postgres-${identity}`;
+// Distinct invocations from one checkout must not remove each other's database.
+const container = `tnl-test-postgres-${identity}-${randomUUID()}`;
 const image =
   "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
 const command = process.argv[separator + 1];

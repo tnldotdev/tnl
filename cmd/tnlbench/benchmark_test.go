@@ -167,6 +167,30 @@ func TestVisitorSourceAddressUsesNamedLocalInterface(t *testing.T) {
 	t.Skip("no IPv4 loopback interface available")
 }
 
+func TestSmokeSuiteBoundsEveryWorkloadDimension(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		set  func(*workloadOptions)
+	}{
+		{"concurrency", func(c *workloadOptions) { c.Concurrency = 100_000 }},
+		{"queue slots", func(c *workloadOptions) { c.QueueSlots = 10_000 }},
+		{"payload bytes", func(c *workloadOptions) { c.PayloadBytes = 16 << 20 }},
+		{"warmup", func(c *workloadOptions) { c.Warmup = 5 * time.Minute }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options := smokeOptions()
+			test.set(&options)
+			if _, err := options.plan(); err == nil {
+				t.Fatal("smoke accepted a target-sized workload dimension")
+			}
+			options.Suite = "target"
+			if _, err := options.plan(); err != nil {
+				t.Fatalf("target rejected its documented bounds: %v", err)
+			}
+		})
+	}
+}
+
 func TestReportReadsExistingAndGenericBenchmarkResults(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -294,8 +318,15 @@ func TestCanceledRunPersistsResultBeforePublishing(t *testing.T) {
 
 func TestPhaseReportsProgressWhileRunning(t *testing.T) {
 	var progress bytes.Buffer
-	if err := reportPhaseEvery(&progress, "local baseline", 80*time.Millisecond, 10*time.Millisecond, func() error {
-		return wait(t.Context(), 80*time.Millisecond)
+	heartbeat := make(chan struct{})
+	writer := &phaseHeartbeatWriter{Buffer: &progress, heartbeat: heartbeat}
+	if err := reportPhaseEvery(writer, "local baseline", time.Second, time.Millisecond, func() error {
+		select {
+		case <-heartbeat:
+			return nil
+		case <-time.After(time.Second):
+			return errors.New("no progress heartbeat while phase was running")
+		}
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,4 +335,17 @@ func TestPhaseReportsProgressWhileRunning(t *testing.T) {
 			t.Fatalf("progress missing %q: %s", message, progress.String())
 		}
 	}
+}
+
+type phaseHeartbeatWriter struct {
+	*bytes.Buffer
+	heartbeat chan struct{}
+	once      sync.Once
+}
+
+func (w *phaseHeartbeatWriter) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte("still running")) {
+		w.once.Do(func() { close(w.heartbeat) })
+	}
+	return w.Buffer.Write(data)
 }

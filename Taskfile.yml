@@ -312,7 +312,7 @@ tasks:
       SEED: "{{.SEED}}"
       TRACE: "{{.TRACE}}"
       RACE: "{{.RACE}}"
-      RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
+      RESULTS: "{{.RESULTS}}"
     cmds:
       - node scripts/runtime-load.ts
 

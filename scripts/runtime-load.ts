@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as z from "zod";
 import {
@@ -43,7 +44,10 @@ type FaultEvents = {
   "udp.cleaned": boolean;
 };
 
-const results = z.string().min(1).parse(process.env.RESULTS);
+const results = resolve(z.string().min(1).parse(process.env.RESULTS));
+process.env.RESULTS = results;
+const composeProject = `tnl-separated-load-${randomUUID()}`;
+process.env.COMPOSE_PROJECT_NAME = composeProject;
 const routes = z.coerce
   .number()
   .int()
@@ -400,7 +404,7 @@ try {
         "--filter",
         "type=container",
         "--filter",
-        "label=com.docker.compose.project=tnl-separated-load-test",
+        `label=com.docker.compose.project=${composeProject}`,
         ...["die", "kill", "oom"].flatMap((action) => ["--filter", `event=${action}`]),
         "--format",
         "{{.TimeNano}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}} signal={{.Actor.Attributes.signal}}",
@@ -518,25 +522,34 @@ try {
       return "";
     }
   };
-  writeFileSync(
-    join(results, "containers-before-cleanup.json"),
-    cleanup(["ps", "--all", "--format", "json"]),
-  );
-  for (const services of [
-    ["visitor-1", "visitor-2", "visitor-3", "visitor-4"],
-    [...appServices, ...publisherServices],
-    ["ingress-a", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
-    ["control-a", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
-    ["postgres"],
-  ])
-    cleanup(["stop", ...services]);
-  writeFileSync(join(results, "containers.json"), cleanup(["ps", "--all", "--format", "json"]));
-  if (logs && logs.exitCode === null && logs.signalCode === null) {
-    const process = logs;
-    const exited = new Promise<void>((resolve) => process.once("exit", () => resolve()));
-    process.kill("SIGTERM");
-    await exited;
+  const saveSnapshot = (name: string) => {
+    const snapshot = cleanup(["ps", "--all", "--format", "json"]);
+    try {
+      writeFileSync(join(results, name), snapshot);
+    } catch (error) {
+      console.error(`save ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      status = 1;
+    }
+  };
+  try {
+    saveSnapshot("containers-before-cleanup.json");
+    for (const services of [
+      ["visitor-1", "visitor-2", "visitor-3", "visitor-4"],
+      [...appServices, ...publisherServices],
+      ["ingress-a", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
+      ["control-a", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
+      ["postgres"],
+    ])
+      cleanup(["stop", ...services]);
+    saveSnapshot("containers.json");
+    if (logs && logs.exitCode === null && logs.signalCode === null) {
+      const process = logs;
+      const exited = new Promise<void>((resolve) => process.once("exit", () => resolve()));
+      process.kill("SIGTERM");
+      await exited;
+    }
+  } finally {
+    cleanup(["down", "--volumes", "--remove-orphans"]);
   }
-  cleanup(["down", "--volumes", "--remove-orphans"]);
 }
 process.exitCode = status;

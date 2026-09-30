@@ -105,7 +105,9 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 	if c.PublicURLs < 1 || c.PublicURLs > 10_000 || c.FreshRate < 1 || c.FreshRate > 10_000 || c.HeldStreams < 0 || c.HeldStreams > 100_000 || c.Concurrency < 1 || c.Concurrency > 100_000 || c.QueueSlots < 0 || c.QueueSlots > 10_000 || c.PayloadBytes < 1 || c.PayloadBytes > 16<<20 || c.Repetitions < 1 || c.Repetitions > 10 || c.Warmup < 0 || c.Warmup > 5*time.Minute || c.Duration < time.Second || c.Duration > time.Hour {
 		return benchmarkPlan{}, errors.New("invalid workload shape or duration")
 	}
-	if c.Suite == "smoke" && (c.Transport != "mixed" || c.PublicURLs > 4 || c.FreshRate > 16 || c.HeldStreams > 4 || c.Repetitions != 1 || c.Duration > 30*time.Second) {
+	if c.Suite == "smoke" && (c.Transport != "mixed" || c.PublicURLs > 4 || c.FreshRate > 16 ||
+		c.HeldStreams > 4 || c.Concurrency > 128 || c.QueueSlots > 8 || c.PayloadBytes > 32<<10 ||
+		c.Repetitions != 1 || c.Warmup > 5*time.Second || c.Duration > 30*time.Second) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
 	return benchmarkPlan{SchemaVersion: 2, ReadOnly: true, Server: server,
