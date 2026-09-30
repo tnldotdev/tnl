@@ -282,6 +282,7 @@ operational procedures and current capability limits in
 
 # development workflow
 
+- Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
 - Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
