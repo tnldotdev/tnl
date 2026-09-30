@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 			ActingRole: authorityv1.TeamRoleOwner, PublicUrlMembershipId: pointer("membership_1"), PolicyRevision: 4,
 			DomainId: "domain_1", CanonicalHostname: "api.example.test", PublicUrlScope: authorityv1.PublicURLScopeMember,
 			DnsAuthorityReference: "dns_authority_1", CertificatePlan: &authorityv1.CertificatePlan{
-				CacheKey: "example.test", Scope: "example.test", Identifiers: []string{"example.test", "*.example.test"},
+				CacheKey: "example.test", Scope: "example.test", Identifiers: []string{"*.example.test", "example.test"},
 				ChallengeMethod: authorityv1.Dns01,
 			},
 		})
@@ -76,6 +77,53 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 		decision.CertificatePlan == nil || decision.CertificatePlan.ChallengeMethod != "dns-01" ||
 		decision.RetrySecret != retrySecret {
 		t.Fatalf("decision = %#v", decision)
+	}
+}
+
+func TestHostedAuthorizationRejectsMalformedCertificatePlans(t *testing.T) {
+	request := authorization.Request{
+		Operation: authorization.OperationPublishRunCreate, TeamID: "team_1", DomainID: "domain_1",
+		CanonicalHostname: "api.example.test", PublicURLScope: "member", PublicURLMembershipID: "membership_1",
+	}
+	decision := authorization.Decision{
+		IdentityID: "identity_1", TeamID: request.TeamID, ActingMembershipID: "membership_1",
+		ActingRole: "owner", PolicyRevision: 1, DomainID: request.DomainID,
+		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
+		PublicURLMembershipID: request.PublicURLMembershipID, DNSAuthorityReference: "dns_authority_1",
+		CertificatePlan: &authorization.CertificatePlan{CacheKey: "example.test", Scope: "example.test",
+			Identifiers: []string{"api.example.test"}, ChallengeMethod: "dns-01"},
+	}
+	if !validAuthorizationDecision(request, decision) {
+		t.Fatal("valid certificate plan was rejected")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*authorization.CertificatePlan)
+	}{
+		{"too many names", func(p *authorization.CertificatePlan) {
+			p.Identifiers = []string{"*.example.test", "api.example.test", "example.test"}
+		}},
+		{"duplicate", func(p *authorization.CertificatePlan) {
+			p.Identifiers = []string{"api.example.test", "api.example.test"}
+		}},
+		{"unsorted", func(p *authorization.CertificatePlan) { p.Identifiers = []string{"example.test", "*.example.test"} }},
+		{"not canonical", func(p *authorization.CertificatePlan) { p.Identifiers = []string{"API.EXAMPLE.TEST"} }},
+		{"wrong hostname", func(p *authorization.CertificatePlan) { p.Identifiers = []string{"other.example.test"} }},
+		{"invalid wildcard method", func(p *authorization.CertificatePlan) {
+			p.Identifiers = []string{"*.example.test"}
+			p.ChallengeMethod = "tls-alpn-01"
+		}},
+		{"unbounded cache key", func(p *authorization.CertificatePlan) { p.CacheKey = strings.Repeat("x", 257) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := decision
+			plan := *decision.CertificatePlan
+			test.mutate(&plan)
+			candidate.CertificatePlan = &plan
+			if validAuthorizationDecision(request, candidate) {
+				t.Fatal("accepted an invalid authority certificate plan")
+			}
+		})
 	}
 }
 

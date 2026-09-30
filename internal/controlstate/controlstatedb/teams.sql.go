@@ -1084,8 +1084,21 @@ JOIN control.teams AS t ON t.id = m.team_id
 JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
 WHERE m.team_id = $1
   AND m.removed_at IS NULL
+  AND t.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM control.team_memberships AS actor
+      WHERE actor.team_id = m.team_id
+        AND actor.identity_id = $2
+        AND actor.removed_at IS NULL
+  )
 ORDER BY m.created_at, m.id
 `
+
+type ListTeamMembershipContextsParams struct {
+	TeamID     string
+	IdentityID string
+}
 
 type ListTeamMembershipContextsRow struct {
 	ID              string
@@ -1101,8 +1114,8 @@ type ListTeamMembershipContextsRow struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
-func (q *Queries) ListTeamMembershipContexts(ctx context.Context, teamID string) ([]ListTeamMembershipContextsRow, error) {
-	rows, err := q.db.Query(ctx, listTeamMembershipContexts, teamID)
+func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error) {
+	rows, err := q.db.Query(ctx, listTeamMembershipContexts, arg.TeamID, arg.IdentityID)
 	if err != nil {
 		return nil, err
 	}

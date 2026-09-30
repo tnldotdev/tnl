@@ -194,9 +194,16 @@ func (d *Database) ListTeamMemberships(ctx context.Context, identityID, teamID s
 	} else if err != nil {
 		return nil, fmt.Errorf("controlstate: list team memberships: read actor: %w", err)
 	}
-	rows, err := queries.ListTeamMembershipContexts(ctx, teamID)
+	rows, err := queries.ListTeamMembershipContexts(ctx, controlstatedb.ListTeamMembershipContextsParams{
+		TeamID: teamID, IdentityID: identityID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: list team memberships: %w", err)
+	}
+	// An actor can be removed after the first lookup. The list query checks
+	// authorization in its own snapshot; an authorized actor is itself a row.
+	if len(rows) == 0 {
+		return nil, ErrTeamNotFound
 	}
 	result := make([]Membership, len(rows))
 	for index, row := range rows {
@@ -484,7 +491,7 @@ func nameserverRecords(domain string, nameservers []string) []DNSRecord {
 }
 
 func validDisplayName(value string) bool {
-	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value
+	return len(value) <= 128 && validStateText(value)
 }
 
 func validAuthorityLabel(value string) bool {

@@ -170,7 +170,7 @@ type Querier interface {
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ControlRelayServiceAssignmentTotal, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
-	ListTeamMembershipContexts(ctx context.Context, teamID string) ([]ListTeamMembershipContextsRow, error)
+	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)

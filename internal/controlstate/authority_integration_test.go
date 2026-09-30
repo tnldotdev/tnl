@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
@@ -29,6 +30,11 @@ func TestIntegrationTeamCreation(t *testing.T) {
 	request.RequestDigest = sha256.Sum256([]byte("changed"))
 	if _, err := database.CreateTeam(t.Context(), request, now); !errors.Is(err, ErrAuthorityIdempotency) {
 		t.Fatalf("team idempotency: %v", err)
+	}
+	invalid := authorityTeamRequest(session.Identity.Identity.ID)
+	invalid.DisplayName, invalid.IdempotencyKey = "a\x00b", "invalid-display-name"
+	if _, err := database.CreateTeam(t.Context(), invalid, now); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("NUL display name was not rejected at validation: %v", err)
 	}
 	memberships, err := database.ListTeamMemberships(t.Context(), session.Identity.Identity.ID, team.ID)
 	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "owner" {
@@ -79,6 +85,30 @@ func TestIntegrationInvitationAcceptanceAndRoles(t *testing.T) {
 	}
 	if _, err := database.SetMembershipRole(t.Context(), owner, team.ID, owners[0].ID, "member", now); !errors.Is(err, ErrAuthorityConflict) {
 		t.Fatalf("last owner demotion: %v", err)
+	}
+}
+
+func TestIntegrationMembershipListDoesNotOutliveActorMembership(t *testing.T) {
+	database, now, owner, team := newAuthorityTeam(t)
+	reader := addAuthorityMember(t, database, now, owner, team.ID, "reader", "member")
+	queries := controlstatedb.New(database.pool)
+	// Reproduce revocation between the actor lookup and the membership list.
+	if _, err := queries.GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{
+		IdentityID: reader.IdentityID, TeamID: team.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RemoveMembership(t.Context(), owner, team.ID, reader.ID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := queries.ListTeamMembershipContexts(t.Context(), controlstatedb.ListTeamMembershipContextsParams{
+		TeamID: team.ID, IdentityID: reader.IdentityID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("revoked actor received %d team memberships", len(rows))
 	}
 }
 

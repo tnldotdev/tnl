@@ -559,7 +559,7 @@ func (d *Database) requireOpen() error {
 }
 
 func validStateText(value string) bool {
-	return value != "" && len(value) <= 256 && strings.TrimSpace(value) == value
+	return value != "" && len(value) <= 256 && strings.TrimSpace(value) == value && !strings.ContainsRune(value, '\x00')
 }
 
 func positiveInt64(value uint64) (int64, bool) {

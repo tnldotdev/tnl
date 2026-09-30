@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -257,12 +258,21 @@ func validAuthorizationDecision(request authorization.Request, decision authoriz
 		return false
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
-		return decision.CertificatePlan != nil && decision.CertificatePlan.CacheKey != "" &&
-			decision.CertificatePlan.Scope != "" && len(decision.CertificatePlan.Identifiers) != 0 &&
-			(decision.CertificatePlan.ChallengeMethod == string(controlv1.Dns01) ||
-				decision.CertificatePlan.ChallengeMethod == string(controlv1.TlsAlpn01))
+		return validHostedCertificatePlan(decision.CertificatePlan, decision.CanonicalHostname)
 	}
 	return decision.CertificatePlan == nil
+}
+
+func validHostedCertificatePlan(plan *authorization.CertificatePlan, hostname string) bool {
+	if plan == nil {
+		return false
+	}
+	canonical, err := certificateidentity.CanonicalPlan(controlv1.CertificatePlan{
+		CacheKey: plan.CacheKey, Scope: plan.Scope,
+		Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod),
+	})
+	return err == nil && slices.Equal(canonical.Identifiers, plan.Identifiers) &&
+		certificateidentity.Covers(canonical.Identifiers, hostname)
 }
 
 func hostedAuthorizationError(err error) error {
