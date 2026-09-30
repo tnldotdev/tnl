@@ -83,7 +83,8 @@ and `tnl` publishes to its unique URL, with only your current IP whitelisted:
 Hot reloading works automatically, as well as SSE/websockets/streaming responses.
 
 You can [allow reviewers or webhooks](https://tnl.dev/docs/publish#who-can-visit) when
-you need them.
+you need them. For example, `tnl dev --allow-provider stripe` allows Stripe's
+published webhook IPs alongside your current IP.
 
 [Follow the quickstart](https://tnl.dev/docs) or read about
 [framework setup](https://tnl.dev/docs/frameworks).

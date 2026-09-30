@@ -68,12 +68,12 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	if _, err := CanonicalizeIPPrefixes([]string{"192.0.2.1/24", "192.0.2.0/24"}); err == nil {
 		t.Fatal("canonically duplicate prefixes were accepted")
 	}
-	tooMany := make([]string, MaxIPPrefixes+1)
-	for index := range tooMany {
-		tooMany[index] = "192.0.2." + strconv.Itoa(index)
+	large := make([]string, 256)
+	for index := range large {
+		large[index] = "192.0.2." + strconv.Itoa(index)
 	}
-	if _, err := CanonicalizeIPPrefixes(tooMany); err == nil {
-		t.Fatal("oversized prefix policy was accepted")
+	if prefixes, err := CanonicalizeIPPrefixes(large); err != nil || len(prefixes) != len(large) {
+		t.Fatalf("large prefix policy = %d entries, error = %v", len(prefixes), err)
 	}
 	plan := CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"}
 	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"tls-alpn-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"public_url_id":"public_url_1","public_url_scope":"member","publish_run_number":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)

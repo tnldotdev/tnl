@@ -64,12 +64,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
 	if err != nil {
 		return err
 	}
-	if currentIP != "" {
-		if err := output.currentIP(currentIP); err != nil {
+	output.setIPPolicy(policy)
+	if policy.current != "" {
+		if err := output.currentIP(policy.current); err != nil {
 			return err
 		}
 	}
@@ -79,7 +80,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	publisherConfig := services.config(target, allowedIPPrefixes, flags.requestLimit())
+	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, nil, func(event publisher.Event) error {
 		return handlePublisherEvent(ctx, tunnel, output, event)

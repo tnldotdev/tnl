@@ -190,7 +190,7 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 	entry := event.Entry
 	if entry.PublishRunId == "" || entry.PublicUrlId != event.PublicUrlId || entry.PublishRunNumber != event.PublishRunNumber ||
 		entry.CanonicalHostname != event.CanonicalHostname || entry.PolicyRevision <= 0 ||
-		entry.PublicUrlExpiresAt.IsZero() || !entry.IpPolicy.Valid() || len(entry.AllowedIpPrefixes) > 64 ||
+		entry.PublicUrlExpiresAt.IsZero() || !entry.IpPolicy.Valid() ||
 		len(entry.PublisherConnections) > 2 {
 		return ErrRoutingTableEvent
 	}

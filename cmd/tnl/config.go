@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 type projectConfiguration struct {
@@ -223,9 +224,14 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 		flags.Ephemeral = *tunnel.Ephemeral
 	}
 	_, allowAllIPsFromEnvironment := os.LookupEnv("TNL_ALLOW_ALL_IPS")
-	if !flags.allowAllIPsFromCLI && flags.AllowIP == nil && !allowAllIPsFromEnvironment {
-		flags.AllowIP = slices.Clone(tunnel.AllowIP)
-		if tunnel.AllowAllIPs != nil {
+	if !flags.allowAllIPsFromCLI && !allowAllIPsFromEnvironment {
+		if flags.AllowIP == nil {
+			flags.AllowIP = slices.Clone(tunnel.AllowIP)
+		}
+		if flags.AllowProvider == nil {
+			flags.AllowProvider = slices.Clone(tunnel.AllowProviders)
+		}
+		if tunnel.AllowAllIPs != nil && flags.AllowIP == nil && flags.AllowProvider == nil {
 			flags.AllowAllIPs = *tunnel.AllowAllIPs
 		}
 	}
@@ -238,11 +244,18 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	if flags.Host != "" && flags.Subdomain != "" {
 		return errors.New("--host and --subdomain are mutually exclusive")
 	}
-	if flags.AllowAllIPs && flags.AllowIP != nil {
-		return errors.New("--allow-all-ips and --allow-ip are mutually exclusive")
+	if flags.AllowAllIPs && (flags.AllowIP != nil || flags.AllowProvider != nil) {
+		return errors.New("--allow-all-ips cannot be combined with --allow-ip or --allow-provider")
 	}
-	if len(flags.AllowIP) > 63 {
-		return errors.New("--allow-ip may be repeated at most 63 times")
+	seen := make(map[string]bool, len(flags.AllowProvider))
+	for _, provider := range flags.AllowProvider {
+		if !webhookips.Valid(provider) {
+			return fmt.Errorf("unknown webhook IP provider %q (choose %s)", provider, strings.Join(webhookips.Names(), " or "))
+		}
+		if seen[provider] {
+			return fmt.Errorf("--allow-provider %q was repeated", provider)
+		}
+		seen[provider] = true
 	}
 	return nil
 }

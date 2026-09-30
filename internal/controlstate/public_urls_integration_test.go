@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -56,6 +57,33 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	}
 	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLIdempotency) {
 		t.Fatalf("deleted route retry: %v", err)
+	}
+}
+
+func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "large_public_url_ip_policy")
+	request := builtinRouteRequest(t, database, now)
+	request.AllowedIPPrefixes = make([]string, 512)
+	for index := range request.AllowedIPPrefixes {
+		request.AllowedIPPrefixes[index] = fmt.Sprintf("198.18.%d.%d/32", index/256, index%256)
+	}
+	slices.Sort(request.AllowedIPPrefixes)
+	route, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil || len(route.AllowedIPPrefixes) != 512 {
+		t.Fatalf("created large public URL IP policy: %d prefixes, %v", len(route.AllowedIPPrefixes), err)
+	}
+	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID)
+	if err != nil || !slices.Equal(loaded.AllowedIPPrefixes, route.AllowedIPPrefixes) {
+		t.Fatalf("loaded policy: %d prefixes, %v", len(loaded.AllowedIPPrefixes), err)
+	}
+	update := AuthorizedPublicURLUpdateRequest{
+		PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
+		Target: route.Target, AllowedIPPrefixes: request.AllowedIPPrefixes[1:],
+		PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+	}
+	updated, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(time.Second))
+	if err != nil || len(updated.AllowedIPPrefixes) != 511 {
+		t.Fatalf("updated large public URL IP policy: %d prefixes, %v", len(updated.AllowedIPPrefixes), err)
 	}
 }
 
