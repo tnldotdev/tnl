@@ -56,10 +56,10 @@ func TestHostnameLookupUsesCurrentTeamAuthorizationAndOneLookup(t *testing.T) {
 }
 
 type hostnameLookupStore struct {
-	Store  // Any attempt to use the unfiltered list path fails the test.
-	err    error
-	calls  int
-	lookup [2]string
+	PublicURLStore // any attempt to use the unfiltered list path fails the test.
+	err            error
+	calls          int
+	lookup         [2]string
 }
 
 func (s *hostnameLookupStore) GetAuthorizedPublicURLByHostname(_ context.Context, teamID, hostname string) (controlstate.PublicURL, error) {

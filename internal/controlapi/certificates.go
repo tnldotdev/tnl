@@ -29,7 +29,7 @@ func (h *handler) CreateCertificateIssuance(
 		return
 	}
 	digest := certificateIssuanceRequestDigest(uint64(body.PublishRunNumber), body.Csr)
-	issuance, err := h.store.CreateCertificateIssuance(request.Context(), controlstate.CreateCertificateIssuanceRequest{
+	issuance, err := h.certificates.CreateCertificateIssuance(request.Context(), controlstate.CreateCertificateIssuanceRequest{
 		Authentication: authentication, DirectoryURL: h.config.ACMEDirectoryURL,
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), RequestDigest: digest, CSRDER: body.Csr,
 	}, time.Now())
@@ -46,7 +46,7 @@ func (h *handler) GetCertificateIssuance(response http.ResponseWriter, request *
 		writeBearerProblem(response)
 		return
 	}
-	issuance, err := h.store.GetCertificateIssuance(
+	issuance, err := h.certificates.GetCertificateIssuance(
 		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
@@ -62,7 +62,7 @@ func (h *handler) MarkCertificateChallengeReady(response http.ResponseWriter, re
 		writeBearerProblem(response)
 		return
 	}
-	issuance, err := h.store.MarkCertificateChallengeReady(
+	issuance, err := h.certificates.MarkCertificateChallengeReady(
 		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
@@ -78,7 +78,7 @@ func (h *handler) MarkCertificateChallengeRemoved(response http.ResponseWriter, 
 		writeBearerProblem(response)
 		return
 	}
-	issuance, err := h.store.MarkCertificateChallengeRemoved(
+	issuance, err := h.certificates.MarkCertificateChallengeRemoved(
 		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {

@@ -32,7 +32,7 @@ func (h *handler) CreateDNSAuthority(
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	authority, err := h.store.CreateDNSAuthority(request.Context(), controlstate.CreateDNSAuthorityRequest{
+	authority, err := h.dnsAuthorities.CreateDNSAuthority(request.Context(), controlstate.CreateDNSAuthorityRequest{
 		TeamID: body.TeamId, DomainID: body.DomainId, CanonicalDomain: body.CanonicalDomain,
 		IdempotencyKey: params.IdempotencyKey, RequestDigest: digest,
 	}, time.Now())
@@ -51,7 +51,7 @@ func (h *handler) GetDNSAuthority(
 	if !h.authenticateHostedService(response, request) {
 		return
 	}
-	authority, err := h.store.GetDNSAuthority(request.Context(), string(reference))
+	authority, err := h.dnsAuthorities.GetDNSAuthority(request.Context(), string(reference))
 	if err != nil {
 		writeControlStateProblem(response, "get DNS authority", err)
 		return
@@ -68,7 +68,7 @@ func (h *handler) ReleaseDNSAuthority(
 	if !h.authenticateHostedService(response, request) {
 		return
 	}
-	authority, err := h.store.ReleaseDNSAuthority(
+	authority, err := h.dnsAuthorities.ReleaseDNSAuthority(
 		request.Context(), string(reference), params.IdempotencyKey, time.Now(),
 	)
 	if err != nil {

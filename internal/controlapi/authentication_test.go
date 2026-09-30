@@ -17,8 +17,8 @@ import (
 )
 
 func TestPublishRunAuthenticationRejectsAmbiguousHeadersBeforeStore(t *testing.T) {
-	// Any call through this embedded nil store panics, proving parsing happens first.
-	h := &handler{store: struct{ Store }{}}
+	// any call through this embedded nil store panics, proving parsing happens first.
+	h := &handler{store: struct{ PublicURLStore }{}}
 	for _, values := range [][]string{nil, {"Bearer first", "Bearer second"}, {"Bearer first,second"}} {
 		request := httptest.NewRequest(http.MethodPost, "/", nil)
 		request.Header["Authorization"] = values
@@ -38,7 +38,7 @@ func TestPublishRunAuthenticationMapsCredentialAndStoreFailures(t *testing.T) {
 	databaseFailure := errors.New("database unavailable")
 	for _, test := range []struct {
 		name       string
-		store      Store
+		store      PublicURLStore
 		wantStatus int
 		wantCode   controlv1.ProblemCode
 		wantLog    bool
@@ -77,7 +77,7 @@ func TestPublishRunAuthenticationMapsCredentialAndStoreFailures(t *testing.T) {
 }
 
 type publicURLAuthenticationStoreStub struct {
-	Store
+	PublicURLStore
 	err error
 }
 

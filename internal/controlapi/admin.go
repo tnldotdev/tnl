@@ -20,7 +20,7 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
-	counts, err := h.store.AdminRuntimeCounts(request.Context(), now)
+	counts, err := h.admin.AdminRuntimeCounts(request.Context(), now)
 	if err != nil {
 		log.Printf("read admin server status: %v", err)
 		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
@@ -62,7 +62,7 @@ func (h *handler) ListAdminRelays(
 	if params.Cursor != nil {
 		cursor = *params.Cursor
 	}
-	page, err := h.store.ListAdminRelayLeases(request.Context(), cursor, time.Now().UTC())
+	page, err := h.admin.ListAdminRelayLeases(request.Context(), cursor, time.Now().UTC())
 	if err != nil {
 		h.writeAdminStateError(response, "list admin relays", err)
 		return
@@ -97,7 +97,7 @@ func (h *handler) DrainAdminRelay(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
-	lease, err := h.store.BeginAdminRelayDrain(request.Context(), controlstate.RelayLeaseIdentity{
+	lease, err := h.admin.BeginAdminRelayDrain(request.Context(), controlstate.RelayLeaseIdentity{
 		RelayID: string(relayID), RelayRunID: body.RelayRunId,
 		RelayLeaseRevision: uint64(body.RelayLeaseRevision),
 	}, principal.identityID, newRequestID(), now, body.Deadline.UTC())
@@ -116,7 +116,7 @@ func (h *handler) ListMaintenanceControls(response http.ResponseWriter, request 
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
-	controls, err := h.store.ListMaintenanceControls(request.Context())
+	controls, err := h.admin.ListMaintenanceControls(request.Context())
 	if err != nil {
 		h.writeAdminStateError(response, "list maintenance controls", err)
 		return
@@ -146,7 +146,7 @@ func (h *handler) SetMaintenanceControl(
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "control unavailable")
 		return
 	}
-	control, err := h.store.SetMaintenanceControl(
+	control, err := h.admin.SetMaintenanceControl(
 		request.Context(), controlstate.MaintenanceControlName(name), body.Allowed,
 		principal.identityID, newRequestID(), time.Now().UTC(),
 	)

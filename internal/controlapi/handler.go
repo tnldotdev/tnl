@@ -47,9 +47,8 @@ type Config struct {
 	RelayReadiness              func() error
 }
 
-// Store is the stored state used by the control API.
-type Store interface {
-	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
+// PublicURLStore owns saved public URL and publish run state.
+type PublicURLStore interface {
 	ListAuthorizedPublicURLs(context.Context, string, string) (controlstate.PublicURLPage, error)
 	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
 	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
@@ -61,21 +60,47 @@ type Store interface {
 	PublishRunAuthentication(context.Context, string, uint64, credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error)
 	HeartbeatPublishRun(context.Context, controlstate.PublishRunAuthentication, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
 	MarkPublicURLCertificateInstalled(context.Context, controlstate.PublishRunAuthentication, string, time.Time, time.Time) (controlstate.PublishRunLifecycle, error)
+	MarkPublishRunReady(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.PublishRunLifecycle, error)
+	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
+}
+
+// CertificateStore owns publish run certificate issuance state.
+type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkPublishRunReady(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.PublishRunLifecycle, error)
-	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
-	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
+}
+
+// DNSAuthorityStore owns DNS authority references.
+type DNSAuthorityStore interface {
 	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	ReleaseDNSAuthority(context.Context, string, string, time.Time) (controlstate.DNSAuthority, error)
+}
+
+// HostedRevocationStore applies policy changes from an external authority.
+type HostedRevocationStore interface {
+	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
+}
+
+// AdminStore owns administrator operations.
+type AdminStore interface {
 	AdminRuntimeCounts(context.Context, time.Time) (controlstate.AdminRuntimeCounts, error)
 	ListAdminRelayLeases(context.Context, string, time.Time) (controlstate.AdminRelayPage, error)
 	BeginAdminRelayDrain(context.Context, controlstate.RelayLeaseIdentity, string, string, time.Time, time.Time) (controlstate.RelayLease, error)
 	ListMaintenanceControls(context.Context) ([]controlstate.MaintenanceControl, error)
 	SetMaintenanceControl(context.Context, controlstate.MaintenanceControlName, bool, string, string, time.Time) (controlstate.MaintenanceControl, error)
+}
+
+// Store composes the control API's independent state boundaries.
+type Store interface {
+	PublicURLStore
+	CertificateStore
+	DNSAuthorityStore
+	HostedRevocationStore
+	AdminStore
+	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
 // BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
@@ -86,11 +111,15 @@ type BuiltinAuthorizationStore interface {
 }
 
 type handler struct {
-	config        Config
-	store         Store
-	readiness     func(context.Context) error
-	authorizer    publicURLAuthorizer
-	hostedSecrets serviceapi.BearerSecrets
+	config         Config
+	store          PublicURLStore
+	certificates   CertificateStore
+	dnsAuthorities DNSAuthorityStore
+	revocations    HostedRevocationStore
+	admin          AdminStore
+	readiness      func(context.Context) error
+	authorizer     publicURLAuthorizer
+	hostedSecrets  serviceapi.BearerSecrets
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -102,7 +131,8 @@ func NewHandler(
 	builtinAuthorizationStore BuiltinAuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
-	h := &handler{config: cfg, store: store, readiness: readiness}
+	h := &handler{config: cfg, store: store, certificates: store, dnsAuthorities: store,
+		revocations: store, admin: store, readiness: readiness}
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
 	}

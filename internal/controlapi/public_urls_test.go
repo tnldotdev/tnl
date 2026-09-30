@@ -447,7 +447,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 }
 
 type publicURLCreationStore struct {
-	Store
+	PublicURLStore
 	result   controlstate.PublicURL
 	requests []controlstate.CreatePublicURLRequest
 }

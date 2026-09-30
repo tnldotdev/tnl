@@ -20,7 +20,7 @@ func (h *handler) RevokeHostedPolicy(response http.ResponseWriter, request *http
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	_, _, err := h.store.ApplyHostedPolicyRevocation(
+	_, _, err := h.revocations.ApplyHostedPolicyRevocation(
 		request.Context(), h.externalAuthorityIssuer(), body.TeamId, uint64(body.PolicyRevision),
 		body.AllSessions, body.MembershipIds, body.DomainIds, time.Now(),
 	)
