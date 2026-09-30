@@ -403,6 +403,10 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			allowAllIPs = true
 		case "ephemeral":
 			ephemeral = true
+		case "port":
+			flags.Dev.portFromCLI = true
+		case "startup-timeout":
+			flags.Dev.startupTimeoutFromCLI = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
@@ -450,7 +454,8 @@ func rootCommandIndex(args []string) int {
 		switch {
 		case argument == "--config":
 			index++
-		case strings.HasPrefix(argument, "--config="), argument == "--no-config", argument == "--no-telemetry":
+		case strings.HasPrefix(argument, "--config="), argument == "--no-config", argument == "--no-telemetry",
+			strings.HasPrefix(argument, "--no-config="), strings.HasPrefix(argument, "--no-telemetry="):
 		case strings.HasPrefix(argument, "-"):
 			return -1
 		default:

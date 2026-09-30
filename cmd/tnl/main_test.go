@@ -283,6 +283,41 @@ func TestSplitDevPassthroughAllowsGlobalOptionsBeforeDev(t *testing.T) {
 	}
 }
 
+func TestSplitDevPassthroughAllowsExplicitGlobalBooleanValues(t *testing.T) {
+	parsed, command, err := splitDevPassthrough([]string{
+		"--no-telemetry=false", "--no-config=true", "dev", "api", "--", "node", "server.js",
+	})
+	if err != nil || strings.Join(parsed, " ") != "--no-telemetry=false --no-config=true dev api" ||
+		strings.Join(command, " ") != "node server.js" {
+		t.Fatalf("parsed = %v, command = %v, error = %v", parsed, command, err)
+	}
+}
+
+func TestDevRejectsExplicitZeroPortAndStartupTimeout(t *testing.T) {
+	for _, test := range []struct {
+		flag, want string
+	}{
+		{"--port=0", "port must be between 1 and 65535"},
+		{"--startup-timeout=0s", "startup timeout must be greater than zero"},
+	} {
+		t.Run(test.flag, func(t *testing.T) {
+			var flags cli
+			parser, err := kong.New(&flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parser.Parse([]string{"dev", test.flag})
+			if err != nil {
+				t.Fatal(err)
+			}
+			applyTunnelCLIUnits(parsed, &flags)
+			if err := (projectConfiguration{}).applyDev(&flags.Dev); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("explicit %s: %v", test.flag, err)
+			}
+		})
+	}
+}
+
 func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	var output bytes.Buffer
 	writeCommandError(&output, clioutput.WrapCommand("tnl team use", errors.New("team not found")))

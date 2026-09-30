@@ -104,3 +104,22 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestExplicitHostnameUsesReadyDomainWhenDefaultIsPending(t *testing.T) {
+	current := teamContext{
+		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_pending"},
+		membership: authorityv1.Membership{Id: "membership_1", TeamId: "team_1",
+			Role: authorityv1.TeamRoleOwner, MemberSlug: "member", ManagedLabel: "managed-member"},
+		domains: []authorityv1.Domain{
+			{Id: "domain_pending", CanonicalDomain: "pending.example.test", State: authorityv1.DomainStatePending},
+			{Id: "domain_ready", CanonicalDomain: "ready.example.test", Kind: authorityv1.Claimed, State: authorityv1.DomainStateReady},
+		},
+	}
+	hostname, domain, scope, err := resolvePublishHostname("api.member.ready.example.test", "", current)
+	if err != nil || hostname != "api.member.ready.example.test" || domain.Id != "domain_ready" || scope != controlv1.Member {
+		t.Fatalf("explicit hostname = %q, %+v, %q, %v", hostname, domain, scope, err)
+	}
+	if _, _, _, err := resolvePublishHostname("", "api", current); err == nil {
+		t.Fatal("default-domain subdomain was accepted while its domain is pending")
+	}
+}

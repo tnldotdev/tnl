@@ -151,6 +151,12 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 	if flags.commandDir == "" && c.Selection.Path != "" {
 		flags.commandDir = c.Root
 	}
+	if flags.portFromCLI && flags.Port == 0 {
+		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("port must be between 1 and 65535"))
+	}
+	if flags.startupTimeoutFromCLI && flags.StartupTimeout == 0 {
+		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
+	}
 	if len(flags.Command) == 0 && effective.Dev != nil && effective.Dev.Command != nil {
 		flags.Command = slices.Clone(effective.Dev.Command)
 	}

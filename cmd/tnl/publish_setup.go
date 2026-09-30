@@ -150,7 +150,17 @@ func resolvePublishHostname(
 	if hostname != "" && subdomain != "" {
 		return "", authorityv1.Domain{}, "", errors.New("--host and --subdomain are mutually exclusive")
 	}
-	domain, err := defaultReadyDomain(current)
+	var domain authorityv1.Domain
+	var err error
+	if hostname != "" {
+		canonical, canonicalErr := naming.CanonicalizeHostname(hostname)
+		if canonicalErr != nil || canonical != hostname {
+			return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
+		}
+		domain, err = readyDomainForHostname(current.domains, hostname)
+	} else {
+		domain, err = defaultReadyDomain(current)
+	}
 	if err != nil {
 		return "", authorityv1.Domain{}, "", err
 	}

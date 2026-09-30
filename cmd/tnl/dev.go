@@ -50,12 +50,14 @@ type devCommand struct {
 	Port           int           `name:"port" help:"Port for the local service. Usually detected automatically."`
 	StartupTimeout time.Duration `name:"startup-timeout" help:"Time to wait for the local service to start and report its target."`
 
-	commandDir          string
-	serverFromConfig    bool
-	selectedTeam        string
-	projectRoot         string
-	project             projectConfiguration
-	useMetadataHostname bool
+	commandDir            string
+	serverFromConfig      bool
+	selectedTeam          string
+	projectRoot           string
+	project               projectConfiguration
+	useMetadataHostname   bool
+	portFromCLI           bool
+	startupTimeoutFromCLI bool
 }
 
 type childExitError struct {
@@ -210,11 +212,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if target == "" {
 		registrationTimeout := min(flags.StartupTimeout, devRegistrationWait)
 		configurationCtx, cancelConfiguration := context.WithTimeout(ctx, registrationTimeout)
-		configured := make(chan devConfigurationResult, 1)
-		go func() {
-			configuration, err := bootstrap.Configuration(configurationCtx)
-			configured <- devConfigurationResult{configuration: configuration, err: err}
-		}()
+		configured := awaitDevConfiguration(configurationCtx, bootstrap)
 		select {
 		case <-child.Done():
 			cancelConfiguration()
@@ -237,11 +235,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	} else {
-		configured := make(chan devConfigurationResult, 1)
-		go func() {
-			configuration, err := bootstrap.Configuration(ctx)
-			configured <- devConfigurationResult{configuration: configuration, err: err}
-		}()
+		configured := awaitDevConfiguration(ctx, bootstrap)
 		startupCtx, cancelStartup := context.WithTimeout(ctx, flags.StartupTimeout)
 		cancelTargetReady = cancelStartup
 		defer cancelTargetReady()
@@ -429,6 +423,17 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 type devConfigurationResult struct {
 	configuration devConfigurationRequest
 	err           error
+}
+
+// The buffered result lets startup select child exit or target readiness first.
+// Configuration exits when its context is canceled or the bootstrap closes.
+func awaitDevConfiguration(ctx context.Context, bootstrap *devBootstrap) <-chan devConfigurationResult {
+	configured := make(chan devConfigurationResult, 1)
+	go func() {
+		configuration, err := bootstrap.Configuration(ctx)
+		configured <- devConfigurationResult{configuration: configuration, err: err}
+	}()
+	return configured
 }
 
 type devFrameworkResult struct {
