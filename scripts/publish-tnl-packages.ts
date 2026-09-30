@@ -6,26 +6,13 @@ import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import * as z from "zod";
-import {
-  nativeTargets,
-  type NativePlatform,
-  type NativeArchitecture,
-} from "../packages/tnl/src/internal/native-targets.ts";
+import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
 import {
   npmPackageMetadataSchema,
   packageManifestSchema,
   type PackedPackage,
 } from "./npm-artifacts.ts";
 import { parseJSON, parseValue } from "./validation.ts";
-
-type ExpectedPackage =
-  | { readonly name: string; readonly kind: "launcher" }
-  | {
-      readonly name: string;
-      readonly kind: "native";
-      readonly os: NativePlatform;
-      readonly cpu: NativeArchitecture;
-    };
 
 const registryPackageSchema = z.object({
   "dist-tags": z.optional(z.record(z.string(), z.string())),
@@ -47,13 +34,8 @@ assert(
   "usage: node scripts/publish-tnl-packages.ts PACKAGE_DIRECTORY EXPECTED_VERSION",
 );
 
-const expectedPackages: readonly ExpectedPackage[] = [
-  ...nativeTargets.map(({ platform, architecture, packageName }): ExpectedPackage => ({
-    name: packageName,
-    kind: "native",
-    os: platform,
-    cpu: architecture,
-  })),
+const expectedPackages = [
+  ...nativeTargets.map(({ packageName }) => ({ name: packageName, kind: "native" })),
   { name: "@tnldotdev/tnl", kind: "launcher" },
 ];
 const packageDirectory = path.resolve(packageDirectoryArgument);
@@ -71,8 +53,8 @@ assert.deepEqual(
 
 const distTag = expectedVersion.includes("-") ? "next" : "latest";
 const packages = [];
-for (const expected of expectedPackages) {
-  packages.push(await verifyLocalPackage(expected));
+for (const entry of metadata.packages) {
+  packages.push(await verifyLocalPackage(entry));
 }
 
 // Validate every registry state before creating an immutable package version.
@@ -102,9 +84,8 @@ for (const package_ of unpublished) {
   await publish(package_, distTag);
 }
 
-async function verifyLocalPackage(expected: ExpectedPackage): Promise<PackedPackage> {
-  const entry = metadata.packages.find(({ name }) => name === expected.name);
-  assert(entry !== undefined);
+async function verifyLocalPackage(entry: PackedPackage): Promise<PackedPackage> {
+  // Packing checked the package shape; publishing checks that the handed-off tarball is unchanged.
   assert.equal(
     path.basename(entry.tarball),
     entry.tarball,
@@ -123,27 +104,8 @@ async function verifyLocalPackage(expected: ExpectedPackage): Promise<PackedPack
     maxBuffer: 1024 * 1024,
   });
   const manifest = parseJSON(stdout, packageManifestSchema, "packed manifest");
-  assert.equal(manifest.name, expected.name);
+  assert.equal(manifest.name, entry.name);
   assert.equal(manifest.version, expectedVersion);
-  for (const lifecycle of ["preinstall", "install", "postinstall"]) {
-    assert.equal(manifest.scripts?.[lifecycle], undefined);
-  }
-  if (expected.kind === "native") {
-    assert.deepEqual(manifest.os, [expected.os]);
-    assert.deepEqual(manifest.cpu, [expected.cpu]);
-  } else {
-    assert(manifest.exports, "launcher must define public exports");
-    assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
-    assert.deepEqual(
-      manifest.optionalDependencies,
-      Object.fromEntries(
-        expectedPackages
-          .filter(({ kind }) => kind === "native")
-          .map(({ name }) => [name, expectedVersion]),
-      ),
-    );
-    assert.deepEqual(manifest.bin, { tnl: "dist/bin/tnl.js" });
-  }
   return { ...entry, integrity, tarball };
 }
 

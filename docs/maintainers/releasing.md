@@ -40,6 +40,9 @@ After environment approval, the workflow:
 - attaches the image digest;
 - updates the Homebrew formula for stable releases.
 
+The Homebrew formula template is `deploy/tnl.rb.template`. The workflow fills it
+with archive checksums and updates the tap using `scripts/update-homebrew.ts`.
+
 CI publishes artifacts and images. It does not deploy production.
 
 ## bootstrap npm once

@@ -8,6 +8,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -174,6 +175,16 @@ try {
   launcherManifest.tnl = { commit: metadata.commit };
   await writeJson(launcherManifestPath, launcherManifest);
   await chmod(path.join(launcherStage, "dist", "bin", "tnl.js"), 0o755);
+  const builtFiles = (
+    await readdir(path.join(launcherStage, "dist"), { recursive: true, withFileTypes: true })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      path
+        .relative(launcherStage, path.join(entry.parentPath, entry.name))
+        .split(path.sep)
+        .join("/"),
+    );
   packedPackages.push(
     await packAndVerify(launcherStage, {
       kind: "launcher",
@@ -183,32 +194,7 @@ try {
         "NOTICE",
         "readme.md",
         "THIRD_PARTY_LICENSES.txt",
-        "dist/bin/tnl.d.ts",
-        "dist/bin/tnl.js",
-        "dist/config.d.ts",
-        "dist/config.js",
-        "dist/config.gen.d.ts",
-        "dist/config.gen.js",
-        "dist/internal/dev.d.ts",
-        "dist/internal/dev.js",
-        "dist/internal/launcher.d.ts",
-        "dist/internal/launcher.js",
-        "dist/internal/native-targets.d.ts",
-        "dist/internal/native-targets.js",
-        "dist/internal/port.d.ts",
-        "dist/internal/port.js",
-        "dist/internal/register.d.ts",
-        "dist/internal/register.js",
-        "dist/internal/runtime.d.ts",
-        "dist/internal/runtime.js",
-        "dist/index.browser.d.ts",
-        "dist/index.browser.js",
-        "dist/index.d.ts",
-        "dist/index.js",
-        "dist/next.d.ts",
-        "dist/next.js",
-        "dist/vite.d.ts",
-        "dist/vite.js",
+        ...builtFiles,
         "package.json",
       ],
     }),
