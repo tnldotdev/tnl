@@ -162,6 +162,23 @@ func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
 	}
 }
 
+func TestRouteServerRepeatedClosePreservesServeFailure(t *testing.T) {
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: "http://127.0.0.1:3000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("HTTP serve failed")
+	route.started = true
+	route.httpDone <- failure
+	for range 2 {
+		if err := route.Close(); !errors.Is(err, failure) {
+			t.Fatalf("close lost HTTP serve failure: %v", err)
+		}
+	}
+}
+
 func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -193,8 +210,9 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	type accepted struct {
-		session *tunnel.Session
-		err     error
+		session   *tunnel.Session
+		transport muxsession.Session
+		err       error
 	}
 	relayResult := make(chan accepted, 1)
 	relayDone := make(chan struct{})
@@ -219,7 +237,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		session, _, err := tunnel.Accept(ctx, transport, func(context.Context, tunnelv1.Message) error {
 			return nil
 		})
-		relayResult <- accepted{session: session, err: err}
+		relayResult <- accepted{session: session, transport: transport, err: err}
 		if err == nil {
 			defer session.Close()
 			select {
@@ -269,7 +287,16 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		awaitPublisherTest(t, serveDone)
 	})
 
-	stream, err := acceptedRelay.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
+	stalled, err := acceptedRelay.transport.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stalled.Close() })
+	// A stream that never sends its header cannot hold up another visitor on
+	// the same publisher connection.
+	openCtx, stopOpen := context.WithTimeout(ctx, 2*time.Second)
+	defer stopOpen()
+	stream, err := acceptedRelay.session.OpenVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: "visitor_connection_1", PublicURLID: ref.PublicURLID,
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
@@ -280,6 +307,22 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stream.Close() })
+	_ = stalled.Close()
+	// A malformed header rejects just that stream, preserving the already
+	// accepted visitor and the publisher connection that carries it.
+	malformed, err := acceptedRelay.transport.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = malformed.Close() })
+	_ = malformed.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := malformed.Write([]byte{0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	badResponse, err := tunnelv1.ReadStreamResponse(malformed)
+	if err != nil || badResponse.Type != tunnelv1.StreamRejected || badResponse.Code != tunnelv1.InvalidMessage {
+		t.Fatalf("malformed stream response = %+v, %v", badResponse, err)
+	}
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}

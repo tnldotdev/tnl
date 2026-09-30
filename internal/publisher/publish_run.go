@@ -178,45 +178,13 @@ func runSession(
 		}
 	}()
 	heartbeatDone := make(chan error, 1)
-	heartbeatStarted := false
-	defer func() {
-		cancelSession(nil)
-		if heartbeatStarted {
-			normalParentCancellation := parentCtx.Err() != nil && errors.Is(context.Cause(sessionCtx), context.Cause(parentCtx)) &&
-				!errors.Is(result, controlclient.ErrStatusConflict) && !errors.Is(result, controlclient.ErrUnauthenticated) && !errors.Is(result, errCertificateExpired)
-			if normalParentCancellation {
-				if errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded) {
-					result = nil
-				}
-				route.stopAdmissions()
-				result = errors.Join(result, observe(config, Event{
-					Type: EventDraining, PublicURLID: setup.PublicUrl.Id, Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version,
-				}))
-				drainCtx, cancelDrain := context.WithTimeout(context.Background(), config.DrainTime)
-				connectionDrainErr := connections.Drain(drainCtx)
-				publicURLDrainErr := route.Drain(drainCtx)
-				cancelDrain()
-				result = errors.Join(result, connectionDrainErr, publicURLDrainErr)
-				select {
-				case <-route.certificateExpiration():
-					result = errors.Join(result, errCertificateExpired)
-				default:
-				}
-			}
-		}
-		cancelTransports()
-		if heartbeatStarted {
-			result = errors.Join(result, <-heartbeatDone)
-			if parentCtx.Err() == nil {
-				cause := context.Cause(sessionCtx)
-				if cause != nil && !errors.Is(cause, context.Canceled) {
-					result = cause
-				}
-			}
-		}
-		connections.Close()
-		<-expirationDone
-	}()
+	cleanup := sessionCleanup{
+		parentCtx: parentCtx, sessionCtx: sessionCtx,
+		cancelSession: cancelSession, cancelTransports: cancelTransports,
+		connections: connections, route: route, config: config, setup: setup, version: version,
+		heartbeatDone: heartbeatDone, expirationDone: expirationDone,
+	}
+	defer func() { result = cleanup.finish(result) }()
 	if err := connections.Update(setup.PublisherConnections); err != nil {
 		return err
 	}
@@ -236,7 +204,7 @@ func runSession(
 		}
 		heartbeatDone <- err
 	}()
-	heartbeatStarted = true
+	cleanup.heartbeatStarted = true
 	if err := connections.WaitReady(ctx, 1); err != nil {
 		return err
 	}
@@ -277,13 +245,84 @@ func runSession(
 		case <-time.After(activationRetry):
 		}
 	}
-	var renewalTimer *time.Timer
-	var renewal <-chan time.Time
+	return runCertificateRenewals(ctx, config, setup, route, state, material)
+}
+
+// sessionCleanup owns the teardown after the route and connection manager have
+// started. A normal parent cancellation drains before transport cancellation;
+// a heartbeat or certificate failure closes transports immediately.
+type sessionCleanup struct {
+	parentCtx, sessionCtx context.Context
+	cancelSession         context.CancelCauseFunc
+	cancelTransports      context.CancelFunc
+	connections           *publisherConnectionManager
+	route                 *PublicURLServer
+	config                Config
+	setup                 controlv1.PublishRunSetup
+	version               uint64
+	heartbeatDone         <-chan error
+	expirationDone        <-chan struct{}
+	heartbeatStarted      bool
+}
+
+func (s *sessionCleanup) finish(result error) error {
+	s.cancelSession(nil)
+	if s.heartbeatStarted && s.parentCtx.Err() != nil &&
+		errors.Is(context.Cause(s.sessionCtx), context.Cause(s.parentCtx)) &&
+		!errors.Is(result, controlclient.ErrStatusConflict) && !errors.Is(result, controlclient.ErrUnauthenticated) &&
+		!errors.Is(result, errCertificateExpired) {
+		result = s.drain(result)
+	}
+	s.cancelTransports()
+	if s.heartbeatStarted {
+		result = errors.Join(result, <-s.heartbeatDone)
+		if s.parentCtx.Err() == nil {
+			cause := context.Cause(s.sessionCtx)
+			if cause != nil && !errors.Is(cause, context.Canceled) {
+				result = cause
+			}
+		}
+	}
+	s.connections.Close()
+	<-s.expirationDone
+	return result
+}
+
+func (s *sessionCleanup) drain(result error) error {
+	if errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded) {
+		result = nil
+	}
+	s.route.stopAdmissions()
+	result = errors.Join(result, observe(s.config, Event{
+		Type: EventDraining, PublicURLID: s.setup.PublicUrl.Id,
+		Hostname: s.setup.PublicUrl.CanonicalHostname, PublishRunNumber: s.version,
+	}))
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), s.config.DrainTime)
+	connectionDrainErr := s.connections.Drain(drainCtx)
+	publicURLDrainErr := s.route.Drain(drainCtx)
+	cancelDrain()
+	result = errors.Join(result, connectionDrainErr, publicURLDrainErr)
+	select {
+	case <-s.route.certificateExpiration():
+		result = errors.Join(result, errCertificateExpired)
+	default:
+	}
+	return result
+}
+
+func runCertificateRenewals(
+	ctx context.Context,
+	config Config,
+	setup controlv1.PublishRunSetup,
+	route *PublicURLServer,
+	state *clientstate.CertificateCache,
+	material clientstate.Material,
+) error {
 	// Keep renewal ownership across retry waits, but release it before the next renewal is due.
 	var renewalLock *clientstate.Lock
 	defer func() { _ = renewalLock.Close() }()
-	renewalTimer = time.NewTimer(max(time.Until(material.RenewAt), 0))
-	renewal = renewalTimer.C
+	renewalTimer := time.NewTimer(max(time.Until(material.RenewAt), 0))
+	renewal := renewalTimer.C
 	defer renewalTimer.Stop()
 	for {
 		select {
@@ -292,10 +331,11 @@ func runSession(
 			return context.Cause(ctx)
 		case <-renewal:
 			if renewalLock == nil {
-				renewalLock, err = state.Lock(ctx)
+				lock, err := state.Lock(ctx)
 				if err != nil {
 					return err
 				}
+				renewalLock = lock
 			}
 			replacement, renewalErr := attemptCertificateTransaction(
 				ctx, config.Control, route, state, setup, true,

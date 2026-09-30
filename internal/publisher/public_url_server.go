@@ -55,6 +55,7 @@ type PublicURLServer struct {
 	handlers           sync.WaitGroup
 	httpDone           chan error
 	closeOnce          sync.Once
+	closeErr           error
 
 	// Certificate transactions retain challenge identity across lost control responses.
 	challengeIssuanceID string
@@ -265,7 +266,8 @@ func (r *PublicURLServer) start() error {
 }
 
 // ServePublisherConnection accepts visitor streams for one exact publisher
-// connection. The caller owns the session and closes it to end active streams.
+// connection. On exit it closes the session to stop pending header reads;
+// callers may also close it to interrupt active streams.
 func (r *PublicURLServer) ServePublisherConnection(
 	ctx context.Context,
 	session *tunnel.Session,
@@ -277,44 +279,82 @@ func (r *PublicURLServer) ServePublisherConnection(
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	for {
-		incoming, err := session.AcceptVisitorStream(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+	// Bound header parsing while letting a slow or invalid stream coexist with
+	// healthy streams on the same publisher connection.
+	const headerReaders = 4
+	acceptCtx, cancel := context.WithCancel(ctx)
+	var readers sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = session.Close()
+		readers.Wait()
+	}()
+	results := make(chan error, headerReaders)
+	for range headerReaders {
+		readers.Go(func() {
+			for {
+				incoming, err := session.AcceptVisitorStream(acceptCtx)
+				if err != nil {
+					var headerErr *tunnel.StreamHeaderError
+					if errors.As(err, &headerErr) {
+						continue
+					}
+					results <- err
+					return
+				}
+				if acceptCtx.Err() != nil {
+					_ = incoming.Stream.Close()
+					return
+				}
+				if err := r.acceptVisitor(incoming, ref); err != nil {
+					results <- err
+					return
+				}
 			}
-			return err
+		})
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-results:
+		if ctx.Err() != nil {
+			return nil
 		}
-		code := r.validateIncomingPublicURL(incoming.Header, ref)
-		r.mu.Lock()
-		if r.closed || r.draining {
-			code = tunnelv1.Unavailable
-		}
-		if code != "" {
-			r.mu.Unlock()
-			_ = incoming.Reject(code)
-			continue
-		}
-		r.streams[incoming.Stream] = struct{}{}
-		r.handlers.Add(1)
+		return err
+	}
+}
+
+func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+	code := r.validateIncomingPublicURL(incoming.Header, ref)
+	r.mu.Lock()
+	if r.closed || r.draining {
+		code = tunnelv1.Unavailable
+	}
+	if code != "" {
 		r.mu.Unlock()
-		if err := incoming.Accept(); err != nil {
+		_ = incoming.Reject(code)
+		return nil
+	}
+	r.streams[incoming.Stream] = struct{}{}
+	r.handlers.Add(1)
+	r.mu.Unlock()
+	if err := incoming.Accept(); err != nil {
+		r.mu.Lock()
+		delete(r.streams, incoming.Stream)
+		r.mu.Unlock()
+		r.handlers.Done()
+		return err
+	}
+	go func() {
+		defer r.handlers.Done()
+		defer func() {
 			r.mu.Lock()
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
-			r.handlers.Done()
-			return err
-		}
-		go func() {
-			defer r.handlers.Done()
-			defer func() {
-				r.mu.Lock()
-				delete(r.streams, incoming.Stream)
-				r.mu.Unlock()
-			}()
-			r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied)
 		}()
-	}
+		r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied)
+	}()
+	return nil
 }
 
 func (r *PublicURLServer) validateIncomingPublicURL(
@@ -345,7 +385,6 @@ func (r *PublicURLServer) stopAdmissions() {
 }
 
 func (r *PublicURLServer) Close() error {
-	var result error
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
 		r.closed = true
@@ -359,7 +398,7 @@ func (r *PublicURLServer) Close() error {
 			streams = append(streams, stream)
 		}
 		r.mu.Unlock()
-		result = errors.Join(r.http.Close(), r.queue.Close())
+		result := errors.Join(r.http.Close(), r.queue.Close())
 		for _, stream := range streams {
 			_ = stream.Close()
 		}
@@ -367,8 +406,9 @@ func (r *PublicURLServer) Close() error {
 		if started {
 			result = errors.Join(result, <-r.httpDone)
 		}
+		r.closeErr = result
 	})
-	return result
+	return r.closeErr
 }
 
 func (r *PublicURLServer) startHTTP() {

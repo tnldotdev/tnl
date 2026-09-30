@@ -521,21 +521,19 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 	if !errors.As(err, &problem) || problem.Problem == nil {
 		return tunnelv1.Internal
 	}
-	switch {
-	case problemtype.Is(problem.Problem.Type, "unauthenticated"),
-		problemtype.Is(problem.Problem.Type, "relay_identity_mismatch"),
-		problemtype.Is(problem.Problem.Type, "invalid_publisher_connection_credential"):
+	switch problem.Problem.Type {
+	case problemtype.URL("unauthenticated"), problemtype.URL("relay_identity_mismatch"),
+		problemtype.URL("invalid_publisher_connection_credential"):
 		return tunnelv1.Unauthenticated
-	case problemtype.Is(problem.Problem.Type, "stale_connection_assignment"),
-		problemtype.Is(problem.Problem.Type, "relay_lease_stale"):
+	case problemtype.URL("stale_connection_assignment"), problemtype.URL("relay_lease_stale"):
 		return tunnelv1.StaleConnectionAssignment
-	case problemtype.Is(problem.Problem.Type, "publisher_connection_already_claimed"):
+	case problemtype.URL("publisher_connection_already_claimed"):
 		return tunnelv1.DuplicatePublisherConnection
-	case problemtype.Is(problem.Problem.Type, "relay_draining"):
+	case problemtype.URL("relay_draining"):
 		return tunnelv1.DrainingPublisherConnection
-	case problemtype.Is(problem.Problem.Type, "relay_connection_capacity_exhausted"):
+	case problemtype.URL("relay_connection_capacity_exhausted"):
 		return tunnelv1.CapacityExceeded
-	case problemtype.Is(problem.Problem.Type, "publisher_connection_unavailable"):
+	case problemtype.URL("publisher_connection_unavailable"):
 		return tunnelv1.Unavailable
 	default:
 		return tunnelv1.Internal

@@ -21,6 +21,19 @@ type ProtocolError struct {
 
 func (e *ProtocolError) Error() string { return "tunnel: " + string(e.Code) }
 
+// StreamHeaderError belongs to one rejected stream, not its authenticated
+// publisher connection. The acceptor may keep serving other streams.
+type StreamHeaderError struct {
+	Kind string
+	Err  error
+}
+
+func (e *StreamHeaderError) Error() string {
+	return fmt.Sprintf("tunnel: read %s stream header: %v", e.Kind, e.Err)
+}
+
+func (e *StreamHeaderError) Unwrap() error { return e.Err }
+
 // AuthenticateFunc authorizes one publisher or ingress hello.
 type AuthenticateFunc func(context.Context, tunnelv1.Message) error
 
@@ -272,7 +285,7 @@ func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStre
 			Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage,
 		})
 		_ = stream.Close()
-		return nil, fmt.Errorf("tunnel: read visitor stream header: %w", err)
+		return nil, &StreamHeaderError{Kind: "visitor", Err: err}
 	}
 	return &IncomingVisitorStream{
 		Stream: stream, Header: header, response: incomingStreamResponse{stream: stream},
@@ -308,7 +321,7 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 			Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage,
 		})
 		_ = stream.Close()
-		return nil, fmt.Errorf("tunnel: read internal forwarding stream header: %w", err)
+		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
 	}
 	return &IncomingInternalForwardingStream{
 		Stream: stream, Header: header, response: incomingStreamResponse{stream: stream},

@@ -85,26 +85,52 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 		_ = session.Close()
 		return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
+	// Several bounded readers keep a slow stream header from blocking other
+	// visitors on the same authenticated publisher connection.
+	const headerReaders = 4
+	acceptCtx, cancel := context.WithCancel(ctx)
 	var group sync.WaitGroup
 	defer func() {
+		cancel()
 		_ = session.Close()
 		group.Wait()
 	}()
-	for {
-		incoming, err := session.AcceptInternalForwardingStream(ctx)
-		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, muxsession.ErrClosed) {
-				return nil
+	results := make(chan error, headerReaders)
+	for range headerReaders {
+		group.Go(func() {
+			for {
+				incoming, err := session.AcceptInternalForwardingStream(acceptCtx)
+				if err != nil {
+					var headerErr *tunnel.StreamHeaderError
+					if errors.As(err, &headerErr) {
+						if acceptCtx.Err() == nil {
+							a.report(err)
+						}
+						continue
+					}
+					results <- err
+					return
+				}
+				if acceptCtx.Err() != nil {
+					_ = incoming.Stream.Close()
+					return
+				}
+				group.Go(func() {
+					if err := a.forward(acceptCtx, incoming); err != nil && acceptCtx.Err() == nil {
+						a.report(err)
+					}
+				})
 			}
-			return err
+		})
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-results:
+		if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, muxsession.ErrClosed) {
+			return nil
 		}
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			if err := a.forward(ctx, incoming); err != nil && ctx.Err() == nil {
-				a.report(err)
-			}
-		}()
+		return err
 	}
 }
 
