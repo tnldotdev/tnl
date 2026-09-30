@@ -24,13 +24,21 @@ type publisherConnectionManagerConfig struct {
 	Report         func(error)
 }
 
+type publisherConnectionPhase uint8
+
+const (
+	connectionConnecting publisherConnectionPhase = iota
+	connectionServing
+	connectionAwaitingReplacement
+)
+
 type managedPublisherConnection struct {
 	assignment controlv1.ConnectionAssignment
 	cancel     context.CancelFunc
 	session    *tunnel.Session
 	transport  tunnel.Transport
 	preferTCP  bool
-	ready      bool
+	phase      publisherConnectionPhase
 }
 
 // publisherConnectionManager owns the two independently assigned publisher
@@ -106,7 +114,7 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 		}
 		// A relay can replace a QUIC claim before the publisher notices its
 		// transport failure. Prefer TCP for the replacement in either case.
-		preferTCP := current != nil && (current.preferTCP || current.ready && current.transport == tunnel.TransportQUIC)
+		preferTCP := current != nil && (current.preferTCP || current.phase == connectionServing && current.transport == tunnel.TransportQUIC)
 		if current != nil {
 			current.cancel()
 		}
@@ -128,7 +136,7 @@ func (m *publisherConnectionManager) WaitReady(ctx context.Context, minimum int)
 		m.mu.Lock()
 		ready := 0
 		for _, connection := range m.connections {
-			if connection != nil && connection.ready {
+			if connection != nil && connection.phase == connectionServing {
 				ready++
 			}
 		}
@@ -160,7 +168,7 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 		if connection == nil {
 			continue
 		}
-		if connection.session == nil {
+		if connection.phase != connectionServing {
 			connection.cancel()
 			continue
 		}
@@ -213,6 +221,9 @@ func (m *publisherConnectionManager) run(
 	managed *managedPublisherConnection,
 ) {
 	defer m.wg.Done()
+	preferTCP := managed.preferTCP
+	// failed attempts and expired credentials also wait for a new assignment.
+	defer func() { m.connectionEnded(slot, managed, preferTCP) }()
 	assignment := managed.assignment
 	ref := tunnelv1.PublisherConnectionRef{
 		PublishRunID:                 m.publishRunID,
@@ -247,7 +258,9 @@ func (m *publisherConnectionManager) run(
 				return
 			}
 			err = m.route.ServePublisherConnection(ctx, session, ref)
-			m.clearSession(slot, managed, transport == tunnel.TransportQUIC && err != nil && ctx.Err() == nil)
+			preferTCP = transport == tunnel.TransportQUIC && err != nil && ctx.Err() == nil
+			// stop reporting readiness before closing or logging the lost session.
+			m.connectionEnded(slot, managed, preferTCP)
 			_ = session.Close()
 			if err != nil && ctx.Err() == nil {
 				m.config.Report(fmt.Errorf("publisher: publisher connection %s closed: %w", assignment.PublisherConnectionId, err))
@@ -280,7 +293,7 @@ func (m *publisherConnectionManager) setSession(
 ) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.draining || m.closed || m.connections[slot] != managed {
+	if m.draining || m.closed || m.connections[slot] != managed || managed.phase != connectionConnecting {
 		return false
 	}
 	managed.session = session
@@ -289,17 +302,17 @@ func (m *publisherConnectionManager) setSession(
 		managed.preferTCP = false
 		m.fallbackOnce.Do(func() { close(m.fallback) })
 	}
-	managed.ready = true
+	managed.phase = connectionServing
 	m.signalLocked()
 	return true
 }
 
-func (m *publisherConnectionManager) clearSession(slot int, managed *managedPublisherConnection, failedQUIC bool) {
+func (m *publisherConnectionManager) connectionEnded(slot int, managed *managedPublisherConnection, preferTCP bool) {
 	m.mu.Lock()
-	if m.connections[slot] == managed {
+	if !m.closed && m.connections[slot] == managed && managed.phase != connectionAwaitingReplacement {
 		managed.session = nil
-		managed.ready = false
-		managed.preferTCP = failedQUIC
+		managed.phase = connectionAwaitingReplacement
+		managed.preferTCP = preferTCP
 		m.signalLocked()
 	}
 	m.mu.Unlock()

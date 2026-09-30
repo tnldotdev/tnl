@@ -142,6 +142,11 @@ the second candidate if TCP cannot connect. A later replacement returns to
 QUIC-first after TCP recovery. The failed connection's visitor streams end;
 they cannot resume on the new transport.
 
+The publisher tracks each local slot as connecting, serving, or waiting for a
+replacement. These phases describe its local session, not control's stored
+assignment state. Heartbeat updates to that stored state do not restart a slot;
+only a new assignment identity does.
+
 ## separate the trust boundaries
 
 | Credential or key               | Held by                           | Purpose                                         |
