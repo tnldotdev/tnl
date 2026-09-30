@@ -400,6 +400,126 @@ test("socket identity matches the shared Go fixture", async () => {
   }
 });
 
+test("project metadata agrees with the Go validation fixture", async () => {
+  const fixture = z
+    .object({
+      version: z.literal(1),
+      cases: z.array(
+        z.object({
+          name: z.string(),
+          valid: z.boolean(),
+          runtimeValid: z.boolean().optional(),
+          metadata: z.object({
+            namespace: z.string(),
+            dev: z.boolean(),
+            version: z.number(),
+            serviceDirectories: z.record(z.string(), z.string()),
+            services: z.record(
+              z.string(),
+              z.object({ namespace: z.string(), hostname: z.string(), url: z.string() }),
+            ),
+          }),
+        }),
+      ),
+    })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../api/fixtures/project-metadata-v1.json", import.meta.url),
+          "utf8",
+        ),
+      ) as unknown,
+    );
+  expect(fixture.cases.length).toBeGreaterThan(0);
+  for (const entry of fixture.cases) {
+    const root = await temporaryDirectory("tnl-project-contract-");
+    await mkdir(path.join(root, ".tnl"));
+    await writeFile(path.join(root, ".tnl", "project.json"), JSON.stringify(entry.metadata));
+    if (entry.valid) {
+      expect(discoverProject(root)?.project.namespace, entry.name).toBe(entry.metadata.namespace);
+    } else {
+      expect(() => discoverProject(root), entry.name).toThrow();
+    }
+    const { namespace, services, dev } = entry.metadata;
+    const runtime = JSON.stringify({ namespace, services, dev });
+    if (entry.runtimeValid ?? entry.valid) {
+      expect(parseRuntimePayload(runtime)?.namespace, entry.name).toBe(namespace);
+    } else {
+      expect(() => parseRuntimePayload(runtime), entry.name).toThrow();
+    }
+  }
+});
+
+test("tnl dev requests and assignment agree with the Go wire fixture", async () => {
+  const fixture = z
+    .object({
+      version: z.literal(1),
+      configuration: z.object({ protocol: z.literal(1), framework: z.string() }),
+      invalidConfiguration: z.object({ protocol: z.literal(1), framework: z.string() }),
+      target: z.object({ protocol: z.literal(1), framework: z.string(), target: z.string() }),
+      invalidTarget: z.object({
+        protocol: z.literal(1),
+        framework: z.string(),
+        target: z.string(),
+      }),
+      invalidAssignmentOverride: z.object({ unexpected: z.literal(true) }),
+      assignment: z.object({
+        protocol: z.literal(1),
+        tunnelID: z.string(),
+        service: z.string(),
+        namespace: z.string(),
+        hostname: z.string(),
+        publicURL: z.string(),
+        project: z.object({
+          namespace: z.string(),
+          dev: z.boolean(),
+          services: z.record(
+            z.string(),
+            z.object({ namespace: z.string(), hostname: z.string(), url: z.string() }),
+          ),
+        }),
+      }),
+    })
+    .parse(
+      JSON.parse(
+        await readFile(new URL("../../api/fixtures/dev-protocol-v1.json", import.meta.url), "utf8"),
+      ) as unknown,
+    );
+  const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(fixture.assignment) });
+  const assignment = await requestTunnelAssignment(fixture.configuration.framework, {
+    socket: bootstrap.environment.TNL_DEV_SOCKET ?? "",
+  });
+  const { protocol, ...expectedAssignment } = fixture.assignment;
+  expect(protocol).toBe(1);
+  expect(assignment).toMatchObject(expectedAssignment);
+  const target = new URL(fixture.target.target);
+  await registerLocalTarget(
+    assignment,
+    canonicalLoopbackTarget(target.hostname, Number(target.port)),
+  );
+  expect(bootstrap.requests.map((request) => request.body)).toEqual([
+    fixture.configuration,
+    fixture.target,
+  ]);
+  await expect(
+    requestTunnelAssignment(fixture.invalidConfiguration.framework, {
+      socket: bootstrap.environment.TNL_DEV_SOCKET ?? "",
+    }),
+  ).rejects.toThrow(/framework name/);
+  const invalidTarget = new URL(fixture.invalidTarget.target);
+  expect(() =>
+    canonicalLoopbackTarget(invalidTarget.hostname, Number(invalidTarget.port)),
+  ).toThrow();
+  const invalidBootstrap = await startTestBootstrap({
+    responseBody: JSON.stringify({ ...fixture.assignment, ...fixture.invalidAssignmentOverride }),
+  });
+  await expect(
+    requestTunnelAssignment(fixture.configuration.framework, {
+      socket: invalidBootstrap.environment.TNL_DEV_SOCKET ?? "",
+    }),
+  ).rejects.toThrow(/invalid shape/);
+});
+
 function validAssignmentResponse() {
   return {
     hostname: "api.member.example",

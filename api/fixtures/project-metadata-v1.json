@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "one service",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api": "apps/api" },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "valid A-label",
+      "valid": true,
+      "metadata": {
+        "namespace": "xn--bcher-kva.example",
+        "dev": false,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "xn--bcher-kva.example",
+            "hostname": "api.xn--bcher-kva.example",
+            "url": "https://api.xn--bcher-kva.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "invalid A-label",
+      "valid": false,
+      "metadata": {
+        "namespace": "xn--a.example",
+        "dev": false,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "invalid service name",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api-": "." },
+        "services": {
+          "api-": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "duplicate service hostname",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api": ".", "web": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          },
+          "web": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "incorrect service url",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://other.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "unclean service directory",
+      "valid": false,
+      "runtimeValid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api": "../api" },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "unsupported version",
+      "valid": false,
+      "runtimeValid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 2
+      }
+    },
+    {
+      "name": "generated metadata marked as dev",
+      "valid": false,
+      "runtimeValid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": true,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    }
+  ]
+}

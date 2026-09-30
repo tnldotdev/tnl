@@ -135,6 +135,11 @@ export function requiredHostname(value: unknown, description: string): string {
   ) {
     throw new Error(`${description} is invalid`);
   }
+  for (const label of labels) {
+    if (label.startsWith("xn--") && !validALabel(label)) {
+      throw new Error(`${description} is invalid`);
+    }
+  }
   if (
     labels.length === 4 &&
     labels.every((label) => /^[0-9]+$/.test(label) && Number(label) <= 255)
@@ -142,6 +147,14 @@ export function requiredHostname(value: unknown, description: string): string {
     throw new Error(`${description} is invalid`);
   }
   return value;
+}
+
+function validALabel(label: string): boolean {
+  try {
+    return new URL(`https://${label}.example`).hostname === `${label}.example`;
+  } catch {
+    return false;
+  }
 }
 
 export function exactKeys(

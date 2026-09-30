@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import * as z from "zod";
 import { parseRuntimePayload } from "./dist/internal/runtime.js";
 import { startTestProcess } from "./test-helper/process.js";
 
@@ -120,5 +122,33 @@ describe("root runtime", () => {
 
   test("rejects an oversized payload before parsing", () => {
     expect(() => parseRuntimePayload("x".repeat(64 * 1024 + 1))).toThrow(/exceeds 65536 bytes/);
+  });
+
+  test("uses the canonical Go hostname cases for project metadata", async () => {
+    const fixture = z
+      .object({
+        version: z.literal(1),
+        cases: z.array(
+          z.object({
+            context: z.string(),
+            input: z.string(),
+            canonical: z.string().optional(),
+          }),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(new URL("../../api/fixtures/hostname/v1.json", import.meta.url), "utf8"),
+        ) as unknown,
+      );
+    expect(fixture.cases.length).toBeGreaterThan(0);
+    for (const entry of fixture.cases.filter((item) => item.context === "hostname")) {
+      const payload = JSON.stringify({ namespace: entry.input, services: {}, dev: false });
+      if (entry.canonical === entry.input) {
+        expect(parseRuntimePayload(payload)?.namespace, entry.input).toBe(entry.input);
+      } else {
+        expect(() => parseRuntimePayload(payload), entry.input).toThrow();
+      }
+    }
   });
 });
