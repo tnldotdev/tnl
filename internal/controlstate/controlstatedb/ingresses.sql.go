@@ -202,7 +202,13 @@ ON CONFLICT (ingress_id) DO UPDATE SET
         ELSE EXCLUDED.registered_at
     END,
     renewed_at = EXCLUDED.renewed_at,
-    lease_expires_at = EXCLUDED.lease_expires_at
+    lease_expires_at = CASE
+        WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
+         AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.ingress_leases.draining
+            THEN control.ingress_leases.lease_expires_at
+        ELSE EXCLUDED.lease_expires_at
+    END
 WHERE control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
    OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
 RETURNING ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
@@ -249,9 +255,12 @@ func (q *Queries) RegisterIngress(ctx context.Context, arg RegisterIngressParams
 const renewIngress = `-- name: RenewIngress :one
 UPDATE control.ingress_leases
 SET reported_connections = $1,
-    routing_table_revision = $2,
+    routing_table_revision = GREATEST(routing_table_revision, $2),
     renewed_at = $3,
-    lease_expires_at = $4
+    lease_expires_at = CASE
+        WHEN draining THEN lease_expires_at
+        ELSE $4
+    END
 WHERE ingress_id = $5
   AND ingress_run_id = $6
   AND ingress_lease_revision = $7

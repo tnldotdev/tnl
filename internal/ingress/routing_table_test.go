@@ -86,6 +86,19 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 	}
 }
 
+func TestRoutingTableSnapshotDoesNotRegressRevision(t *testing.T) {
+	var table RoutingTable
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 3}); !errors.Is(err, ErrRoutingTableRevision) {
+		t.Fatalf("stale snapshot = %v", err)
+	}
+	if revision, ready := table.Revision(); !ready || revision != 4 {
+		t.Fatalf("snapshot rolled routing revision back to %d, ready = %t", revision, ready)
+	}
+}
+
 func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	entry := forwardingTestEntry(now, "relay.example:443")

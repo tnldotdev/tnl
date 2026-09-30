@@ -35,6 +35,27 @@ func TestDirectStaleLeaseClearsController(t *testing.T) {
 
 type staleLeaseStore struct{ ingressapi.Store }
 
+func TestRunUntilEitherStopsJoinsSibling(t *testing.T) {
+	failure := errors.New("renewal stopped")
+	siblingDone := make(chan struct{})
+	err := runUntilEitherStops(t.Context(),
+		func(context.Context) error { return failure },
+		func(ctx context.Context) error {
+			defer close(siblingDone)
+			<-ctx.Done()
+			return nil
+		},
+	)
+	if !errors.Is(err, failure) {
+		t.Fatalf("loop failure = %v", err)
+	}
+	select {
+	case <-siblingDone:
+	default:
+		t.Fatal("controller returned before its sibling exited")
+	}
+}
+
 func (staleLeaseStore) RenewIngress(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error) {
 	return controlstate.IngressLease{}, controlstate.ErrIngressLeaseStale
 }

@@ -104,19 +104,26 @@ func NewController(config ControllerConfig) (*Controller, error) {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
+	err := runUntilEitherStops(ctx, c.run, c.watchLease)
+	c.clearLease()
+	return err
+}
+
+// runUntilEitherStops cancels the sibling when one controller loop exits and
+// joins both before returning. Caller cancellation is a normal shutdown.
+func runUntilEitherStops(ctx context.Context, first, second func(context.Context) error) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	results := make(chan error, 2)
-	go func() { results <- c.run(runCtx) }()
-	go func() { results <- c.watchLease(runCtx) }()
+	go func() { results <- first(runCtx) }()
+	go func() { results <- second(runCtx) }()
 	err := <-results
 	cancel()
-	other := <-results
-	c.clearLease()
+	err = errors.Join(err, <-results)
 	if ctx.Err() != nil {
 		return nil
 	}
-	return errors.Join(err, other)
+	return err
 }
 
 func (c *Controller) watchLease(ctx context.Context) error {
@@ -176,17 +183,10 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	if err := c.loadSnapshot(ctx, acknowledge); err != nil {
 		return err
 	}
-	cycleCtx, cancel := context.WithCancel(ctx)
-	results := make(chan error, 2)
-	go func() { results <- c.renewLoop(cycleCtx, acknowledge) }()
-	go func() { results <- c.routingLoop(cycleCtx, acknowledge) }()
-	err := <-results
-	cancel()
-	err = errors.Join(err, <-results)
-	if ctx.Err() != nil {
-		return nil
-	}
-	return err
+	return runUntilEitherStops(ctx,
+		func(cycleCtx context.Context) error { return c.renewLoop(cycleCtx, acknowledge) },
+		func(cycleCtx context.Context) error { return c.routingLoop(cycleCtx, acknowledge) },
+	)
 }
 
 func (c *Controller) register(ctx context.Context) (retErr error) {

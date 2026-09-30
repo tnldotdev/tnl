@@ -61,11 +61,14 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 		target[event.CanonicalHostname] = routingEntryForEvent(event)
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.initialized && snapshot.ThroughRevision < t.revision {
+		return ErrRoutingTableRevision
+	}
 	t.routes = routes
 	t.challenges = challenges
 	t.revision = snapshot.ThroughRevision
 	t.initialized = true
-	t.mu.Unlock()
 	return nil
 }
 
