@@ -123,14 +123,11 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return errors.New("duration must be a string")
 	}
-	if !durationSyntax.MatchString(value) {
-		return errors.New("invalid duration syntax")
-	}
-	parsed, err := time.ParseDuration(value)
+	parsed, err := parseDuration(value)
 	if err != nil {
-		return fmt.Errorf("invalid duration: %w", err)
+		return err
 	}
-	*d = Duration(parsed)
+	*d = parsed
 	return nil
 }
 
@@ -138,15 +135,23 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
 		return errors.New("duration must be a string")
 	}
-	if !durationSyntax.MatchString(node.Value) {
-		return errors.New("invalid duration syntax")
-	}
-	parsed, err := time.ParseDuration(node.Value)
+	parsed, err := parseDuration(node.Value)
 	if err != nil {
-		return fmt.Errorf("invalid duration: %w", err)
+		return err
 	}
-	*d = Duration(parsed)
+	*d = parsed
 	return nil
+}
+
+func parseDuration(value string) (Duration, error) {
+	if !durationSyntax.MatchString(value) {
+		return 0, errors.New("invalid duration syntax")
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration: %w", err)
+	}
+	return Duration(parsed), nil
 }
 
 // TNLDSection is a presence-aware partial tnldconfig.Config value. Its field

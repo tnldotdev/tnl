@@ -163,6 +163,11 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 	if server != nil && (strings.TrimSpace(*server) == "" || strings.TrimSpace(*server) != *server) {
 		return errors.New("server must not be empty or surrounded by whitespace")
 	}
+	if server != nil {
+		if _, err := naming.CanonicalControlURL(*server); err != nil {
+			return errors.New("server must be an HTTPS origin")
+		}
+	}
 	if team != nil && (strings.TrimSpace(*team) == "" || strings.TrimSpace(*team) != *team) {
 		return errors.New("team must not be empty or surrounded by whitespace")
 	}
@@ -172,6 +177,18 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 		}
 		if tunnel.Host != nil && tunnel.Subdomain != nil {
 			return errors.New("tunnel.host and tunnel.subdomain are mutually exclusive")
+		}
+		if tunnel.Host != nil {
+			canonical, err := naming.CanonicalizeHostname(*tunnel.Host)
+			if err != nil || canonical != *tunnel.Host {
+				return errors.New("tunnel.host must be a canonical hostname")
+			}
+		}
+		if tunnel.Subdomain != nil {
+			canonical, err := naming.CanonicalizeHostname(*tunnel.Subdomain)
+			if err != nil || canonical != *tunnel.Subdomain || strings.Contains(*tunnel.Subdomain, ".") {
+				return errors.New("tunnel.subdomain must be one lowercase ASCII DNS label")
+			}
 		}
 		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
 			return errors.New("tunnel.allow_all_ips and tunnel.allow_ip are mutually exclusive")

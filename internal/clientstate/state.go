@@ -9,14 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
@@ -190,25 +189,12 @@ func (d *Database) SaveServer(ctx context.Context, serverOrigin string) error {
 
 // CanonicalServer validates and normalizes a tnl server origin.
 func CanonicalServer(value string) (string, error) {
-	origin, err := url.Parse(value)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil ||
-		origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" {
+	server, err := naming.CanonicalControlURL(value)
+	if errors.Is(err, naming.ErrInvalidControlPort) {
+		return "", errors.New("clientstate: server port must be between 1 and 65535")
+	}
+	if err != nil {
 		return "", errors.New("clientstate: server must be an HTTPS origin")
 	}
-	hostname := strings.ToLower(origin.Hostname())
-	if hostname == "" {
-		return "", errors.New("clientstate: server must be an HTTPS origin")
-	}
-	port := origin.Port()
-	if port == "" || port == "443" {
-		if strings.Contains(hostname, ":") {
-			origin.Host = "[" + hostname + "]"
-		} else {
-			origin.Host = hostname
-		}
-	} else {
-		origin.Host = net.JoinHostPort(hostname, port)
-	}
-	origin.Path = ""
-	return origin.String(), nil
+	return server, nil
 }

@@ -30,6 +30,8 @@ func TestCanonicalServerRejectsNonOrigins(t *testing.T) {
 		"https://user@tnl.example",
 		"https://tnl.example/path",
 		"https://tnl.example?query=true",
+		"https://tnl.example:0",
+		"https://tnl.example:65536",
 	} {
 		if _, err := CanonicalServer(value); err == nil {
 			t.Fatalf("CanonicalServer(%q) succeeded", value)
