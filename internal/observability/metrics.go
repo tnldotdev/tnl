@@ -181,8 +181,6 @@ func New(role string) *Metrics {
 			metrics.certificateClaims, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
 			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration, metrics.usageLastSuccess,
 			metrics.cleanupRuns, metrics.cleanupItems, metrics.cleanupLastSuccess, metrics.placementDecisions, metrics.assignmentReplacements)
-	}
-	if role == "control" || role == "standalone" {
 		for _, surface := range []string{"control", "authority", "private_ingress", "private_relay"} {
 			metrics.apiInFlight.WithLabelValues(surface).Set(0)
 		}
@@ -198,8 +196,6 @@ func New(role string) *Metrics {
 			metrics.inspectionFailures, metrics.challengeRejections, metrics.ingressOperations,
 			metrics.recoveryPending, metrics.recoveryAttempts, metrics.usageRetained,
 		)
-	}
-	if role == "ingress" || role == "standalone" {
 		for _, class := range []string{"client_hello", "public", "denied", "challenge", "control", "relay_tcp"} {
 			metrics.ingressConnections.WithLabelValues(class).Set(0)
 		}

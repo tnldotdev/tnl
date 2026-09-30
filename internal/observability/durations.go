@@ -3,7 +3,6 @@ package observability
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,44 +34,43 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 	if m == nil {
 		return
 	}
+	var histogram *prometheus.HistogramVec
 	switch operation {
 	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot",
 		"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
 		"ReadIngressRoutingTableEvents", "ReportIngressUsage", "RenewIngress",
-		"ClaimPublisherConnection", "MarkPublisherConnectionReady",
-		"IngressFetchSnapshot", "IngressFetchEvents", "IngressRenewLease",
+		"ClaimPublisherConnection", "MarkPublisherConnectionReady":
+		histogram = m.controlOperations
+	case "IngressRegister", "IngressFetchSnapshot", "IngressFetchEvents", "IngressRenewLease",
 		"IngressApplySnapshot", "IngressApplyEvents",
 		"IngressRelayConnect", "IngressForwardingAck", "IngressForwardingCleanup",
 		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback",
-		"IngressUsagePage", "IngressUsageFinalFlush",
-		"RelayRegister", "RelayRenewLease", "RelayBeginDrain", "RelayDrain",
-		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream", "RelayDisconnectPublisherConnection", "IngressRegister":
-		var histogram *prometheus.HistogramVec
-		switch {
-		case strings.HasPrefix(operation, "Ingress"):
-			histogram = m.ingressOperations
-		case strings.HasPrefix(operation, "Relay"):
-			histogram = m.relayOperations
-		default:
-			histogram = m.controlOperations
-		}
-		histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+		"IngressUsagePage", "IngressUsageFinalFlush":
+		histogram = m.ingressOperations
+	case "RelayRegister", "RelayRenewLease", "RelayBeginDrain", "RelayDrain",
+		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream", "RelayDisconnectPublisherConnection":
+		histogram = m.relayOperations
+	default:
+		return
 	}
+	histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
 }
 
 // ObserveDatabaseQuery accepts only names sanitized by the controlstate tracer:
 // compiled sqlc operations, transaction commands, or the fixed "unknown" label.
 func (m *Metrics) ObserveDatabaseQuery(operation string, err error, elapsed time.Duration) {
-	if m != nil {
-		m.databaseQueryDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
-		if err != nil {
-			phase := "query"
-			switch operation {
-			case "begin", "commit", "rollback":
-				phase = operation
-			}
-			m.databaseFailures.WithLabelValues(phase, durationOutcome(err)).Inc()
+	if m == nil {
+		return
+	}
+	outcome := durationOutcome(err)
+	m.databaseQueryDuration.WithLabelValues(operation, outcome).Observe(elapsed.Seconds())
+	if err != nil {
+		phase := "query"
+		switch operation {
+		case "begin", "commit", "rollback":
+			phase = operation
 		}
+		m.databaseFailures.WithLabelValues(phase, outcome).Inc()
 	}
 }
 
@@ -80,9 +78,10 @@ func (m *Metrics) ObserveDatabaseAcquire(err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
-	m.databaseAcquireDuration.WithLabelValues(durationOutcome(err)).Observe(elapsed.Seconds())
+	outcome := durationOutcome(err)
+	m.databaseAcquireDuration.WithLabelValues(outcome).Observe(elapsed.Seconds())
 	if err != nil {
-		m.databaseFailures.WithLabelValues("acquire", durationOutcome(err)).Inc()
+		m.databaseFailures.WithLabelValues("acquire", outcome).Inc()
 	}
 }
 

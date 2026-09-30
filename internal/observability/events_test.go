@@ -76,3 +76,35 @@ func TestBackgroundLabelsAreClosed(t *testing.T) {
 		t.Fatalf("unexpected visitor fallback count=%g", got)
 	}
 }
+
+func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
+	metrics := New("standalone")
+	for _, operation := range []string{
+		"CreatePublishRun", "IngressRegister", "RelayDisconnectPublisherConnection",
+	} {
+		metrics.ObserveOperation(operation, nil, time.Millisecond)
+	}
+	metrics.ObserveOperation("IngressPrivateHostname", nil, time.Millisecond)
+	for _, test := range []struct {
+		name      string
+		operation string
+	}{
+		{"tnl_control_operation_duration_seconds", "CreatePublishRun"},
+		{"tnl_ingress_operation_duration_seconds", "IngressRegister"},
+		{"tnl_relay_operation_duration_seconds", "RelayDisconnectPublisherConnection"},
+	} {
+		family := metricFamily(t, metrics, test.name)
+		if len(family.Metric) != 1 || family.Metric[0].GetHistogram().GetSampleCount() != 1 {
+			t.Fatalf("%s samples = %v", test.name, family.Metric)
+		}
+		found := false
+		for _, label := range family.Metric[0].Label {
+			if label.GetName() == "operation" && label.GetValue() == test.operation {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s did not record %s", test.name, test.operation)
+		}
+	}
+}
