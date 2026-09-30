@@ -17,9 +17,14 @@ x-runtime: &runtime
     - sh
     - -ec
     - |
+      if [ "$${SEPARATED_COMPONENT}" = coordinator ]; then
+        test_name='^TestLoadSeparatedRuntime$$'
+      else
+        test_name='^TestSeparatedRuntimeComponent$$'
+      fi
       exec /artifacts/runtime.test \
         -test.v \
-        -test.run='^TestSeparatedRuntimeComponent$$' \
+        -test.run="$$test_name" \
         -test.timeout=30m \
         -tnl-test-tier=runtime-load \
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
@@ -336,52 +341,13 @@ services:
     cpus: "${COORDINATOR_CPUS:-0.5}"
     mem_limit: "${COORDINATOR_MEMORY:-128m}"
     memswap_limit: "${COORDINATOR_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: coordinator
     volumes:
       - artifacts:/artifacts:ro
       - coordination:/load
       - ${RESULTS:?results directory required}:/results
-    command:
-      - /artifacts/runtime.test
-      - -test.v
-      - -test.run=^TestLoadSeparatedRuntime$$
-      - -test.timeout=30m
-      - -tnl-test-tier=runtime-load
-      - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
-      - -tnl-separated-component=coordinator
-      - "-tnl-runtime-load-public-urls=${PUBLIC_URLS:-4}"
-      - "-tnl-runtime-load-start-parallel=${START_PARALLEL:-4}"
-      - "-tnl-runtime-load-ready-timeout=${READY_TIMEOUT:-30s}"
-      - "-tnl-runtime-load-public-url-certificate-workers=${PUBLIC_URL_CERTIFICATE_WORKERS:-8}"
-      - "-tnl-runtime-load-rps=${RPS:-16}"
-      - "-tnl-runtime-load-workers=${WORKERS:-128}"
-      - "-tnl-runtime-load-queue=${QUEUE:-8}"
-      - "-tnl-runtime-load-held-streams=${HELD_STREAMS:-8}"
-      - "-tnl-runtime-load-held-warmup=${HELD_WARMUP:-0s}"
-      - "-tnl-runtime-load-held-measure=${HELD_MEASURE:-0s}"
-      - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
-      - "-tnl-runtime-load-cpu-profile=${CPU_PROFILE:-0}"
-      - "-tnl-runtime-load-capacity-only=${CAPACITY_ONLY:-0}"
-      - "-tnl-runtime-load-combined=${COMBINED:-0}"
-      - "-tnl-runtime-load-ha-topology=${HA_TOPOLOGY:-1}"
-      - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
-      - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
-      - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"
-      - "-tnl-runtime-load-bandwidth-streams=${BANDWIDTH_STREAMS:-64}"
-      - "-tnl-runtime-load-bandwidth-measure=${BANDWIDTH_MEASURE:-0s}"
-      - "-tnl-runtime-load-client-hello-connection-limit=${CLIENT_HELLO_CONNECTION_LIMIT:--1}"
-      - "-tnl-runtime-load-challenge-connection-limit=${CHALLENGE_CONNECTION_LIMIT:--1}"
-      - "-tnl-runtime-load-challenge-hostname-connection-limit=${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}"
-      - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:--1}"
-      - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:--1}"
-      - "-tnl-runtime-load-publisher-request-limit=${PUBLISHER_REQUEST_LIMIT:-500}"
-      - "-tnl-runtime-load-relay-stream-capacity=${RELAY_STREAM_CAPACITY:--1}"
-      - "-tnl-runtime-load-quic-max-incoming-streams=${QUIC_MAX_INCOMING_STREAMS:--1}"
-      - "-tnl-runtime-load-scenario=${SCENARIO:-relay-restart}"
-      - "-tnl-runtime-load-network-path=${NETWORK_PATH:-forwarding}"
-      - "-tnl-runtime-load-rtt=${RTT:-20ms}"
-      - "-tnl-runtime-load-loss=${LOSS:-0.1}"
-      - "-tnl-runtime-load-trace=${TRACE:-0}"
-      - "-tnl-runtime-load-duration=${DURATION:-10s}"
 
 volumes:
   artifacts:

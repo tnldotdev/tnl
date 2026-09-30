@@ -239,79 +239,51 @@ tasks:
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
       PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
-      START_PARALLEL: '{{default "4" .START_PARALLEL}}'
-      READY_TIMEOUT: '{{default "30s" .READY_TIMEOUT}}'
-      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "8" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
-      RPS: '{{default "16" .RPS}}'
-      DURATION: '{{default "10s" .DURATION}}'
-      WORKERS: '{{default "128" .WORKERS}}'
-      QUEUE: '{{default "8" .QUEUE}}'
-      HELD_STREAMS: '{{default "8" .HELD_STREAMS}}'
-      HELD_WARMUP: '{{default "0s" .HELD_WARMUP}}'
       HELD_MEASURE: '{{default "0s" .HELD_MEASURE}}'
-      HEAP_PROFILE: '{{default "0" .HEAP_PROFILE}}'
-      CPU_PROFILE: '{{default "0" .CPU_PROFILE}}'
-      CAPACITY_ONLY: '{{default "0" .CAPACITY_ONLY}}'
-      COMBINED: '{{default "0" .COMBINED}}'
       HA_TOPOLOGY: '{{default "1" .HA_TOPOLOGY}}'
-      DIRECT_PATH: '{{default "0" .DIRECT_PATH}}'
-      BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
-      BANDWIDTH_MBITS_PER_SECOND: '{{default "100" .BANDWIDTH_MBITS_PER_SECOND}}'
-      BANDWIDTH_STREAMS: '{{default "64" .BANDWIDTH_STREAMS}}'
-      BANDWIDTH_MEASURE: '{{default "0s" .BANDWIDTH_MEASURE}}'
-      CLIENT_HELLO_CONNECTION_LIMIT: '{{default "-1" .CLIENT_HELLO_CONNECTION_LIMIT}}'
-      CHALLENGE_CONNECTION_LIMIT: '{{default "-1" .CHALLENGE_CONNECTION_LIMIT}}'
-      CHALLENGE_HOSTNAME_CONNECTION_LIMIT: '{{default "8" .CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}'
-      VISITOR_CONNECTION_LIMIT: '{{default "-1" .VISITOR_CONNECTION_LIMIT}}'
-      PUBLISHER_CONNECTION_LIMIT: '{{default "-1" .PUBLISHER_CONNECTION_LIMIT}}'
-      PUBLISHER_REQUEST_LIMIT: '{{default "500" .PUBLISHER_REQUEST_LIMIT}}'
-      RELAY_STREAM_CAPACITY: '{{default "-1" .RELAY_STREAM_CAPACITY}}'
-      QUIC_MAX_INCOMING_STREAMS: '{{default "-1" .QUIC_MAX_INCOMING_STREAMS}}'
       SCENARIO: '{{default "relay-restart" .SCENARIO}}'
       NETWORK_PATH: '{{default "forwarding" .NETWORK_PATH}}'
       RTT: '{{default "20ms" .RTT}}'
       LOSS: '{{default "0.1" .LOSS}}'
       SEED: '{{default "0" .SEED}}'
-      TRACE: '{{default "0" .TRACE}}'
-      RACE: '{{default "0" .RACE}}'
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
-      START_PARALLEL: "{{.START_PARALLEL}}"
-      READY_TIMEOUT: "{{.READY_TIMEOUT}}"
-      PUBLIC_URL_CERTIFICATE_WORKERS: "{{.PUBLIC_URL_CERTIFICATE_WORKERS}}"
-      RPS: "{{.RPS}}"
-      DURATION: "{{.DURATION}}"
-      WORKERS: "{{.WORKERS}}"
-      QUEUE: "{{.QUEUE}}"
-      HELD_STREAMS: "{{.HELD_STREAMS}}"
-      HELD_WARMUP: "{{.HELD_WARMUP}}"
+      START_PARALLEL: '{{default "" .START_PARALLEL}}'
+      READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
+      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
+      RPS: '{{default "" .RPS}}'
+      DURATION: '{{default "" .DURATION}}'
+      WORKERS: '{{default "" .WORKERS}}'
+      QUEUE: '{{default "" .QUEUE}}'
+      HELD_STREAMS: '{{default "" .HELD_STREAMS}}'
+      HELD_WARMUP: '{{default "" .HELD_WARMUP}}'
       HELD_MEASURE: "{{.HELD_MEASURE}}"
-      HEAP_PROFILE: "{{.HEAP_PROFILE}}"
-      CPU_PROFILE: "{{.CPU_PROFILE}}"
-      CAPACITY_ONLY: "{{.CAPACITY_ONLY}}"
-      COMBINED: "{{.COMBINED}}"
+      HEAP_PROFILE: '{{default "" .HEAP_PROFILE}}'
+      CPU_PROFILE: '{{default "" .CPU_PROFILE}}'
+      CAPACITY_ONLY: '{{default "" .CAPACITY_ONLY}}'
+      COMBINED: '{{default "" .COMBINED}}'
       HA_TOPOLOGY: "{{.HA_TOPOLOGY}}"
-      DIRECT_PATH: "{{.DIRECT_PATH}}"
-      BANDWIDTH_DIRECTION: "{{.BANDWIDTH_DIRECTION}}"
-      BANDWIDTH_MBITS_PER_SECOND: "{{.BANDWIDTH_MBITS_PER_SECOND}}"
-      BANDWIDTH_STREAMS: "{{.BANDWIDTH_STREAMS}}"
-      BANDWIDTH_MEASURE: "{{.BANDWIDTH_MEASURE}}"
-      CLIENT_HELLO_CONNECTION_LIMIT: "{{.CLIENT_HELLO_CONNECTION_LIMIT}}"
-      CHALLENGE_CONNECTION_LIMIT: "{{.CHALLENGE_CONNECTION_LIMIT}}"
-      CHALLENGE_HOSTNAME_CONNECTION_LIMIT: "{{.CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}"
-      VISITOR_CONNECTION_LIMIT: "{{.VISITOR_CONNECTION_LIMIT}}"
-      PUBLISHER_CONNECTION_LIMIT: "{{.PUBLISHER_CONNECTION_LIMIT}}"
-      PUBLISHER_REQUEST_LIMIT: "{{.PUBLISHER_REQUEST_LIMIT}}"
-      RELAY_STREAM_CAPACITY: "{{.RELAY_STREAM_CAPACITY}}"
-      QUIC_MAX_INCOMING_STREAMS: "{{.QUIC_MAX_INCOMING_STREAMS}}"
+      DIRECT_PATH: '{{default "" .DIRECT_PATH}}'
+      BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
+      BANDWIDTH_MBITS_PER_SECOND: '{{default "" .BANDWIDTH_MBITS_PER_SECOND}}'
+      BANDWIDTH_STREAMS: '{{default "" .BANDWIDTH_STREAMS}}'
+      BANDWIDTH_MEASURE: '{{default "" .BANDWIDTH_MEASURE}}'
+      CLIENT_HELLO_CONNECTION_LIMIT: '{{default "" .CLIENT_HELLO_CONNECTION_LIMIT}}'
+      CHALLENGE_CONNECTION_LIMIT: '{{default "" .CHALLENGE_CONNECTION_LIMIT}}'
+      CHALLENGE_HOSTNAME_CONNECTION_LIMIT: '{{default "" .CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}'
+      VISITOR_CONNECTION_LIMIT: '{{default "" .VISITOR_CONNECTION_LIMIT}}'
+      PUBLISHER_CONNECTION_LIMIT: '{{default "" .PUBLISHER_CONNECTION_LIMIT}}'
+      PUBLISHER_REQUEST_LIMIT: '{{default "" .PUBLISHER_REQUEST_LIMIT}}'
+      RELAY_STREAM_CAPACITY: '{{default "" .RELAY_STREAM_CAPACITY}}'
+      QUIC_MAX_INCOMING_STREAMS: '{{default "" .QUIC_MAX_INCOMING_STREAMS}}'
       SCENARIO: "{{.SCENARIO}}"
       NETWORK_PATH: "{{.NETWORK_PATH}}"
       RTT: "{{.RTT}}"
       LOSS: "{{.LOSS}}"
       SEED: "{{.SEED}}"
-      TRACE: "{{.TRACE}}"
-      RACE: "{{.RACE}}"
+      TRACE: '{{default "" .TRACE}}'
+      RACE: '{{default "" .RACE}}'
       RESULTS: "{{.RESULTS}}"
     cmds:
       - node scripts/runtime-load.ts
