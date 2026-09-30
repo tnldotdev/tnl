@@ -200,7 +200,7 @@ func (c projectConfiguration) defaultService() (string, error) {
 
 func applyBuiltInHostname(flags *tunnelFlags, service string, worktree projectconfig.Worktree) {
 	if flags.Host == "" && flags.Subdomain == "" && !flags.Ephemeral {
-		flags.Subdomain = projectconfig.ServiceWorktreeLabel(service, worktree.Label)
+		flags.Subdomain = projectconfig.ServiceWorktreeLabel(service, worktree)
 	}
 }
 

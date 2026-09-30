@@ -43,7 +43,7 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	Team          string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host          string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current namespace."`
+	Host          string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to a project/worktree label prefixed by the service in the current namespace."`
 	Subdomain     string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current namespace."`
 	AllowIP       []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
 	AllowProvider []string `name:"allow-provider" help:"Allow webhook IPs from stripe or github. Repeat for each provider."`

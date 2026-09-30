@@ -102,7 +102,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		}
 		flags.project = projectConfiguration{
 			Project: projectconfig.Project{
-				Root: flags.projectRoot, Worktree: projectconfig.ApplyWorktreeHashSalt(worktree, salt),
+				Root: flags.projectRoot, Worktree: projectconfig.ApplyWorktreeHashSalt(worktree, flags.projectRoot, salt),
 				ServiceDirectories: map[string]string{}, RelativeServiceDirectories: map[string]string{},
 			},
 		}

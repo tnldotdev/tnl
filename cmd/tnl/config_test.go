@@ -198,16 +198,15 @@ func TestProjectConfigurationSetsConfiguredCommandDirectory(t *testing.T) {
 
 func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T) {
 	root := t.TempDir()
+	worktree := namedTestWorktree(root, "feature")
 	rootServer := "https://root.example"
 	serviceTeam := "Frontend Team"
 	target := config.Target("4173")
 	rootTimeout := config.Duration(20 * time.Second)
 	project := projectConfiguration{
 		Project: projectconfig.Project{
-			Root: root,
-			Worktree: projectconfig.Worktree{
-				Root: root, Label: "feature-abcdef12",
-			},
+			Root:     root,
+			Worktree: worktree,
 			Config: config.TNL{
 				Server: &rootServer,
 				Dev:    &config.Dev{StartupTimeout: &rootTimeout},
@@ -222,7 +221,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 		t.Fatal(err)
 	}
 	if flags.Service != "web" || flags.Target != "4173" || flags.ServerURL != rootServer ||
-		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Subdomain != "web-feature-abcdef12" {
+		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Subdomain != projectconfig.ServiceWorktreeLabel("web", worktree) {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 
@@ -230,16 +229,18 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 	if err := project.applyDev(&dev); err != nil {
 		t.Fatal(err)
 	}
-	if dev.Service != "web" || dev.StartupTimeout != 20*time.Second || dev.Subdomain != "web-feature-abcdef12" {
+	if dev.Service != "web" || dev.StartupTimeout != 20*time.Second || dev.Subdomain != flags.Subdomain {
 		t.Fatalf("dev flags = %#v", dev)
 	}
 }
 
 func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
+	root := t.TempDir()
+	worktree := namedTestWorktree(root, "project")
 	project := projectConfiguration{
 		Project: projectconfig.Project{
-			Root:     t.TempDir(),
-			Worktree: projectconfig.Worktree{Label: "project-abcdef12"},
+			Root:     root,
+			Worktree: worktree,
 			Config: config.TNL{Services: map[string]config.Service{
 				"web": {},
 			}},
@@ -249,7 +250,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "3000" || flags.Subdomain != "project-abcdef12" {
+	if flags.Service != "" || flags.Target != "3000" || flags.Subdomain != worktree.Label {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 }
@@ -274,7 +275,7 @@ func TestProjectConfigurationUsesServiceDirectoryAsChildCWD(t *testing.T) {
 	directory := "apps/web"
 	project := projectConfiguration{
 		Project: projectconfig.Project{
-			Root: root, Worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
+			Root: root, Worktree: namedTestWorktree(root, "tnl"),
 			Config:             config.TNL{Services: config.Services{"web": {Directory: &directory}}},
 			ServiceDirectories: map[string]string{"web": serviceDirectory},
 		},
@@ -289,6 +290,7 @@ func TestProjectConfigurationUsesServiceDirectoryAsChildCWD(t *testing.T) {
 }
 
 func TestConfiguredProjectHostnameFixture(t *testing.T) {
+	worktree := namedTestWorktree(t.TempDir(), "tnl")
 	current := teamContext{
 		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"},
 		membership: authorityv1.Membership{
@@ -300,13 +302,14 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		}},
 	}
 	service, err := configuredProjectService(
-		"api", projectconfig.Worktree{Label: "tnl-bb4eff12"}, config.TNL{}, current,
+		"api", worktree, config.TNL{}, current,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != "api-tnl-bb4eff12.ecstatic-penguin.tnl.dev" ||
-		service.URL != "https://api-tnl-bb4eff12.ecstatic-penguin.tnl.dev" {
+	want := projectconfig.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
+	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want ||
+		service.URL != "https://"+want {
 		t.Fatalf("service metadata = %#v", service)
 	}
 }
@@ -321,9 +324,11 @@ func TestEphemeralTunnelDoesNotReceiveWorktreeSubdomain(t *testing.T) {
 
 func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t *testing.T) {
 	ephemeral := true
+	root := t.TempDir()
+	worktree := namedTestWorktree(root, "tnl")
 	project := projectConfiguration{
 		Project: projectconfig.Project{
-			Root: t.TempDir(), Worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
+			Root: root, Worktree: worktree,
 			Config: config.TNL{
 				Tunnel: &config.Tunnel{Ephemeral: &ephemeral},
 				Services: config.Services{
@@ -354,9 +359,13 @@ func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t 
 	if err := project.applyDev(&withExplicitFalse); err != nil {
 		t.Fatal(err)
 	}
-	if withExplicitFalse.useMetadataHostname || withExplicitFalse.Ephemeral || withExplicitFalse.Subdomain != "api-tnl-bb4eff12" {
+	if withExplicitFalse.useMetadataHostname || withExplicitFalse.Ephemeral || withExplicitFalse.Subdomain != projectconfig.ServiceWorktreeLabel("api", worktree) {
 		t.Fatalf("explicit false ephemeral flags = %#v", withExplicitFalse)
 	}
+}
+
+func namedTestWorktree(root, name string) projectconfig.Worktree {
+	return projectconfig.ApplyWorktreeHashSalt(projectconfig.Worktree{Root: root, Name: name}, root, [32]byte{1})
 }
 
 func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {

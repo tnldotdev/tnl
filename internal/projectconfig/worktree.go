@@ -1,12 +1,16 @@
 package projectconfig
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/binary"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -17,6 +21,15 @@ type Worktree struct {
 	Name  string `json:"name"`
 	Label string `json:"label"`
 	IsGit bool   `json:"isGit"`
+
+	primaryRoot string
+	labelParts  worktreeLabelParts
+}
+
+type worktreeLabelParts struct {
+	project  string
+	checkout string
+	id       string
 }
 
 // ResolveWorktree returns project facts and falls back to cwd when Git is
@@ -28,6 +41,9 @@ func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 		return Worktree{}, err
 	}
 	root := filepath.Clean(absolute)
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
 	isGit := false
 	if err := ctx.Err(); err != nil {
 		return Worktree{}, err
@@ -35,30 +51,97 @@ func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 	command := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	command.Dir = root
 	if output, commandErr := command.Output(); commandErr == nil {
-		discovered := strings.TrimSpace(string(output))
-		if discoveredRoot, pathErr := filepath.Abs(discovered); discovered != "" && pathErr == nil && pathWithin(root, discoveredRoot) {
-			root = filepath.Clean(discoveredRoot)
-			isGit = true
+		discovered := strings.TrimSuffix(string(output), "\n")
+		if discoveredRoot, pathErr := filepath.Abs(discovered); discovered != "" && pathErr == nil {
+			if canonical, err := filepath.EvalSymlinks(discoveredRoot); err == nil {
+				discoveredRoot = canonical
+			}
+			if pathWithin(root, discoveredRoot) {
+				root = filepath.Clean(discoveredRoot)
+				isGit = true
+			}
 		}
 	} else if err := ctx.Err(); err != nil {
 		return Worktree{}, err
+	}
+	primaryRoot := root
+	if isGit {
+		primaryRoot, err = primaryGitWorktree(ctx, root)
+		if err != nil {
+			return Worktree{}, err
+		}
 	}
 	name := filepath.Base(root)
 	if name == "" || name == string(filepath.Separator) || name == "." {
 		name = "worktree"
 	}
-	return Worktree{Root: root, Name: name, IsGit: isGit}, nil
+	return Worktree{Root: root, Name: name, IsGit: isGit, primaryRoot: primaryRoot}, nil
 }
 
-func ApplyWorktreeHashSalt(worktree Worktree, salt [32]byte) Worktree {
-	worktree.Label = WorktreeLabel(worktree.Name, worktree.Root, salt)
+func primaryGitWorktree(ctx context.Context, root string) (string, error) {
+	command := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain", "-z")
+	command.Dir = root
+	output, err := command.Output()
+	if err != nil {
+		if cause := ctx.Err(); cause != nil {
+			return "", cause
+		}
+		return "", fmt.Errorf("list Git worktrees: %w", err)
+	}
+	line, _, _ := bytes.Cut(output, []byte{0})
+	path, ok := bytes.CutPrefix(line, []byte("worktree "))
+	if !ok || len(path) == 0 || !filepath.IsAbs(string(path)) {
+		return "", errors.New("list Git worktrees: missing primary worktree")
+	}
+	primary := filepath.Clean(string(path))
+	if canonical, err := filepath.EvalSymlinks(primary); err == nil {
+		primary = canonical
+	}
+	return primary, nil
+}
+
+func ApplyWorktreeHashSalt(worktree Worktree, projectRoot string, salt [32]byte) Worktree {
+	if canonical, err := filepath.EvalSymlinks(projectRoot); err == nil {
+		projectRoot = canonical
+	}
+	project := worktree.Name
+	if worktree.primaryRoot != "" {
+		project = filepath.Base(worktree.primaryRoot)
+	}
+	if project == "." || project == string(filepath.Separator) || project == "" {
+		project = "project"
+	}
+	if projectRoot != worktree.Root && worktree.IsGit {
+		relative, err := filepath.Rel(worktree.Root, projectRoot)
+		if err == nil && relative != "." && pathWithin(projectRoot, worktree.Root) {
+			project += "-" + filepath.ToSlash(relative)
+		}
+	}
+	parts := worktreeLabelParts{project: dnsLabelStem(project, "project"), id: worktreeLabelID(worktree.Root, projectRoot, salt)}
+	if worktree.IsGit && worktree.Root != worktree.primaryRoot {
+		parts.checkout = dnsLabelStem(worktree.Name, "worktree")
+	}
+	worktree.labelParts = parts
+	worktree.Label = formatWorktreeLabel("", worktree.labelParts)
 	return worktree
 }
 
-func WorktreeLabel(name, root string, salt [32]byte) string {
+func worktreeLabelID(root, projectRoot string, salt [32]byte) string {
+	hash := hmac.New(sha256.New, salt[:])
+	_, _ = hash.Write([]byte("tnl-worktree-label-v2\x00"))
+	_, _ = hash.Write([]byte(root))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(projectRoot))
+	sum := hash.Sum(nil)
+	value := binary.BigEndian.Uint32(sum[:4]) >> 1
+	encoded := strconv.FormatUint(uint64(value), 36)
+	return strings.Repeat("0", 6-len(encoded)) + encoded
+}
+
+func dnsLabelStem(value, fallback string) string {
 	var normalized strings.Builder
 	separator := false
-	for _, character := range norm.NFKD.String(strings.ToLower(name)) {
+	for _, character := range norm.NFKD.String(strings.ToLower(value)) {
 		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
 			if separator && normalized.Len() != 0 {
 				normalized.WriteByte('-')
@@ -69,29 +152,39 @@ func WorktreeLabel(name, root string, salt [32]byte) string {
 			separator = true
 		}
 	}
-	stem := strings.Trim(normalized.String(), "-")
-	if len(stem) > 54 {
-		stem = strings.TrimRight(stem[:54], "-")
+	if normalized.Len() == 0 {
+		return fallback
 	}
-	if stem == "" {
-		stem = "worktree"
+	return normalized.String()
+}
+
+func formatWorktreeLabel(service string, parts worktreeLabelParts) string {
+	remaining := 63 - len(parts.id) - 1
+	if service != "" {
+		remaining -= len(service) + 1
 	}
-	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte("tnl-worktree-label-v1\x00"))
-	_, _ = hash.Write([]byte(root))
-	return stem + "-" + hex.EncodeToString(hash.Sum(nil)[:4])
+	project, checkout := parts.project, parts.checkout
+	if checkout == "" {
+		project = strings.TrimRight(project[:min(len(project), remaining)], "-")
+	} else if len(project)+len(checkout)+1 > remaining {
+		// give each name room before using any spare bytes for the longer one.
+		available := remaining - 1
+		projectBudget := min(len(project), available/2)
+		checkoutBudget := min(len(checkout), available-projectBudget)
+		projectBudget = min(len(project), available-checkoutBudget)
+		project = strings.TrimRight(project[:projectBudget], "-")
+		checkout = strings.TrimRight(checkout[:checkoutBudget], "-")
+	}
+	if checkout != "" {
+		project += "-" + checkout
+	}
+	if service != "" {
+		project = service + "-" + project
+	}
+	return project + "-" + parts.id
 }
 
 // ServiceWorktreeLabel returns the built-in hostname label for one service.
-func ServiceWorktreeLabel(service, worktreeLabel string) string {
-	if service == "" {
-		return worktreeLabel
-	}
-	maximumWorktreeLength := 63 - len(service) - 1
-	if len(worktreeLabel) > maximumWorktreeLength {
-		digest := worktreeLabel[len(worktreeLabel)-9:]
-		stem := strings.TrimRight(worktreeLabel[:maximumWorktreeLength-9], "-")
-		worktreeLabel = stem + digest
-	}
-	return service + "-" + worktreeLabel
+func ServiceWorktreeLabel(service string, worktree Worktree) string {
+	return formatWorktreeLabel(service, worktree.labelParts)
 }

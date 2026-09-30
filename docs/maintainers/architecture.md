@@ -221,6 +221,11 @@ package validates it again when reading it or receiving a `tnl dev` assignment.
 Both validators use the shared hostname and project metadata fixtures under
 `api/fixtures/`; the `tnl dev` wire fixture covers requests and assignments.
 
+Go also owns default public URL naming. It combines the primary Git checkout
+name (and any project path below it), the linked worktree directory when present,
+and a six-character, client-state-salted ID. Branch names are not part of the
+label. Publish, dev, and project metadata use the same composition.
+
 ## preserve the core invariants
 
 - Control is the only source of durable runtime state.
