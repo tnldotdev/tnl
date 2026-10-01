@@ -25,19 +25,62 @@ const (
 	telemetryRequestTimeout = 500 * time.Millisecond
 )
 
+type telemetryEventName string
+
+const (
+	telemetryCommandStarted    telemetryEventName = "command_started"
+	telemetryCommandCompleted  telemetryEventName = "command_completed"
+	telemetryCommandFailed     telemetryEventName = "command_failed"
+	telemetryPublishRunStarted telemetryEventName = "publish_run_started"
+)
+
+type telemetryTrackedCommand string
+
+const (
+	telemetryInit    telemetryTrackedCommand = "init"
+	telemetryLogin   telemetryTrackedCommand = "login"
+	telemetryDev     telemetryTrackedCommand = "dev"
+	telemetryPublish telemetryTrackedCommand = "publish"
+)
+
+type telemetryFailureStage string
+
+const (
+	telemetrySetupStage          telemetryFailureStage = "setup"
+	telemetryCommandStage        telemetryFailureStage = "command"
+	telemetryAuthenticationStage telemetryFailureStage = "authentication"
+	telemetryLocalServiceStage   telemetryFailureStage = "local_service"
+	telemetryPublicURLStage      telemetryFailureStage = "public_url"
+)
+
+type telemetryServerKind string
+
+const (
+	telemetryHosted     telemetryServerKind = "hosted"
+	telemetrySelfHosted telemetryServerKind = "self_hosted"
+)
+
+type telemetryFrameworkName string
+
+const (
+	telemetryVite  telemetryFrameworkName = "vite"
+	telemetryNext  telemetryFrameworkName = "next"
+	telemetryOther telemetryFrameworkName = "other"
+)
+
 type telemetryPayload struct {
-	InstallationID string `json:"installation_id"`
-	InvocationID   string `json:"invocation_id"`
-	Event          string `json:"event"`
-	Command        string `json:"command"`
-	FailureStage   string `json:"failure_stage,omitempty"`
-	DiagnosticCode string `json:"diagnostic_code,omitempty"`
-	ServerKind     string `json:"server_kind,omitempty"`
-	Framework      string `json:"framework,omitempty"`
-	Version        string `json:"version"`
-	OS             string `json:"os"`
-	Arch           string `json:"arch"`
-	CI             bool   `json:"ci"`
+	InstallationID string                  `json:"installation_id"`
+	InvocationID   string                  `json:"invocation_id"`
+	Event          telemetryEventName      `json:"event"`
+	Command        telemetryTrackedCommand `json:"command"`
+	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
+	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
+	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
+	Framework      telemetryFrameworkName  `json:"framework,omitempty"`
+	Version        string                  `json:"version"`
+	OS             string                  `json:"os"`
+	Arch           string                  `json:"arch"`
+	CI             bool                    `json:"ci"`
 }
 
 type telemetryReporter interface {
@@ -62,29 +105,30 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
 	payload.InvocationID = i.id
-	if payload.Event == "publish_run_started" {
+	if payload.Event == telemetryPublishRunStarted {
 		i.ready.Store(true)
 	}
 	i.reporter.Report(payload)
 }
 
-func (i *telemetryInvocation) failed(command, stage string, err error) {
+func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
 	if i.ready.Load() {
 		return
 	}
-	payload := newTelemetryPayload("command_failed", command, "", "")
+	payload := newTelemetryBase(command)
+	payload.Event = telemetryCommandFailed
 	if code, ok := diagnostic.CodeOf(err); ok {
-		payload.DiagnosticCode = string(code)
-		if stage != "setup" {
+		payload.DiagnosticCode = code
+		if stage != telemetrySetupStage {
 			switch code {
 			case diagnostic.AuthenticationTimeout, diagnostic.AuthenticationRequired:
-				stage = "authentication"
+				stage = telemetryAuthenticationStage
 			case diagnostic.TargetUnavailable, diagnostic.TargetInvalid, diagnostic.FrameworkRegistrationTimeout,
 				diagnostic.TargetMismatch, diagnostic.DevCommandRecursion:
-				stage = "local_service"
+				stage = telemetryLocalServiceStage
 			case diagnostic.PublicURLInvalid, diagnostic.PublicURLConflict, diagnostic.DNSSetupPending,
 				diagnostic.ProvisioningStalled:
-				stage = "public_url"
+				stage = telemetryPublicURLStage
 			}
 		}
 	}
@@ -169,21 +213,52 @@ func (r *asyncTelemetryReporter) Wait(ctx context.Context) {
 	}
 }
 
-func newTelemetryPayload(event, command, serverKind, framework string) telemetryPayload {
+func newTelemetryBase(command telemetryTrackedCommand) telemetryPayload {
 	return telemetryPayload{
-		Event: event, Command: command, ServerKind: serverKind, Framework: framework,
+		Command: command,
 		Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != "",
 	}
 }
 
-func canonicalTelemetryCommand(parsed *kong.Context) string {
+func newTelemetryStarted(command telemetryTrackedCommand) telemetryPayload {
+	payload := newTelemetryBase(command)
+	payload.Event = telemetryCommandStarted
+	return payload
+}
+
+func newTelemetryCompleted(command telemetryTrackedCommand) telemetryPayload {
+	payload := newTelemetryBase(command)
+	payload.Event = telemetryCommandCompleted
+	return payload
+}
+
+func newTelemetryReady(command telemetryTrackedCommand, kind telemetryServerKind, framework telemetryFrameworkName) telemetryPayload {
+	payload := newTelemetryBase(command)
+	payload.Event = telemetryPublishRunStarted
+	payload.ServerKind = kind
+	payload.Framework = framework
+	return payload
+}
+
+func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, bool) {
 	var command []string
 	for _, element := range parsed.Path {
 		if element.Command != nil && element.Command.Type == kong.CommandNode {
 			command = append(command, element.Command.Name)
 		}
 	}
-	return strings.Join(command, " ")
+	switch strings.Join(command, " ") {
+	case string(telemetryInit):
+		return telemetryInit, true
+	case string(telemetryLogin):
+		return telemetryLogin, true
+	case string(telemetryDev):
+		return telemetryDev, true
+	case string(telemetryPublish):
+		return telemetryPublish, true
+	default:
+		return "", false
+	}
 }
 
 func commandStateRoot(parsed *kong.Context) (string, error) {
@@ -220,16 +295,16 @@ func optionalTelemetryReporter(reporters []telemetryReporter) telemetryReporter 
 
 func withTelemetryObserver(
 	reporter telemetryReporter,
-	command, serverURL string,
+	command telemetryTrackedCommand, serverURL string,
 	framework func() string,
 	observe func(publisher.Event) error,
 ) func(publisher.Event) error {
 	if reporter == nil {
 		return observe
 	}
-	serverKind := "self_hosted"
+	serverKind := telemetrySelfHosted
 	if serverURL == defaultServerURL {
-		serverKind = "hosted"
+		serverKind = telemetryHosted
 	}
 	var ready sync.Once
 	return func(event publisher.Event) error {
@@ -240,24 +315,26 @@ func withTelemetryObserver(
 		}
 		if event.Type == publisher.EventReady {
 			ready.Do(func() {
-				name := ""
+				var name telemetryFrameworkName
 				if framework != nil {
 					name = telemetryFramework(framework())
 				}
-				reporter.Report(newTelemetryPayload("publish_run_started", command, serverKind, name))
+				reporter.Report(newTelemetryReady(command, serverKind, name))
 			})
 		}
 		return nil
 	}
 }
 
-func telemetryFramework(framework string) string {
+func telemetryFramework(framework string) telemetryFrameworkName {
 	switch framework {
 	case "":
 		return ""
-	case "vite", "next":
-		return framework
+	case "vite":
+		return telemetryVite
+	case "next":
+		return telemetryNext
 	default:
-		return "other"
+		return telemetryOther
 	}
 }

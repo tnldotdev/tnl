@@ -220,7 +220,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 		publisherConfig.Logf = output.logf
-		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, currentFramework, func(event publisher.Event) error {
+		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
 		publishDone <- publisher.Run(publishCtx, publisherConfig)

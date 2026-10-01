@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -44,10 +45,10 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		serverURL  string
-		serverKind string
+		serverKind telemetryServerKind
 	}{
-		{name: "hosted", serverURL: defaultServerURL, serverKind: "hosted"},
-		{name: "self hosted", serverURL: "https://control.example.com", serverKind: "self_hosted"},
+		{name: "hosted", serverURL: defaultServerURL, serverKind: telemetryHosted},
+		{name: "self hosted", serverURL: "https://control.example.com", serverKind: telemetrySelfHosted},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var payloads []telemetryPayload
@@ -56,7 +57,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 				telemetryReporterFunc(func(payload telemetryPayload) {
 					payloads = append(payloads, payload)
 				}),
-				"publish",
+				telemetryPublish,
 				test.serverURL,
 				nil,
 				func(event publisher.Event) error {
@@ -76,8 +77,8 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 			if len(events) != 3 {
 				t.Fatalf("forwarded events = %d, want 3", len(events))
 			}
-			if len(payloads) != 1 || payloads[0].Event != "publish_run_started" ||
-				payloads[0].Command != "publish" || payloads[0].ServerKind != test.serverKind {
+			if len(payloads) != 1 || payloads[0].Event != telemetryPublishRunStarted ||
+				payloads[0].Command != telemetryPublish || payloads[0].ServerKind != test.serverKind {
 				t.Fatalf("telemetry payloads = %#v", payloads)
 			}
 		})
@@ -87,7 +88,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 	reported := false
 	observe := withTelemetryObserver(
 		telemetryReporterFunc(func(telemetryPayload) { reported = true }),
-		"publish",
+		telemetryPublish,
 		defaultServerURL,
 		nil,
 		func(publisher.Event) error { return wantErr },
@@ -103,13 +104,13 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 func TestTelemetryFramework(t *testing.T) {
 	for _, test := range []struct {
 		framework string
-		want      string
+		want      telemetryFrameworkName
 	}{
 		{framework: "", want: ""},
-		{framework: "vite", want: "vite"},
-		{framework: "next", want: "next"},
-		{framework: "astro", want: "other"},
-		{framework: "private-project-name", want: "other"},
+		{framework: "vite", want: telemetryVite},
+		{framework: "next", want: telemetryNext},
+		{framework: "astro", want: telemetryOther},
+		{framework: "private-project-name", want: telemetryOther},
 	} {
 		if got := telemetryFramework(test.framework); got != test.want {
 			t.Errorf("telemetryFramework(%q) = %q, want %q", test.framework, got, test.want)
@@ -125,17 +126,17 @@ func TestTelemetryInvocationEmitsBoundedFailureOnceBeforeReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation.Report(newTelemetryPayload("command_started", "dev", "", ""))
-	invocation.failed("dev", "command", diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
+	invocation.Report(newTelemetryStarted(telemetryDev))
+	invocation.failed(telemetryDev, telemetryCommandStage, diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
 	if len(events) != 2 || events[0].InvocationID != invocation.id || events[1].InvocationID != invocation.id ||
-		events[1].FailureStage != "local_service" || events[1].DiagnosticCode != string(diagnostic.TargetUnavailable) {
+		events[1].FailureStage != telemetryLocalServiceStage || events[1].DiagnosticCode != diagnostic.TargetUnavailable {
 		t.Fatalf("invocation events = %#v", events)
 	}
 	if events[1].Framework != "" || events[1].ServerKind != "" {
 		t.Fatalf("failure included a URL or target: %#v", events[1])
 	}
-	invocation.Report(newTelemetryPayload("publish_run_started", "dev", "hosted", "vite"))
-	invocation.failed("dev", "command", io.EOF)
+	invocation.Report(newTelemetryReady(telemetryDev, telemetryHosted, telemetryVite))
+	invocation.failed(telemetryDev, telemetryCommandStage, io.EOF)
 	if len(events) != 3 {
 		t.Fatalf("failure after readiness = %#v", events)
 	}
@@ -162,5 +163,29 @@ func TestTelemetryReportsConfigurationFailureBeforeStartingDev(t *testing.T) {
 	_ = run(t.Context(), []string{"--no-telemetry", "--config", config, "dev"}, io.Discard, io.Discard, factory)
 	if len(events) != 0 {
 		t.Fatalf("disabled telemetry = %#v", events)
+	}
+}
+
+func TestTypedTelemetryKeepsWireValues(t *testing.T) {
+	ready := newTelemetryReady(telemetryDev, telemetryHosted, telemetryVite)
+	ready.InstallationID = "installation_0123456789abcdef0123456789abcdef"
+	ready.InvocationID = "invocation_0123456789abcdef0123456789abcdef"
+	body, err := json.Marshal(ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{
+		"event": "publish_run_started", "command": "dev", "server_kind": "hosted", "framework": "vite",
+	} {
+		if wire[field] != want {
+			t.Errorf("%s = %v, want %q", field, wire[field], want)
+		}
+	}
+	if _, ok := wire["failure_stage"]; ok {
+		t.Fatal("ready report included failure stage")
 	}
 }

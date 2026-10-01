@@ -256,10 +256,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
-	telemetryCommand := canonicalTelemetryCommand(parsed)
+	telemetryCommand, collectTelemetry := selectedTelemetryCommand(parsed)
 	var telemetry *telemetryInvocation
-	if !flags.NoTelemetry && (telemetryCommand == "init" || telemetryCommand == "login" ||
-		telemetryCommand == "dev" || telemetryCommand == "publish") &&
+	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
 			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
@@ -271,14 +270,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	failureStage := "setup"
+	failureStage := telemetrySetupStage
 	if telemetry != nil {
-		telemetry.Report(newTelemetryPayload("command_started", telemetryCommand, "", ""))
+		telemetry.Report(newTelemetryStarted(telemetryCommand))
 		defer func() {
 			if result != nil {
 				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand == "init" || telemetryCommand == "login" {
-				telemetry.Report(newTelemetryPayload("command_completed", telemetryCommand, "", ""))
+			} else if telemetryCommand == telemetryInit || telemetryCommand == telemetryLogin {
+				telemetry.Report(newTelemetryCompleted(telemetryCommand))
 			}
 		}()
 	}
@@ -317,7 +316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	failureStage = "command"
+	failureStage = telemetryCommandStage
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
