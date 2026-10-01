@@ -27,13 +27,13 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		loginToken = ""
 	}
 	return controlapi.Config{
-		Role:                    string(cfg.Role),
+		Role:                    cfg.Role,
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
 		AuthorityEndpoint:       cfg.AuthorityOrigin(),
 		LoginToken:              loginToken,
 		OIDCIssuer:              cfg.OIDCIssuer,
 		OIDCClientID:            cfg.OIDCClientID,
-		OIDCLoginFlow:           string(cfg.OIDCLoginFlow),
+		OIDCLoginFlow:           cfg.OIDCLoginFlow,
 		OIDCScopes:              cfg.EffectiveOIDCScopes(),
 		CertificateIssuance:     cfg.ACMEEnabled(),
 		ACMEDirectoryURL:        cfg.ACMEDirectoryURL,

@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -24,14 +25,14 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
-	Role                        string
+	Role                        tnldconfig.Role
 	StartedAt                   time.Time
 	ManagedDeploymentDomain     string
 	AuthorityEndpoint           string
 	LoginToken                  string
 	OIDCIssuer                  string
 	OIDCClientID                string
-	OIDCLoginFlow               string
+	OIDCLoginFlow               tnldconfig.OIDCLoginFlow
 	OIDCScopes                  []string
 	CertificateIssuance         bool
 	ACMEDirectoryURL            string
