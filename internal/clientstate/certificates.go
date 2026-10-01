@@ -26,9 +26,11 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+type certificatePhase string
+
 const (
-	certificatePhasePending = "pending"
-	certificatePhaseCurrent = "current"
+	certificatePhasePending certificatePhase = "pending"
+	certificatePhaseCurrent certificatePhase = "current"
 )
 
 var ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
@@ -84,7 +86,7 @@ func (r *CertificateCache) Staged(ctx context.Context, hostname string) (Materia
 	return r.material(ctx, hostname, certificatePhasePending)
 }
 
-func (r *CertificateCache) material(ctx context.Context, hostname, phase string) (Material, bool, error) {
+func (r *CertificateCache) material(ctx context.Context, hostname string, phase certificatePhase) (Material, bool, error) {
 	stored, err := r.record(ctx, phase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Material{}, false, nil
@@ -146,7 +148,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 		return Pending{}, err
 	}
 	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
 		KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "",
 		UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
@@ -186,7 +188,7 @@ func (r *CertificateCache) Stage(
 		return Material{}, err
 	}
 	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
 		KeyDer: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
 		CertificatePem: bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
 		IssuanceID: issuanceID,
@@ -214,7 +216,7 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 	defer tx.Rollback()
 	queries := r.store.database.queries.WithTx(tx)
 	identity := clientstatedb.GetCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
 	}
 	stored, err := queries.GetCertificateMaterial(ctx, identity)
 	if err != nil {
@@ -224,7 +226,7 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 		return errors.New("clientstate: staged certificate changed before promotion")
 	}
 	if err := queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
-		ServerOrigin: stored.ServerOrigin, TeamID: stored.TeamID, CacheKey: stored.CacheKey, Plan: stored.Plan, Phase: certificatePhaseCurrent,
+		ServerOrigin: stored.ServerOrigin, TeamID: stored.TeamID, CacheKey: stored.CacheKey, Plan: stored.Plan, Phase: string(certificatePhaseCurrent),
 		KeyDer: stored.KeyDer, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
 		RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID, UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
@@ -241,7 +243,7 @@ func (r *CertificateCache) NewPending(ctx context.Context, hostname string) (Pen
 		return Pending{}, errors.New("clientstate: certificate plan does not cover hostname")
 	}
 	if err := r.store.database.queries.DeleteCertificateMaterial(ctx, clientstatedb.DeleteCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: replace pending public URL certificate: %w", err)
 	}
@@ -266,9 +268,9 @@ func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstate
 	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER}, nil
 }
 
-func (r *CertificateCache) record(ctx context.Context, phase string) (clientstatedb.CertificateMaterial, error) {
+func (r *CertificateCache) record(ctx context.Context, phase certificatePhase) (clientstatedb.CertificateMaterial, error) {
 	return r.store.database.queries.GetCertificateMaterial(ctx, clientstatedb.GetCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: phase,
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(phase),
 	})
 }
 
