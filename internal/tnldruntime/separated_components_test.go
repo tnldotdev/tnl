@@ -306,9 +306,9 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 			}
 		}
 	}
-	transport := "mixed"
+	transport := benchworkload.TransportMixed
 	if *runtimeLoadScenario == "udp-fallback" {
-		transport = "auto"
+		transport = benchworkload.TransportAuto
 	}
 	var fallbacks atomic.Int64
 	client := separatedHTTP(t)
