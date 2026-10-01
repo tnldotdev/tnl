@@ -199,6 +199,19 @@ func (q *Queries) GetSelectedTeam(ctx context.Context, origin string) (string, e
 	return selected_team_id, err
 }
 
+const getTelemetryEnabled = `-- name: GetTelemetryEnabled :one
+SELECT telemetry_enabled
+FROM client_settings
+WHERE id = 1
+`
+
+func (q *Queries) GetTelemetryEnabled(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getTelemetryEnabled)
+	var telemetry_enabled int64
+	err := row.Scan(&telemetry_enabled)
+	return telemetry_enabled, err
+}
+
 const getWorktreeHashSalt = `-- name: GetWorktreeHashSalt :one
 SELECT worktree_hash_salt
 FROM client_settings
@@ -434,6 +447,17 @@ type SetSelectedTeamParams struct {
 
 func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams) error {
 	_, err := q.db.ExecContext(ctx, setSelectedTeam, arg.TeamID, arg.Now, arg.Origin)
+	return err
+}
+
+const setTelemetryEnabled = `-- name: SetTelemetryEnabled :exec
+UPDATE client_settings
+SET telemetry_enabled = ?1
+WHERE id = 1
+`
+
+func (q *Queries) SetTelemetryEnabled(ctx context.Context, enabled int64) error {
+	_, err := q.db.ExecContext(ctx, setTelemetryEnabled, enabled)
 	return err
 }
 

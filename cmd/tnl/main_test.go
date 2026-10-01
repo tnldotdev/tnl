@@ -34,7 +34,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	for _, command := range []string{
 		"init", "dev", "publish", "status", "login",
-		"config path", "config check", "config generate",
+		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
 		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url delete",

@@ -31,7 +31,10 @@ export default {};`
 	t.Chdir(directory)
 
 	var stdout, stderr bytes.Buffer
-	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr); err != nil {
+	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr, func(string) telemetryReporter {
+		t.Fatal("config path started a telemetry reporter")
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	want, err := clioutput.Render(clioutput.Frame{

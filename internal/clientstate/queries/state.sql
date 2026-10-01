@@ -34,6 +34,16 @@ UPDATE client_settings
 SET installation_id = sqlc.arg(installation_id)
 WHERE id = 1 AND installation_id = '';
 
+-- name: GetTelemetryEnabled :one
+SELECT telemetry_enabled
+FROM client_settings
+WHERE id = 1;
+
+-- name: SetTelemetryEnabled :exec
+UPDATE client_settings
+SET telemetry_enabled = sqlc.arg(enabled)
+WHERE id = 1;
+
 -- name: GetWorktreeHashSalt :one
 SELECT worktree_hash_salt
 FROM client_settings
