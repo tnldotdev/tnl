@@ -290,6 +290,9 @@ func optionalTelemetryReporter(reporters []telemetryReporter) telemetryReporter 
 	if len(reporters) == 0 {
 		return nil
 	}
+	if invocation, ok := reporters[0].(*telemetryInvocation); ok && invocation == nil {
+		return nil
+	}
 	return reporters[0]
 }
 

@@ -41,6 +41,22 @@ func TestTelemetryInstallationIDRetries(t *testing.T) {
 	}
 }
 
+func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
+	var disabled *telemetryInvocation
+	reporter := optionalTelemetryReporter([]telemetryReporter{disabled})
+	if reporter != nil {
+		t.Fatalf("disabled telemetry reporter = %#v", reporter)
+	}
+	observed := false
+	observer := withTelemetryObserver(reporter, telemetryDev, defaultServerURL, nil, func(publisher.Event) error {
+		observed = true
+		return nil
+	})
+	if err := observer(publisher.Event{Type: publisher.EventReady}); err != nil || !observed {
+		t.Fatalf("ready event was not forwarded: observed=%t, err=%v", observed, err)
+	}
+}
+
 func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 	for _, test := range []struct {
 		name       string
