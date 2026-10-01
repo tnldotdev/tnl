@@ -5,6 +5,7 @@ import {
   impairmentEndpoints,
   netemOptions,
   publisherServices,
+  type NetworkPath,
   type RuntimeService,
 } from "./runtime-network.ts";
 import { parseJSON } from "./validation.ts";
@@ -44,7 +45,7 @@ export type FaultRuntime = {
   readonly ingresses: readonly ("ingress-a" | "ingress-b")[];
   readonly activePublishers: readonly (typeof publisherServices)[number][];
   readonly network: {
-    readonly path: string | undefined;
+    readonly path: NetworkPath;
     readonly rtt: string | undefined;
     readonly loss: string | undefined;
     readonly seed: string | undefined;
