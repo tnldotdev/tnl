@@ -116,6 +116,29 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	}
 }
 
+func TestRunSessionDoesNotRetryReadyCallbackAfterControlAccepts(t *testing.T) {
+	control, route, state := newCertificateTransactionTest(t)
+	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
+		t.Fatal(err)
+	}
+	config := startCertificateTLSYamuxHarness(t, control)
+	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
+		return controlv1.CertificateIssuance{}, errors.New("cached certificate triggered a new issuance")
+	}
+	readyAttempts := 0
+	control.ready = func() error { readyAttempts++; return nil }
+	callbackAttempts := 0
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := runSession(ctx, config, control.setup, func() error {
+		callbackAttempts++
+		return controlclient.ErrStatusConflict
+	})
+	if !errors.Is(err, controlclient.ErrStatusConflict) || readyAttempts != 1 || callbackAttempts != 1 {
+		t.Fatalf("ready calls = %d, callback calls = %d, session error = %v", readyAttempts, callbackAttempts, err)
+	}
+}
+
 func TestRunTransportFallbackObserverErrorCancelsSession(t *testing.T) {
 	control := newCertificateTestControl(t, "member.example", namespaceCertificateTestPlan())
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
