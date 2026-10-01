@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -27,6 +28,7 @@ type cli struct {
 	Dev         devCommand       `cmd:"" help:"Run and publish one development service. Pass its command after --." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish one local HTTP service." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show local tunnels for this project." group:"start"`
+	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
@@ -290,13 +292,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	}
 	var telemetry telemetryReporter
-	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
+	if !flags.NoTelemetry && parsedCommand != "config path" && !strings.HasPrefix(parsedCommand, "telemetry ") &&
+		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		root, stateErr := commandStateRoot(parsed)
 		if stateErr == nil {
-			telemetry = reporterFactories[0](root)
-			command := canonicalTelemetryCommand(parsed)
-			if telemetry != nil && command != "" {
-				telemetry.Report(newTelemetryPayload("command", command, "", ""))
+			enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root)
+			if preferenceErr == nil && enabled {
+				telemetry = reporterFactories[0](root)
+				command := canonicalTelemetryCommand(parsed)
+				if telemetry != nil && command != "" {
+					telemetry.Report(newTelemetryPayload("command", command, "", ""))
+				}
 			}
 		}
 	}
@@ -309,6 +315,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigCheck(project, stdout)
 	case "config generate":
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
+	case "telemetry on":
+		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
+	case "telemetry off":
+		return runTelemetryPreference(ctx, flags.Telemetry.Off, "off", stdout)
+	case "telemetry status":
+		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
 	case "login":
 		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
 	case "logout":

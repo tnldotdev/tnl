@@ -27,6 +27,7 @@ type ClientSetting struct {
 	SelectedServerOrigin sql.NullString
 	InstallationID       string
 	WorktreeHashSalt     []byte
+	TelemetryEnabled     int64
 }
 
 type ControlSession struct {
