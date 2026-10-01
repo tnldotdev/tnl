@@ -221,7 +221,7 @@ func (m *ChallengeManager) challengeRecord(
 		if err != nil {
 			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", err
 		}
-		if authority.State != "ready" && !(authority.State == "releasing" && challenge.State == "cleaning") || authority.ProviderZoneID == "" ||
+		if authority.State != controlstate.DNSAuthorityReady && !(authority.State == controlstate.DNSAuthorityReleasing && challenge.State == "cleaning") || authority.ProviderZoneID == "" ||
 			authority.Reference != challenge.DNSAuthorityReference ||
 			authority.TeamID != challenge.TeamID || authority.DomainID != challenge.DomainID ||
 			authority.CanonicalDomain != challenge.CanonicalDomain ||

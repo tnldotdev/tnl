@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -15,6 +16,7 @@ type domainCommand struct {
 	Claim   domainClaimCommand   `cmd:"" help:"Claim a domain for the selected team."`
 	Default domainDefaultCommand `cmd:"" help:"Set the selected team's default domain."`
 	List    domainListCommand    `cmd:"" help:"List domains available to the selected team."`
+	Status  domainStatusCommand  `cmd:"" help:"Show DNS setup for one team domain."`
 	Release domainReleaseCommand `cmd:"" help:"Release a claimed domain."`
 }
 
@@ -31,6 +33,11 @@ type domainDefaultCommand struct {
 
 type domainListCommand struct {
 	remoteFlags `embed:""`
+}
+
+type domainStatusCommand struct {
+	remoteFlags `embed:""`
+	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 type domainReleaseCommand struct {
@@ -56,17 +63,98 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil {
 		return err
 	}
-	claimed, err := session.api.ClaimTeamDomain(ctx, current.team.Id, domain, key, command.Default)
+	claimed, timedOut, err := claimAndWaitForDomainRecords(ctx, session.api, current.team.Id, domain, key, command.Default, defaultDomainClaimWait())
 	if err != nil {
 		return err
 	}
+	return writeDomainClaim(output, claimed, command.Default, timedOut)
+}
+
+type domainClaimAPI interface {
+	ClaimTeamDomain(context.Context, string, string, string, bool) (authorityv1.Domain, error)
+	ListTeamDomains(context.Context, string) (authorityv1.DomainPage, error)
+}
+
+type domainClaimWait struct {
+	timeout time.Duration
+	poll    func(context.Context) error
+}
+
+func defaultDomainClaimWait() domainClaimWait {
+	return domainClaimWait{timeout: 3 * time.Minute, poll: func(ctx context.Context) error {
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}}
+}
+
+func claimAndWaitForDomainRecords(ctx context.Context, api domainClaimAPI, teamID, name, key string, makeDefault bool, wait domainClaimWait) (authorityv1.Domain, bool, error) {
+	claimed, err := api.ClaimTeamDomain(ctx, teamID, name, key, makeDefault)
+	if err != nil || claimed.State != authorityv1.DomainStatePending || len(claimed.RequiredRecords) != 0 {
+		return claimed, false, err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, wait.timeout)
+	defer cancel()
+	for {
+		if err := wait.poll(waitCtx); err != nil {
+			if ctx.Err() != nil {
+				return claimed, false, ctx.Err()
+			}
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return claimed, true, nil
+			}
+			return claimed, false, err
+		}
+		if err := waitCtx.Err(); err != nil {
+			if ctx.Err() != nil {
+				return claimed, false, ctx.Err()
+			}
+			return claimed, true, nil
+		}
+		page, err := api.ListTeamDomains(waitCtx, teamID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return claimed, false, ctx.Err()
+			}
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return claimed, true, nil
+			}
+			return claimed, false, err
+		}
+		if err := ctx.Err(); err != nil {
+			return claimed, false, err
+		}
+		if domain, ok := teamDomain(page.Domains, claimed.Id); ok {
+			claimed = domain
+			if len(domain.RequiredRecords) != 0 || domain.State != authorityv1.DomainStatePending {
+				return domain, false, nil
+			}
+		}
+	}
+}
+
+func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool) error {
 	blocks := []clioutput.Block{clioutput.Fields(
 		clioutput.Field{Label: "domain", Value: claimed.CanonicalDomain},
 		clioutput.Field{Label: "state", Value: string(claimed.State)},
 		clioutput.Field{Label: "id", Value: claimed.Id},
 	)}
 	blocks = append(blocks, domainDNSRecordBlocks(claimed.RequiredRecords)...)
-	state, footer := domainClaimPresentation(claimed, command.Default)
+	state, footer := domainClaimPresentation(claimed, makeDefault)
+	if timedOut {
+		state, footer = "saved", "claim saved; check with tnl domain status"
+		blocks = append(blocks, clioutput.Text("DNS records not yet available"), clioutput.Fields(
+			clioutput.Field{Label: "next", Value: "tnl domain status " + claimed.CanonicalDomain},
+		))
+		if makeDefault {
+			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
+		}
+	}
 	return writeHumanFrame(output, "tnl domain claim", state, footer, blocks...)
 }
 
@@ -97,6 +185,53 @@ func runDomainList(ctx context.Context, command domainListCommand, output, diagn
 	return writeHumanFrame(output, "tnl domain list", countState(len(blocks), "domain", "domains"), "* default", blocks...)
 }
 
+func runDomainStatus(ctx context.Context, command domainStatusCommand, output, diagnostics io.Writer) error {
+	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain status", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.current(ctx)
+	if err != nil {
+		return err
+	}
+	domain, ok := teamDomain(current.domains, command.Domain)
+	if !ok {
+		return fmt.Errorf("domain %q is not available to the selected team", command.Domain)
+	}
+	return writeDomainStatus(output, domain, domain.Id == current.team.DefaultDomainId)
+}
+
+func writeDomainStatus(output io.Writer, domain authorityv1.Domain, isDefault bool) error {
+	marker := "no"
+	if isDefault {
+		marker = "yes"
+	}
+	blocks := []clioutput.Block{clioutput.Fields(
+		clioutput.Field{Label: "domain", Value: domain.CanonicalDomain},
+		clioutput.Field{Label: "kind", Value: string(domain.Kind)},
+		clioutput.Field{Label: "state", Value: string(domain.State)},
+		clioutput.Field{Label: "id", Value: domain.Id},
+		clioutput.Field{Label: "default", Value: marker},
+	)}
+	blocks = append(blocks, domainDNSRecordBlocks(domain.RequiredRecords)...)
+	state, footer := domainStatusPresentation(domain)
+	return writeHumanFrame(output, "tnl domain status", state, footer, blocks...)
+}
+
+func domainStatusPresentation(domain authorityv1.Domain) (string, string) {
+	if domain.State == authorityv1.DomainStatePending && len(domain.RequiredRecords) == 0 {
+		return "provisioning", "DNS records not yet available; check again later"
+	}
+	if domain.State == authorityv1.DomainStatePending {
+		return "verification required", "add the DNS records to continue"
+	}
+	if domain.State == authorityv1.DomainStateFailed {
+		return "failed", "ask your team admin to check DNS setup"
+	}
+	return string(domain.State), "ready for public URLs"
+}
+
 func domainDNSRecordBlocks(records []authorityv1.DNSRecord) []clioutput.Block {
 	blocks := make([]clioutput.Block, 0, len(records))
 	for _, record := range records {
@@ -113,9 +248,9 @@ func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (strin
 	state, footer := string(domain.State), ""
 	if domain.State == authorityv1.DomainStatePending {
 		if len(domain.RequiredRecords) == 0 {
-			state, footer = "provisioning", "run tnl domain list to check DNS setup"
+			state, footer = "provisioning", "run tnl domain status to check DNS setup"
 			if makeDefault {
-				footer = "run tnl domain list; this domain will become the default"
+				footer = "will become default; run tnl domain status"
 			}
 			return state, footer
 		}
@@ -127,6 +262,9 @@ func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (strin
 	}
 	if domain.State == authorityv1.DomainStateReady && makeDefault {
 		footer = "selected as the default domain"
+	}
+	if domain.State == authorityv1.DomainStateFailed {
+		footer = "ask your team admin to check DNS setup"
 	}
 	return state, footer
 }
@@ -162,10 +300,18 @@ func mutateDomain(ctx context.Context, flags remoteFlags, command, value string,
 	if err != nil {
 		return err
 	}
-	for _, domain := range current.domains {
-		if domain.Id == value || domain.CanonicalDomain == value {
-			return mutate(session, current, domain)
-		}
+	domain, ok := teamDomain(current.domains, value)
+	if ok {
+		return mutate(session, current, domain)
 	}
 	return fmt.Errorf("domain %q is not available to the selected team", value)
+}
+
+func teamDomain(domains []authorityv1.Domain, value string) (authorityv1.Domain, bool) {
+	for _, domain := range domains {
+		if domain.Id == value || domain.CanonicalDomain == value {
+			return domain, true
+		}
+	}
+	return authorityv1.Domain{}, false
 }

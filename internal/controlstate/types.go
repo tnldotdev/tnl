@@ -17,6 +17,26 @@ const (
 	PublicURLLifecycleDeleted   PublicURLLifecycleState = "deleted"
 )
 
+// DNSAuthorityState is the stored state of a claimed-domain DNS authority.
+type DNSAuthorityState string
+
+const (
+	DNSAuthorityPending   DNSAuthorityState = "pending"
+	DNSAuthorityReady     DNSAuthorityState = "ready"
+	DNSAuthorityReleasing DNSAuthorityState = "releasing"
+	DNSAuthorityReleased  DNSAuthorityState = "released"
+	DNSAuthorityFailed    DNSAuthorityState = "failed"
+)
+
+func (state DNSAuthorityState) valid() bool {
+	switch state {
+	case DNSAuthorityPending, DNSAuthorityReady, DNSAuthorityReleasing, DNSAuthorityReleased, DNSAuthorityFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // PublicURLDNSState is the stored state of public URL DNS.
 type PublicURLDNSState string
 

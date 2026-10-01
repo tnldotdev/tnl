@@ -172,25 +172,22 @@ func (s *Session) RequestPublisherDrain(ctx context.Context, requestID string) e
 	}); err != nil {
 		return controlContextError(ctx, fmt.Errorf("tunnel: write drain request: %w", err))
 	}
-	draining, err := tunnelv1.ReadControl(s.control)
+	if err := s.readDrainResponse(ctx, requestID, tunnelv1.Draining); err != nil {
+		return err
+	}
+	return s.readDrainResponse(ctx, requestID, tunnelv1.Drained)
+}
+
+func (s *Session) readDrainResponse(ctx context.Context, requestID string, expected tunnelv1.MessageType) error {
+	response, err := tunnelv1.ReadControl(s.control)
 	if err != nil {
-		return controlContextError(ctx, fmt.Errorf("tunnel: read draining response: %w", err))
+		return controlContextError(ctx, fmt.Errorf("tunnel: read %s response: %w", expected, err))
 	}
-	if draining.Type == tunnelv1.Error && draining.RequestID == requestID {
-		return &ProtocolError{Code: draining.Code}
+	if response.Type == tunnelv1.Error && response.RequestID == requestID {
+		return &ProtocolError{Code: response.Code}
 	}
-	if draining.Type != tunnelv1.Draining || draining.RequestID != requestID {
-		return errors.New("tunnel: unexpected draining response")
-	}
-	drained, err := tunnelv1.ReadControl(s.control)
-	if err != nil {
-		return controlContextError(ctx, fmt.Errorf("tunnel: read drained response: %w", err))
-	}
-	if drained.Type == tunnelv1.Error && drained.RequestID == requestID {
-		return &ProtocolError{Code: drained.Code}
-	}
-	if drained.Type != tunnelv1.Drained || drained.RequestID != requestID {
-		return errors.New("tunnel: unexpected drained response")
+	if response.Type != expected || response.RequestID != requestID {
+		return fmt.Errorf("tunnel: unexpected %s response", expected)
 	}
 	return nil
 }

@@ -353,6 +353,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDomainDefault(ctx, flags.Domain.Default, stdout, stderr)
 	case "domain list":
 		return runDomainList(ctx, flags.Domain.List, stdout, stderr)
+	case "domain status <domain>":
+		return runDomainStatus(ctx, flags.Domain.Status, stdout, stderr)
 	case "domain release <domain>":
 		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
 	case "url list":

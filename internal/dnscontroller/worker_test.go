@@ -215,7 +215,7 @@ func testDNSWork(now time.Time) controlstate.DNSAuthorityWork {
 	return controlstate.DNSAuthorityWork{
 		DNSAuthority: controlstate.DNSAuthority{
 			Reference: "dns_authority_0123456789abcdef0123456789abcdef",
-			TeamID:    "team_1", DomainID: "domain_1", CanonicalDomain: "claimed.example.test", State: "pending",
+			TeamID:    "team_1", DomainID: "domain_1", CanonicalDomain: "claimed.example.test", State: controlstate.DNSAuthorityPending,
 		},
 		Provider: "route53", WorkRevision: 1, Attempts: 1, AvailableAt: now,
 		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
@@ -444,16 +444,18 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 func TestWorkerClaimedRouteAuthorityBoundaries(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
-		name, domain, state, zone string
-		lookupErr                 error
-		wantState                 controlstate.PublicURLDNSState
-		wantDelay                 time.Duration
+		name, domain string
+		state        controlstate.DNSAuthorityState
+		zone         string
+		lookupErr    error
+		wantState    controlstate.PublicURLDNSState
+		wantDelay    time.Duration
 	}{
-		{"pending authority", "claimed.example.test", "pending", "", nil, controlstate.PublicURLDNSPending, time.Second},
-		{"wrong domain", "other.example.test", "ready", "Z123", nil, controlstate.PublicURLDNSFailed, 0},
-		{"released authority", "claimed.example.test", "released", "Z123", nil, controlstate.PublicURLDNSFailed, 0},
-		{"missing zone", "claimed.example.test", "ready", "", nil, controlstate.PublicURLDNSFailed, 0},
-		{"lookup failure", "claimed.example.test", "ready", "Z123", errors.New("lookup unavailable"), controlstate.PublicURLDNSPending, 4 * time.Second},
+		{"pending authority", "claimed.example.test", controlstate.DNSAuthorityPending, "", nil, controlstate.PublicURLDNSPending, time.Second},
+		{"wrong domain", "other.example.test", controlstate.DNSAuthorityReady, "Z123", nil, controlstate.PublicURLDNSFailed, 0},
+		{"released authority", "claimed.example.test", controlstate.DNSAuthorityReleased, "Z123", nil, controlstate.PublicURLDNSFailed, 0},
+		{"missing zone", "claimed.example.test", controlstate.DNSAuthorityReady, "", nil, controlstate.PublicURLDNSFailed, 0},
+		{"lookup failure", "claimed.example.test", controlstate.DNSAuthorityReady, "Z123", errors.New("lookup unavailable"), controlstate.PublicURLDNSPending, 4 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			work := claimedRouteWork(now)
@@ -473,7 +475,7 @@ func TestWorkerClaimedRouteAuthorityBoundaries(t *testing.T) {
 				provider.publishCalls != 0 || provider.removeCalls != 0 || verifier.publicURLCalls != 0 {
 				t.Fatalf("authority boundary: saved %#v, provider %#v, verifier %#v", store.publicURLSaved, provider, verifier)
 			}
-			if (store.publicURLSaved.LastError != "") != (test.state != "pending") {
+			if (store.publicURLSaved.LastError != "") != (test.state != controlstate.DNSAuthorityPending) {
 				t.Fatalf("last error = %q", store.publicURLSaved.LastError)
 			}
 		})
