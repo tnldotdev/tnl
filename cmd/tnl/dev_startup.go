@@ -24,6 +24,9 @@ func awaitDevStartup(
 	bootstrap *devBootstrap, child *devProcess, tunnel *clientstate.Tunnel,
 	assignment devConfigurationResponse,
 ) (devStartupResult, error) {
+	// child exit, framework registration, and target readiness compete during
+	// startup. if a forced target becomes ready first, keep the registration
+	// result pending; if registration wins, cancel the target wait.
 	var configuration *devConfigurationRequest
 	target := forcedTarget
 	targetIsReady := false

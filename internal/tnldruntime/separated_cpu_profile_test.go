@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// CPU profiling perturbs capacity measurements. Use it only in an explicitly
+// CPU profiling perturbs capacity measurements. use it only in an explicitly
 // selected diagnostic run while the steady visitor workload is active.
 func captureSeparatedCPUProfiles(t *testing.T) {
 	t.Helper()

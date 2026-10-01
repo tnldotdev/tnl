@@ -22,7 +22,7 @@ type Project struct {
 }
 
 // Resolve loads a selected project configuration and resolves its worktree and
-// configured service directories. An empty selection still resolves cwd as a
+// configured service directories. an empty selection still resolves cwd as a
 // project so commands without a configuration file share the same identity.
 func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte) (Project, error) {
 	worktree, err := ResolveWorktree(ctx, cwd)

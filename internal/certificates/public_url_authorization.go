@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
-// discoverAuthorizations stores a complete set only after every ca identity is checked.
+// discoverAuthorizations stores a complete set only after every CA identity is checked.
 func (w *PublicURLWorker) discoverAuthorizations(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, order acmeclient.Order, now time.Time) error {
 	expected := make(map[string]struct{}, len(work.CertificateIdentifiers))
 	for _, identifier := range work.CertificateIdentifiers {
@@ -65,7 +65,7 @@ func validateActiveAuthorizations(authorizations []controlstate.ACMEAuthorizatio
 }
 
 // advanceAuthorizations performs at most one action per claim. present every
-// challenge before checking any presented one so shared dns names are complete.
+// challenge before checking any presented one so shared DNS names are complete.
 func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) (bool, error) {
 	for _, phase := range []controlstate.ACMEAuthorizationState{
 		controlstate.ACMEAuthorizationPresenting, controlstate.ACMEAuthorizationPresented, controlstate.ACMEAuthorizationValidating,
@@ -120,6 +120,8 @@ func (w *PublicURLWorker) acceptAuthorization(ctx context.Context, client acmeAP
 		}
 	}
 	if authorization.ChallengeType == "tls-alpn-01" {
+		// wait for every live ingress to acknowledge this challenge projection
+		// before asking the CA to validate the publisher's certificate.
 		ready, err := w.store.ACMEChallengeRoutingReady(ctx, orderID, now)
 		if err != nil {
 			return err
@@ -206,7 +208,7 @@ func authorizationChallengeProblem(authorization acmeclient.Authorization, chall
 
 // an order can become invalid before the next authorization poll. fetch the
 // failed challenge while the original order is still available, so replacement
-// issuance retains the ca's reason rather than only "order became invalid".
+// issuance retains the CA's reason rather than only "order became invalid".
 func (w *PublicURLWorker) invalidOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork) error {
 	for _, authorization := range work.Authorizations {
 		if authorization.AuthorizationURL == "" || authorization.ChallengeURL == "" {

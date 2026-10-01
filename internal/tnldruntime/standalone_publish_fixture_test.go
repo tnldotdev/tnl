@@ -51,8 +51,8 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalone
 func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPAddress, directoryURL string) tnldconfig.Config {
 	t.Helper()
 	const serverDomain = "integration.test"
-	// Standalone uses one public listener and creates its internal listeners on
-	// :0 itself. These required but unused split-role addresses need no probes.
+	// standalone uses one public listener and creates its internal listeners on
+	// :0 itself. these required but unused split-role addresses need no probes.
 	return tnldconfig.Config{
 		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
@@ -149,7 +149,7 @@ func assertIntegrationWebSocketPushes(
 		t.Fatal(err)
 	}
 	defer secured.Close()
-	// Bound the WebSocket upgrade as well as subsequent messages.
+	// bound the WebSocket upgrade as well as subsequent messages.
 	deadline, _ := ctx.Deadline()
 	if err := secured.SetDeadline(deadline); err != nil {
 		t.Fatal(err)

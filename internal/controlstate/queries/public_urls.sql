@@ -3,7 +3,7 @@ SELECT id
 FROM control.identities
 WHERE id = sqlc.arg(identity_id)
   AND disabled_at IS NULL
--- Serialize creators without blocking publish run and audit foreign-key checks.
+-- serialize creators without blocking publish run and audit foreign-key checks.
 FOR NO KEY UPDATE;
 
 -- name: GetPublicURLByCreatorIdempotency :one

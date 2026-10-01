@@ -33,6 +33,8 @@ func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore, me
 		}
 		delay := 30 * time.Second
 		if err == nil {
+			// the retention floor commits before pruning; a failed batch keeps
+			// its cursor so the next pass does not skip unswept history.
 			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			batch, pruneErr := store.PruneIngressRoutingHistory(callCtx, cursor)
 			cancel()

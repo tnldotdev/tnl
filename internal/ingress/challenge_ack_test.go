@@ -95,7 +95,7 @@ func TestControllerCoalescesChallengeAcknowledgments(t *testing.T) {
 		if len(renewals) != 1 || (<-renewals).RoutingTableRevision != 4 {
 			t.Fatal("challenge burst was not acknowledged once at revision 4")
 		}
-		// Routing continues during a blocked renewal; only one renewal can be in flight.
+		// routing continues during a blocked renewal; only one renewal can be in flight.
 		send(5, ingressv1.ChallengeUpsert)
 		send(6, ingressv1.ChallengeUpsert)
 		time.Sleep(time.Second)

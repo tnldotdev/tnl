@@ -36,8 +36,8 @@ var (
 	errRelayPlacementCapacity    = errors.New("controlstate: relay-service placement capacity exhausted")
 )
 
-// PublishRunRequest contains authority already established by the control
-// API plus the authenticated request secret used for retry-stable credentials.
+// PublishRunRequest carries authority already established by the control API
+// and the authenticated request secret used for retry-stable credentials.
 type PublishRunRequest struct {
 	PublicURLID              string
 	TeamID                   string
@@ -85,9 +85,9 @@ type PublishRunSetup struct {
 	PublisherConnections [publishRunConnectionCount]ConnectionAssignment
 }
 
-// CreatePublishRun creates one publish run number and exactly two connection
-// assignments on distinct relay services. An authenticated retry returns the
-// same session and assignment credentials.
+// CreatePublishRun creates one publish run with two connection assignments on
+// distinct relay services. an authenticated retry returns the same publish run
+// and assignment credentials.
 func (d *Database) CreatePublishRun(
 	ctx context.Context,
 	request PublishRunRequest,
@@ -116,8 +116,8 @@ func (d *Database) CreatePublishRun(
 	if !errors.Is(retErr, ErrInsufficientRelayServices) {
 		return result, retErr
 	}
-	// Placement holds the relay reservation guard after the public URL lock.
-	// Roll back before closing expired runs on unrelated URLs, then retry once.
+	// placement takes the assignment-total guard after the public URL lock.
+	// roll back before closing expired runs on other public URLs, then retry once.
 	closed, err := d.ExpireSavedPublishRuns(ctx, now)
 	if err != nil {
 		return PublishRunSetup{}, err
@@ -360,7 +360,7 @@ func availableRelayServicePlacements(
 	queries *controlstatedb.Queries,
 	now time.Time,
 ) ([]relayServicePlacement, []controlstatedb.LockEligibleRelayLeasesRow, error) {
-	// The query takes the reservation guard before service guards/rows. Finish
+	// the query takes the assignment-total guard before service guards and rows. finish
 	// locking services before leases, matching registration's service-first order.
 	serviceIDs, err := queries.LockRelayServicesForPlacement(ctx)
 	if err != nil {

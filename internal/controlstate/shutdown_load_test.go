@@ -12,9 +12,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
-// A finite shutdown workload with one-hour logical leases, not a cadence test.
-// Half the routes stop while the other half heartbeat and both ingress sources
-// continue accounting for every route. Publisher transports and visitor sockets
+// a finite shutdown workload with one-hour logical leases, not a cadence test.
+// half the public URLs stop while the other half heartbeat and both ingress sources
+// account for every public URL. publisher transports and visitor sockets
 // are absent; the separate runtime load test exercises them.
 func TestLoadShutdown(t *testing.T) {
 	f := newControlLoadFixture(t)
@@ -203,7 +203,7 @@ func TestLoadShutdown(t *testing.T) {
 	if firstErr != nil || ctx.Err() != nil {
 		t.Fatalf("shutdown under load: %v (context %v)", firstErr, ctx.Err())
 	}
-	// Tiny smoke fixtures can close between the 100ms heartbeat sweeps. Larger
+	// tiny smoke fixtures can close between the 100ms heartbeat sweeps. larger
 	// load cases must demonstrate completed background work during closure itself.
 	if f.routes >= 128 && (duringHeartbeats == 0 || duringPages == 0) {
 		t.Fatal("background work made no progress while closing routes")
@@ -219,8 +219,8 @@ func TestLoadShutdown(t *testing.T) {
 			t.Fatalf("unexpected surviving route %s", event.PublicURLID)
 		}
 	}
-	// Usage is still accepted for closed historical versions and must not be lost
-	// or counted again by replay. Verify every route, not only global totals.
+	// usage remains accepted for closed historical publish run numbers and must not be lost
+	// or counted again by replay. verify every public URL, not only global totals.
 	for index, session := range sessions {
 		want := int64(usageRevisions[0][index] + 2*usageRevisions[1][index])
 		var matches bool
@@ -247,7 +247,7 @@ func TestLoadShutdown(t *testing.T) {
 	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_url_usage_buckets`).Scan(&buckets); err != nil || buckets != len(sessions) {
 		t.Fatalf("usage bucket count=%d: %v", buckets, err)
 	}
-	// A repeated close must not publish another tombstone or release capacity twice.
+	// a repeated close must not publish another tombstone or release capacity twice.
 	if err := f.controls[0].ClosePublishRun(ctx, sessions[0].setup.PublishRunID, sessions[0].setup.PublishRunToken, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}

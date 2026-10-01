@@ -43,7 +43,7 @@ func waitForIngressRoutingCurrent(t *testing.T, database *sql.DB, expected int) 
 
 func waitForIngressRoutingCurrentWithin(t *testing.T, database *sql.DB, expected int, timeout time.Duration) {
 	t.Helper()
-	// Wait for the state that preceded this barrier. Ongoing publisher heartbeats
+	// wait for the state that preceded this barrier. ongoing publisher heartbeats
 	// must not move its goal past an ingress's otherwise sufficient acknowledgment.
 	var revision int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT current_revision FROM control.ingress_routing_table_clock`).Scan(&revision); err != nil {

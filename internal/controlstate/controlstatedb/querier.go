@@ -14,14 +14,14 @@ type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
-	// Commit this short clock update BEFORE pruning in a different transaction.
-	// A crash in between retains excess data, never an advertised but missing suffix.
+	// commit the retention floor before pruning in another transaction. a crash
+	// between them retains extra rows, never a missing advertised suffix.
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
-	// The caller holds the ingress/run, public URL/publish run and existing bucket guards.
-	// Dependencies make the immutable report, aggregate delta and denial update
-	// one ordered write command. The caller checks insertion/aggregation and any
-	// nonzero denial delta, rolling back all writes if a required step was rejected.
+	// callers hold the ingress/run, public URL/publish run, and existing bucket
+	// guards. dependent writes insert the immutable report, apply its aggregate
+	// delta, and update denials atomically. reject any missing required step and
+	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
@@ -30,14 +30,16 @@ type Querier interface {
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
 	CancelPublishRunACMEOrders(ctx context.Context, arg CancelPublishRunACMEOrdersParams) error
-	// Claim-time checks can precede a publisher's challenge-ready transition.
-	// Recheck the current projection and every live ingress immediately before
+	// claim-time checks can precede a publisher's challenge-ready transition.
+	// recheck the current projection and every live ingress immediately before
 	// asking the CA to validate, while the authorization is still presented.
 	CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error)
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
 	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
+	// require the exact publish run, assignment revision, and relay service. only
+	// the same process and claim ID may repeat a connected or ready claim.
 	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnection, error)
 	ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error)
@@ -46,7 +48,7 @@ type Querier interface {
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompletePublicURLUsageDelivery(ctx context.Context, arg CompletePublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
-	// Diagnostic/test oracle only; placement reads the trigger-maintained totals.
+	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
@@ -67,6 +69,7 @@ type Querier interface {
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
+	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnection, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureExternalAuthorityPrincipal(ctx context.Context, arg EnsureExternalAuthorityPrincipalParams) (ControlIdentity, error)
@@ -113,18 +116,15 @@ type Querier interface {
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnection, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
-	// Claims and readiness read service configuration without changing it. Share
-	// that guard across processes. Claims exclusively lock the selected lease's
-	// non-key fields so capacity checks cannot race each other, renewal, or drain.
-	// NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
-	// not consume another connection. Registration and placement take the service
-	// exclusively before leases; keep that order here too.
+	// claims and readiness share the relay-service guard across processes.
+	// claims take NO KEY UPDATE on the selected lease to serialize capacity with
+	// other claims, renewal, and drain. readiness takes compatible KEY SHARE
+	// because it uses an existing reservation. service guards precede lease rows.
 	GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error)
-	// Readiness retains the service guard through routing publication so process
-	// registration/replacement cannot change its identity. KEY SHARE protects the
-	// lease's existence without serializing claims or other readiness publications.
-	// Renewal/drain may overlap; readiness validates the lease it reads, and routing
-	// projection reads independently exclude a lease that has since drained.
+	// keep the service guard through routing publication so registration cannot
+	// replace the relay process between readiness and the published projection.
+	// KEY SHARE does not block claims or other readiness work. renewal or drain may
+	// overlap; readiness checks its lease, and projection reads exclude drained leases.
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
@@ -134,9 +134,9 @@ type Querier interface {
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
-	// Acquire the clock before identity allocation in this same command. Single-event
-	// publishers avoid a separate round trip while holding the global clock; callers
-	// with earlier events already hold it. Keep the lock through transaction commit.
+	// take the routing clock before allocating the revision in this command.
+	// single-event publishers avoid an extra round trip; multi-event publishers
+	// already hold the clock. keep it through commit to preserve revision order.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
@@ -159,11 +159,11 @@ type Querier interface {
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
 	ListIngressRoutingTableEvents(ctx context.Context, arg ListIngressRoutingTableEventsParams) ([]ControlIngressRoutingTableEvent, error)
-	// Group only entry keys and revisions across history, then fetch the selected
-	// payloads. Filter after selection so tombstones/expiry cannot revive old rows.
+	// select the latest revision for each entry before filtering kind or expiry;
+	// filtering first could revive a superseded public URL or challenge.
 	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error)
-	// The ingress/run guards serialize this source's append-only history. Fetch only
-	// bounded metadata, not histogram blobs; exact replays still load their payload.
+	// ingress and usage-run guards serialize this source's append-only history.
+	// fetch bounded metadata; exact replays load histogram payloads separately.
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnection, error)
@@ -183,9 +183,9 @@ type Querier interface {
 	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
-	// Lock only public URLs, never publish runs first: heartbeat and closure take
-	// the public URL before the run. The partial expiration index finds candidates;
-	// SKIP LOCKED lets other controls and active publishers keep their public URL locks.
+	// lock public URLs before publish runs, as heartbeat and closure do. the
+	// partial expiration index finds candidates; SKIP LOCKED leaves busy public
+	// URLs to other controls and active publishers.
 	LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error)
 	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
@@ -196,36 +196,37 @@ type Querier interface {
 	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlPublishRunConnection, error)
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
 	LockLocalPublicURLTeamForMutation(ctx context.Context, publicUrlID string) (string, error)
-	// Local authority mutations lock the team before identities, memberships,
-	// domains, DNS authorities, and public URLs. Authorization is rechecked under this
-	// transaction-held guard; hosted teams never require fabricated local rows.
-	// Queue writers with the publish run readers using a transaction advisory lock:
-	// PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
+	// local authority mutations lock the team before identities, memberships,
+	// domains, DNS authorities, and public URLs. recheck authorization under this
+	// transaction-held guard; hosted teams need no fabricated local rows.
+	// queue writers with publish run readers through the advisory lock: row-lock
+	// readers alone can bypass a waiting writer indefinitely.
 	LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error)
-	// Publish run creation reads authority under this guard before locking its public URL.
-	// Different public URLs may start together; team/role/domain mutations must wait.
-	// Callers must not upgrade this guard by writing the team later in the transaction.
+	// publish run creation reads authority under this guard before locking its
+	// public URL. different public URLs may start together while team, role, or
+	// domain mutations wait. callers must not upgrade this guard by writing the team.
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
 	LockPublicURLCreationControl(ctx context.Context) (bool, error)
-	// Serialize creators without blocking publish run and audit foreign-key checks.
+	// serialize creators without blocking publish run and audit foreign-key checks.
 	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
-	// Publish run operations serialize public URL mutations but never change the public URL's
-	// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
-	// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
+	// publish run operations serialize with public URL mutations without changing
+	// public URL identity. NO KEY UPDATE permits usage's KEY SHARE references;
+	// overlapping usage pages could starve a stronger UPDATE heartbeat lock.
 	LockPublicURLForRun(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
 	LockPublicURLForUsage(ctx context.Context, publicUrlID string) (string, error)
 	LockPublicURLRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlPublicUrlRecoveryEpisode, error)
 	LockPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	LockPublishRunCreationControl(ctx context.Context) (bool, error)
-	// Acquire the immutable public URL reference before the publish run, in one round trip.
-	// Read the bucket in a LATER statement: a competing ingress may create it while
-	// this statement waits for the publish run lock, after this statement's snapshot.
+	// acquire the public URL reference before the publish run in one statement.
+	// read the bucket later: another ingress may create it while this statement
+	// waits for the publish run lock, after this statement's snapshot was taken.
 	LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
-	// Acquire the reservation guard before service guards and rows, in one command.
-	// Callers finish locking all services before locking leases or checking capacity.
+	// callers hold affected public URL rows and any existing publish run rows.
+	// take the assignment-total guard before relay-service guards and lease rows;
+	// lock all services before checking capacity or locking leases.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
@@ -242,26 +243,25 @@ type Querier interface {
 	MarkInvitationExpired(ctx context.Context, invitationID string) (int64, error)
 	MarkPublishRunCertificateInstalled(ctx context.Context, arg MarkPublishRunCertificateInstalledParams) (ControlPublishRun, error)
 	MarkPublishRunReady(ctx context.Context, arg MarkPublishRunReadyParams) (ControlPublishRun, error)
+	// ready is idempotent for the exact claim; a replaced assignment cannot revive.
 	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnection, error)
 	ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
-	// Bound candidates visited as well as rows deleted. Advance past anchors even
-	// when no row can be removed. Keep the newest hostname/category projection
-	// (including tombstones/expired entries) AND each publish run number's latest revision.
-	// All checks use this statement's snapshot. Concurrent publications can only
-	// make an old anchor redundant; they cannot make a superseded event current.
+	// bound candidates scanned, even when an anchor cannot be removed. retain the
+	// latest hostname/category projection, including tombstones and expired rows,
+	// and each publish run number's latest revision. concurrent publication can
+	// make an anchor redundant but cannot restore a superseded event.
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)
-	// Blocking service operations acquire a transaction advisory guard before any
-	// service/lease row locks. Shared row readers alone can bypass a queued writer;
-	// the advisory queue lets registration, placement and certificate writes progress.
-	// SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
-	// row-only writers: they never wait for a service row or acquire this guard after
-	// holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
+	// blocking relay-service operations take the transaction advisory guard before
+	// service and lease rows. row readers can bypass a waiting writer without this
+	// queue, starving registration, placement, or certificate updates.
+	// SKIP LOCKED certificate preparation and key rotation only take row locks;
+	// they must not wait for this guard while holding a row.
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
@@ -269,14 +269,14 @@ type Querier interface {
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
-	// A failed ready connection can keep its existing service reservation. This
+	// a failed ready connection can keep its existing service reservation. this
 	// atomic ready -> assigned transition has zero counter delta and needs only the
 	// caller's public URL/publish run locks, not placement's global/service/lease guards.
-	// Check failure and eligible service capacity in the statement snapshot. A
+	// check failure and eligible service capacity in the statement snapshot. a
 	// concurrent lease/configuration change may invalidate the returned assignment,
 	// just as one immediately after commit can; claim checks the exact current lease
-	// and process capacity under its exclusive lease guard. No capacity is added here.
-	// Closed/expired slots have no reservation and require guarded placement first.
+	// and process capacity under its exclusive lease guard. no capacity is added here.
+	// closed or expired slots have no reservation and require guarded placement first.
 	ReplacePublishRunConnection(ctx context.Context, arg ReplacePublishRunConnectionParams) (ControlPublishRunConnection, error)
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
@@ -295,9 +295,9 @@ type Querier interface {
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	SaveDNSPublicURLWork(ctx context.Context, arg SaveDNSPublicURLWorkParams) (ControlPublicUrl, error)
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
-	// Find an old committed PREFIX, not the largest old timestamp. Request-start
-	// timestamps can be out of revision order; preserve every still-recent event.
-	// This scan happens before acquiring the publication clock.
+	// find a committed prefix, not the largest old timestamp: request-start times
+	// can be out of revision order. keep every recent event without taking the
+	// publication clock during this scan.
 	SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
@@ -307,7 +307,7 @@ type Querier interface {
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
-	// Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
+	// cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
@@ -316,8 +316,8 @@ type Querier interface {
 	UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error)
 	UpdatePublicURLRecoveryHistogram(ctx context.Context, arg UpdatePublicURLRecoveryHistogramParams) (ControlPublicUrlRecoveryHistogram, error)
 	UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error
-	// A publisher transition invalidates the worker's authorization snapshot.
-	// Call only after changing authorizations while holding the order lock.
+	// a publisher transition invalidates the worker's authorization snapshot.
+	// call only after changing authorizations while holding the order lock.
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error
 }
 

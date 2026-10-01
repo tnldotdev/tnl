@@ -20,7 +20,7 @@ import (
 
 const routingTablePageSize = 1000
 
-// ErrIngressLeaseLost ends this process run. Its accounting identity cannot be
+// ErrIngressLeaseLost ends this process run. its accounting identity cannot be
 // reused after expiry; the process supervisor must start a new run.
 var ErrIngressLeaseLost = errors.New("ingress: lease lost; restart the process with a new run ID")
 
@@ -110,7 +110,7 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 // runUntilEitherStops cancels the sibling when one controller loop exits and
-// joins both before returning. Caller cancellation is a normal shutdown.
+// joins both before returning. caller cancellation is a normal shutdown.
 func runUntilEitherStops(ctx context.Context, first, second func(context.Context) error) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -212,8 +212,8 @@ func (c *Controller) renewLoop(ctx context.Context, acknowledge <-chan struct{})
 		case <-ctx.Done():
 			return nil
 		case <-acknowledge:
-			// Combine challenge bursts without delaying a periodic renewal.
-			// Routing keeps applying pages while this one renewal path waits.
+			// combine challenge bursts without delaying lease renewal. routing
+			// continues applying pages while this renewal path waits.
 			batch := time.NewTimer(min(100*time.Millisecond, c.renewalInterval))
 			select {
 			case <-ctx.Done():
@@ -385,7 +385,7 @@ func (c *Controller) routingUpdateFailed() {
 }
 
 // RoutingStatus reads only local controller state, even during a blocked fetch.
-// Lease renewal never advances routing freshness or the observed revision.
+// lease renewal never advances routing freshness or the observed revision.
 func (c *Controller) RoutingStatus() observability.IngressRoutingSnapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

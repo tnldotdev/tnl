@@ -1,9 +1,9 @@
 // Package authorityclient calls the authority API.
 //
-// Responses cannot exceed 64 KiB. A successful response other than HTTP 204
+// responses cannot exceed 64 KiB. a successful response other than HTTP 204
 // must contain one non-null JSON value that matches the generated schema.
-// Numbers in open objects stay as json.Number. Requests time out after 20
-// seconds and do not follow redirects. Network and read failures wrap
+// numbers in open objects stay as json.Number. requests time out after 20
+// seconds and do not follow redirects. network and read failures wrap
 // ErrUnavailable, but caller cancellation, invalid responses, and oversized
 // responses do not. HTTP 429 and 503 are classified before their bodies are read.
 package authorityclient
@@ -194,7 +194,7 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string)
 }
 
 // AuthorizeServiceOperation asks the external authority to authorize an
-// operation. It uses the hosted secret instead of the user's access token.
+// operation. it uses the hosted secret instead of the user's access token.
 func (c *Client) AuthorizeServiceOperation(
 	ctx context.Context,
 	serviceSecret string,

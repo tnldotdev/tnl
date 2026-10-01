@@ -171,8 +171,8 @@ func (v *AuthoritativeVerifier) VerifyChallenge(
 			return false, nil
 		}
 	}
-	// After Route 53 reports INSYNC and its nameservers agree, also require
-	// the configured recursive resolver to see this value. It may still have
+	// after Route 53 reports INSYNC and its nameservers agree, also require
+	// the configured recursive resolver to see this value. it may still have
 	// cached an earlier NXDOMAIN answer from before the record existed.
 	return v.verifyRecursiveChallenge(ctx, recordName, expected)
 }

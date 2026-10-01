@@ -22,7 +22,7 @@ import (
 var subjectAlternativeNameOID = asn1.ObjectIdentifier{2, 5, 29, 17}
 
 // CanonicalPlan validates a certificate plan and returns it with a copied,
-// sorted identifier list. Scope and cache key come from the authority and are
+// sorted identifier list. scope and cache key come from the authority and are
 // not derived from local DNS rules.
 func CanonicalPlan(plan controlv1.CertificatePlan) (controlv1.CertificatePlan, error) {
 	if plan.CacheKey == "" || len(plan.CacheKey) > 256 || plan.Scope == "" || len(plan.Scope) > 256 || strings.TrimSpace(plan.CacheKey) != plan.CacheKey ||
@@ -68,7 +68,7 @@ func Matches(extensions []pkix.Extension, names, identifiers []string) bool {
 }
 
 // ValidateCertificate checks an automatically issued certificate and private key.
-// It parses the leaf instead of trusting certificate.Leaf from the caller.
+// it parses the leaf instead of trusting certificate.Leaf from the caller.
 func ValidateCertificate(certificate tls.Certificate, hostname string, identifiers []string) (*x509.Certificate, error) {
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
 		return nil, errors.New("certificateidentity: certificate and private key are required")
@@ -96,7 +96,7 @@ func ValidateCertificate(certificate tls.Certificate, hostname string, identifie
 }
 
 // ValidateIssuedCertificate checks a certificate chain against the authorized
-// CSR. It does not have the private key and does not allow clock skew. ACME is
+// CSR. it does not have the private key and does not allow clock skew. ACME is
 // responsible for trusting the issuer.
 func ValidateIssuedCertificate(certificatePEM, csrDER []byte, identifiers []string, now time.Time) (*x509.Certificate, error) {
 	csr, err := x509.ParseCertificateRequest(csrDER)

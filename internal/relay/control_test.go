@@ -210,7 +210,7 @@ func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 		t.Fatal("controller did not observe the draining lease")
 	}
 	synctest.Wait()
-	// Advance several renewal/retry intervals with every worker quiescent.
+	// advance several renewal/retry intervals with every worker quiescent.
 	time.Sleep(25 * time.Millisecond)
 	synctest.Wait()
 	if calls := client.registrations.Load(); calls != 1 {

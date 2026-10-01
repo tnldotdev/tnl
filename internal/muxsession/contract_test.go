@@ -60,7 +60,7 @@ func TestSessionContract(t *testing.T) {
 			t.Run("full duplex and half close", func(t *testing.T) {
 				client, server := test.pair(t)
 				a, b := streamPair(t, client, server)
-				// Larger than either stream's window: both readers and both writers
+				// larger than either stream's window: both readers and both writers
 				// must make progress concurrently, before either half closes.
 				left, right := bytes.Repeat([]byte("left"), 300000), bytes.Repeat([]byte("right"), 240000)
 				gate := make(chan struct{})

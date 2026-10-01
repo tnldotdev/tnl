@@ -357,10 +357,10 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		_, err := database.CreatePublishRun(ctx, replacementRequest, now.Add(2*time.Second), time.Hour, time.Hour)
 		replacementDone <- err
 	})
-	// The closed slot needs a new reservation (a failed ready slot may reuse its
-	// reservation without placement). Replacement must queue behind that allocation.
-	// Extending the fixture's 48-hour lease also requires routing publication.
-	// If closure acquired the routing clock immediately, it would wait on the gate instead.
+	// the closed slot needs a new reservation (a failed ready slot may reuse its
+	// reservation without placement). replacement must queue behind that allocation.
+	// extending the fixture's 48-hour lease also requires routing publication.
+	// if closure acquired the routing clock immediately, it would wait on the gate instead.
 	waitForPostgresBlock(t, ctx, database, heartbeatPID, replacementDone)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -412,7 +412,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					}
 					mutationDone <- err
 				})
-				// The authority mutation owns the team and is stopped at its route lock.
+				// the authority mutation owns the team and waits at the public URL lock.
 				mutationPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), mutationDone)
 				operationDone := make(chan error, 1)
 				workers.Go(func() {
@@ -435,7 +435,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					}
 					operationDone <- err
 				})
-				// PublicURL operations must wait on the team, not acquire the route first.
+				// public URL operations must wait on the team before locking a public URL.
 				waitForPostgresBlock(t, ctx, database, mutationPID, operationDone)
 				if err := gate.Commit(ctx); err != nil {
 					t.Fatal(err)
@@ -512,7 +512,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 				t.Fatalf("session closure lost issued certificate history: state %s, expiry %v, bytes %d", state, notAfter, len(certificate))
 			}
 			if certificateState == "canceled" {
-				// Persisted canceled, unacknowledged orders still own an issued certificate.
+				// persisted canceled, unacknowledged orders still own an issued certificate.
 				if _, err := database.pool.Exec(t.Context(), `UPDATE control.acme_orders SET state = 'canceled' WHERE id = $1`, work.ID); err != nil {
 					t.Fatal(err)
 				}
@@ -555,7 +555,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Complete the real domain release only after all blockers have expired.
+			// complete the real domain release only after all blockers have expired.
 			authorityWork, found, err := database.ClaimDNSAuthorityWork(t.Context(), "release", notAfter, time.Minute)
 			if err != nil || !found || authorityWork.Reference != fixture.domain.DNSAuthorityReference {
 				t.Fatalf("claim domain release: %t, %v", found, err)

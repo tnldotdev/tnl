@@ -94,7 +94,7 @@ func main() {
 	defer stop()
 	go func() {
 		<-ctx.Done()
-		stop() // Restore default handling so a second signal terminates immediately.
+		stop() // restore default handling so a second signal terminates immediately.
 	}()
 	var telemetry *asyncTelemetryReporter
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {

@@ -27,7 +27,7 @@ func ChildDepth(hostname, base string) (int, bool) {
 }
 
 // CustomDomain validates an absolute BYO domain against the pinned x/net PSL,
-// including its private section. The returned boolean identifies a zone apex.
+// including its private section. the returned boolean identifies a zone apex.
 func CustomDomain(input, hostnameSuffix string) (string, bool, error) {
 	domain, err := CanonicalizeHostname(input)
 	if err != nil {

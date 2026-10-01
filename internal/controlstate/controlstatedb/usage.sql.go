@@ -171,10 +171,10 @@ type ApplyIngressUsageReportRow struct {
 	PolicyDenialsUpdated bool
 }
 
-// The caller holds the ingress/run, public URL/publish run and existing bucket guards.
-// Dependencies make the immutable report, aggregate delta and denial update
-// one ordered write command. The caller checks insertion/aggregation and any
-// nonzero denial delta, rolling back all writes if a required step was rejected.
+// callers hold the ingress/run, public URL/publish run, and existing bucket
+// guards. dependent writes insert the immutable report, apply its aggregate
+// delta, and update denials atomically. reject any missing required step and
+// roll back the whole page.
 func (q *Queries) ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error) {
 	row := q.db.QueryRow(ctx, applyIngressUsageReport,
 		arg.IngressID,
@@ -749,8 +749,8 @@ type ListLatestIngressUsageReportsRow struct {
 	Final                     bool
 }
 
-// The ingress/run guards serialize this source's append-only history. Fetch only
-// bounded metadata, not histogram blobs; exact replays still load their payload.
+// ingress and usage-run guards serialize this source's append-only history.
+// fetch bounded metadata; exact replays load histogram payloads separately.
 func (q *Queries) ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error) {
 	rows, err := q.db.Query(ctx, listLatestIngressUsageReports,
 		arg.IngressID,
@@ -825,9 +825,9 @@ type LockPublishRunForUsageParams struct {
 	PublicURLID      string
 }
 
-// Acquire the immutable public URL reference before the publish run, in one round trip.
-// Read the bucket in a LATER statement: a competing ingress may create it while
-// this statement waits for the publish run lock, after this statement's snapshot.
+// acquire the public URL reference before the publish run in one statement.
+// read the bucket later: another ingress may create it while this statement
+// waits for the publish run lock, after this statement's snapshot was taken.
 func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error) {
 	row := q.db.QueryRow(ctx, lockPublishRunForUsage, arg.PublishRunNumber, arg.PublicURLID)
 	var i ControlPublishRun

@@ -81,7 +81,8 @@ func TestConcurrentRefreshSerializesAndReusesRotatedToken(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("refresh did not start")
 			}
-			// The network call must remain inside the persisted-session lock.
+			// keep the network call inside the persisted-session lock so a competing
+			// process cannot rotate the same refresh token concurrently.
 			lock, err := f.store.LockControlSession()
 			if lock != nil {
 				_ = lock.Close()
@@ -92,7 +93,7 @@ func TestConcurrentRefreshSerializesAndReusesRotatedToken(t *testing.T) {
 			for range 7 {
 				start(second)
 			}
-			// Every contender has started while the first refresh is gated.
+			// every contender has started while the first refresh is gated.
 			for range 8 {
 				select {
 				case <-started:
@@ -111,7 +112,7 @@ func TestConcurrentRefreshSerializesAndReusesRotatedToken(t *testing.T) {
 					t.Fatal("refresh workers did not finish")
 				}
 			}
-			// A delayed 401 for the old token must reuse the persisted rotation too.
+			// a delayed 401 for the old token must reuse the persisted rotation too.
 			if token, err := second.accessToken(ctx, true, old.AccessToken); err != nil || token != rotated.AccessToken {
 				t.Fatalf("delayed refresh: %v", err)
 			}

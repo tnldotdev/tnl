@@ -109,7 +109,7 @@ func (t *Target) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // DurationPattern describes the positive Go duration syntax accepted by
-// project configuration. Semantic bounds are checked after decoding.
+// project configuration. semantic bounds are checked after decoding.
 const DurationPattern = `^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h)(([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h))*$`
 
 var durationSyntax = regexp.MustCompile(strings.ReplaceAll(DurationPattern, `\u00b5`, `\x{00b5}`))
@@ -155,7 +155,7 @@ func parseDuration(value string) (Duration, error) {
 	return Duration(parsed), nil
 }
 
-// TNLDSection is a presence-aware partial tnldconfig.Config value. Its field
+// TNLDSection is a presence-aware partial tnldconfig.Config value. its field
 // names and types are derived from Config so file configuration cannot drift
 // from flags.
 type TNLDSection struct {

@@ -37,7 +37,7 @@ type integrationProcess struct {
 }
 
 // runtimeTopology owns all incarnations, including retired and replacement
-// processes. Cleanup order follows dependencies rather than start chronology.
+// processes. cleanup order follows dependencies rather than start chronology.
 type runtimeTopology struct {
 	directory  string
 	afterStop  []func()
@@ -85,7 +85,7 @@ func (f *runtimeTopology) cleanupResource(t *testing.T, close func()) {
 func cleanupIntegrationHTTPServer(t *testing.T, server *httptest.Server, owner *runtimeTopology) {
 	t.Helper()
 	owner.cleanupResource(t, func() {
-		// Cancel active handlers before joining; httptest.Close alone can wait
+		// cancel active handlers before joining; httptest.Close alone can wait
 		// forever on an interrupted scenario's stream or gated request.
 		server.CloseClientConnections()
 		done := make(chan struct{})
@@ -227,7 +227,7 @@ func integrationGET(ctx context.Context, client *http.Client, url string) (*http
 	return client.Do(request)
 }
 
-// For individual assertions outside a polling loop. A fresh deadline belongs
+// for individual assertions outside a polling loop. a fresh deadline belongs
 // to each operation, and cancellation is registered even if Scan/Fatal exits.
 func integrationOperationContext(t *testing.T) context.Context {
 	t.Helper()
@@ -269,8 +269,8 @@ var issuedIntegrationTCPAddresses = struct {
 	addresses map[string]struct{}
 }{addresses: make(map[string]struct{})}
 
-// These probes do not reserve addresses. tnld configuration rejects port 0 and
-// tnld/Pebble accept address strings, not inherited listeners. Harness-owned
+// these probes do not reserve addresses. tnld configuration rejects port 0 and
+// tnld/Pebble accept address strings, not inherited listeners. harness-owned
 // HTTP/DNS servers instead retain :0 listeners and use their actual addresses.
 func unusedTCPAddress(t *testing.T) string {
 	t.Helper()

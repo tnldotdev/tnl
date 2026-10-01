@@ -36,7 +36,7 @@ func TestGeneratedHostnameExclusions(t *testing.T) {
 	if err := ValidateGeneratedHostnameCorpus(); err != nil {
 		t.Fatal(err)
 	}
-	// Check every reviewed exclusion against the loaded corpus, rather than
+	// check every reviewed exclusion against the loaded corpus, rather than
 	// hoping a random generation happens to select an excluded word.
 	for _, word := range strings.Split(strings.TrimSpace(string(generatedHostnameExclusions)), "\n") {
 		if slices.Contains(generatedHostnameCorpus.Predicates, word) || slices.Contains(generatedHostnameCorpus.Objects, word) {

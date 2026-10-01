@@ -41,7 +41,7 @@ func relayWorker(t *testing.T, unblock func(), run func() error) <-chan error {
 	return result
 }
 
-// Lifecycle tests use the real TLS/yamux transport so closing a session also
+// lifecycle tests use the real TLS/yamux transport so closing a session also
 // interrupts streams whose publisher acknowledgement is still pending.
 func publisherFixture(t *testing.T, id string, revision uint64) (*PublisherConnection, *tunnel.Session) {
 	t.Helper()
@@ -98,7 +98,7 @@ func publisherFixture(t *testing.T, id string, revision uint64) (*PublisherConne
 		}
 		return nil
 	})
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{InsecureSkipVerify: true}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"}) // Self-signed local fixture.
+	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{InsecureSkipVerify: true}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"}) // self-signed local fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	if _, ok := registry.Candidate(lifecycleHeader("connection_1", 3), lifecycleLease(), time.Now()); ok {
 		t.Fatal("draining registry selected candidate")
 	}
-	// Existing streams survive the admission gate.
+	// existing streams survive the admission gate.
 	if _, err := stream.Write([]byte("live")); err != nil {
 		t.Fatal(err)
 	}

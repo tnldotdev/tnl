@@ -30,7 +30,7 @@ func TestIntegrationIngressDrainRetainsExpiration(t *testing.T) {
 	}
 	assertDraining("begin drain", draining)
 
-	// A short renewal must not expire the lease before its drain deadline, and
+	// a short renewal must not expire the lease before its drain deadline, and
 	// a longer one or a repeated registration must not extend it afterward.
 	short, err := database.RenewIngress(t.Context(), IngressRenewal{
 		IngressLeaseIdentity: lease.IngressLeaseIdentity,

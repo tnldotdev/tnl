@@ -57,7 +57,7 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	if result := ingressAwait(t, backend.result); result.err != nil {
 		t.Fatal(result.err)
 	}
-	active.Store(false) // Simulate a tombstone or expired challenge projection.
+	active.Store(false) // simulate a tombstone or expired challenge projection.
 	stale := ingressClient(t, address, "route.example", "", "acme-tls/1")
 	if err := stale.Handshake(); err == nil {
 		t.Fatal("stale challenge was forwarded")
@@ -151,7 +151,7 @@ func TestClientHelloCapacityAndTimeoutRelease(t *testing.T) {
 		a, b := net.Pipe()
 		defer a.Close()
 		defer b.Close()
-		// Address metadata is already provided, as it is after trusted PROXY
+		// address metadata is already provided, as it is after trusted PROXY
 		// decoding; the peer stalls without sending a ClientHello.
 		connection := &testAddressConn{Conn: a}
 		if !server.admit(connection) {
@@ -229,7 +229,7 @@ func TestChallengeDeadlineAndForcedDrain(t *testing.T) {
 	if deadline.IsZero() || time.Until(deadline) > challengeConnectionTimeout {
 		t.Fatalf("challenge backend open not bounded by challenge deadline: %s", deadline)
 	}
-	// Forced drain must cancel a pending challenge open just as it cancels a
+	// forced drain must cancel a pending challenge open just as it cancels a
 	// visitor open, and every class counter must be released.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -289,7 +289,7 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 			defer finish()
 			done <- server.handle(connection, finish)
 		}()
-		client := tls.Client(clientSocket, &tls.Config{ServerName: "route.example", NextProtos: []string{"acme-tls/1"}, InsecureSkipVerify: true}) // Self-signed fixture.
+		client := tls.Client(clientSocket, &tls.Config{ServerName: "route.example", NextProtos: []string{"acme-tls/1"}, InsecureSkipVerify: true}) // self-signed fixture.
 		if err := client.Handshake(); err != nil {
 			t.Fatal(err)
 		}

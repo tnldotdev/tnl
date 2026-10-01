@@ -78,7 +78,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   server.on("error", (error) => {
     failure ??= error;
   });
-  // Install ownership before listen/chmod: either operation can fail before returning a handle.
+  // install ownership before listen/chmod: either operation can fail before returning a handle.
   let closing: Promise<void> | undefined;
   const close = () =>
     (closing ??= (async () => {
@@ -97,7 +97,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const assertHealthy = () => {
     if (failure !== undefined) {
       const error = failure;
-      failure = undefined; // Report handler failures once, including from the cleanup hook.
+      failure = undefined; // report handler failures once, including from the cleanup hook.
       throw error;
     }
   };
@@ -116,7 +116,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     await chmod(socket, 0o600);
   } catch (error) {
     await close();
-    failure = undefined; // The startup caller receives this error directly.
+    failure = undefined; // the startup caller receives this error directly.
     throw error;
   }
   return {

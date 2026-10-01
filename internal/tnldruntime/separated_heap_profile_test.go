@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Heap snapshots are deliberately opt-in: the forced GC changes the workload.
-// Run a separate diagnostic trial rather than mixing them into capacity points.
+// heap snapshots are opt-in because forced GC changes the workload. run a
+// separate diagnostic trial rather than mixing them into capacity points.
 func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separatedSnapshot) {
 	t.Helper()
 	components := append([]string{"ingress-a", "relay-a"}, separatedPublisherComponents()...)

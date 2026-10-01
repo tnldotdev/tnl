@@ -347,7 +347,7 @@ func testQUICReplacement(t *testing.T, controlReplacedFirst bool) {
 		t.Fatal("replacement tried QUIC before TLS/TCP")
 	default:
 	}
-	// A later replacement must return to the ordinary QUIC-first policy.
+	// a later replacement must return to the ordinary QUIC-first policy.
 	assignments[0].ConnectionAssignmentRevision++
 	assignments[0].PublisherConnectionId = "connection_after_recovery"
 	if err := manager.Update(assignments); err != nil {

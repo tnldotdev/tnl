@@ -80,9 +80,9 @@ func issueInitialCertificate(
 }
 
 // attemptCertificateTransaction advances every issuance phase at most once.
-// Retrying this entire function is safe because the pending slot preserves
+// retrying this entire function is safe because the pending slot preserves
 // the CSR until it has saved the server's installation acknowledgement.
-// The caller holds the cache lock while issuing or retrying the certificate.
+// the caller holds the cache lock while issuing or retrying the certificate.
 func attemptCertificateTransaction(
 	ctx context.Context,
 	server PublicURLControlClient,
@@ -192,7 +192,7 @@ func installCertificateMaterial(
 	material clientstate.Material,
 	staged bool,
 ) error {
-	// A shared cache entry is never permission for this publish run to serve it.
+	// a shared cache entry never authorizes this publish run to serve it.
 	if err := server.MarkPublishRunCertificateInstalled(
 		ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), material.IssuanceID,
 		material.Certificate.Leaf.NotAfter, credentials.PublishRunToken(setup.PublishRunToken),

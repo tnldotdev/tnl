@@ -26,7 +26,7 @@ const (
 	testAuthorityOrigin = "https://authority.example"
 )
 
-// MockInit replaces a process-global keyring. Hold this for the entire fixture,
+// MockInit replaces a process-global keyring. hold this for the entire fixture,
 // including database cleanup and all joined refresh goroutines.
 var keyringTestMu sync.Mutex
 
@@ -381,7 +381,7 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 				assertAuthRequest(t, requests[3], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
 			}
 			if test.last == http.StatusServiceUnavailable {
-				// A later invocation must revoke using the saved rotated access
+				// a later invocation must revoke using the saved rotated access
 				// token, without trying the obsolete refresh credential again.
 				recovered = true
 				if err := Logout(t.Context(), f.config); err != nil {

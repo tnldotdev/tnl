@@ -33,10 +33,9 @@ type candidateResult struct {
 }
 
 // Race starts the primary candidate, then the fallback after fallbackDelay.
-// The first connection accepted by tunnelv1 wins; completing TLS alone is not
-// enough. A duplicate claim waits for an already-running sibling; other permanent
-// handshake rejections stop both attempts. Race only chooses the publisher
-// connection transport. It does not retry visitor streams.
+// the first authenticated publisher connection wins, not the first TLS handshake.
+// a duplicate claim waits for a running sibling; other permanent rejections
+// stop both attempts. this race does not retry visitor streams.
 func Race(
 	ctx context.Context,
 	primary Candidate,
@@ -124,8 +123,8 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 }
 
 // IsTerminalHandshakeError reports whether a protocol rejection must stop both
-// attempts for this connection assignment. Network failures and temporary server
-// errors can use the other transport. This result does not allow a claimed
+// attempts for this connection assignment. network failures and temporary server
+// errors can use the other transport. this result does not allow a claimed
 // connection to reconnect.
 func IsTerminalHandshakeError(err error) bool {
 	var protocolError *ProtocolError

@@ -30,7 +30,7 @@ const (
 )
 
 // RunCadenceLoad is bridged from the external test package so it can use the
-// production ingress API adapter without a controlstate import cycle. This is
+// production ingress API adapter without a controlstate import cycle. this is
 // still a database workload: publisher transports and visitor sockets are absent.
 func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-chan struct{}, bool) (ingress.ControlClient, error)) {
 	t.Helper()
@@ -76,8 +76,8 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 			current[index].PublisherConnections[slot].State = PublisherConnectionReady
 		}
 	}
-	// Setup uses one fixed logical instant. From here the clock runs at wall
-	// speed; every caller, session, process lease, and routing entry shares it.
+	// setup uses one fixed logical instant. from here the clock runs at wall
+	// speed; every caller, publish run, process lease, and routing entry shares it.
 	clockStarted := time.Now()
 	now := func() time.Time { return f.now.Add(time.Since(clockStarted)) }
 	ctx, cancel := context.WithTimeout(t.Context(), duration+time.Minute)
@@ -90,7 +90,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		first.Do(func() {
 			firstErr = err
 			t.Logf("first_failure_since_clock_start=%s error=%v", time.Since(clockStarted), err)
-			// Collect the production's bounded, sanitized diagnostics before
+			// collect the production's bounded, sanitized diagnostics before
 			// cancellation and cleanup change the database wait graph.
 			diagnostic, _ := f.controls[0].Diagnostics(t.Context())
 			if data, marshalErr := json.Marshal(diagnostic); marshalErr == nil {
@@ -153,7 +153,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	var retentionFloor atomic.Uint64
 	var expiredAt atomic.Int64
 	pending := make([]atomic.Bool, f.routes)
-	wasRepaired := make([]bool, f.routes) // One pending heartbeat per route.
+	wasRepaired := make([]bool, f.routes) // one pending heartbeat per public URL.
 	affected := int64(0)
 	for _, session := range sessions {
 		if session.leases[failed.RelayServiceID].RelayID == failed.RelayID {
@@ -194,7 +194,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 			t.Logf("test_process %s before=%g after=%g available=%t", name, beforeValue, afterValue, beforeOK && afterOK)
 		}
 	}()
-	// Join before the deferred metric snapshot, even when a deadline fails.
+	// join before the deferred metric snapshot, even when a deadline fails.
 	defer actors.stop()
 	type job struct {
 		index int
@@ -446,7 +446,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 				if waitCadence(ctx, due) != nil {
 					return
 				}
-				// One accounted connection per route per minute, divided between
+				// one accounted connection per public URL per minute, divided between
 				// two ingresses and six ten-second reporting checkpoints.
 				at := f.now.Add(due.Sub(clockStarted)).Add(-time.Microsecond)
 				bucket := at.Truncate(time.Minute)
@@ -525,7 +525,7 @@ waiting:
 	}
 	verifyCtx, stopVerification := context.WithTimeout(ctx, 10*time.Second)
 	defer stopVerification()
-	// All publishing and reporting has stopped. Drain routing consumers to a
+	// all publishing and reporting has stopped. drain routing consumers to a
 	// final production snapshot while their normal lease renewals continue.
 	identity := controllers[0].Lease()
 	final, err := f.database.ReadIngressRoutingTableSnapshot(verifyCtx, IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}, now())

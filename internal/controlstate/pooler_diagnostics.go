@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// PgBouncer may deny its admin console to the runtime user. Unavailable values
+// PgBouncer may deny its admin console to the runtime user. unavailable values
 // remain absent and carry a sanitized error; they are never inferred from SKU.
 type DatabasePoolerDiagnostics struct {
 	Settings map[string]string      `json:"settings,omitempty"`
@@ -88,7 +88,7 @@ func readPoolerSettings(ctx context.Context, connection poolerQuerier) (map[stri
 	return settings, rows.Err()
 }
 
-// Includes the observing admin client; client identities and addresses are
+// includes the observing admin client; client identities and addresses are
 // never retained. A bounded partial count is explicitly marked as such.
 func readPoolerClients(ctx context.Context, connection poolerQuerier) (*DatabasePoolerClients, error) {
 	rows, err := connection.Query(ctx, "SHOW CLIENTS")

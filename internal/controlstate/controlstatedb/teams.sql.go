@@ -1319,11 +1319,11 @@ WHERE teams.id = $1
 FOR NO KEY UPDATE OF teams
 `
 
-// Local authority mutations lock the team before identities, memberships,
-// domains, DNS authorities, and public URLs. Authorization is rechecked under this
-// transaction-held guard; hosted teams never require fabricated local rows.
-// Queue writers with the publish run readers using a transaction advisory lock:
-// PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
+// local authority mutations lock the team before identities, memberships,
+// domains, DNS authorities, and public URLs. recheck authorization under this
+// transaction-held guard; hosted teams need no fabricated local rows.
+// queue writers with publish run readers through the advisory lock: row-lock
+// readers alone can bypass a waiting writer indefinitely.
 func (q *Queries) LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error) {
 	row := q.db.QueryRow(ctx, lockLocalTeamForMutation, teamID)
 	var id string
@@ -1342,9 +1342,9 @@ WHERE teams.id = $1
 FOR SHARE OF teams
 `
 
-// Publish run creation reads authority under this guard before locking its public URL.
-// Different public URLs may start together; team/role/domain mutations must wait.
-// Callers must not upgrade this guard by writing the team later in the transaction.
+// publish run creation reads authority under this guard before locking its
+// public URL. different public URLs may start together while team, role, or
+// domain mutations wait. callers must not upgrade this guard by writing the team.
 func (q *Queries) LockLocalTeamForSession(ctx context.Context, teamID string) (string, error) {
 	row := q.db.QueryRow(ctx, lockLocalTeamForSession, teamID)
 	var id string

@@ -21,8 +21,8 @@ import (
 
 const defaultOpenTimeout = 10 * time.Second
 
-// Keep a failed preferred relay from consuming the visitor concurrency budget
-// while a ready publisher connection exists through the alternate relay.
+// keep a failed preferred relay from consuming the visitor concurrency budget
+// while another connected relay can still serve the public URL.
 const alternateAttemptTimeout = 250 * time.Millisecond
 
 const visitorConnectionIDPrefix = "visitor_connection_"
@@ -257,7 +257,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil
 		}
-		// The HTTP server owns control connections after a successful handoff.
+		// the HTTP server owns control connections after a successful handoff.
 		s.transfer(public)
 		return nil
 	}
@@ -269,7 +269,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		if !s.handoff(public, source, destination, hello, relayConnection, handler) {
 			return nil
 		}
-		// The selected relay-hostname handler owns the connection after a successful handoff.
+		// the selected relay-hostname handler owns the connection after a successful handoff.
 		s.transfer(public)
 		return nil
 	}
@@ -336,7 +336,7 @@ func (s *Server) admit(connection net.Conn) bool {
 		s.config.Metrics.SetIngressConnections("client_hello", s.pending)
 	}
 	s.connections[connection] = struct{}{}
-	// Register before launch so Drain cannot miss an accepted handler.
+	// register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
 	return true
 }

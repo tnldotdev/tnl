@@ -45,7 +45,7 @@ func (r Role) RunsControl() bool { return r == RoleStandalone || r == RoleContro
 func (r Role) RunsIngress() bool { return r == RoleStandalone || r == RoleIngress }
 func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay }
 
-// Config configures one tnld process. Migration configuration is intentionally
+// Config configures one tnld process. migration configuration is intentionally
 // absent: tnld migrate reads only TNLD_DATABASE_DIRECT_URL.
 type Config struct {
 	Role Role `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`

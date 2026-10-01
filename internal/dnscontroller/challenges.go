@@ -111,8 +111,8 @@ func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authoriza
 	return verified, err
 }
 
-// The per-name lock around this call orders every write and receipt for a
-// shared TXT record, including wildcard and exact-name authorizations.
+// the per-name lock orders every write and receipt for a shared TXT record,
+// including wildcard and exact-name authorizations across control processes.
 func reconcileChallengeChange(
 	ctx context.Context, store ChallengeChangeStore, provider ChallengeProvider, verifier ChallengeVerifier,
 	record ChallengeRecord, expected, state string,
@@ -125,12 +125,14 @@ func reconcileChallengeChange(
 	if err != nil {
 		return false, err
 	}
-	// Do not rewrite a TXT record while its last Route 53 change is pending,
-	// even if another authorization changed the desired values. Listing records
-	// can see the new value before all DNS replicas have it.
+	// do not rewrite a TXT record while its last Route 53 change is pending,
+	// even if the desired values changed. a listing may show the new value before
+	// DNS replicas have it; wait for the durable change receipt to complete.
 	checkedReady := false
 	if found {
 		if change.DesiredDigest == digest && state == "presenting" {
+			// this presentation already has a receipt. verification waits for
+			// propagation and checks DNS before the CA validates the challenge.
 			return false, nil
 		}
 		checkedReady, err = provider.ChangeReady(ctx, change.ChangeID)
@@ -149,8 +151,8 @@ func reconcileChallengeChange(
 		return false, err
 	}
 	if zone.ChangeID == "" && (!found || change.DesiredDigest != digest) && len(values) != 0 {
-		// The Route 53 write may have succeeded just before a crash or a lost
-		// response. An idempotent UPSERT obtains a new, durable receipt.
+		// a Route 53 write may succeed before a crash or lost response. an
+		// idempotent UPSERT obtains another durable receipt for the same values.
 		zone, err = provider.RefreshChallenge(ctx, record)
 		if err != nil {
 			return false, err
@@ -170,8 +172,8 @@ func reconcileChallengeChange(
 		return false, nil
 	}
 	if state == "cleaning" && (!found || change.DesiredDigest != digest) {
-		// A deletion already absent in Route 53 needs no further change. A
-		// later presentation will obtain a fresh receipt before validation.
+		// an already absent record needs no further deletion. a later presentation
+		// obtains its own change receipt before validation.
 		return false, nil
 	}
 	if !found || change.DesiredDigest != digest {

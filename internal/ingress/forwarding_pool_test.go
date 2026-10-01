@@ -113,7 +113,7 @@ func TestForwarderWaiterCancellationAndCloseWhileConnecting(t *testing.T) {
 				ingressAwait(t, connector.started)
 				waitCtx, stop := context.WithCancel(ctx)
 				waiter := ingressWorker(t, stop, func() error { _, _, err := f.session(waitCtx, target); return err })
-				synctest.Wait() // The second caller is now waiting on the pooled entry.
+				synctest.Wait() // the second caller is now waiting on the pooled entry.
 				if closePool {
 					if err := f.Close(); err != nil {
 						t.Fatal(err)

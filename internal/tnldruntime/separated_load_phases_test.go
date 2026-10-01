@@ -170,7 +170,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-			// a killed relay waits out its 30-second lease. The next 15-second
+			// a killed relay waits out its 30-second lease. the next 15-second
 			// publisher heartbeat can then assign replacement connections.
 			repaired = separatedWaitForRecovery(t, database, publishers, 45*time.Second)
 			var currentRelayRun string
@@ -228,7 +228,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
 			assertRelayOpenedVisitors(t, before, after, "relay-a")
 		}
-		// cover every live route, not only routes sampled late in a traffic window.
+		// cover every live public URL, not only those sampled late in a traffic window.
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
 		if phase == "steady" && *runtimeLoadCapacityOnly && *runtimeLoadHeldStreams > 0 {
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: "tunnel-held-close", URLs: publishers.URLs, CloseHeld: true})
@@ -286,7 +286,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
 	}
-	// stop ingress while control and PostgreSQL remain available. Its production
+	// stop ingress while control and PostgreSQL remain available. its production
 	// reporter flushes final checkpoints and marks this process run complete.
 	stoppingIngress := time.Now()
 	ingressStopTimeout := 10 * time.Second

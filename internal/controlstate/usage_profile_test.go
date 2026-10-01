@@ -8,8 +8,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
-// Isolate page processing from the cadence scheduler and competing pool users.
-// The same production histograms then distinguish round trips from pool waiting.
+// isolate page processing from the cadence scheduler and competing pool users.
+// the same production histograms distinguish round trips from pool waiting.
 func TestProfileIngressUsage(t *testing.T) {
 	f := newControlLoadFixture(t)
 	const pageSize = 16

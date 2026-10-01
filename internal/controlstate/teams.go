@@ -200,8 +200,8 @@ func (d *Database) ListTeamMemberships(ctx context.Context, identityID, teamID s
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: list team memberships: %w", err)
 	}
-	// An actor can be removed after the first lookup. The list query checks
-	// authorization in its own snapshot; an authorized actor is itself a row.
+	// an actor may be removed after the first lookup. the list query checks
+	// authorization in its own snapshot; an authorized actor has a row there.
 	if len(rows) == 0 {
 		return nil, ErrTeamNotFound
 	}

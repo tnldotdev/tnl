@@ -58,7 +58,7 @@ for (const entry of metadata.packages) {
   packages.push(await verifyLocalPackage(entry));
 }
 
-// Validate every registry state before creating an immutable package version.
+// validate every registry state before creating an immutable package version.
 const unpublished = [];
 for (const package_ of packages) {
   const registry = await registryPackage(package_.name);
@@ -86,7 +86,7 @@ for (const package_ of unpublished) {
 }
 
 async function verifyLocalPackage(entry: PackedPackage): Promise<PackedPackage> {
-  // Packing checked the package shape; publishing checks that the handed-off tarball is unchanged.
+  // packing checked the package shape; publishing checks that the handed-off tarball is unchanged.
   assert.equal(
     path.basename(entry.tarball),
     entry.tarball,

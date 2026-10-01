@@ -166,8 +166,8 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	if config.Start.IsZero() {
 		config.Start = time.Now()
 	}
-	// Coordination serializes UTC timestamps without a monotonic component.
-	// Rebase once; subsequent wall-clock adjustments must not move the slots.
+	// coordination serializes UTC timestamps without a monotonic component.
+	// rebase once; subsequent wall-clock adjustments must not move the slots.
 	config.Start = localSchedule(time.Now(), config.Start)
 	result.StartedAt, result.OfferDuration = config.Start, config.Duration
 	end := config.Start.Add(config.Duration)
@@ -195,8 +195,8 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 		})
 	}
 	ready.Wait()
-	// Compute each slot from the original epoch, never from a delayed timer.
-	// A slow generator cannot silently lower its offered rate or extend its window.
+	// compute each slot from the original epoch, never from a delayed timer.
+	// a slow generator cannot silently lower its offered rate or extend its window.
 	for index := 0; config.Rate > 0; index++ {
 		at := config.Start.Add(time.Duration(index) * time.Second / time.Duration(config.Rate))
 		if !at.Before(end) {

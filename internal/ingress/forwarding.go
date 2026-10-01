@@ -27,8 +27,8 @@ type ForwarderConfig struct {
 	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
 }
 
-// Forwarder pools authenticated sessions to exact relay processes and creates
-// route backends that open acknowledged internal-forwarding streams.
+// Forwarder pools authenticated sessions to exact relay processes and opens
+// acknowledged internal-forwarding streams for visitor connections.
 type Forwarder struct {
 	connector       relayConnector
 	observer        OperationObserver
@@ -59,7 +59,7 @@ func newForwarder(connector relayConnector) *Forwarder {
 	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession)}
 }
 
-// Backends preserves control's publisher-connection order. Every returned
+// Backends preserves control's publisher-connection order. every returned
 // backend is bound to the publish run number, assignment, and concrete relay lease
 // represented by entry.
 func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routebackend.Backend, error) {
@@ -100,8 +100,8 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routeb
 	return backends, nil
 }
 
-// PublicURL converts one validated routing-table projection into the immutable
-// per-visitor route consumed by Server.
+// PublicURL converts one validated routing-table projection into an immutable
+// public URL view used by Server for a visitor connection.
 func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicURL, error) {
 	backends, err := f.Backends(entry)
 	if err != nil {
@@ -165,9 +165,9 @@ type forwardingBackend struct {
 	header    tunnelv1.InternalForwardingHeader
 }
 
-// Open waits for relay acceptance after the visitor stream is acknowledged.
-// The caller owns the returned stream, not the pooled session. Acceptance does
-// not establish route TLS or prove local-service health.
+// Open waits for the relay to accept an internal forwarding stream. the caller
+// owns the stream, not the pooled session; acceptance does not establish visitor
+// TLS or prove that the local service is healthy.
 func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
 	return b.open(ctx, visitorConnectionID, false)
 }
@@ -198,15 +198,15 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
-		// A stream can fail while its pooled session is still usable. Closing
-		// that session would also drop unrelated held visitor streams. Let
-		// ingress try the other relay for this visitor instead.
+		// a failed stream does not invalidate a still-usable pooled session.
+		// closing it would also drop unrelated visitor streams; ingress can try
+		// another connected relay for this visitor before sending visitor bytes.
 		if session.Err() == nil && b.forwarder.currentSession(b.target.key(), session) {
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}
 		err = errors.Join(err, b.forwarder.invalidate(b.target.key(), session))
-		// Another visitor may populate the pool before our retry, so even the
-		// second attempt can reuse a session. Exhaustion is an ordinary error.
+		// another visitor may populate the pool before our retry. at most one
+		// retry is allowed, even if it reuses a session.
 		if !reused || attempt == 1 || ctx.Err() != nil {
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}

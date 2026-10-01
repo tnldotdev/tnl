@@ -81,7 +81,7 @@ func (p *devProcess) run(processGroupID int, leaderExited <-chan error, watcherS
 	}
 	p.err = p.command.Wait()
 	// on macOS a group containing only its unreaped leader can report EPERM
-	// instead of ESRCH. retry after Wait reaps the leader; a persistent EPERM
+	// instead of ESRCH. retry after Wait reaps the leader; persistent EPERM
 	// still reports a real failure to stop the remaining group members.
 	if errors.Is(signalFailure, syscall.EPERM) {
 		signalFailure = signalDevProcessGroup(processGroupID, syscall.SIGKILL)

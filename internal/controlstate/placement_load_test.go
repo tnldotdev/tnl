@@ -18,8 +18,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-// Local load test: production session/claim transactions, one team,
-// 1,000 pre-created routes, 64 workers, two eight-connection pools, four relays.
+// local load test: production publish run and claim transactions, one team,
+// 1,000 saved public URLs, 64 workers, two eight-connection pools, four relays.
 // HTTP, ACME, visitor traffic, and background heartbeats are deliberately absent.
 func TestLoadPlacement(t *testing.T) {
 	RunPlacementLoad(t, nil)
@@ -153,7 +153,7 @@ type queryDelayTracer struct {
 
 func (r *queryDelayTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
 	r.connectionTracer.TraceQueryEnd(ctx, conn, data)
-	// Optional client-side round-trip model, not a network emulator. Query
+	// optional client-side round-trip model, not a network emulator. query
 	// timings exclude their own delay; lock-held windows include earlier delays.
 	if r.delay > 0 && data.Err == nil {
 		timer := time.NewTimer(r.delay)

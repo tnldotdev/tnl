@@ -146,6 +146,8 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 			continue
 		}
 		if acquired {
+			// the dedicated transaction owns leadership. cancel the issuance
+			// worker and wait for it with a bound if the connection loses the lock.
 			leaderCtx, cancelLeader := context.WithCancel(ctx)
 			result := make(chan error, 1)
 			go func() { result <- run(leaderCtx) }()
@@ -165,6 +167,8 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 					release()
 					return err
 				case <-check.C:
+					// a lost connection may release the advisory lock while the issuance
+					// worker is still running. wait for it before retrying leadership.
 					pingCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
 					_, err := transaction.Exec(pingCtx, `SELECT 1`)
 					cancel()

@@ -1,11 +1,11 @@
 // Package controlclient calls the tnl control API.
 //
-// Responses cannot exceed 64 KiB. A successful response other than HTTP 204
-// must contain one non-null JSON value that matches the generated schema. Most
+// responses cannot exceed 64 KiB. a successful response other than HTTP 204
+// must contain one non-null JSON value that matches the generated schema. most
 // requests time out after 20 seconds; certificate requests time out after 150
-// seconds. Requests do not follow redirects. Network and read failures wrap
+// seconds. requests do not follow redirects. network and read failures wrap
 // ErrUnavailable, but caller cancellation, invalid responses, and oversized
-// responses do not. Known server problem codes take precedence over status.
+// responses do not. known server problem codes take precedence over status.
 package controlclient
 
 import (
@@ -122,7 +122,7 @@ func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1
 }
 
 // GetPublicURLByHostname uses one filtered request instead of paging through a
-// team's routes. Reject unfiltered responses from servers ignoring the filter.
+// team's public URLs. reject unfiltered responses from servers ignoring the filter.
 func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname string) (controlv1.PublicURL, error) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if teamID == "" || err != nil || canonical != hostname {

@@ -174,6 +174,8 @@ func (d *daemon) startStandalone(
 		client: ingressClient, ingressID: standaloneIngressID, listener: publicListener,
 		clusterSecret: d.clusterSecret,
 		configure: func(ingressConfig *ingress.Config) {
+			// ingress hands accepted control and relay connections to these
+			// listeners; their servers own each connection after a successful enqueue.
 			ingressConfig.ServerHostname = settings.serverHostname
 			ingressConfig.HandleControl = controlListener.Enqueue
 			ingressConfig.RelayHostname = settings.relayHostname

@@ -56,6 +56,8 @@ type ClaimPublisherConnectionParams struct {
 	RelayServiceID               string
 }
 
+// require the exact publish run, assignment revision, and relay service. only
+// the same process and claim ID may repeat a connected or ready claim.
 func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnection, error) {
 	row := q.db.QueryRow(ctx, claimPublisherConnection,
 		arg.RelayID,
@@ -134,6 +136,7 @@ type DisconnectPublisherConnectionParams struct {
 	ClaimID                      pgtype.Text
 }
 
+// close only the exact claim so a late disconnect cannot close its replacement.
 func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnection, error) {
 	row := q.db.QueryRow(ctx, disconnectPublisherConnection,
 		arg.DisconnectedAt,
@@ -250,6 +253,7 @@ type MarkPublisherConnectionReadyParams struct {
 	ClaimID                      pgtype.Text
 }
 
+// ready is idempotent for the exact claim; a replaced assignment cannot revive.
 func (q *Queries) MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnection, error) {
 	row := q.db.QueryRow(ctx, markPublisherConnectionReady,
 		arg.ReadyAt,

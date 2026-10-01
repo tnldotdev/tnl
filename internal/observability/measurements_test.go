@@ -48,7 +48,7 @@ func TestDurationSummariesIntervalAndLabels(t *testing.T) {
 		got.P99Seconds == nil || math.Abs(*got.P99Seconds-1.98) > 1e-9 {
 		t.Fatalf("summary = %+v", got)
 	}
-	// Structured identities are independent of label ordering.
+	// structured identities are independent of label ordering.
 	after[0].Metric[0].Label[0], after[0].Metric[0].Label[1] = after[0].Metric[0].Label[1], after[0].Metric[0].Label[0]
 	if _, err := DurationSummaries(before, after); err != nil {
 		t.Fatal(err)

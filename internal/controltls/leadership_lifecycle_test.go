@@ -81,7 +81,7 @@ func TestLeadershipCancellationStopsInFlightIssuance(t *testing.T) {
 					close(release)
 				default:
 					t.Error("Run has not finished after leadership cancellation")
-					// Unblock the broken implementation so the reproduction owns
+					// unblock the broken implementation so the reproduction owns
 					// and joins its goroutine even when the assertions fail.
 					close(release)
 					<-done
@@ -115,7 +115,7 @@ func TestStoppedSourceDoesNotStartCertificateRenewal(t *testing.T) {
 		defer stop()
 		done := make(chan error, 1)
 		go func() { done <- source.Run(ctx) }()
-		// With usable cached material, Run reaches its wait without ACME I/O.
+		// with usable cached material, Run reaches its wait without ACME I/O.
 		synctest.Wait()
 		if requests.Load() != 0 {
 			t.Fatal("fixture unexpectedly required initial issuance")
@@ -124,8 +124,8 @@ func TestStoppedSourceDoesNotStartCertificateRenewal(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
-		// Advance past the cached certificate's renewal window and expiry.
-		// No real clock wait or external CA is involved.
+		// advance past the cached certificate's renewal window and expiry.
+		// no real clock wait or external CA is involved.
 		time.Sleep(2 * time.Hour)
 		if got := requests.Load(); got != 0 {
 			t.Errorf("stopped source started %d ACME requests after Run returned", got)
@@ -161,8 +161,8 @@ func TestScheduledRenewalStopsWithLeadership(t *testing.T) {
 		if len(requests) != 0 {
 			t.Error("fresh cached certificate triggered issuance")
 		}
-		// A one-hour certificate enters its renewal window after about
-		// forty minutes. Exercise the timer, not a direct issuance call.
+		// a one-hour certificate enters its renewal window after about
+		// forty minutes. exercise the timer, not a direct issuance call.
 		time.Sleep(40 * time.Minute)
 		synctest.Wait()
 		var requestCtx context.Context

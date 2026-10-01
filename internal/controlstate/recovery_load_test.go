@@ -14,9 +14,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
-// A database-state model of one relay restart, not a process-crash or visitor
-// recovery test. Drain to a short logical deadline, then register a new run.
-// The other leases remain valid for one hour; no real network calls are made.
+// a database-state model of one relay restart, not a process-crash or visitor
+// recovery test. drain to a short logical deadline, then register a new run.
+// the other leases remain valid for one hour; no real network calls are made.
 func TestLoadRelayRecovery(t *testing.T) {
 	f := newControlLoadFixture(t)
 	if f.routes < 2 {
@@ -71,7 +71,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	workers := newIntegrationWorkers(t, cancel)
 	var recovered, healthyPublicURLs, heartbeats atomic.Int64
 	var pages [2]atomic.Int64
-	var usageRevisions [2]uint64 // One writer per ingress; read only after joining.
+	var usageRevisions [2]uint64 // one writer per ingress; read only after joining.
 	recoveryTimes := make([]time.Duration, f.routes)
 	f.startMetrics(t)
 	started := time.Now()
@@ -99,13 +99,13 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 
 	// 32 recovery workflows and 32 healthy workflows share the same two pools.
-	// Healthy heartbeats and the two serial usage writers finish their current
+	// healthy heartbeats and the two serial usage writers finish their current
 	// sweep only after every affected slot has actually been marked ready.
 	restartReady := make(chan struct{})
 	backgroundReady := make(chan struct{}, 3+len(ingresses))
 	var work sync.WaitGroup
 	work.Add(64 + len(ingresses))
-	var restarted RelayLease // Published to recovery workflows by restartReady.
+	var restarted RelayLease // published to recovery workflows by restartReady.
 	for worker := range 32 {
 		workers.Go(func() {
 			defer work.Done()
@@ -138,7 +138,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 					index := unaffected[offset]
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					// One owner per route advances its logical heartbeats monotonically.
+					// one owner per public URL advances its logical heartbeats monotonically.
 					at := now.Add(time.Since(started))
 					setup, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), at, time.Hour, time.Hour)
 					stop()
@@ -219,7 +219,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 			}
 		})
 	}
-	// Require successful background work after the failure before releasing the
+	// require successful background work after the failure before releasing the
 	// recovery workflows, rather than counting goroutine starts as progress.
 	for range 3 + len(ingresses) {
 		select {
@@ -266,7 +266,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 		}
 	}
 
-	// Verification uses the undelayed setup pool. Walk the bounded event history
+	// verification uses the undelayed setup pool. walk the bounded event history
 	// once against one final snapshot to check every intermediate survivor
 	// projection; never take a full snapshot for each small delta page.
 	verificationStarted := time.Now()
@@ -324,8 +324,8 @@ func TestLoadRelayRecovery(t *testing.T) {
 		seen[event.PublicURLID] = true
 		verified++
 	}
-	// Check committed usage per route/session, not merely successful calls or a
-	// global total. Both serial streams finish complete cumulative revisions.
+	// check committed usage per public URL and publish run, not merely successful calls or a
+	// global total. both serial streams finish complete cumulative revisions.
 	units := usageRevisions[0] + 2*usageRevisions[1]
 	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
@@ -359,8 +359,8 @@ func TestLoadRelayRecovery(t *testing.T) {
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
 
-// Readers use immutable initial projections while recovery workers change their
-// assignments. Check identity, monotonic revisions, and surviving connections
+// readers use immutable initial projections while recovery workers change their
+// assignments. check identity, monotonic revisions, and surviving connections
 // live; the post-join event walk verifies every final replacement and stale run.
 func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, failedRelayID string, now time.Time, workDone <-chan struct{}, backgroundReady chan<- struct{}) error {
 	expected := make(map[string]IngressRoutingTableEvent, len(initial.Entries))

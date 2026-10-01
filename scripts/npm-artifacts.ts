@@ -18,7 +18,7 @@ export const npmPackageMetadataSchema = z.object({
 export type PackageKind = z.infer<typeof packageKindSchema>;
 export type PackedPackage = z.infer<typeof packedPackageSchema>;
 
-// Preserve unmodeled npm fields when rewriting or serving a package manifest.
+// preserve unmodeled npm fields when rewriting or serving a package manifest.
 export const packageManifestSchema = z.looseObject({
   name: z.string(),
   version: z.string(),

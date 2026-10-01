@@ -53,7 +53,7 @@ func goldenWire(t testing.TB, name string) []byte {
 	return b
 }
 
-// A payload read is itself a failure: an EOF-only fixture would also pass if
+// a payload read is itself a failure: an EOF-only fixture would also pass if
 // the size guard were deleted and the reader tried to consume the payload.
 type headerOnlyReader struct {
 	header       *bytes.Reader

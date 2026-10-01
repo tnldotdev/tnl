@@ -156,7 +156,7 @@ func TestBearerTransportOriginRestrictionsAndExplicitAuthorization(t *testing.T)
 					return &http.Response{StatusCode: 401, Header: http.Header{"Www-Authenticate": {"Bearer"}}, Body: body}, nil
 				}}
 				source := &tokenSource{control: control{serverEndpoint: testControlOrigin, authorityEndpoint: testAuthorityOrigin}, explicit: "automatic-access"}
-				// With explicit Authorization, no token lookup (and no state) is needed.
+				// with explicit Authorization, no token lookup or saved state is needed.
 				if authorization != "" {
 					source.explicit = ""
 				}

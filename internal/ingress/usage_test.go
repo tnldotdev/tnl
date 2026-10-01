@@ -278,8 +278,8 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	// Mutate the first page and an unsent page, then cross the minute while the
-	// request is blocked. None of these events belong to the frozen checkpoint.
+	// mutate the first page and an unsent page, then cross the minute while the
+	// request is blocked. none of these events belong to the frozen checkpoint.
 	for _, name := range []string{"route-000", "route-256"} {
 		connection := reporter.Open(name, 1, source, cutoff)
 		connection.Close(cutoff)
@@ -307,7 +307,7 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 	}
 	control.calls = nil
 	control.onReport = nil
-	// A delayed ticker timestamp must not predate an already observed mutation.
+	// a delayed ticker timestamp must not predate an already observed mutation.
 	if err := reporter.flush(ctx, cutoff, false); err != nil {
 		t.Fatal(err)
 	}

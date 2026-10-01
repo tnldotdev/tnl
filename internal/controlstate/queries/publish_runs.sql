@@ -1,7 +1,7 @@
 -- name: LockPublicURLForRun :one
--- Publish run operations serialize public URL mutations but never change the public URL's
--- identity. Let usage's KEY SHARE references coexist; overlapping usage pages
--- can otherwise starve a waiting heartbeat's stronger UPDATE lock.
+-- publish run operations serialize with public URL mutations without changing
+-- public URL identity. NO KEY UPDATE permits usage's KEY SHARE references;
+-- overlapping usage pages could starve a stronger UPDATE heartbeat lock.
 SELECT *
 FROM control.public_urls
 WHERE id = sqlc.arg(public_url_id)
@@ -19,9 +19,9 @@ FROM control.publish_runs
 WHERE public_url_id = sqlc.arg(public_url_id)
   AND closed_at IS NULL;
 
--- Lock only public URLs, never publish runs first: heartbeat and closure take
--- the public URL before the run. The partial expiration index finds candidates;
--- SKIP LOCKED lets other controls and active publishers keep their public URL locks.
+-- lock public URLs before publish runs, as heartbeat and closure do. the
+-- partial expiration index finds candidates; SKIP LOCKED leaves busy public
+-- URLs to other controls and active publishers.
 -- name: LockExpiredPublishRunPublicURLs :many
 SELECT routes.*
 FROM control.publish_runs AS sessions
@@ -143,14 +143,14 @@ INSERT INTO control.publish_run_connections (
 FROM generate_series(0, 1) AS slots(connection_slot)
 RETURNING *;
 
--- A failed ready connection can keep its existing service reservation. This
+-- a failed ready connection can keep its existing service reservation. this
 -- atomic ready -> assigned transition has zero counter delta and needs only the
 -- caller's public URL/publish run locks, not placement's global/service/lease guards.
--- Check failure and eligible service capacity in the statement snapshot. A
+-- check failure and eligible service capacity in the statement snapshot. a
 -- concurrent lease/configuration change may invalidate the returned assignment,
 -- just as one immediately after commit can; claim checks the exact current lease
--- and process capacity under its exclusive lease guard. No capacity is added here.
--- Closed/expired slots have no reservation and require guarded placement first.
+-- and process capacity under its exclusive lease guard. no capacity is added here.
+-- closed or expired slots have no reservation and require guarded placement first.
 -- name: ReplacePublishRunConnection :one
 UPDATE control.publish_run_connections AS connections
 SET publisher_connection_id = sqlc.arg(new_publisher_connection_id),

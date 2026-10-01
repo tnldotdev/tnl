@@ -28,7 +28,7 @@ func TestSelectProjectConfigExplicitAndNonGitSelection(t *testing.T) {
 		t.Fatalf("explicit selection = %#v, %v", selection, err)
 	}
 
-	// Discovery outside a Git worktree intentionally inspects cwd only.
+	// discovery outside a Git worktree inspects cwd only.
 	selection, err = SelectProjectConfig(t.Context(), filepath.Join(root, "a"), "", "", false)
 	if err != nil || selection.Path != nearConfig || selection.Explicit {
 		t.Fatalf("discovered selection = %#v, %v", selection, err)
@@ -72,7 +72,7 @@ func TestSelectProjectConfigWalksAncestorsAndStopsAtRepositoryBoundary(t *testin
 			}
 		}
 	}
-	// Explicit selection is allowed to cross the boundary and flags beat env.
+	// explicit selection may cross the boundary and flags take precedence over env.
 	selection, err := SelectProjectConfig(t.Context(), nested, outerConfig, "missing.yml", false)
 	if err != nil || selection.Path != outerConfig || !selection.Explicit {
 		t.Fatalf("explicit outside selection = %#v, %v", selection, err)

@@ -23,8 +23,8 @@ func hasPendingDNSCleanup(authorizations []controlstate.ACMEAuthorizationWork) b
 	})
 }
 
-// continueDNSCleanup saves cleaning intent before calling the dns provider.
-// one reconciliation finishes all authorizations sharing a txt name.
+// continueDNSCleanup saves cleaning intent before calling the DNS provider.
+// one reconciliation finishes all authorizations sharing a TXT name.
 func (w *PublicURLWorker) continueDNSCleanup(
 	ctx context.Context,
 	work *controlstate.ACMEOrderWork,
@@ -65,8 +65,8 @@ func (w *PublicURLWorker) continueDNSCleanup(
 		if err := w.config.DNSChallenges.Cleanup(ctx, work.PublicURLID, authorization.ID); err != nil {
 			return false, err
 		}
-		// all authorizations for this base identifier share one txt name. the
-		// challenge manager reconciles their combined owned values in one write.
+		// all authorizations for this identifier share one TXT name. reconcile
+		// their combined owned values in one write.
 		base := strings.TrimPrefix(authorization.Identifier, "*.")
 		for otherIndex := range work.Authorizations {
 			other := &work.Authorizations[otherIndex]

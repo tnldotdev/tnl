@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// This fixture models only session closure and ordered stream delivery. Transport
+// this fixture models only session closure and ordered stream delivery. transport
 // half-close/reset behavior is tested against real QUIC and TLS/yamux elsewhere.
 type memoryPair struct {
 	mu       sync.Mutex
@@ -127,7 +127,7 @@ func await[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-// Allocate ownership on the test goroutine, before Race starts its workers.
+// allocate ownership on the test goroutine before Race starts its workers.
 func handshakeConnector(t *testing.T, authenticate AuthenticateFunc) (muxsession.Connector, *memorySession) {
 	t.Helper()
 	client, server := newMemoryPair(t)

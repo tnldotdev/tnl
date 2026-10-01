@@ -45,7 +45,7 @@ func TestWorkerDoesNotStarvePublicURLWorkBehindAuthorityBacklog(t *testing.T) {
 	if found, err := worker.processOne(t.Context()); !found || err != nil {
 		t.Fatalf("first authority iteration = %t, %v", found, err)
 	}
-	// Control can always have another claimable authority. The other queue
+	// control can always have another claimable authority. the other queue
 	// must still make progress while authority work remains available.
 	store.work = testDNSWork(now)
 	if found, err := worker.processOne(t.Context()); !found || err != nil {
@@ -507,7 +507,7 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 			} else if provider.publishCalls != 1 || verifier.publicURLCalls != 1 || store.publicURLSaves != 1 || store.publicURLSaved.State != controlstate.PublicURLDNSPublished || store.publicURLSaved.LastError != "" {
 				t.Fatalf("route save = %#v", store)
 			}
-			// A failed save leaves the original durable work available for a later claim.
+			// a failed save leaves the original durable work available for a later claim.
 			store.saveErr, store.publicURLSaveErr = nil, nil
 			if kind == "authority" {
 				store.work = testDNSWork(now)

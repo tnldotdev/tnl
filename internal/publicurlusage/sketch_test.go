@@ -36,7 +36,7 @@ func TestVisitorSketchScopesNetworksByRouteAndKey(t *testing.T) {
 }
 
 func TestVisitorSketchSparseAndDenseVectors(t *testing.T) {
-	// Version 1, precision 12, sparse; registers 0=1, 2048=7, 4095=53.
+	// version 1, precision 12, sparse; registers 0=1, 2048=7, 4095=53.
 	sparse := []byte{1, 12, 0, 0, 3, 0, 0, 1, 8, 0, 7, 15, 255, 53}
 	var want VisitorSketch
 	want.registers[0], want.registers[2048], want.registers[4095] = 1, 7, 53
@@ -44,7 +44,7 @@ func TestVisitorSketchSparseAndDenseVectors(t *testing.T) {
 	if err != nil || got != want || !bytes.Equal(want.MarshalBinary(), sparse) {
 		t.Fatalf("sparse vector: %v", err)
 	}
-	// Every register is populated, so the dense vector is deterministic.
+	// every register is populated, so the dense vector is deterministic.
 	dense := append([]byte{1, 12, 1}, bytes.Repeat([]byte{1}, 4096)...)
 	for index := range want.registers {
 		want.registers[index] = 1
@@ -53,7 +53,7 @@ func TestVisitorSketchSparseAndDenseVectors(t *testing.T) {
 	if err != nil || got != want || !bytes.Equal(want.MarshalBinary(), dense) || got.Estimate() != 5907 {
 		t.Fatalf("dense vector: estimate=%d error=%v", got.Estimate(), err)
 	}
-	// Sparse costs 5+3n bytes, dense costs 4099: transition at n=1365.
+	// sparse costs 5+3n bytes, dense costs 4099: transition at n=1365.
 	for _, count := range []int{1364, 1365} {
 		var sketch VisitorSketch
 		for index := range count {

@@ -61,7 +61,7 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 		t.Fatalf("visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
-	// Publishers and the reusable visitor connection are still open: admission
+	// publishers and the reusable visitor connection are still open: admission
 	// and stream-open metrics must already be complete, not lifetime timers.
 	assertRuntimeOperations(t, []*integrationProcess{fixture.process}, map[string]uint64{
 		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
@@ -100,7 +100,7 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 			quic, tcp := fixture.connectors()
 			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			config.AllowedIPPrefixes = []string{"192.0.2.10/32"} // Visitor connects from 127.0.0.1.
+			config.AllowedIPPrefixes = []string{"192.0.2.10/32"} // visitor connects from 127.0.0.1.
 			handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 			ready := fixture.waitReady(t, handle)
 			http2Client, http2Transport := newIntegrationHTTPSClient(t, fixture.pebble.roots, fixture.publicAddress, true, fixture.owner)
@@ -307,7 +307,7 @@ func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
 			websocketGate := make(chan struct{})
 			sseGate := make(chan struct{})
 			streamGate := make(chan struct{})
-			// Release handlers even if an assertion fails before the first read.
+			// release handlers even if an assertion fails before the first read.
 			releaseWebSocket := sync.OnceFunc(func() { close(websocketGate) })
 			releaseSSE := sync.OnceFunc(func() { close(sseGate) })
 			releaseStream := sync.OnceFunc(func() { close(streamGate) })

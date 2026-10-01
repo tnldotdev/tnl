@@ -37,8 +37,8 @@ const routes = z.coerce
   .parse(process.env.PUBLIC_URLS ?? "4");
 const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
 const replicatedRelays = process.env.SCENARIO === "control-restart";
-// Each publisher component owns striped pairs of routes. Small smoke runs
-// intentionally leave some publisher components without a route.
+// each publisher component owns striped pairs of public URLs. small smoke runs
+// intentionally leave some publisher components without a public URL.
 const activePublishers = publisherServices.filter((_, shard) => shard * 2 < routes);
 const ingresses: readonly ("ingress-a" | "ingress-b")[] = haTopology
   ? ["ingress-a", "ingress-b"]
@@ -63,7 +63,7 @@ const composeArgs = [
 function docker(args: readonly string[], quiet = false): string {
   return execFileSync("docker", args, {
     encoding: "utf8",
-    // A fresh CI runner compiles the race binary and dependencies inside Docker.
+    // a fresh CI runner compiles the race binary and dependencies inside Docker.
     timeout: args.includes("build") ? 600_000 : 180_000,
     stdio: ["ignore", "pipe", quiet ? "pipe" : "inherit"],
   });

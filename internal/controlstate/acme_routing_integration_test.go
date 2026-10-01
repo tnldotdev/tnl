@@ -131,7 +131,7 @@ func seedACMERoutingBarrierOrder(t *testing.T, database *Database, now time.Time
 
 func setACMERoutingBarrierRevision(t *testing.T, database *Database, revision int64, now time.Time) {
 	t.Helper()
-	// Each barrier advance represents an actual change to this challenge.
+	// each barrier advance represents an actual change to this challenge.
 	got, err := controlstatedb.New(database.pool).InsertFinalIngressRoutingTableEvent(t.Context(), controlstatedb.InsertFinalIngressRoutingTableEventParams{
 		EventKind: "challenge_upsert", PublicURLID: "public_url_acmebarrier", PublishRunNumber: 1,
 		CanonicalHostname: "route-acmebarrier.example.test", EntryRevision: revision,

@@ -49,7 +49,7 @@ func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, handled) })
 	client := tls.Client(ingress, &tls.Config{
 		ServerName: "ROUTE.EXAMPLE", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		InsecureSkipVerify: true, // The test public URL certificate is self-signed.
+		InsecureSkipVerify: true, // the test public URL certificate is self-signed.
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -107,7 +107,7 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 	if _, err := ingress.Write(header); err != nil {
 		t.Fatal(err)
 	}
-	visitor := tls.Client(ingress, &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // Test certificate is self-signed.
+	visitor := tls.Client(ingress, &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // test certificate is self-signed.
 	if err := visitor.Handshake(); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stalled.Close() })
-	// A stream that never sends its header cannot hold up another visitor on
+	// a stream that never sends its header cannot hold up another visitor on
 	// the same publisher connection.
 	openCtx, stopOpen := context.WithTimeout(ctx, 2*time.Second)
 	defer stopOpen()
@@ -308,7 +308,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = stream.Close() })
 	_ = stalled.Close()
-	// A malformed header rejects just that stream, preserving the already
+	// a malformed header rejects just that stream, preserving the already
 	// accepted visitor and the publisher connection that carries it.
 	malformed, err := acceptedRelay.transport.OpenStream(ctx)
 	if err != nil {
@@ -374,7 +374,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 		ForceAttemptHTTP2: true,
 		TLSClientConfig: &tls.Config{
 			ServerName: "route.example", MinVersion: tls.VersionTLS13,
-			InsecureSkipVerify: true, // The test public URL certificate is self-signed.
+			InsecureSkipVerify: true, // the test public URL certificate is self-signed.
 		},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			return openHTTPTestRouteServer(route, handled)
@@ -447,7 +447,7 @@ func openHTTPTestRouteServer(route *PublicURLServer, handled chan struct{}) (net
 	return ingress, nil
 }
 
-// Every real-I/O test wait has a local bound, including cleanup after Fatal.
+// every real-I/O test wait has a local bound, including cleanup after Fatal.
 func awaitPublisherTest[T any](t *testing.T, result <-chan T) T {
 	t.Helper()
 	select {

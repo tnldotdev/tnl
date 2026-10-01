@@ -90,8 +90,8 @@ func TestIntegrationDatabaseDiagnosticsMarksOmittedBlockers(t *testing.T) {
 	defer cancel()
 	var blockers []pgx.Tx
 	for range MaxDatabaseDiagnosticBlockers + 1 {
-		// Separate connections keep this independent of the test machine's pool
-		// size. They model concurrent shared lock holders, not request activity.
+		// separate connections keep this independent of the test machine's pool
+		// size. they model concurrent shared lock holders, not request activity.
 		connection, err := pgx.Connect(ctx, databaseURL)
 		if err != nil {
 			t.Fatal(err)

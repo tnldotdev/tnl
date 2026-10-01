@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Only explicit, non-secret response fields are logged. Preserve the response
+// only explicit, non-secret response fields are logged. preserve the response
 // bytes and closer for the real client; never log headers or challenge material.
 func traceRuntimeCertificateHTTP(t *testing.T, client *http.Client, start time.Time) {
 	base := client.Transport
@@ -52,9 +52,9 @@ func traceRuntimeCertificateHTTP(t *testing.T, client *http.Client, start time.T
 	})
 }
 
-// Sample at 250ms while activating, logging only state transitions. This is a
+// sample at 250ms while activating, logging only state transitions. this is a
 // test-only observer on the inspection connection, not a worker or metrics hook.
-// Attempts/epochs retain evidence of short claims between samples. The timestamps
+// attempts/epochs retain evidence of short claims between samples. the timestamps
 // are database transition times; elapsed is the observation time.
 func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Time) func() {
 	ctx, cancel := context.WithCancel(t.Context())

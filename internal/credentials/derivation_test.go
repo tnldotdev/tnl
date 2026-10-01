@@ -10,7 +10,7 @@ import (
 )
 
 func TestCredentialDerivation(t *testing.T) {
-	// Independently calculated HMAC-SHA256 vectors: key bytes 00..1f,
+	// independently calculated HMAC-SHA256 vectors: key bytes 00..1f,
 	// context "fixture/context", and each documented v1 domain plus NUL.
 	key := make([]byte, 32)
 	for index := range key {

@@ -6,7 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// IngressRoutingSnapshot is bounded, process-local controller state. Revisions
+// IngressRoutingSnapshot is bounded, process-local controller state. revisions
 // describe successful routing responses, not control's current revision while
 // a request is pending. CaughtUp requires an event response confirming catch-up;
 // applying the initial snapshot alone only establishes Initialized.
@@ -23,7 +23,7 @@ type IngressRoutingSnapshot struct {
 	Resnapshots          uint64
 }
 
-// RegisterIngressRouting exposes one ingress controller's in-memory state. The
+// RegisterIngressRouting exposes one ingress controller's in-memory state. the
 // source must perform no network or database I/O, including during a stalled poll.
 func (m *Metrics) RegisterIngressRouting(source func() IngressRoutingSnapshot) {
 	m.registry.MustRegister(newIngressRoutingCollector(source))

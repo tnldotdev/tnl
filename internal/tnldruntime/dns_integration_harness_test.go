@@ -24,7 +24,7 @@ import (
 
 var integrationDNSChild = flag.String("tnl-dns-child", "", "isolated DNS integration child test")
 
-// Start a fresh process before net/http caches proxy settings. Even if the SDK
+// start a fresh process before net/http caches proxy settings. even if the SDK
 // ignores the endpoint override, its public API requests hit a rejecting proxy.
 // Process-group cleanup also contains daemon panics without orphaning Pebble.
 func integrationDNSSubprocess(t *testing.T) bool {
@@ -114,8 +114,8 @@ type integrationDNSChange struct {
 	zoneID string
 }
 
-// This is only the Route 53 HTTP wire boundary, not a replacement provider or
-// verifier. Records written by the real SDK are served to tnld and Pebble.
+// this is only the Route 53 HTTP wire boundary, not a replacement provider or
+// verifier. records written by the real SDK are served to tnld and Pebble.
 type integrationRoute53 struct {
 	address      string
 	server       *httptest.Server
@@ -259,8 +259,8 @@ func (f *integrationRoute53) applyChanges(ctx context.Context, changes []integra
 			}
 		}
 	}
-	// Validate against the current state after the gate, then commit the entire
-	// batch under one lock. Failed/canceled batches cannot partially mutate DNS.
+	// validate against the current state after the gate, then commit the entire
+	// batch under one lock. failed/canceled batches cannot partially mutate DNS.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := ctx.Err(); err != nil {

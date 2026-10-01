@@ -48,8 +48,8 @@ func TestRouteServerBoundsHTTP2FanoutAcrossVisitorConnections(t *testing.T) {
 		bodies, results, cancels = append(bodies, body), append(results, result), append(cancels, cancel)
 		awaitPublisherTest(t, started)
 	}
-	// A single visitor connection can attempt many concurrent streams, but
-	// only the configured route budget can reach the HTTP/1 local service.
+	// a visitor connection can open concurrent streams, but only the public
+	// URL's request budget can reach the local HTTP/1 service.
 	for range 32 {
 		assertRouteOverloaded(t, client)
 	}
@@ -61,7 +61,7 @@ func TestRouteServerBoundsHTTP2FanoutAcrossVisitorConnections(t *testing.T) {
 	}
 	independent, _ := startLimitedTestPublicURL(t, upstream.URL, 1, 0)
 	assertRouteAvailable(t, singleConnectionRouteClient(t, independent, true))
-	// Cancel one stream: its slot must become available to another connection.
+	// cancel one stream: its slot must become available to another connection.
 	cancels[0]()
 	awaitPublisherTest(t, results[0])
 	awaitPublisherTest(t, finished)
@@ -100,7 +100,7 @@ func TestRouteServerRejectsMisdirectedHTTP2StreamWithRetryableStatus(t *testing.
 	}
 	client := singleConnectionRouteClient(t, route, true)
 
-	// Establish a TLS connection for route.example, then send a stream for a
+	// establish a TLS connection for route.example, then send a stream for a
 	// different authority over that same HTTP/2 connection, as browsers can do
 	// when sibling public URLs share a wildcard certificate and ingress address.
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://route.example/", nil)
@@ -150,7 +150,7 @@ func TestRouteServerTimesOutIncompleteBodies(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Unknown length also covers HTTP/1 chunked request bodies.
+				// unknown length also covers HTTP/1 chunked request bodies.
 				result, done := make(chan publicURLRequestResult, 1), make(chan struct{})
 				go func() { defer close(done); result <- doRouteRequest(client, request) }()
 				t.Cleanup(func() { cancel(); _ = writer.Close(); awaitPublisherTest(t, done) })
@@ -189,7 +189,7 @@ func TestRouteServerTimesOutIncompleteBodies(t *testing.T) {
 				if err := awaitPublisherTest(t, ended); err == nil {
 					t.Fatal("incomplete upstream body was not interrupted")
 				}
-				// Observe the handler return before testing admission again.
+				// observe the handler return before testing admission again.
 				awaitPublisherTest(t, finished)
 				if !h2 {
 					client = singleConnectionRouteClient(t, route, false)
@@ -239,7 +239,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 	}
 }
 
-// The real route server is used, with only its deadline shortened for tests.
+// the real public URL server is used, with only its deadline shortened for tests.
 func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout time.Duration) (*PublicURLServer, chan struct{}) {
 	t.Helper()
 	route, err := NewPublicURLServer(PublicURLServerConfig{

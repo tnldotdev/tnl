@@ -13,7 +13,7 @@ import (
 
 var ErrPublicURLRecoveryEpisodeStale = errors.New("controlstate: route recovery episode is stale")
 
-// PublicURLRecoveryObservation is one stored route recovery measurement.
+// PublicURLRecoveryObservation is one stored public URL recovery measurement.
 type PublicURLRecoveryObservation struct {
 	RecoveryEpisodeID uint64
 	PublicURLID       string
@@ -24,7 +24,7 @@ type PublicURLRecoveryObservation struct {
 }
 
 // ObservePublicURLRecovery closes one open episode and updates its cumulative
-// histogram in a transaction. Repeating an observed episode is safe.
+// histogram in a transaction. repeating an observed episode is safe.
 func (d *Database) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressIdentity IngressLeaseIdentity,

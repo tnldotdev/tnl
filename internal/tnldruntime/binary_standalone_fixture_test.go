@@ -46,7 +46,7 @@ func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone
 	}
 	runIntegrationBinaryCommand(t, repositoryRoot, integrationBinaryEnvironment(map[string]string{"TNLD_DATABASE_DIRECT_URL": databaseURL}), tnldPath, "migrate")
 	metricsAddress := unusedTCPAddress(t)
-	// Standalone creates its own internal listeners. The unused split-role
+	// standalone creates its own internal listeners. the unused split-role
 	// addresses below only need to satisfy configuration validation.
 	serveEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":                     trustFile,

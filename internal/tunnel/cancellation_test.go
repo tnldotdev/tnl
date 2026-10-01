@@ -166,7 +166,7 @@ type closeAfterTransportStream struct {
 }
 
 func (s closeAfterTransportStream) Close() error {
-	<-s.done // Models a FIN enqueue blocked behind the transport writer.
+	<-s.done // models a FIN enqueue blocked behind the transport writer.
 	return s.Stream.Close()
 }
 

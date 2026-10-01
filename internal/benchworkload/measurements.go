@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Histogram counts are cumulative and use the production duration buckets.
+// histogram counts are cumulative and use the production duration buckets.
 type Histogram struct {
 	BoundsMilliseconds  []float64 `json:"bounds_milliseconds"`
 	Counts              []uint64  `json:"counts"`

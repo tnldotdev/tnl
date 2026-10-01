@@ -8,14 +8,14 @@ import (
 func TestIntegrationExpiredTLSChallengeCanBeClaimedWithoutIngress(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "expired_tls_challenge_claim")
 	seedACMERoutingBarrierOrder(t, database, now)
-	// The publisher continues heartbeating while ingress is unavailable. Keep
-	// the publish run alive beyond the authorization's one-hour deadline.
+	// simulate continued publisher heartbeats by extending the publish run
+	// expiry beyond the authorization's one-hour deadline without ingress.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at = $1 WHERE id = 'session_acme_barrier'`, now.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
-	// A presented challenge without a forwarding projection must not be sent to
-	// the CA. Its worker still needs a claim after expiry to retire the order.
+	// a presented challenge without a forwarding projection must not be sent to
+	// the CA. its worker still needs a claim after expiry to retire the order.
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "before-expiry", now, time.Minute); err != nil || found {
 		t.Fatalf("claim before routing is ready: found=%t error=%v", found, err)
 	}

@@ -53,7 +53,7 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 		}, now, time.Minute, time.Minute)
 		sessionDone <- err
 	})
-	// The session holds the authority revision while waiting for the maintenance gate.
+	// the publish run holds the authority revision while waiting for the maintenance gate.
 	sessionPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), sessionDone)
 	siblingRequest := request
 	siblingRequest.IdempotencyKey, siblingRequest.CanonicalHostname = "sibling", "sibling.member.example.test"
@@ -65,8 +65,8 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 		sibling, err = database.CreatePublicURL(ctx, siblingRequest, now)
 		creatorDone <- err
 	})
-	// The creator now holds the identity lock and waits for the session's authority revision.
-	// Releasing the gate makes the session's INSERT check its identity foreign key.
+	// the creator holds the identity lock and waits for the publish run's authority revision.
+	// releasing the gate makes the publish run INSERT check its identity foreign key.
 	waitForPostgresBlock(t, ctx, database, sessionPID, creatorDone)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestIntegrationTeamCreationIdentityLockAvoidsDomainForeignKeyCycle(t *testi
 	if _, err := gate.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
 		t.Fatal(err)
 	}
-	// This models an identity foreign-key check performed by domain work while
+	// this models an identity foreign-key check performed by domain work while
 	// team creation is waiting on the domain row.
 	if _, err := gate.Exec(ctx, `SELECT id FROM control.identities WHERE id = $1 FOR KEY SHARE`, identity); err != nil {
 		t.Fatalf("team creator blocked domain identity foreign-key work: %v", err)

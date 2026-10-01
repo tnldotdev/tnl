@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
-// Only admission settings belong in this evidence; never serialize the full
+// only admission settings belong in this evidence; never serialize the full
 // process configuration, which includes credentials and database URLs.
 type separatedAdmissionLimits struct {
 	ClientHelloConnectionLimit       int   `json:"client_hello_connection_limit"`

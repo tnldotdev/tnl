@@ -1,6 +1,6 @@
--- Find an old committed PREFIX, not the largest old timestamp. Request-start
--- timestamps can be out of revision order; preserve every still-recent event.
--- This scan happens before acquiring the publication clock.
+-- find a committed prefix, not the largest old timestamp: request-start times
+-- can be out of revision order. keep every recent event without taking the
+-- publication clock during this scan.
 -- name: SelectIngressRoutingRetentionFloor :one
 SELECT GREATEST(clock.retained_after_revision, LEAST(clock.current_revision,
     COALESCE((SELECT min(events.routing_table_revision) - 1
@@ -10,23 +10,22 @@ SELECT GREATEST(clock.retained_after_revision, LEAST(clock.current_revision,
 FROM control.ingress_routing_table_clock AS clock
 WHERE clock.singleton = true;
 
--- Commit this short clock update BEFORE pruning in a different transaction.
--- A crash in between retains excess data, never an advertised but missing suffix.
+-- commit the retention floor before pruning in another transaction. a crash
+-- between them retains extra rows, never a missing advertised suffix.
 -- name: AdvanceIngressRoutingRetentionFloor :one
 UPDATE control.ingress_routing_table_clock
 SET retained_after_revision = GREATEST(retained_after_revision, sqlc.arg(revision)::bigint)
 WHERE singleton = true AND current_revision >= sqlc.arg(revision)::bigint
 RETURNING retained_after_revision;
 
--- Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
+-- cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 -- name: TryLockIngressRoutingHistoryCleanup :one
 SELECT pg_try_advisory_xact_lock(hashtextextended('tnl:routing-history-cleanup', 0));
 
--- Bound candidates visited as well as rows deleted. Advance past anchors even
--- when no row can be removed. Keep the newest hostname/category projection
--- (including tombstones/expired entries) AND each publish run number's latest revision.
--- All checks use this statement's snapshot. Concurrent publications can only
--- make an old anchor redundant; they cannot make a superseded event current.
+-- bound candidates scanned, even when an anchor cannot be removed. retain the
+-- latest hostname/category projection, including tombstones and expired rows,
+-- and each publish run number's latest revision. concurrent publication can
+-- make an anchor redundant but cannot restore a superseded event.
 -- name: PruneIngressRoutingHistoryBatch :one
 WITH candidates AS MATERIALIZED (
     SELECT events.routing_table_revision, events.canonical_hostname,

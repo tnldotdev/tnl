@@ -60,7 +60,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 				}
 				return
 			}
-			// Material has been delivered and staged, but neither control nor the local cache has an ACK.
+			// material is delivered and staged, but neither control nor the local cache has acknowledged it.
 			if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
 				t.Fatal(err)
 			}

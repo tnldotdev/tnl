@@ -37,7 +37,7 @@ type failingForwardingTransport struct {
 func (s *failingForwardingTransport) OpenStream(ctx context.Context) (muxsession.Stream, error) {
 	if s.opens.Add(1) == 1 {
 		return s.Session.OpenStream(ctx)
-	} // Real control handshake.
+	} // real control handshake.
 	if s.index >= len(s.connector.release) {
 		return nil, errors.New("unexpected third connection")
 	}
@@ -71,7 +71,7 @@ func TestForwarderRetryCanReuseConcurrentReplacement(t *testing.T) {
 	if index := ingressAwait(t, connector.opened); index != 0 {
 		t.Fatalf("first attempt=%d", index)
 	}
-	// Another visitor invalidates the first session and establishes a replacement
+	// another visitor invalidates the first session and establishes a replacement
 	// while this visitor's first open has not yet returned its failure.
 	forwarder.invalidate(backend.target.key(), first)
 	second, reused, err := forwarder.session(ctx, backend.target)
@@ -116,7 +116,7 @@ type singleStreamFailureTransport struct {
 }
 
 func (s *singleStreamFailureTransport) OpenStream(ctx context.Context) (muxsession.Stream, error) {
-	if s.opens.Add(1) == 2 { // The control handshake opened the first stream.
+	if s.opens.Add(1) == 2 { // the control handshake opened the first stream.
 		return nil, s.failure
 	}
 	return s.Session.OpenStream(ctx)

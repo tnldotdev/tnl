@@ -364,7 +364,7 @@ func (m *Metrics) ObserveAPIRequest(surface, operation, outcome string, duration
 	m.apiDuration.WithLabelValues(surface, operation, outcome).Observe(duration.Seconds())
 }
 
-// Outcomes and stages are closed sets, independent of route and order identity.
+// outcomes and stages are closed sets, independent of public URL and order identity.
 func (m *Metrics) ObservePublishRunReadiness(outcome string, duration, age time.Duration) {
 	switch outcome {
 	case "ready", "certificate_missing", "connections_missing", "certificate_and_connections_missing", "error":

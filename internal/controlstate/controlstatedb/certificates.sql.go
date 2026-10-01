@@ -105,8 +105,8 @@ type CheckACMEChallengeRoutingReadyParams struct {
 	IssuanceID string
 }
 
-// Claim-time checks can precede a publisher's challenge-ready transition.
-// Recheck the current projection and every live ingress immediately before
+// claim-time checks can precede a publisher's challenge-ready transition.
+// recheck the current projection and every live ingress immediately before
 // asking the CA to validate, while the authorization is still presented.
 func (q *Queries) CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error) {
 	row := q.db.QueryRow(ctx, checkACMEChallengeRoutingReady, arg.CheckedAt, arg.IssuanceID)
@@ -138,9 +138,10 @@ WITH candidate AS (
       )
       AND orders.available_at <= $3
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= $3)
-      -- Wait for this challenge's current forwarding projection, not unrelated
-      -- publications at the global head. Select the latest event before testing
-      -- kind/expiry so an older upsert cannot bypass a tombstone or expiration.
+      -- an unexpired presented challenge waits for its current forwarding
+      -- projection, not unrelated publications. an expired authorization skips
+      -- this barrier so its worker can retire it without ingress. select the
+      -- latest event before testing kind/expiry so an older upsert cannot revive.
       AND (
           NOT EXISTS (
               SELECT 1
@@ -1373,8 +1374,8 @@ type WakeACMEOrderParams struct {
 	IssuanceID  string
 }
 
-// A publisher transition invalidates the worker's authorization snapshot.
-// Call only after changing authorizations while holding the order lock.
+// a publisher transition invalidates the worker's authorization snapshot.
+// call only after changing authorizations while holding the order lock.
 func (q *Queries) WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error {
 	_, err := q.db.Exec(ctx, wakeACMEOrder, arg.AvailableAt, arg.IssuanceID)
 	return err

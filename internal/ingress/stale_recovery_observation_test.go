@@ -10,8 +10,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
-// A publish run can close while ingress is reporting its first publisher byte.
-// Control then cancels the open episode and permanently rejects the observation.
+// a publish run can close while ingress reports its first publisher byte.
+// control then cancels the open episode and permanently rejects the observation.
 func TestRecoveryReporterStopsAfterCanceledEpisode(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())

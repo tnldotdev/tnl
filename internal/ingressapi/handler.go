@@ -178,7 +178,7 @@ func (h *handler) writeServiceError(response http.ResponseWriter, request *http.
 	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The ingress service request failed")
 }
 
-// storeProblem is shared by HTTP and standalone adapters. Role controllers see
+// storeProblem is shared by HTTP and standalone adapters. role controllers see
 // API problems, never controlstate error identities.
 func storeProblem(err error, report func(error)) (status int, kind, detail string) {
 	switch {

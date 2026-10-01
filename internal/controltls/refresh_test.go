@@ -189,7 +189,7 @@ func TestCertificateInitialLoadCoalescesAndShutdownCancelsRefresh(t *testing.T) 
 		t.Fatalf("initial loads = %d", cache.calls.Load())
 	}
 
-	// A refresh started by Run is canceled and joined when Run stops.
+	// a refresh started by Run is canceled and joined when Run stops.
 	data := testCertificate(t, "control.example")
 	certificate, err := tls.X509KeyPair(data, data)
 	if err != nil {

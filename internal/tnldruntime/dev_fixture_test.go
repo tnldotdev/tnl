@@ -85,7 +85,7 @@ func (f *integrationViteFixture) start(t *testing.T, exitCode int) {
 	environment := append(append([]string(nil), f.server.environment...), "TNL_ACCESS_TOKEN="+f.accessToken,
 		"TNL_LOGIN_TOKEN=test-login-token-sentinel", "TNL_PROJECT_RUNTIME=stale-parent-metadata",
 		"TNL_FIXTURE_HOST=127.0.0.1", "TNL_FIXTURE_PORT=0", "XDG_RUNTIME_DIR="+f.project.runtimeDirectory)
-	// tnl owns its development process group. This fallback runs only after the
+	// tnl owns its development process group. this fallback runs only after the
 	// parent has tried to stop and reap it, and reports a leaked child as a failure.
 	t.Cleanup(func() {
 		report, err := readIntegrationBinaryDevReport(f.project.reportPath)
@@ -398,7 +398,7 @@ func newIntegrationBinaryDevProject(t *testing.T, repositoryRoot, name string) i
 	if _, err := os.Stat(filepath.Join(packageDirectory, "dist", "vite.js")); err != nil {
 		t.Fatal("built @tnldotdev/tnl is required; run mise exec -- pnpm --filter @tnldotdev/tnl build")
 	}
-	// Keep runtime sockets below Unix socket path length limits.
+	// keep runtime sockets below Unix socket path length limits.
 	runtimeDirectory, err := os.MkdirTemp("/tmp", "tnl-dev-")
 	if err != nil {
 		t.Fatal(err)

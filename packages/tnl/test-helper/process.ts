@@ -29,7 +29,7 @@ export function startTestProcess(
   const collect = (chunk: Buffer | string) => {
     output = `${output}${chunk.toString()}`.slice(-16_384);
   };
-  // Drain both pipes immediately, including while startup/termination is being awaited.
+  // drain both pipes immediately, including while startup/termination is being awaited.
   child.stdout?.on("data", collect);
   child.stderr?.on("data", collect);
   let spawnError: Error | undefined;
@@ -59,7 +59,7 @@ export function startTestProcess(
         if (!(await settlesWithin(closed, 2000)))
           throw new Error(`child process did not close after SIGKILL\n${output}`);
       }
-      // The framework launcher may have exited before its descendants.
+      // the framework launcher may have exited before its descendants.
       if (grouped) signal("SIGKILL");
     })());
   onTestFinished(close);

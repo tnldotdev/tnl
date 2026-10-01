@@ -12,9 +12,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
-// This is a bounded database workload, not a lease-cadence or soak test. The
+// this is a bounded database workload, not a lease-cadence or soak test. the
 // certificate fixture signs local test material; no visitors, DNS, or ACME
-// network calls are involved. All logical leases last one hour.
+// network calls are involved. all logical leases last one hour.
 func TestLoadSteadyState(t *testing.T) {
 	setupStarted := time.Now()
 	f := newControlLoadFixture(t)
@@ -65,7 +65,7 @@ func TestLoadSteadyState(t *testing.T) {
 	fail := func(err error) {
 		first.Do(func() { firstErr = err; cancel() })
 	}
-	// Each route belongs to one workflow, so its three heartbeats advance its
+	// each public URL belongs to one workflow, so its three heartbeats advance its
 	// logical time monotonically even when workflows progress at different rates.
 	start := make(chan struct{})
 	var work sync.WaitGroup
@@ -104,7 +104,7 @@ func TestLoadSteadyState(t *testing.T) {
 	bucketStart := f.now.Truncate(time.Minute)
 	now := f.now.Add(3 * time.Second)
 	for index, ingress := range ingresses {
-		// Exactly one serial page stream per ingress. Each cumulative revision
+		// exactly one serial page stream per ingress. each cumulative revision
 		// is replayed once before the next page; only new deltas may be counted.
 		workers.Go(func() {
 			defer work.Done()
@@ -159,8 +159,8 @@ func TestLoadSteadyState(t *testing.T) {
 		t.Fatal("incomplete heartbeat or usage workload")
 	}
 	t.Logf("mixed_workload_elapsed=%s", time.Since(started))
-	// Both ingress streams end at revision 2: their cumulative units are 2+4.
-	// One undelayed row stream checks every stored bucket and its session. Match
+	// both ingress streams end at revision 2: their cumulative units are 2+4.
+	// one undelayed row stream checks every stored bucket and publish run. match
 	// each row to the fixture to reject missing, extra, duplicate, or misrouted
 	// rows even when their global sums happen to be correct.
 	verificationStarted := time.Now()
@@ -220,7 +220,7 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 	var sessions []publishRunFixture
 	started := time.Now()
 	defer func() { t.Logf("ready_setup_completed=%d/%d elapsed=%s", len(sessions), f.routes, time.Since(started)) }()
-	// Use the untraced setup pool and stay serial: the certificate helper claims
+	// use the untraced setup pool and stay serial: the certificate helper claims
 	// the oldest pending ACME order and expects it to be the one just created.
 	for index := range f.routes {
 		request := f.request(index)
@@ -254,7 +254,7 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 	return sessions
 }
 
-// One actor per ingress drains delta pages promptly, renewing and sampling a
+// one actor per ingress drains delta pages promptly, renewing and sampling a
 // live snapshot initially and once a second. A final observation after writes
 // finish verifies the fully drained history against the final snapshot.
 func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, now time.Time, workDone <-chan struct{}) error {

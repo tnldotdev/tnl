@@ -91,7 +91,7 @@ func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate an owner exiting without Finish: retain the persisted row, but
+	// simulate an owner exiting without Finish: retain the persisted row, but
 	// stop and join lease maintenance before advancing the reader's clock.
 	cancel()
 	select {
@@ -198,7 +198,7 @@ func TestLiveTunnelHeartbeatRenewsPersistedLease(t *testing.T) {
 		}
 		defer tunnel.Finish(context.Background(), nil)
 		initial := assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1}).Tunnels[0]
-		synctest.Wait() // Ensure the heartbeat ticker is running before advancing time.
+		synctest.Wait() // ensure the heartbeat ticker is running before advancing time.
 		time.Sleep(tunnelLeaseDuration + tunnelHeartbeatInterval)
 		synctest.Wait()
 		renewed := assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1}).Tunnels[0]

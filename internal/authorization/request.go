@@ -180,7 +180,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 }
 
 // CanonicalizeIPPrefixes parses, masks, rejects duplicates, and sorts an IP
-// policy. It preserves nil so an omitted policy differs from an empty policy.
+// policy. it preserves nil so an omitted policy differs from an empty policy.
 func CanonicalizeIPPrefixes(values []string) ([]string, error) {
 	if values == nil {
 		return nil, nil
@@ -227,7 +227,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 	return netip.PrefixFrom(address, bits).Masked(), nil
 }
 
-// ValidateTarget accepts the local HTTP target format used by routes.
+// ValidateTarget accepts the local HTTP target format used by public URLs.
 func ValidateTarget(target string) error {
 	canonical, err := localproxy.NormalizeTarget(target)
 	if err != nil || canonical != target {

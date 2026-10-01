@@ -38,8 +38,8 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 			}
 		},
 	})
-	// A forced port can already be listening before framework configuration
-	// registers. Keep a real child alive while the test acts as its integration.
+	// a forced port can already be listening before framework configuration
+	// registers. keep a real child alive while the test acts as its integration.
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer origin.Close()
 	root, stateRoot := t.TempDir(), filepath.Join(t.TempDir(), "state")
@@ -107,7 +107,7 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 		}
 	}
 	// SetDevTarget runs just before the framework result is delivered to
-	// runDev's event loop. Allow the loop to consume it before releasing ready;
+	// runDev's event loop. allow the loop to consume it before releasing ready;
 	// the displayed framework below independently checks that ordering.
 	time.Sleep(50 * time.Millisecond)
 	close(allowReady)
@@ -133,7 +133,7 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 	}
 }
 
-// Child stderr and publisher lifecycle output can write concurrently.
+// child stderr and publisher lifecycle output can write concurrently.
 type devTelemetryBuffer struct {
 	mu     sync.Mutex
 	buffer bytes.Buffer

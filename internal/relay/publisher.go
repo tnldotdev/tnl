@@ -101,6 +101,8 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		return nil
 	})
 	registered := false
+	// a successful claim must be disconnected with its exact identity, even if
+	// registration or readiness fails. remove locally before notifying control.
 	defer func() {
 		if !ready {
 			finishAdmission(retErr)
@@ -145,7 +147,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	claimed = readyClaim
 	ready = true
 	a.readyDelta(1)
-	// Admission ends here, before the long-lived connection and drain loop.
+	// admission ends after readiness; the connection and drain loop can outlive it.
 	finishAdmission(nil)
 	retErr = session.HandlePublisherDrain(ctx, connection.Drain)
 	drained := retErr == nil

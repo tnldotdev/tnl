@@ -9,7 +9,7 @@ import (
 )
 
 // DurationBucketsSeconds returns independent boundaries shared by operation,
-// HTTP, SQL, and driver-observed guard histograms. The final implicit +Inf bucket
+// HTTP, SQL, and driver-observed guard histograms. the final implicit +Inf bucket
 // also counts operations longer than two minutes.
 func DurationBucketsSeconds() []float64 {
 	return []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120}
@@ -28,7 +28,7 @@ func durationOutcome(err error) string {
 	}
 }
 
-// ObserveOperation records only the fixed application operations below. Nil
+// ObserveOperation records only the fixed application operations below. nil
 // metrics are useful for callers that do not run a process metrics listener.
 func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Duration) {
 	if m == nil {
@@ -85,7 +85,7 @@ func (m *Metrics) ObserveDatabaseAcquire(err error, elapsed time.Duration) {
 	}
 }
 
-// ObserveDatabaseGuard records a driver-observed guard interval. Outcome is the
+// ObserveDatabaseGuard records a driver-observed guard interval. outcome is the
 // transaction-ending command's outcome, not the application operation's outcome.
 func (m *Metrics) ObserveDatabaseGuard(operation string, err error, elapsed time.Duration) {
 	if m != nil {

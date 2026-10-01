@@ -104,7 +104,7 @@ func New(config Config) (*Source, error) {
 
 func (s *Source) TLSConfig() *tls.Config { return s.tlsConfig.Clone() }
 
-// EarliestCertificateExpiry reads only loaded certificate material. Zero means
+// EarliestCertificateExpiry reads only loaded certificate material. zero means
 // at least one configured hostname has not yet been loaded into this process.
 func (s *Source) EarliestCertificateExpiry() time.Time {
 	s.mu.RLock()
@@ -156,7 +156,7 @@ func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 		}
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		// Read shared challenge state even on the issuing process. An old
+		// read shared challenge state even on the issuing process. an old
 		// leader must never keep serving its own superseded in-memory token.
 		return s.readCachedCertificate(ctx, hostname+"+token", hostname)
 	}
@@ -213,8 +213,8 @@ func validCertificate(certificate *tls.Certificate, hostname string, now time.Ti
 		now.Before(certificate.Leaf.NotAfter) && certificate.Leaf.VerifyHostname(hostname) == nil
 }
 
-// All cache reads, including initial misses, share one bounded load per hostname.
-// Failed refreshes retain valid material and back off. Initial misses retry after
+// all cache reads, including initial misses, share one bounded load per hostname.
+// failed refreshes retain valid material and back off. initial misses retry after
 // one second so certificate provisioning becomes visible to readiness promptly.
 func (s *Source) refreshCertificate(parent context.Context, hostname string, now time.Time) (*tls.Certificate, error) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)

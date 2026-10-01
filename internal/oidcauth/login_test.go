@@ -65,12 +65,12 @@ func TestLoginDeviceCode(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			// OpenURL runs on the test goroutine. Prepare the token here, not in /token.
+			// OpenURL runs on the test goroutine. prepare the token here, not in /token.
 			idToken = p.signer.Token(t, "key-1", map[string]any{
 				"iss": p.issuer, "sub": "user-123", "aud": "tnl-cli", "nonce": nonce,
 				"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 			})
-			return errors.New("browser unavailable") // Manual device login remains usable.
+			return errors.New("browser unavailable") // manual device login remains usable.
 		},
 	}, &output)
 	mu.Lock()

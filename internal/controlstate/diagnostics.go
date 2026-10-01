@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Private diagnostic limits are shared with collectors. Eight blocker PIDs per
+// private diagnostic limits are shared with collectors. eight blocker PIDs per
 // session keep a maximum-shaped snapshot within 64 KiB, leaving room for eight
 // snapshots alongside the benchmark's periodic and failure metrics windows.
 const (
@@ -25,7 +25,7 @@ const (
 func (d *Database) PoolStats() *pgxpool.Stat { return d.pool.Stat() }
 
 // DatabaseMetrics contains process-local state that is safe to collect on every
-// metrics scrape. It never acquires a database connection.
+// metrics scrape. it never acquires a database connection.
 type DatabaseMetrics struct {
 	Pool              *pgxpool.Stat
 	ActiveOperations  []DatabaseOperation
@@ -74,7 +74,7 @@ type DatabaseSession struct {
 
 // Diagnostics uses a separate connection through the configured pooled URL.
 // It cannot be starved by the local pgx pool; pooler/database unavailability is
-// still bounded by the timeout. It never returns query text or connection data.
+// still bounded by the timeout. it never returns query text or connection data.
 func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnostics, retErr error) {
 	result = DatabaseDiagnostics{CapturedAt: time.Now().UTC(), Sessions: []DatabaseSession{}}
 	local := d.Metrics(result.CapturedAt)
@@ -95,8 +95,8 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 	defer d.diagnosticsMu.Unlock()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
-	// The admin console may remain accessible when regular clients are rejected.
-	// Its own timeout consumes at most one second of the shared snapshot budget.
+	// the admin console may remain accessible when regular clients are rejected.
+	// its own timeout consumes at most one second of the shared snapshot budget.
 	result.Pooler = d.poolerDiagnostics(ctx)
 	config := d.dedicatedConnectionConfig(diagnosticConnection)
 	connection, err := pgx.ConnectConfig(ctx, config)

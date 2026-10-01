@@ -117,7 +117,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 				a, b := net.Pipe()
 				ownIngressConn(t, a)
 				ownIngressConn(t, b)
-				first = singleBackend{a} // Peer never reads the PROXY header.
+				first = singleBackend{a} // peer never reads the PROXY header.
 				if stage == "hello_write" {
 					ctx, cancel := context.WithCancel(t.Context())
 					ingressWorker(t, func() { cancel(); _ = b.Close() }, func() error {

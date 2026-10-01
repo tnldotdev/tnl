@@ -193,6 +193,8 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 // returned connection is owned by the caller even when its setup write failed.
 func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (committedVisitorStream, error) {
 	opened := false
+	// rotate ordinary visitors across connected relays. challenge forwarding
+	// keeps control's order and uses the same bounded retry path.
 	firstBackend := 0
 	if kind != challengeConnection && len(backends) > 1 {
 		firstBackend = int((s.nextBackend.Add(1) - 1) % uint64(len(backends)))
@@ -237,6 +239,7 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 			stopAttempt()
 			return committedVisitorStream{}, errBackendTrackingClosed
 		}
+		// a partial ClientHello write crosses the retry boundary even on error.
 		written, writeErr := writeSetup(attemptCtx, candidate, header, prefix)
 		stopAttempt()
 		s.observeAttempt(attempt, writeErr, started)
@@ -322,8 +325,9 @@ func (s *Server) observeAttempt(index int, err error, started time.Time) {
 	}
 }
 
-// only proxy metadata and a zero-byte ClientHello failure can be retried.
-// stop and join the interrupt before clearing deadlines for the live stream.
+// writeSetup counts visitor bytes separately from PROXY v2 metadata. a failed
+// metadata write or a ClientHello failure before any visitor byte can be retried.
+// join the cancellation callback before clearing the live stream's deadline.
 func writeSetup(ctx context.Context, connection net.Conn, header, prefix []byte) (written int64, err error) {
 	deadline, _ := ctx.Deadline()
 	if err = connection.SetDeadline(deadline); err != nil {

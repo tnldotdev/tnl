@@ -41,7 +41,7 @@ func TestRoute53ReleaseFindsZoneCreatedBeforeAuthoritySave(t *testing.T) {
 				}
 				client.tags = ownedRoute53Tags(work)
 			}
-			// Release begins after a crash, before the returned ID was saved.
+			// release begins after a crash, before the returned ID was saved.
 			work.State = "releasing"
 			if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil {
 				t.Fatal(err)

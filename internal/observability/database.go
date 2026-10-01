@@ -28,7 +28,7 @@ type DatabaseOperationSnapshot struct {
 	ElapsedSeconds float64
 }
 
-// RegisterDatabase exposes in-memory database state. Its source must never
+// RegisterDatabase exposes in-memory database state. its source must never
 // acquire a connection because collection must remain available under database
 // contention and pool exhaustion.
 func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {

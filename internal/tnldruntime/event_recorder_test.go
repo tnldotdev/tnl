@@ -10,7 +10,7 @@ import (
 )
 
 // eventRecorder retains every observation, independently of how far any reader
-// has advanced. Notification is a broadcast, never a send to a consumer. No SUT
+// has advanced. notification is a broadcast, never a send to a consumer. no SUT
 // callback waits for a reader, including readers that have already returned.
 type eventRecorder[T any] struct {
 	mu      sync.Mutex
@@ -40,7 +40,7 @@ func (r *eventRecorder[T]) fail(err error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Retain the first error; a noisy child must not grow an error tree forever.
+	// retain the first error; a noisy child must not grow an error tree forever.
 	if r.err == nil {
 		r.err = err
 	}
@@ -60,7 +60,7 @@ func (r *eventRecorder[T]) snapshot() ([]T, error) {
 	return slices.Clone(r.events), r.err
 }
 
-// Each caller owns its cursor. A canceled wait does not consume an observation.
+// each caller owns its cursor. a canceled wait does not consume an observation.
 func (r *eventRecorder[T]) next(ctx context.Context, cursor *int) (T, error) {
 	var zero T
 	for {
@@ -97,7 +97,7 @@ func (r *eventRecorder[T]) next(ctx context.Context, cursor *int) (T, error) {
 }
 
 // pollCondition gives every blocking probe an operation deadline as well as the
-// overall wait deadline. Callbacks must use this context for queries/requests.
+// overall wait deadline. callbacks must use this context for queries/requests.
 func pollCondition(ctx context.Context, interval, operationTimeout time.Duration, check func(context.Context) (bool, error)) error {
 	var lastErr error
 	for {

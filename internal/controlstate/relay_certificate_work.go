@@ -197,7 +197,7 @@ func (d *Database) SaveRelayCertificateOrderWork(
 	}
 	defer rollback(ctx, tx, "save relay certificate work", &retErr)()
 	queries := controlstatedb.New(tx)
-	// Preparation locks the service before inserting an order. Completion must
+	// preparation locks the service before inserting an order. completion must
 	// use the same order before updating both the order and installed material.
 	if _, err := queries.LockRelayServiceForCertificate(ctx, work.RelayServiceID); errors.Is(err, pgx.ErrNoRows) {
 		return RelayCertificateOrderWork{}, ErrRelayCertificateWorkInvalid

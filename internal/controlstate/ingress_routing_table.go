@@ -47,7 +47,7 @@ type IngressRoutingTablePage struct {
 }
 
 // ReadIngressRoutingTableSnapshot returns the latest unexpired projection for
-// each route or challenge as of one repeatable-read high-water revision.
+// each public URL or challenge as of one repeatable-read high-water revision.
 func (d *Database) ReadIngressRoutingTableSnapshot(
 	ctx context.Context,
 	identity IngressLeaseIdentity,

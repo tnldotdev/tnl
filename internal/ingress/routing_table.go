@@ -95,7 +95,7 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 	if page.Events[len(page.Events)-1].RoutingTableRevision != page.NextRevision {
 		return fmt.Errorf("%w: next revision does not match page", ErrRoutingTableRevision)
 	}
-	// Stored entries are immutable; only incoming entries need deep copies.
+	// stored entries are immutable; only incoming entries need deep copies.
 	routes := maps.Clone(t.routes)
 	challenges := maps.Clone(t.challenges)
 	previousRevision := after
@@ -174,9 +174,9 @@ func (t *RoutingTable) lookup(
 		return ingressv1.IngressRoutingTableEntry{}, "public_url_expired"
 	}
 	entry := cloneRoutingTableEntry(stored.entry)
-	// A relay can renew its lease without changing this route projection. Its
-	// copied deadline is therefore only a hint; the relay checks its current
-	// lease and exact process identity before accepting an internal stream.
+	// relay renewal does not republish this public URL projection. the copied
+	// deadline is a hint; the relay checks its current lease and exact process
+	// identity before accepting each internal stream.
 	return entry, ""
 }
 

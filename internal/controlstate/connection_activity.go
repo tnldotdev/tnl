@@ -21,8 +21,8 @@ const (
 
 var connectionPurposeNames = [...]string{"request_pool", "tls_leadership", "dns_challenge", "diagnostics", "pooler_diagnostics"}
 
-// Counts describe this process's client sockets, not PostgreSQL backend slots.
-// Only fixed purpose labels and counters are retained, never connection details.
+// counts describe this process's client sockets, not PostgreSQL backend slots.
+// only fixed purpose labels and counters are retained, never connection details.
 type DatabaseConnectionCounts struct {
 	Open       int64 `json:"open"`
 	Connecting int64 `json:"connecting"`
@@ -38,7 +38,7 @@ type connectionActivity struct {
 }
 
 // CleanupDone tracks actual socket cleanup, including cancellation and network
-// failure. Reaping on connect/snapshot avoids a goroutine per connection and
+// failure. reaping on connect/snapshot avoids a goroutine per connection and
 // prevents completed connections accumulating between diagnostic requests.
 func (a *connectionActivity) reapClosed() {
 	for done, purpose := range a.live {

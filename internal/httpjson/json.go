@@ -1,5 +1,5 @@
-// Package httpjson reads and writes size-limited JSON. Callers handle
-// authentication, media types, timeouts, closing bodies, and API errors. This
+// Package httpjson reads and writes size-limited JSON. callers handle
+// authentication, media types, timeouts, closing bodies, and API errors. this
 // package does not contain generated API or domain types.
 package httpjson
 
@@ -17,7 +17,7 @@ var (
 )
 
 // ReadAll reads up to limit bytes and returns ErrTooLarge when more data exists.
-// It does not close the reader. I/O failures are returned unchanged.
+// it does not close the reader. I/O failures are returned unchanged.
 func ReadAll(reader io.Reader, limit int64) ([]byte, error) {
 	if limit < 0 || limit == math.MaxInt64 {
 		return nil, errors.New("httpjson: invalid body limit")
@@ -33,7 +33,7 @@ func ReadAll(reader io.Reader, limit int64) ([]byte, error) {
 }
 
 // Decode reads one JSON value and rejects unknown struct fields or trailing data.
-// Configure number handling and limit the input before calling it. The standard
+// configure number handling and limit the input before calling it. the standard
 // handling of null and duplicate object keys is unchanged.
 func Decode(decoder *json.Decoder, destination any) error {
 	decoder.DisallowUnknownFields()
@@ -46,7 +46,7 @@ func Decode(decoder *json.Decoder, destination any) error {
 	return nil
 }
 
-// Write sends an application/json response. If encoding fails after writing has
+// Write sends an application/json response. if encoding fails after writing has
 // started, it aborts the response instead of adding a second error body.
 func Write(response http.ResponseWriter, status int, value any) {
 	write(response, status, "application/json", value)

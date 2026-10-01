@@ -46,7 +46,7 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			// Neither input nor lookup mutations may change retained or new entries.
+			// neither input nor lookup mutations may change retained or new entries.
 			for _, event := range []ingressv1.IngressRoutingTableEvent{first, second} {
 				event.Entry.AllowedIpPrefixes[0] = "198.51.100.0/24"
 				event.Entry.PublisherConnections[0].RelayId = "changed"
@@ -59,7 +59,7 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 				entry.PublisherConnections[0].RelayId = "changed"
 				*entry.RecoveryEpisodeId = 100
 			}
-			// A valid first event must not leak out when a later event is stale.
+			// a valid first event must not leak out when a later event is stale.
 			updated, stale := makeEvent(3, "first"), makeEvent(4, "second")
 			updated.Entry.AllowedIpPrefixes[0] = "198.51.100.0/24"
 			stale.EntryRevision = 2

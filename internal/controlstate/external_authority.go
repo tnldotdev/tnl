@@ -14,7 +14,7 @@ import (
 var ErrExternalAuthorityPrincipal = errors.New("controlstate: external authority principal is invalid")
 
 // EnsureExternalAuthorityPrincipal records only the server-local principal ID
-// needed by stored route and audit state and returns the shared retry secret.
+// needed by stored public URL and audit state and returns the shared retry secret.
 func (d *Database) EnsureExternalAuthorityPrincipal(
 	ctx context.Context,
 	identityID string,
@@ -78,7 +78,7 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 }
 
 // GetPublicURLForAuthorization returns stored public URL data for an authority request.
-// Callers must not expose the result before the authority approves it.
+// callers must not expose the result before the authority approves it.
 func (d *Database) GetPublicURLForAuthorization(ctx context.Context, publicURLID string) (PublicURL, error) {
 	return d.getPublicURLForAuthorization(ctx, publicURLID, "")
 }

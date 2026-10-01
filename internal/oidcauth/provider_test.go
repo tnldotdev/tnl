@@ -40,7 +40,7 @@ func newTestProvider(t *testing.T, issuerPath string) *testProvider {
 	return p
 }
 
-// Handlers report errors without calling FailNow on an HTTP server goroutine.
+// handlers report errors without calling FailNow on an HTTP server goroutine.
 func writeProviderJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

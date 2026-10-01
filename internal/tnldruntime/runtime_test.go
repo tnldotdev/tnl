@@ -39,7 +39,7 @@ func TestDaemonSupervisesAndJoinsComponents(t *testing.T) {
 		t.Fatalf("first component error = %v", err)
 	}
 
-	// A component can finish after Serve has selected its result. No later
+	// a component can finish after Serve has selected its result. no later
 	// completion may block shutdown, regardless of the number of workers.
 	release := make(chan struct{})
 	d.background(func() { <-release })

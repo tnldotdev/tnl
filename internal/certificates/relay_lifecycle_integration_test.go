@@ -62,7 +62,7 @@ func TestIntegrationRelayLifecycleCleanupCrossesCertificateExpiry(t *testing.T) 
 	work.CertificatePEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	work.NotBefore, work.NotAfter, work.RenewAt = &notBefore, &notAfter, &renewAt
 	work.State = "complete"
-	// The real store must still reject expired completion. A permissive stub
+	// the real store must still reject expired completion. a permissive stub
 	// would hide the cleaning-loop regression this test exercises.
 	if _, err := database.SaveRelayCertificateOrderWork(t.Context(), work, notAfter); !errors.Is(err, controlstate.ErrRelayCertificateWorkInvalid) {
 		t.Fatalf("expired material was accepted as complete: %v", err)

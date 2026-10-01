@@ -1,5 +1,5 @@
 // Package controlstate stores persistent control state in PostgreSQL and changes
-// that state in transactions. It also manages schema migrations.
+// that state in transactions. it also manages schema migrations.
 package controlstate
 
 import (
@@ -32,7 +32,7 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// Database is the PostgreSQL connection pool for control state. Its database
+// Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
 	pool          *pgxpool.Pool
@@ -155,7 +155,7 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 	return &Database{pool: pool, storageKey: keyring, activity: activity, connections: connections}, nil
 }
 
-// Close closes all runtime database connections. It is safe to call more than
+// Close closes all runtime database connections. it is safe to call more than
 // once.
 func (d *Database) Close() {
 	if d != nil && d.pool != nil {
@@ -175,7 +175,7 @@ func (d *Database) Health(ctx context.Context) error {
 	return nil
 }
 
-// Readiness verifies runtime connectivity and schema compatibility. Unlike
+// Readiness verifies runtime connectivity and schema compatibility. unlike
 // Open, it is safe to call repeatedly from a readiness probe.
 func (d *Database) Readiness(ctx context.Context) error {
 	if err := d.Health(ctx); err != nil {
@@ -184,7 +184,7 @@ func (d *Database) Readiness(ctx context.Context) error {
 	return checkSchemaVersion(ctx, d.pool)
 }
 
-// Migrations must remain compatible with processes still serving traffic.
+// migrations must remain compatible with processes still serving traffic.
 func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) error {
 	version, err := readSchemaVersion(ctx, database)
 	if err != nil {
@@ -227,7 +227,7 @@ func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
 	if err := validateDatabaseURL(rawURL); err != nil {
 		return nil, err
 	}
-	parsed, _ := url.Parse(rawURL) // Already validated above.
+	parsed, _ := url.Parse(rawURL) // validated above.
 	parameters := parsed.Query()
 	if !parameters.Has("pool_max_conns") {
 		parameters.Set("pool_max_conns", "8")

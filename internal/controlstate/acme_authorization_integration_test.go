@@ -47,7 +47,7 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A reused authorization has no challenge material and may share an ACME
+	// a reused authorization has no challenge material and may share an ACME
 	// authorization URL with an older order, but never within the same order.
 	if _, err := pool.Exec(t.Context(), `INSERT INTO control.acme_authorizations (
 		id, order_id, identifier, authorization_url, state, available_at, validated_at,

@@ -327,7 +327,7 @@ func TestCoordinatorImmutableEventsAndFailureUnblock(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("waiter stuck")
 	}
-	// Results remain collectable after failure, and cleanup can still be recorded.
+	// results remain collectable after failure, and cleanup can still be recorded.
 	if err := client.Put(t.Context(), "cleanup", true); err != nil {
 		t.Fatal(err)
 	}

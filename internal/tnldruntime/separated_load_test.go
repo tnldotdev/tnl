@@ -168,7 +168,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
-	// Validate admission inputs with the production configuration rules before
+	// validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress-a")
 	routes, rate, duration := *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration
@@ -349,7 +349,7 @@ func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, afte
 	}
 }
 
-// The observer's process run ID is stable across clock adjustments. On Docker
+// the observer's process run ID is stable across clock adjustments. on Docker
 // Desktop, process_start_time_seconds can move by a second for every process
 // without any process restarting; retain the run-ID check and difference only
 // the histograms when the same process produced both snapshots.
@@ -393,8 +393,8 @@ func TestSeparatedDurationSummariesUsesProcessRunID(t *testing.T) {
 	}
 }
 
-// Sample production freshness/connection/stream gauges during traffic rather than
-// inferring their peaks from the idle phase endpoints. Raw endpoint scrapes retain
+// sample production freshness, connection, and stream gauges during traffic rather than
+// inferring their peaks from the idle phase endpoints. raw endpoint scrapes retain
 // all counters, including source/capacity rejections and database pool waiting.
 func sampleSeparatedGauges(t *testing.T, phase string) func() {
 	ctx, cancel := context.WithCancel(t.Context())

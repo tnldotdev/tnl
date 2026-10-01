@@ -22,7 +22,7 @@ import (
 
 const maxHeaderFields = 100
 
-// DefaultRequestLimit bounds active requests to one route's local service,
+// DefaultRequestLimit bounds active requests to one public URL's local service,
 // across all visitor connections and HTTP/2 streams.
 const DefaultRequestLimit = 500
 
@@ -108,7 +108,7 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			host := request.In.Host
-			// Remove client forwarding identity before deriving trusted headers.
+			// remove client forwarding identity before deriving trusted headers.
 			removeForwardingHeaders(request.Out.Header)
 			request.SetURL(targetURL)
 			request.Out.Host = host
@@ -131,21 +131,21 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 			diagnostic.WriteHTTP(response, request, code)
 			return
 		}
-		// Admission is shared across the route, not per visitor connection. Do
+		// admission is shared across the public URL, not per visitor connection. do
 		// not queue handlers behind the upstream transport's connection limit.
 		select {
 		case requests <- struct{}{}:
 			defer func() { <-requests }()
 		default:
 			if request.ProtoMajor == 1 {
-				// Avoid draining an unread body before sending the rejection.
+				// avoid draining an unread body before sending the rejection.
 				response.Header().Set("Connection", "close")
 			}
 			response.Header().Set("Retry-After", "1")
 			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
 			return
 		}
-		// The slot remains occupied through streamed responses and upgrades.
+		// the slot remains occupied through streamed responses and upgrades.
 		proxy.ServeHTTP(response, request)
 	}), nil
 }
@@ -192,7 +192,7 @@ func NormalizeTarget(target string) (string, error) {
 }
 
 func validateRequest(request *http.Request, hostname string) diagnostic.Code {
-	// Bind origin-form authority and TLS SNI to this route's hostname.
+	// bind origin-form authority and TLS SNI to this public URL's hostname.
 	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
 		return diagnostic.RequestRejected
 	}

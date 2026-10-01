@@ -12,7 +12,7 @@ import (
 const maximumStorageRotationBatch = 1000
 const storageRotationClaimRetry = 100 * time.Millisecond
 
-// CompleteStorageKeyRotation re-encrypts all currently claimable secrets. New
+// CompleteStorageKeyRotation re-encrypts all currently claimable secrets. new
 // writes always use the current key, so a successful pass cannot create more
 // work for the configured previous key.
 func (d *Database) CompleteStorageKeyRotation(ctx context.Context) error {
@@ -62,7 +62,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 }
 
 // ReencryptStorageSecrets claims and re-encrypts up to limit rows written with
-// the configured previous storage key. Row locks are held through commit, so
+// the previous storage key. row locks last through commit, so
 // concurrent control processes skip work already claimed by another process.
 func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rotated int, retErr error) {
 	if err := d.requireOpen(); err != nil {

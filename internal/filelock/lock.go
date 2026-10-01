@@ -1,6 +1,6 @@
 // Package filelock acquires user-owned, mode-0600 regular lock files on Unix.
-// It protects the final path component with O_NOFOLLOW, not directory ancestry.
-// Callers own trusted directories, path derivation, and lock lifetime.
+// it protects the final path component with O_NOFOLLOW, not directory ancestry.
+// callers own trusted directories, path derivation, and lock lifetime.
 package filelock
 
 import (
@@ -28,14 +28,14 @@ var ErrLocked = errors.New("filelock: already locked")
 
 const retryInterval = 100 * time.Millisecond
 
-// Lock owns a locked descriptor. Do not copy it; Close releases it exactly once.
+// Lock owns a locked descriptor. do not copy it; Close releases it exactly once.
 type Lock struct {
 	file *os.File
 	once sync.Once
 	err  error
 }
 
-// Acquire opens or creates path and takes an exclusive lock. Blocking acquisition
+// Acquire opens or creates path and takes an exclusive lock. blocking acquisition
 // has no cancellation; use AcquireContext for a cancelable wait.
 // ownerUID is explicit because callers may require the real or effective UID.
 func Acquire(path string, mode Mode, ownerUID int) (*Lock, error) {
@@ -73,7 +73,7 @@ func Acquire(path string, mode Mode, ownerUID int) (*Lock, error) {
 }
 
 // AcquireContext retries nonblocking acquisition until it succeeds or ctx is
-// canceled. It avoids an uncancelable wait in the kernel.
+// canceled. it avoids an uncancelable wait in the kernel.
 func AcquireContext(ctx context.Context, path string, ownerUID int) (*Lock, error) {
 	for {
 		if cause := context.Cause(ctx); cause != nil {
@@ -93,7 +93,7 @@ func AcquireContext(ctx context.Context, path string, ownerUID int) (*Lock, erro
 	}
 }
 
-// Close unlocks and closes the descriptor, without removing the lock file. It is
+// Close unlocks and closes the descriptor, without removing the lock file. it is
 // nil-safe and may be called concurrently; repeated calls return the same error.
 func (l *Lock) Close() error {
 	if l == nil {

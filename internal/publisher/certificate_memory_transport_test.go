@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// The in-memory transport lets synctest run handshakes, certificate changes,
+// the in-memory transport lets synctest run handshakes, certificate changes,
 // acknowledgments, and heartbeats. Close stops and joins every pipe goroutine.
 type certificateTestTransport struct {
 	done    chan struct{}

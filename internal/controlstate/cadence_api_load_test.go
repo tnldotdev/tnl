@@ -25,12 +25,12 @@ func TestLoadCadence(t *testing.T) {
 	})
 }
 
-// Exercise the real controller's resnapshot path once during relay recovery.
-// All ordinary calls use the production standalone adapter and service methods.
+// exercise the real controller's resnapshot path once during relay recovery.
+// all ordinary calls use the production standalone adapter and service methods.
 type cadenceIngressClient struct {
 	ingress.ControlClient
 	resnapshot <-chan struct{}
-	requested  bool // Only the controller's serial routing loop accesses this.
+	requested  bool // only the controller's serial routing loop accesses this.
 	retention  bool
 }
 
@@ -40,8 +40,8 @@ func (c *cadenceIngressClient) GetIngressRoutingTableEvents(ctx context.Context,
 		case <-c.resnapshot:
 			c.requested = true
 			if c.retention {
-				// Restore an old consumer cursor against the real published floor.
-				// The production API, not this wrapper, must require a resnapshot.
+				// restore an old consumer cursor against the real published floor.
+				// the production API, not this wrapper, must require a resnapshot.
 				params.After = 0
 				return c.ControlClient.GetIngressRoutingTableEvents(ctx, id, params)
 			}

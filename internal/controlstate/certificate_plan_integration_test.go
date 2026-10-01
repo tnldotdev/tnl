@@ -183,7 +183,8 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			case "method":
 				plan.ChallengeMethod = "tls-alpn-01"
 			}
-			// A fresh session on the SAME route prevents the cross-route bug from masking plan checks.
+			// start a new publish run on the same public URL so a public URL identity
+			// mismatch cannot mask the certificate plan checks.
 			authentication := startExternalPlanSession(t, database, now, route, plan, "replacement")
 			notAfter, installedAt := *work.NotAfter, now
 			wantErr := ErrPublicURLCertificate
@@ -330,7 +331,7 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 		})
 	}
 	if complete {
-		// The fixture replaces only the CA exchange: real CSR/key, signed leaf, matching SANs,
+		// the fixture replaces only the CA exchange: real CSR/key, signed leaf, matching SANs,
 		// completed authorizations, and persisted work all precede acknowledgement.
 		caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {

@@ -6,7 +6,7 @@ import (
 )
 
 // runBatchCleanup drains available batches before waiting for the next sweep.
-// Cancellation always stops the loop, even when the last batch had more work.
+// cancellation always stops the loop, even when the last batch had more work.
 func runBatchCleanup(
 	ctx context.Context,
 	interval time.Duration,

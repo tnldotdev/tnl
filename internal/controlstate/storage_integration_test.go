@@ -12,7 +12,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "storage_rotation")
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	// Seed every recoverable secret kind using the old key. No read through a
+	// seed every recoverable secret kind using the old key. no read through a
 	// dual-key database may lazily rotate a row before the batch assertions.
 	session, err := database.CreateBuiltinControlSession(ctx, "routes.example.test", 1, time.Hour, 24*time.Hour, now)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	for _, store := range stores {
 		var ciphertext []byte
 		var keyID string
-		// Each table has exactly one seeded row; Scan also rejects an empty store.
+		// each table has exactly one seeded row; Scan also rejects an empty store.
 		var count int
 		if err := database.pool.QueryRow(ctx, "SELECT count(*) FROM control."+store.table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("%s precondition: rows %d, %v", store.table, count, err)
@@ -98,7 +98,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("bounded batch left %d old-key rows, want %d: %v", count, remaining-1, err)
 		}
 	}
-	// Complete must drain the other four kinds. The earlier size-limited calls
+	// Complete must drain the other four kinds. the earlier size-limited calls
 	// must not have already done all the work.
 	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	rotating.Close()
 	database.Close()
 
-	// Removing the old key is the essential recovery guarantee. A dual-key read
+	// removing the old key is the recovery guarantee. a dual-key read
 	// would succeed even if a store had been omitted from rotation entirely.
 	reopened, err := Open(ctx, databaseURL, newKey, "")
 	if err != nil {

@@ -19,7 +19,7 @@ import (
 )
 
 // startControlWorkers opens control's durable state and starts its background
-// work. All started workers are joined by daemon.shutdown, including when a
+// work. all started workers are joined by daemon.shutdown, including when a
 // later initialization step fails.
 func (d *daemon) startControlWorkers(
 	ctx, lifetime context.Context,

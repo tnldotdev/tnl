@@ -121,7 +121,7 @@ func TestForwarderReportsUnexpectedRelaySessionClose(t *testing.T) {
 	if err := ingressAwait(t, relaySessions).Close(); err != nil {
 		t.Fatal(err)
 	}
-	// A peer closing its TCP session can appear as EOF or a reset, depending
+	// a peer closing its TCP session can appear as EOF or a reset, depending
 	// on whether the TLS connection still has unread bytes at close.
 	if err := ingressAwait(t, closed); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("unexpected session close cause = %v", err)

@@ -124,7 +124,7 @@ type CountOpenPublishRunAssignmentsByRelayServiceRow struct {
 	AssignmentCount int64
 }
 
-// Diagnostic/test oracle only; placement reads the trigger-maintained totals.
+// diagnostic/test oracle only; placement reads trigger-maintained totals.
 func (q *Queries) CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error) {
 	rows, err := q.db.Query(ctx, countOpenPublishRunAssignmentsByRelayService)
 	if err != nil {
@@ -208,12 +208,10 @@ type GetRelayLeaseForClaimRow struct {
 	TlsServerName        string
 }
 
-// Claims and readiness read service configuration without changing it. Share
-// that guard across processes. Claims exclusively lock the selected lease's
-// non-key fields so capacity checks cannot race each other, renewal, or drain.
-// NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
-// not consume another connection. Registration and placement take the service
-// exclusively before leases; keep that order here too.
+// claims and readiness share the relay-service guard across processes.
+// claims take NO KEY UPDATE on the selected lease to serialize capacity with
+// other claims, renewal, and drain. readiness takes compatible KEY SHARE
+// because it uses an existing reservation. service guards precede lease rows.
 func (q *Queries) GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error) {
 	row := q.db.QueryRow(ctx, getRelayLeaseForClaim, relayID)
 	var i GetRelayLeaseForClaimRow
@@ -282,11 +280,10 @@ type GetRelayLeaseForReadyRow struct {
 	TlsServerName        string
 }
 
-// Readiness retains the service guard through routing publication so process
-// registration/replacement cannot change its identity. KEY SHARE protects the
-// lease's existence without serializing claims or other readiness publications.
-// Renewal/drain may overlap; readiness validates the lease it reads, and routing
-// projection reads independently exclude a lease that has since drained.
+// keep the service guard through routing publication so registration cannot
+// replace the relay process between readiness and the published projection.
+// KEY SHARE does not block claims or other readiness work. renewal or drain may
+// overlap; readiness checks its lease, and projection reads exclude drained leases.
 func (q *Queries) GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error) {
 	row := q.db.QueryRow(ctx, getRelayLeaseForReady, relayID)
 	var i GetRelayLeaseForReadyRow
@@ -502,8 +499,9 @@ ORDER BY services.relay_service_id
 FOR UPDATE OF services
 `
 
-// Acquire the reservation guard before service guards and rows, in one command.
-// Callers finish locking all services before locking leases or checking capacity.
+// callers hold affected public URL rows and any existing publish run rows.
+// take the assignment-total guard before relay-service guards and lease rows;
+// lock all services before checking capacity or locking leases.
 func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement)
 	if err != nil {
@@ -685,12 +683,11 @@ type RegisterRelayRow struct {
 	TlsServerName        string
 }
 
-// Blocking service operations acquire a transaction advisory guard before any
-// service/lease row locks. Shared row readers alone can bypass a queued writer;
-// the advisory queue lets registration, placement and certificate writes progress.
-// SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
-// row-only writers: they never wait for a service row or acquire this guard after
-// holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
+// blocking relay-service operations take the transaction advisory guard before
+// service and lease rows. row readers can bypass a waiting writer without this
+// queue, starving registration, placement, or certificate updates.
+// SKIP LOCKED certificate preparation and key rotation only take row locks;
+// they must not wait for this guard while holding a row.
 func (q *Queries) RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error) {
 	row := q.db.QueryRow(ctx, registerRelay,
 		arg.RelayServiceID,

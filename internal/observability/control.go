@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// APIRequests records matched route patterns, never URLs or resource IDs. Wrap
+// APIRequests records matched route patterns, never URLs or resource IDs. wrap
 // the router so authentication and parameter-binding failures are counted too.
 func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

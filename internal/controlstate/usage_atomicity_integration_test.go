@@ -43,8 +43,8 @@ func TestIntegrationUsageFirstBucketAfterSessionWait(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Keep the first report and bucket uncommitted while the other ingress starts
-	// its session-lock statement. That statement's snapshot cannot see this bucket.
+	// keep the first report and bucket uncommitted while the other ingress starts
+	// its publish run lock statement. that statement's snapshot cannot see this bucket.
 	latest, err := loadIngressUsageHistory(ctx, queries, firstIngress.IngressLeaseIdentity, []IngressUsageReport{first})
 	if err != nil {
 		t.Fatal(err)

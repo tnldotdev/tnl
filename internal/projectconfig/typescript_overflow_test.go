@@ -20,7 +20,7 @@ func TestTypeScriptOversizedResultReportsSizeError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
 			path := filepath.Join(directory, "tnl.config.ts")
-			// The property name and JSON punctuation put even the first case
+			// the property name and JSON punctuation put even the first case
 			// over the result limit; the second cannot fit in a pipe buffer.
 			source := fmt.Sprintf(`export default {server: "x".repeat(%d)};`, test.size)
 			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {

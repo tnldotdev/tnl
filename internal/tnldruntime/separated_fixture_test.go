@@ -107,7 +107,7 @@ func separatedCoordination(t *testing.T) *benchworkload.Coordination {
 	return client
 }
 
-// Coordination uses the same authenticated HTTP events as Fly. The shared
+// coordination uses the same authenticated HTTP events as Fly. the shared
 // volume contains only fixture keys/configuration, never lifecycle barriers.
 func separatedWrite(t *testing.T, name string, value any) {
 	t.Helper()
@@ -391,7 +391,7 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 	}
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/heap" && *runtimeLoadHeapProfile {
-			// Profiling forces GC only in explicitly selected diagnostic runs.
+			// profiling forces GC only in explicitly selected diagnostic runs.
 			runtime.GC()
 			w.Header().Set("Content-Type", "application/octet-stream")
 			if err := pprof.WriteHeapProfile(w); err != nil {

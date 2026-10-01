@@ -98,7 +98,7 @@ func heartbeatResponseOnce(
 	if ctx.Err() != nil {
 		return heartbeatFallback(expiresAt), false, nil
 	}
-	// A missed heartbeat is safe only while the last confirmed session remains valid.
+	// a missed heartbeat is safe only while the last confirmed publish run remains valid.
 	if errors.Is(err, controlclient.ErrUnavailable) || callTimedOut {
 		if time.Now().Before(expiresAt) {
 			return heartbeatFallback(expiresAt), false, nil

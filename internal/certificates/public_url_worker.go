@@ -253,8 +253,8 @@ func (w *PublicURLWorker) createOrder(ctx context.Context, client acmeAPI, work 
 }
 
 func (w *PublicURLWorker) authorizeOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
-	// A known deadline must still retire the order when the CA cannot be
-	// reached; DNS cleanup does not require a fresh response from the CA.
+	// a known deadline retires the order even if the CA is unreachable; DNS
+	// cleanup does not need another CA response.
 	for _, authorization := range work.Authorizations {
 		if authorization.ExpiresAt != nil && !authorization.ExpiresAt.After(now) && authorization.State != "canceled" {
 			return terminalf("authorization for %q expired in state %q", authorization.Identifier, authorization.State)
@@ -413,8 +413,8 @@ func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operati
 	if unconfigured {
 		work.AvailableAt = now.Add(time.Minute)
 	}
-	// DNS cleanup must continue after installation without changing the
-	// availability of an already validated public URL certificate.
+	// keep cleaning up DNS after installation without making the validated
+	// public URL certificate unavailable.
 	if work.State == "waiting_for_install" || work.State == "installed" {
 		return
 	}

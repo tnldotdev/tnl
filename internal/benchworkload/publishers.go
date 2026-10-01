@@ -37,7 +37,7 @@ type PublisherConfig struct {
 	QUICKeepAlive               time.Duration
 	Parallel                    int
 	RequestLimit                int
-	// StartParallel overrides Parallel for activation only; shutdown stays bounded separately.
+	// StartParallel overrides Parallel only during activation; shutdown has its own bound.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
 	DrainTime                 time.Duration
@@ -204,8 +204,9 @@ func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Dur
 func (g *Publishers) Failures() <-chan error { return g.failures }
 func (g *Publishers) Started() int           { return len(g.processes) }
 
-// Start returns partial readiness on failure. Close must always be called, even
-// after partial activation. Lifecycle methods are called by one coordinator.
+// Start returns any ready results collected before failure, then cancels the
+// group. the coordinator must call Close even after partial activation and
+// call lifecycle methods serially.
 func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPublicURL, error) {
 	type activation struct {
 		process *publicURLProcess
@@ -327,7 +328,7 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 	return result, firstErr
 }
 
-// Stop leaves routes running until their bounded shutdown slot is available.
+// Stop leaves public URLs running until their bounded shutdown slot is available.
 func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, error) {
 	result := ShutdownResult{StartedAt: time.Now()}
 	wanted := make(map[int]bool, len(indexes))
@@ -389,7 +390,7 @@ func (g *Publishers) Close(ctx context.Context) (ShutdownResult, error) {
 	}
 	result, err := g.Stop(ctx, indexes)
 	g.cancel()
-	// Do not close SQLite underneath a publisher that has not finished.
+	// do not close SQLite while a publisher still uses it.
 	for _, process := range g.processes {
 		select {
 		case <-process.done:

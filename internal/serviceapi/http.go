@@ -110,7 +110,7 @@ func AuthenticateClusterRequest(response http.ResponseWriter, request *http.Requ
 	return false
 }
 
-// WriteServiceError handles the shared private API error boundary. Callers
+// WriteServiceError handles the shared private API error boundary. callers
 // supply only the role-specific detail for unexpected failures.
 func WriteServiceError(
 	response http.ResponseWriter,

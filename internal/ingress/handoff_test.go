@@ -99,7 +99,7 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 			if wrong.Load() != 0 {
 				t.Fatal("ACME reached publisher transport handler")
 			}
-			// Matching must be exact, not a suffix match.
+			// matching must be exact, not a suffix match.
 			other := ingressClient(t, address, "other."+test.hostname, "", protos...)
 			if err := other.Handshake(); err == nil {
 				t.Fatal("handoff accepted a different hostname")
@@ -145,7 +145,7 @@ func TestIngressHandoffsHaveIndependentCapacityHeldUntilClose(t *testing.T) {
 			default:
 			}
 			_ = owned.Close()
-			_ = owned.Close() // Closing twice must release the slot only once.
+			_ = owned.Close() // closing twice must release the slot only once.
 			_ = ingressAwait(t, handshake)
 			next := ingressClient(t, address, test.hostname, "")
 			nextHandshake := ingressWorker(t, func() { _ = next.Close() }, next.Handshake)

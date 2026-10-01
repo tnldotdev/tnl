@@ -329,8 +329,8 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	return publicURLFromModel(updated, ""), nil
 }
 
-// DeleteExpiredEphemeralPublicURLs removes a limited batch of expired routes. It
-// uses the same publish-run, routing-table, and DNS cleanup as explicit
+// DeleteExpiredEphemeralPublicURLs removes a bounded batch of expired public
+// URLs. it uses the same publish-run, routing-table, and DNS cleanup as explicit
 // deletion.
 func (d *Database) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now time.Time) (count int, retErr error) {
 	if err := d.requireOpen(); err != nil {
@@ -414,7 +414,7 @@ func (d *Database) ListPublicURLs(ctx context.Context, identityID, teamID, curso
 }
 
 // ListAuthorizedPublicURLs returns one team page after the caller has obtained a
-// current authorization decision. It deliberately does not consult local memberships.
+// current authorization decision. it does not consult local memberships.
 func (d *Database) ListAuthorizedPublicURLs(ctx context.Context, teamID, cursor string) (PublicURLPage, error) {
 	if !validStateText(teamID) || cursor != "" && !validStateText(cursor) {
 		return PublicURLPage{}, ErrPublicURLInvalid
@@ -439,7 +439,7 @@ func (d *Database) ListAuthorizedPublicURLs(ctx context.Context, teamID, cursor 
 	return page, nil
 }
 
-// GetAuthorizedPublicURLByHostname reads one non-deleted route after a current
+// GetAuthorizedPublicURLByHostname reads one non-deleted public URL after a current
 // team-read authorization decision, using the existing hostname index.
 func (d *Database) GetAuthorizedPublicURLByHostname(ctx context.Context, teamID, hostname string) (PublicURL, error) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
@@ -663,9 +663,8 @@ func closeOpenPublishRun(
 	return closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason)
 }
 
-// The caller holds the public URL row through commit, so the live/expired
-// result stays valid in its transaction. Closed is false if another control
-// already closed the run before the caller acquired the public URL lock.
+// the caller holds the public URL row through commit, keeping the live/expired
+// result valid. Closed is false if another control closed the publish run first.
 func expireStaleOpenPublishRun(
 	ctx context.Context,
 	queries *controlstatedb.Queries,

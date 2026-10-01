@@ -125,8 +125,8 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		w.applyFailure(&work, err, completedAt)
 	}
 	if work.State == "complete" {
-		// Collection or DNS cleanup can cross certificate expiry. Cleanup has
-		// finished, so retire unusable material without re-entering cleanup.
+		// collection or DNS cleanup may outlast certificate expiry. once cleanup
+		// finishes, retire unusable material without repeating it.
 		if _, _, validationErr := validateRelayCertificate(work.CertificatePEM, work.CSRDER, work.TLSServerName, completedAt); validationErr != nil {
 			work.State = "failed"
 			work.LastError = truncateError(fmt.Errorf("certificates: relay certificate unusable after cleanup: %w", validationErr))
@@ -165,8 +165,8 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.RelayCertificateOrderWork, now time.Time) error {
 	work.LastError = ""
 	if work.State == "authorizing" || work.State == "presenting" || work.State == "presented" || work.State == "validating" {
-		// Orders made before the deadline was persisted can still be recovered
-		// after an upgrade, without depending on DNS propagation.
+		// recover orders created before the deadline was persisted without
+		// depending on DNS propagation after an upgrade.
 		if work.AuthorizationURL != "" && work.AuthorizationExpiresAt == nil {
 			authorization, err := client.GetAuthorization(ctx, work.AuthorizationURL)
 			if err != nil {

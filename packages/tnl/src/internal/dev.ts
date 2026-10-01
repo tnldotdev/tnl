@@ -175,7 +175,7 @@ export function discoverProject(cwd: string): ProjectDiscovery | null {
       }
     }
 
-    // A nested repository or Git worktree must not inherit an unrelated
+    // a nested repository or Git worktree must not inherit an unrelated
     // ancestor's browser-safe project metadata.
     try {
       fs.lstatSync(path.join(directory, ".git"));

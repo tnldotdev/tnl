@@ -21,7 +21,7 @@ import (
 var acmeIdentifierOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 31}
 
 // TLSALPNChallenge contains the size-limited challenge data sent to a publisher.
-// The ACME key authorization and account key stay on the tnl server.
+// the ACME key authorization and account key stay on the tnl server.
 type TLSALPNChallenge struct {
 	ID        string
 	Hostname  string
@@ -34,7 +34,7 @@ type challengeCertificate struct {
 	certificate tls.Certificate
 }
 
-// TLSALPNChallenges stores temporary publisher-owned challenge certificates. Its
+// TLSALPNChallenges stores temporary publisher-owned challenge certificates. its
 // zero value is ready for use.
 type TLSALPNChallenges struct {
 	mu         sync.RWMutex
@@ -43,7 +43,7 @@ type TLSALPNChallenges struct {
 }
 
 // Install creates and swaps in a temporary challenge certificate as one
-// operation. Repeating the same command has no effect. A new ID replaces the
+// operation. repeating the same command has no effect. a new ID replaces the
 // current challenge for the hostname.
 func (s *TLSALPNChallenges) Install(challenge TLSALPNChallenge) error {
 	if challenge.ID == "" {
@@ -93,7 +93,7 @@ func (s *TLSALPNChallenges) Install(challenge TLSALPNChallenge) error {
 	return nil
 }
 
-// Remove removes only the challenge with the matching ID. A stale removal
+// Remove removes only the challenge with the matching ID. a stale removal
 // cannot remove a replacement challenge for the same hostname.
 func (s *TLSALPNChallenges) Remove(id string) bool {
 	s.mu.Lock()
@@ -110,8 +110,8 @@ func (s *TLSALPNChallenges) Remove(id string) bool {
 	return true
 }
 
-// GetCertificate selects a challenge certificate for crypto/tls. It accepts
-// only exact DNS SNI and the sole ALPN protocol acme-tls/1. The serving
+// GetCertificate selects a challenge certificate for crypto/tls. it accepts
+// only exact DNS SNI and the sole ALPN protocol acme-tls/1. the serving
 // TLS config must disable session tickets so every handshake is rechecked.
 func (s *TLSALPNChallenges) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if hello == nil || len(hello.SupportedProtos) != 1 || hello.SupportedProtos[0] != acme.ALPNProto {
