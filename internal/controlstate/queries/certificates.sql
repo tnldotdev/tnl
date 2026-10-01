@@ -271,9 +271,10 @@ WITH candidate AS (
       )
       AND orders.available_at <= sqlc.arg(claimed_at)
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= sqlc.arg(claimed_at))
-      -- wait for this challenge's current forwarding projection, not unrelated
-      -- publications at the global head. select the latest event before testing
-      -- kind/expiry so an older upsert cannot bypass a tombstone or expiration.
+      -- an unexpired presented challenge waits for its current forwarding
+      -- projection, not unrelated publications. an expired authorization skips
+      -- this barrier so its worker can retire it without ingress. select the
+      -- latest event before testing kind/expiry so an older upsert cannot revive.
       AND (
           NOT EXISTS (
               SELECT 1

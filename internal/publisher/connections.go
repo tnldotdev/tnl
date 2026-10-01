@@ -113,7 +113,8 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 			continue
 		}
 		// a relay may replace a QUIC claim before the publisher sees the failure.
-		// prefer TCP for that replacement; a later healthy TCP slot returns to QUIC-first.
+		// prefer TCP for that replacement; an authenticated TCP session resets the
+		// next replacement to QUIC-first.
 		preferTCP := current != nil && (current.preferTCP || current.phase == connectionServing && current.transport == tunnel.TransportQUIC)
 		if current != nil {
 			current.cancel()
@@ -239,8 +240,9 @@ func (m *publisherConnectionManager) run(
 		Role: tunnelv1.Publisher, Credential: assignment.PublisherConnectionCredential,
 		PublisherConnection: &ref,
 	}
-	// dial failures can retry this unclaimed assignment until its credential
-	// expires; a claimed connection waits for a new assignment after loss.
+	// dial and transient handshake failures can retry this assignment before an
+	// authenticated session is returned, until its credential expires. after a
+	// session closes, wait for a new assignment instead of reconnecting it.
 	for time.Now().Before(assignment.PublisherConnectionCredentialExpiresAt) {
 		quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
 			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,

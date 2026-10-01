@@ -1,5 +1,5 @@
 // Package filelock acquires user-owned, mode-0600 regular lock files on Unix.
-// It protects the final path component with O_NOFOLLOW, not directory ancestry.
+// it protects the final path component with O_NOFOLLOW, not directory ancestry.
 // callers own trusted directories, path derivation, and lock lifetime.
 package filelock
 

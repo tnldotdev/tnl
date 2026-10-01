@@ -18,8 +18,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	defer cancelDrain()
 	var result error
 	deadline := time.Now().Add(timeout)
-	// drain ingress visitors before closing usage and recovery reporters so
-	// a successful final report includes every admitted visitor connection.
+	// drain ingress visitors before closing usage and recovery reporters so a
+	// successful final report includes usage-tracked public URL visitor activity.
 	for _, runtime := range d.ingresses {
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
 			result = errors.Join(result, shutdownStep("ingress_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))

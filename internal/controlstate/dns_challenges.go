@@ -130,8 +130,9 @@ func (d *Database) GetDNSChallengeContext(
 }
 
 // WithDNSChallengeLock serializes the stored snapshot and DNS update for one
-// TXT name across control processes. the transaction lock releases on commit,
-// cancellation, or connection loss, even with pooled PostgreSQL connections.
+// TXT name across control processes. the dedicated transaction rolls back
+// after the callback returns, releasing its lock; connection loss releases
+// it too. the callback can still read through the pooled runtime connections.
 func (d *Database) WithDNSChallengeLock(ctx context.Context, recordName string, run func() error) (retErr error) {
 	base := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(recordName), "."), "_acme-challenge.")
 	if canonical, err := naming.CanonicalizeHostname(base); err != nil || canonical != base || run == nil {

@@ -204,8 +204,9 @@ func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Dur
 func (g *Publishers) Failures() <-chan error { return g.failures }
 func (g *Publishers) Started() int           { return len(g.processes) }
 
-// Start may leave some publishers ready on failure. the coordinator must call
-// Close after partial activation and call lifecycle methods serially.
+// Start returns any ready results collected before failure, then cancels the
+// group. the coordinator must call Close even after partial activation and
+// call lifecycle methods serially.
 func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPublicURL, error) {
 	type activation struct {
 		process *publicURLProcess

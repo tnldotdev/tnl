@@ -68,7 +68,7 @@ func Matches(extensions []pkix.Extension, names, identifiers []string) bool {
 }
 
 // ValidateCertificate checks an automatically issued certificate and private key.
-// It parses the leaf instead of trusting certificate.Leaf from the caller.
+// it parses the leaf instead of trusting certificate.Leaf from the caller.
 func ValidateCertificate(certificate tls.Certificate, hostname string, identifiers []string) (*x509.Certificate, error) {
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
 		return nil, errors.New("certificateidentity: certificate and private key are required")

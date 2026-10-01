@@ -181,8 +181,9 @@ func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Querie
 }
 
 // the caller holds the ingress lease and usage-run guards, serializing this
-// run's append-only report history. public URLs and publish runs are retained
-// by foreign keys, so replays need no additional row locks.
+// run's append-only report history. reports reference public URLs and ingress
+// usage runs by foreign key; historical publish runs are retained separately.
+// exact replays need no additional public URL or publish run locks.
 func applyIngressUsageReport(
 	ctx context.Context,
 	queries *controlstatedb.Queries,

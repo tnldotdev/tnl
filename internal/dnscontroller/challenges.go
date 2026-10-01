@@ -131,6 +131,8 @@ func reconcileChallengeChange(
 	checkedReady := false
 	if found {
 		if change.DesiredDigest == digest && state == "presenting" {
+			// this presentation already has a receipt. verification waits for
+			// propagation and checks DNS before the CA validates the challenge.
 			return false, nil
 		}
 		checkedReady, err = provider.ChangeReady(ctx, change.ChangeID)

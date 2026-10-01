@@ -8,8 +8,8 @@ import (
 func TestIntegrationExpiredTLSChallengeCanBeClaimedWithoutIngress(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "expired_tls_challenge_claim")
 	seedACMERoutingBarrierOrder(t, database, now)
-	// the publisher keeps heartbeating while ingress is unavailable. keep
-	// the publish run alive beyond the authorization's one-hour deadline.
+	// simulate continued publisher heartbeats by extending the publish run
+	// expiry beyond the authorization's one-hour deadline without ingress.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at = $1 WHERE id = 'session_acme_barrier'`, now.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}

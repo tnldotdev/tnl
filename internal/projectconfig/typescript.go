@@ -148,7 +148,7 @@ func readBoundedPipe(reader io.Reader, limit int) <-chan result {
 		overflow := len(data) > limit
 		if err == nil && overflow {
 			// keep draining so the loader's synchronous write can finish before
-			// wait without retaining oversized project-controlled data.
+			// command.Wait without retaining oversized project-controlled data.
 			_, err = io.Copy(io.Discard, reader)
 		}
 		channel <- result{data: data, err: err, overflow: overflow}

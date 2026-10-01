@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// defines values for BatchProblemCode.
+// Defines values for BatchProblemCode.
 const (
 	BatchProblemCodeIdempotencyConflict BatchProblemCode = "idempotency_conflict"
 	BatchProblemCodeInternal            BatchProblemCode = "internal"
@@ -44,7 +44,7 @@ func (e BatchProblemCode) Valid() bool {
 	}
 }
 
-// defines values for ProblemCode.
+// Defines values for ProblemCode.
 const (
 	ProblemCodeIdempotencyConflict    ProblemCode = "idempotency_conflict"
 	ProblemCodeInternal               ProblemCode = "internal"
@@ -77,7 +77,7 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// defines values for PublicURLUsageBucketReportResolution.
+// Defines values for PublicURLUsageBucketReportResolution.
 const (
 	Hour   PublicURLUsageBucketReportResolution = "hour"
 	Minute PublicURLUsageBucketReportResolution = "minute"
@@ -136,63 +136,63 @@ type PublicURLID = ResourceID
 
 // PublicURLUsageBucketReport defines model for PublicURLUsageBucketReport.
 type PublicURLUsageBucketReport struct {
-	// ActingIdentityId acting identity recorded when this publish run number was created.
+	// ActingIdentityId Acting identity recorded when this publish run number was created.
 	ActingIdentityId IdentityID `json:"acting_identity_id"`
 	BucketStart      time.Time  `json:"bucket_start"`
 
-	// CapacityDenials matched attempts rejected by the public URL connection limit.
+	// CapacityDenials Matched attempts rejected by the public URL connection limit.
 	CapacityDenials UnsignedInteger `json:"capacity_denials"`
 
-	// Complete whether accounting covers the entire bucket without a missing ingress report.
+	// Complete Whether accounting covers the entire bucket without a missing ingress report.
 	Complete bool `json:"complete"`
 
-	// ConnectionAttempts connections counted after a public URL match and before policy and capacity checks.
+	// ConnectionAttempts Connections counted after a public URL match and before policy and capacity checks.
 	ConnectionAttempts UnsignedInteger `json:"connection_attempts"`
 
-	// ConnectionNanoseconds elapsed time for successful streams, divided among the buckets in which the time passed.
+	// ConnectionNanoseconds Elapsed time for successful streams, divided among the buckets in which the time passed.
 	ConnectionNanoseconds UnsignedInteger `json:"connection_nanoseconds"`
 
-	// EgressBytes bytes successfully forwarded from publishers to visitors.
+	// EgressBytes Bytes successfully forwarded from publishers to visitors.
 	EgressBytes UnsignedInteger `json:"egress_bytes"`
 
-	// IngressBytes bytes successfully forwarded from visitors to publishers.
+	// IngressBytes Bytes successfully forwarded from visitors to publishers.
 	IngressBytes UnsignedInteger `json:"ingress_bytes"`
 	ItemId       string          `json:"item_id"`
 
-	// ObservedThrough latest time covered by this bucket. equals the bucket end when complete is true.
+	// ObservedThrough Latest time covered by this bucket. Equals the bucket end when complete is true.
 	ObservedThrough time.Time `json:"observed_through"`
 
-	// PolicyDenials matched attempts rejected by public URL access policy.
+	// PolicyDenials Matched attempts rejected by public URL access policy.
 	PolicyDenials UnsignedInteger `json:"policy_denials"`
 	PublicUrlId   PublicURLID     `json:"public_url_id"`
 
-	// PublishRunNumber publish run number measured by this report.
+	// PublishRunNumber PublicURL version measured by this report.
 	PublishRunNumber PositiveInteger                      `json:"publish_run_number"`
 	ReportRevision   PositiveInteger                      `json:"report_revision"`
 	Resolution       PublicURLUsageBucketReportResolution `json:"resolution"`
 
-	// SuccessfulConnectionDuration total time for a successful visitor stream. the value is recorded when the stream closes. the field is absent, rather than zero, when the bucket has no observations.
+	// SuccessfulConnectionDuration Total time for a successful visitor stream. The value is recorded when the stream closes. The field is absent, rather than zero, when the bucket has no observations.
 	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
 
-	// SuccessfulStreams visitor streams that entered bidirectional forwarding.
+	// SuccessfulStreams Visitor streams that entered bidirectional forwarding.
 	SuccessfulStreams UnsignedInteger `json:"successful_streams"`
 
-	// TeamId team recorded when this publish run number was created.
+	// TeamId Team recorded when this publish run number was created.
 	TeamId TeamID `json:"team_id"`
 
-	// TimeToFirstPublisherByte time from a public URL match until the first publisher byte reaches the visitor. the value is recorded when that byte is written. the field is absent, rather than zero, when the bucket has no observations.
+	// TimeToFirstPublisherByte Time from a public URL match until the first publisher byte reaches the visitor. The value is recorded when that byte is written. The field is absent, rather than zero, when the bucket has no observations.
 	TimeToFirstPublisherByte *DurationHistogram `json:"time_to_first_publisher_byte,omitempty"`
 
-	// VisitorNetworkEstimate precision-12 HyperLogLog estimate of distinct visitor networks for this public URL and bucket. all publish run numbers share the same sketch, so do not add estimates from reports for the same public URL and bucket.
+	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this public URL and bucket. All publish run numbers share the same sketch, so do not add estimates from reports for the same public URL and bucket.
 	VisitorNetworkEstimate UnsignedInteger `json:"visitor_network_estimate"`
 
-	// VisitorNetworkHll versioned precision-12 HyperLogLog data. after base64 decoding, the bytes start with version 1, precision 12, and an encoding byte. sparse encoding 0 then contains a big-endian uint16 entry count and sorted entries of a big-endian uint16 register index followed by a uint8 value. dense encoding 1 contains 4096 uint8 registers. inputs are visitor IPv4 /32 or IPv6 /64 networks HMACed with a public-URL-scoped secret that changes daily. no source address is included. when combining reports, merge each register by its maximum value instead of adding estimates.
+	// VisitorNetworkHll Versioned precision-12 HyperLogLog data. After base64 decoding, the bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 then contains a big-endian uint16 entry count and sorted entries of a big-endian uint16 register index followed by a uint8 value. Dense encoding 1 contains 4096 uint8 registers. Inputs are visitor IPv4 /32 or IPv6 /64 networks HMACed with a public-URL-scoped secret that changes daily. No source address is included. When combining reports, merge each register by its maximum value instead of adding estimates.
 	VisitorNetworkHll []byte `json:"visitor_network_hll"`
 
-	// VisitorStreamOpenFailures attempts for which opening a visitor stream failed.
+	// VisitorStreamOpenFailures Attempts for which opening a visitor stream failed.
 	VisitorStreamOpenFailures UnsignedInteger `json:"visitor_stream_open_failures"`
 
-	// VisitorStreamOpenLatency time taken to open a visitor stream, including failed attempts. the value is recorded when the attempt ends. the field is absent, rather than zero, when the bucket has no observations.
+	// VisitorStreamOpenLatency Time taken to open a visitor stream, including failed attempts. The value is recorded when the attempt ends. The field is absent, rather than zero, when the bucket has no observations.
 	VisitorStreamOpenLatency *DurationHistogram `json:"visitor_stream_open_latency,omitempty"`
 }
 
@@ -226,39 +226,48 @@ type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
 // Doer performs HTTP requests.
 //
-// the standard http.Client implements this interface.
+// The standard http.Client implements this interface.
 type HttpRequestDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client calls this service's HTTP API.
+// Client which conforms to the OpenAPI3 specification for this service.
 type Client struct {
-	// server URL; operation paths are appended to it.
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
 	Server string
 
-	// Client sends requests; callers can supply an http.Client with custom settings.
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
 	Client HttpRequestDoer
 
-	// RequestEditors modify requests before they are sent.
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
 	RequestEditors []RequestEditorFn
 }
 
 // ClientOption allows setting custom parameters during construction
 type ClientOption func(*Client) error
 
-// NewClient creates a client with default options.
+// Creates a new Client, with reasonable defaults
 func NewClient(server string, opts ...ClientOption) (*Client, error) {
+	// create a client with sane default values
 	client := Client{
 		Server: server,
 	}
+	// mutate client and add all optional params
 	for _, o := range opts {
 		if err := o(&client); err != nil {
 			return nil, err
 		}
 	}
+	// ensure the server URL always has a trailing slash
 	if !strings.HasSuffix(client.Server, "/") {
 		client.Server += "/"
 	}
+	// create httpClient, if not already present
 	if client.Client == nil {
 		client.Client = &http.Client{}
 	}
@@ -266,7 +275,7 @@ func NewClient(server string, opts ...ClientOption) (*Client, error) {
 }
 
 // WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. this is useful for tests.
+// automatically created using http.Client. This is useful for tests.
 func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 	return func(c *Client) error {
 		c.Client = doer
@@ -275,7 +284,7 @@ func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 }
 
 // WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. this can be used to mutate the request.
+// called right before sending the request. This can be used to mutate the request.
 func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	return func(c *Client) error {
 		c.RequestEditors = append(c.RequestEditors, fn)
@@ -283,29 +292,29 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	}
 }
 
-// the interface specification for the client above.
+// The interface specification for the client above.
 type ClientInterface interface {
 
-	// IngestPublicURLUsageBucketReportsWithBody ingest public URL usage bucket reports
+	// IngestPublicURLUsageBucketReportsWithBody Ingest public URL usage bucket reports
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+	// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 	IngestPublicURLUsageBucketReportsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IngestPublicURLUsageBucketReports ingest public URL usage bucket reports
+	// IngestPublicURLUsageBucketReports Ingest public URL usage bucket reports
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+	// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 	IngestPublicURLUsageBucketReports(ctx context.Context, body IngestPublicURLUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// IngestPublicURLUsageBucketReportsWithBody ingest public URL usage bucket reports
+// IngestPublicURLUsageBucketReportsWithBody Ingest public URL usage bucket reports
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 func (c *Client) IngestPublicURLUsageBucketReportsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIngestPublicURLUsageBucketReportsRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -318,11 +327,11 @@ func (c *Client) IngestPublicURLUsageBucketReportsWithBody(ctx context.Context, 
 	return c.Client.Do(req)
 }
 
-// IngestPublicURLUsageBucketReports ingest public URL usage bucket reports
+// IngestPublicURLUsageBucketReports Ingest public URL usage bucket reports
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 func (c *Client) IngestPublicURLUsageBucketReports(ctx context.Context, body IngestPublicURLUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIngestPublicURLUsageBucketReportsRequest(c.Server, body)
 	if err != nil {
@@ -419,18 +428,18 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// IngestPublicURLUsageBucketReportsWithBodyWithResponse ingest public URL usage bucket reports
+	// IngestPublicURLUsageBucketReportsWithBodyWithResponse Ingest public URL usage bucket reports
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+	// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 	IngestPublicURLUsageBucketReportsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestPublicURLUsageBucketReportsResponse, error)
 
-	// IngestPublicURLUsageBucketReportsWithResponse ingest public URL usage bucket reports
+	// IngestPublicURLUsageBucketReportsWithResponse Ingest public URL usage bucket reports
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+	// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 	IngestPublicURLUsageBucketReportsWithResponse(ctx context.Context, body IngestPublicURLUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestPublicURLUsageBucketReportsResponse, error)
 }
 
@@ -524,11 +533,11 @@ func (r IngestPublicURLUsageBucketReportsResponse) ContentType() string {
 	return ""
 }
 
-// IngestPublicURLUsageBucketReportsWithBodyWithResponse ingest public URL usage bucket reports
+// IngestPublicURLUsageBucketReportsWithBodyWithResponse Ingest public URL usage bucket reports
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 func (c *ClientWithResponses) IngestPublicURLUsageBucketReportsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestPublicURLUsageBucketReportsResponse, error) {
 	rsp, err := c.IngestPublicURLUsageBucketReportsWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -537,11 +546,11 @@ func (c *ClientWithResponses) IngestPublicURLUsageBucketReportsWithBodyWithRespo
 	return ParseIngestPublicURLUsageBucketReportsResponse(rsp)
 }
 
-// IngestPublicURLUsageBucketReportsWithResponse ingest public URL usage bucket reports
+// IngestPublicURLUsageBucketReportsWithResponse Ingest public URL usage bucket reports
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
+// Corresponds with POST /v1/public-urls/usage-bucket-reports (the `IngestPublicURLUsageBucketReports` operationId).
 func (c *ClientWithResponses) IngestPublicURLUsageBucketReportsWithResponse(ctx context.Context, body IngestPublicURLUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestPublicURLUsageBucketReportsResponse, error) {
 	rsp, err := c.IngestPublicURLUsageBucketReports(ctx, body, reqEditors...)
 	if err != nil {
@@ -627,7 +636,7 @@ func ParseIngestPublicURLUsageBucketReportsResponse(rsp *http.Response) (*Ingest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// IngestPublicURLUsageBucketReports ingest public URL usage bucket reports
+	// IngestPublicURLUsageBucketReports Ingest public URL usage bucket reports
 	// (POST /v1/public-urls/usage-bucket-reports)
 	IngestPublicURLUsageBucketReports(w http.ResponseWriter, r *http.Request)
 }

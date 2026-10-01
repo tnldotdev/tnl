@@ -17,7 +17,7 @@ var (
 )
 
 // ReadAll reads up to limit bytes and returns ErrTooLarge when more data exists.
-// It does not close the reader. I/O failures are returned unchanged.
+// it does not close the reader. I/O failures are returned unchanged.
 func ReadAll(reader io.Reader, limit int64) ([]byte, error) {
 	if limit < 0 || limit == math.MaxInt64 {
 		return nil, errors.New("httpjson: invalid body limit")

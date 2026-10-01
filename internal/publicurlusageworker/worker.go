@@ -194,7 +194,8 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 		}
 		rejection := fmt.Errorf("publicurlusageworker: receiver rejected %s with %s", item.DeliveryKey, *response.Code)
 		if *response.Code == publicurlusagev1.BatchProblemCodeInvalidArgument {
-			// reject only this invalid item; retryable items keep their own leases.
+			// reject only this invalid item; retryable items release their leases
+			// and become available for a later claim.
 			rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, item, string(*response.Code), completedAt)
 			w.observeWork("reject", rejectErr)
 			if rejectErr == nil {

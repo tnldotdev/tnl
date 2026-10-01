@@ -20,7 +20,7 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// defines values for ClaimedPublisherConnectionState.
+// Defines values for ClaimedPublisherConnectionState.
 const (
 	Closed    ClaimedPublisherConnectionState = "closed"
 	Connected ClaimedPublisherConnectionState = "connected"
@@ -254,39 +254,48 @@ type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
 // Doer performs HTTP requests.
 //
-// the standard http.Client implements this interface.
+// The standard http.Client implements this interface.
 type HttpRequestDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client calls this service's HTTP API.
+// Client which conforms to the OpenAPI3 specification for this service.
 type Client struct {
-	// server URL; operation paths are appended to it.
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
 	Server string
 
-	// Client sends requests; callers can supply an http.Client with custom settings.
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
 	Client HttpRequestDoer
 
-	// RequestEditors modify requests before they are sent.
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
 	RequestEditors []RequestEditorFn
 }
 
 // ClientOption allows setting custom parameters during construction
 type ClientOption func(*Client) error
 
-// NewClient creates a client with default options.
+// Creates a new Client, with reasonable defaults
 func NewClient(server string, opts ...ClientOption) (*Client, error) {
+	// create a client with sane default values
 	client := Client{
 		Server: server,
 	}
+	// mutate client and add all optional params
 	for _, o := range opts {
 		if err := o(&client); err != nil {
 			return nil, err
 		}
 	}
+	// ensure the server URL always has a trailing slash
 	if !strings.HasSuffix(client.Server, "/") {
 		client.Server += "/"
 	}
+	// create httpClient, if not already present
 	if client.Client == nil {
 		client.Client = &http.Client{}
 	}
@@ -294,7 +303,7 @@ func NewClient(server string, opts ...ClientOption) (*Client, error) {
 }
 
 // WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. this is useful for tests.
+// automatically created using http.Client. This is useful for tests.
 func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 	return func(c *Client) error {
 		c.Client = doer
@@ -303,7 +312,7 @@ func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 }
 
 // WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. this can be used to mutate the request.
+// called right before sending the request. This can be used to mutate the request.
 func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	return func(c *Client) error {
 		c.RequestEditors = append(c.RequestEditors, fn)
@@ -311,104 +320,104 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	}
 }
 
-// the interface specification for the client above.
+// The interface specification for the client above.
 type ClientInterface interface {
 
-	// ClaimPublisherConnectionWithBody claim a publisher connection with its credential
+	// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimPublisherConnection claim a publisher connection with its credential
+	// ClaimPublisherConnection Claim a publisher connection with its credential
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisconnectPublisherConnectionWithBody close a matching publisher connection
+	// DisconnectPublisherConnectionWithBody Close a matching publisher connection
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisconnectPublisherConnection close a matching publisher connection
+	// DisconnectPublisherConnection Close a matching publisher connection
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublisherConnectionReadyWithBody mark one connected publisher connection ready
+	// MarkPublisherConnectionReadyWithBody Mark one connected publisher connection ready
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReadyWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublisherConnectionReady mark one connected publisher connection ready
+	// MarkPublisherConnectionReady Mark one connected publisher connection ready
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetRelayTransportCertificate retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	//
-	// corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
 	GetRelayTransportCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RegisterRelayWithBody register one relay process run
+	// RegisterRelayWithBody Register one relay process run
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelayWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RegisterRelay register one relay process run
+	// RegisterRelay Register one relay process run
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelay(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainRelayWithBody stop a matching relay process from accepting new work
+	// DrainRelayWithBody Stop a matching relay process from accepting new work
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainRelay stop a matching relay process from accepting new work
+	// DrainRelay Stop a matching relay process from accepting new work
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelay(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewRelayWithBody renew a matching relay lease
+	// RenewRelayWithBody Renew a matching relay lease
 	//
-	// takes any type of body and a specified content type.
+	// Takes any type of body and a specified content type.
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewRelay renew a matching relay lease
+	// RenewRelay Renew a matching relay lease
 	//
-	// takes a body of the `application/json` content type.
+	// Takes a body of the `application/json` content type.
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelay(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// ClaimPublisherConnectionWithBody claim a publisher connection with its credential
+// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 func (c *Client) ClaimPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimPublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
 	if err != nil {
@@ -421,11 +430,11 @@ func (c *Client) ClaimPublisherConnectionWithBody(ctx context.Context, publisher
 	return c.Client.Do(req)
 }
 
-// ClaimPublisherConnection claim a publisher connection with its credential
+// ClaimPublisherConnection Claim a publisher connection with its credential
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 func (c *Client) ClaimPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimPublisherConnectionRequest(c.Server, publisherConnectionId, body)
 	if err != nil {
@@ -438,11 +447,11 @@ func (c *Client) ClaimPublisherConnection(ctx context.Context, publisherConnecti
 	return c.Client.Do(req)
 }
 
-// DisconnectPublisherConnectionWithBody close a matching publisher connection
+// DisconnectPublisherConnectionWithBody Close a matching publisher connection
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 func (c *Client) DisconnectPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
 	if err != nil {
@@ -455,11 +464,11 @@ func (c *Client) DisconnectPublisherConnectionWithBody(ctx context.Context, publ
 	return c.Client.Do(req)
 }
 
-// DisconnectPublisherConnection close a matching publisher connection
+// DisconnectPublisherConnection Close a matching publisher connection
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 func (c *Client) DisconnectPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPublisherConnectionRequest(c.Server, publisherConnectionId, body)
 	if err != nil {
@@ -472,11 +481,11 @@ func (c *Client) DisconnectPublisherConnection(ctx context.Context, publisherCon
 	return c.Client.Do(req)
 }
 
-// MarkPublisherConnectionReadyWithBody mark one connected publisher connection ready
+// MarkPublisherConnectionReadyWithBody Mark one connected publisher connection ready
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 func (c *Client) MarkPublisherConnectionReadyWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublisherConnectionReadyRequestWithBody(c.Server, publisherConnectionId, contentType, body)
 	if err != nil {
@@ -489,11 +498,11 @@ func (c *Client) MarkPublisherConnectionReadyWithBody(ctx context.Context, publi
 	return c.Client.Do(req)
 }
 
-// MarkPublisherConnectionReady mark one connected publisher connection ready
+// MarkPublisherConnectionReady Mark one connected publisher connection ready
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 func (c *Client) MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublisherConnectionReadyRequest(c.Server, publisherConnectionId, body)
 	if err != nil {
@@ -506,9 +515,9 @@ func (c *Client) MarkPublisherConnectionReady(ctx context.Context, publisherConn
 	return c.Client.Do(req)
 }
 
-// GetRelayTransportCertificate retrieve the current relay transport certificate and private key
+// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 //
-// corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
 func (c *Client) GetRelayTransportCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRelayTransportCertificateRequest(c.Server, relayServiceId, params)
 	if err != nil {
@@ -521,11 +530,11 @@ func (c *Client) GetRelayTransportCertificate(ctx context.Context, relayServiceI
 	return c.Client.Do(req)
 }
 
-// RegisterRelayWithBody register one relay process run
+// RegisterRelayWithBody Register one relay process run
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 func (c *Client) RegisterRelayWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterRelayRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -538,11 +547,11 @@ func (c *Client) RegisterRelayWithBody(ctx context.Context, contentType string, 
 	return c.Client.Do(req)
 }
 
-// RegisterRelay register one relay process run
+// RegisterRelay Register one relay process run
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 func (c *Client) RegisterRelay(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterRelayRequest(c.Server, body)
 	if err != nil {
@@ -555,11 +564,11 @@ func (c *Client) RegisterRelay(ctx context.Context, body RegisterRelayJSONReques
 	return c.Client.Do(req)
 }
 
-// DrainRelayWithBody stop a matching relay process from accepting new work
+// DrainRelayWithBody Stop a matching relay process from accepting new work
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 func (c *Client) DrainRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainRelayRequestWithBody(c.Server, relayId, contentType, body)
 	if err != nil {
@@ -572,11 +581,11 @@ func (c *Client) DrainRelayWithBody(ctx context.Context, relayId RelayID, conten
 	return c.Client.Do(req)
 }
 
-// DrainRelay stop a matching relay process from accepting new work
+// DrainRelay Stop a matching relay process from accepting new work
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 func (c *Client) DrainRelay(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainRelayRequest(c.Server, relayId, body)
 	if err != nil {
@@ -589,11 +598,11 @@ func (c *Client) DrainRelay(ctx context.Context, relayId RelayID, body DrainRela
 	return c.Client.Do(req)
 }
 
-// RenewRelayWithBody renew a matching relay lease
+// RenewRelayWithBody Renew a matching relay lease
 //
-// takes any type of body and a specified content type.
+// Takes any type of body and a specified content type.
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 func (c *Client) RenewRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewRelayRequestWithBody(c.Server, relayId, contentType, body)
 	if err != nil {
@@ -606,11 +615,11 @@ func (c *Client) RenewRelayWithBody(ctx context.Context, relayId RelayID, conten
 	return c.Client.Do(req)
 }
 
-// RenewRelay renew a matching relay lease
+// RenewRelay Renew a matching relay lease
 //
-// takes a body of the `application/json` content type.
+// Takes a body of the `application/json` content type.
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 func (c *Client) RenewRelay(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewRelayRequest(c.Server, relayId, body)
 	if err != nil {
@@ -1015,95 +1024,95 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// ClaimPublisherConnectionWithBodyWithResponse claim a publisher connection with its credential
+	// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
 
-	// ClaimPublisherConnectionWithResponse claim a publisher connection with its credential
+	// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
 
-	// DisconnectPublisherConnectionWithBodyWithResponse close a matching publisher connection
+	// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error)
 
-	// DisconnectPublisherConnectionWithResponse close a matching publisher connection
+	// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error)
 
-	// MarkPublisherConnectionReadyWithBodyWithResponse mark one connected publisher connection ready
+	// MarkPublisherConnectionReadyWithBodyWithResponse Mark one connected publisher connection ready
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReadyWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
 
-	// MarkPublisherConnectionReadyWithResponse mark one connected publisher connection ready
+	// MarkPublisherConnectionReadyWithResponse Mark one connected publisher connection ready
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
 
-	// GetRelayTransportCertificateWithResponse retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 	//
-	// returns a wrapper object for the known response body format(s).
+	// Returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
 	GetRelayTransportCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayTransportCertificateResponse, error)
 
-	// RegisterRelayWithBodyWithResponse register one relay process run
+	// RegisterRelayWithBodyWithResponse Register one relay process run
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelayWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRelayResponse, error)
 
-	// RegisterRelayWithResponse register one relay process run
+	// RegisterRelayWithResponse Register one relay process run
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelayWithResponse(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRelayResponse, error)
 
-	// DrainRelayWithBodyWithResponse stop a matching relay process from accepting new work
+	// DrainRelayWithBodyWithResponse Stop a matching relay process from accepting new work
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error)
 
-	// DrainRelayWithResponse stop a matching relay process from accepting new work
+	// DrainRelayWithResponse Stop a matching relay process from accepting new work
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithResponse(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error)
 
-	// RenewRelayWithBodyWithResponse renew a matching relay lease
+	// RenewRelayWithBodyWithResponse Renew a matching relay lease
 	//
-	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error)
 
-	// RenewRelayWithResponse renew a matching relay lease
+	// RenewRelayWithResponse Renew a matching relay lease
 	//
-	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithResponse(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error)
 }
 
@@ -1450,11 +1459,11 @@ func (r RenewRelayResponse) ContentType() string {
 	return ""
 }
 
-// ClaimPublisherConnectionWithBodyWithResponse claim a publisher connection with its credential
+// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 func (c *ClientWithResponses) ClaimPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error) {
 	rsp, err := c.ClaimPublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
 	if err != nil {
@@ -1463,11 +1472,11 @@ func (c *ClientWithResponses) ClaimPublisherConnectionWithBodyWithResponse(ctx c
 	return ParseClaimPublisherConnectionResponse(rsp)
 }
 
-// ClaimPublisherConnectionWithResponse claim a publisher connection with its credential
+// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 func (c *ClientWithResponses) ClaimPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error) {
 	rsp, err := c.ClaimPublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
 	if err != nil {
@@ -1476,11 +1485,11 @@ func (c *ClientWithResponses) ClaimPublisherConnectionWithResponse(ctx context.C
 	return ParseClaimPublisherConnectionResponse(rsp)
 }
 
-// DisconnectPublisherConnectionWithBodyWithResponse close a matching publisher connection
+// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 func (c *ClientWithResponses) DisconnectPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error) {
 	rsp, err := c.DisconnectPublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
 	if err != nil {
@@ -1489,11 +1498,11 @@ func (c *ClientWithResponses) DisconnectPublisherConnectionWithBodyWithResponse(
 	return ParseDisconnectPublisherConnectionResponse(rsp)
 }
 
-// DisconnectPublisherConnectionWithResponse close a matching publisher connection
+// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 func (c *ClientWithResponses) DisconnectPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error) {
 	rsp, err := c.DisconnectPublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
 	if err != nil {
@@ -1502,11 +1511,11 @@ func (c *ClientWithResponses) DisconnectPublisherConnectionWithResponse(ctx cont
 	return ParseDisconnectPublisherConnectionResponse(rsp)
 }
 
-// MarkPublisherConnectionReadyWithBodyWithResponse mark one connected publisher connection ready
+// MarkPublisherConnectionReadyWithBodyWithResponse Mark one connected publisher connection ready
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 func (c *ClientWithResponses) MarkPublisherConnectionReadyWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error) {
 	rsp, err := c.MarkPublisherConnectionReadyWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
 	if err != nil {
@@ -1515,11 +1524,11 @@ func (c *ClientWithResponses) MarkPublisherConnectionReadyWithBodyWithResponse(c
 	return ParseMarkPublisherConnectionReadyResponse(rsp)
 }
 
-// MarkPublisherConnectionReadyWithResponse mark one connected publisher connection ready
+// MarkPublisherConnectionReadyWithResponse Mark one connected publisher connection ready
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
+// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 func (c *ClientWithResponses) MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error) {
 	rsp, err := c.MarkPublisherConnectionReady(ctx, publisherConnectionId, body, reqEditors...)
 	if err != nil {
@@ -1528,11 +1537,11 @@ func (c *ClientWithResponses) MarkPublisherConnectionReadyWithResponse(ctx conte
 	return ParseMarkPublisherConnectionReadyResponse(rsp)
 }
 
-// GetRelayTransportCertificateWithResponse retrieve the current relay transport certificate and private key
+// GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 //
-// returns a wrapper object for the known response body format(s).
+// Returns a wrapper object for the known response body format(s).
 //
-// corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
 func (c *ClientWithResponses) GetRelayTransportCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayTransportCertificateResponse, error) {
 	rsp, err := c.GetRelayTransportCertificate(ctx, relayServiceId, params, reqEditors...)
 	if err != nil {
@@ -1541,11 +1550,11 @@ func (c *ClientWithResponses) GetRelayTransportCertificateWithResponse(ctx conte
 	return ParseGetRelayTransportCertificateResponse(rsp)
 }
 
-// RegisterRelayWithBodyWithResponse register one relay process run
+// RegisterRelayWithBodyWithResponse Register one relay process run
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 func (c *ClientWithResponses) RegisterRelayWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRelayResponse, error) {
 	rsp, err := c.RegisterRelayWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -1554,11 +1563,11 @@ func (c *ClientWithResponses) RegisterRelayWithBodyWithResponse(ctx context.Cont
 	return ParseRegisterRelayResponse(rsp)
 }
 
-// RegisterRelayWithResponse register one relay process run
+// RegisterRelayWithResponse Register one relay process run
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
+// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 func (c *ClientWithResponses) RegisterRelayWithResponse(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRelayResponse, error) {
 	rsp, err := c.RegisterRelay(ctx, body, reqEditors...)
 	if err != nil {
@@ -1567,11 +1576,11 @@ func (c *ClientWithResponses) RegisterRelayWithResponse(ctx context.Context, bod
 	return ParseRegisterRelayResponse(rsp)
 }
 
-// DrainRelayWithBodyWithResponse stop a matching relay process from accepting new work
+// DrainRelayWithBodyWithResponse Stop a matching relay process from accepting new work
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 func (c *ClientWithResponses) DrainRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error) {
 	rsp, err := c.DrainRelayWithBody(ctx, relayId, contentType, body, reqEditors...)
 	if err != nil {
@@ -1580,11 +1589,11 @@ func (c *ClientWithResponses) DrainRelayWithBodyWithResponse(ctx context.Context
 	return ParseDrainRelayResponse(rsp)
 }
 
-// DrainRelayWithResponse stop a matching relay process from accepting new work
+// DrainRelayWithResponse Stop a matching relay process from accepting new work
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 func (c *ClientWithResponses) DrainRelayWithResponse(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error) {
 	rsp, err := c.DrainRelay(ctx, relayId, body, reqEditors...)
 	if err != nil {
@@ -1593,11 +1602,11 @@ func (c *ClientWithResponses) DrainRelayWithResponse(ctx context.Context, relayI
 	return ParseDrainRelayResponse(rsp)
 }
 
-// RenewRelayWithBodyWithResponse renew a matching relay lease
+// RenewRelayWithBodyWithResponse Renew a matching relay lease
 //
-// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 func (c *ClientWithResponses) RenewRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error) {
 	rsp, err := c.RenewRelayWithBody(ctx, relayId, contentType, body, reqEditors...)
 	if err != nil {
@@ -1606,11 +1615,11 @@ func (c *ClientWithResponses) RenewRelayWithBodyWithResponse(ctx context.Context
 	return ParseRenewRelayResponse(rsp)
 }
 
-// RenewRelayWithResponse renew a matching relay lease
+// RenewRelayWithResponse Renew a matching relay lease
 //
-// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
+// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 func (c *ClientWithResponses) RenewRelayWithResponse(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error) {
 	rsp, err := c.RenewRelay(ctx, relayId, body, reqEditors...)
 	if err != nil {
@@ -1865,25 +1874,25 @@ func ParseRenewRelayResponse(rsp *http.Response) (*RenewRelayResponse, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// ClaimPublisherConnection claim a publisher connection with its credential
+	// ClaimPublisherConnection Claim a publisher connection with its credential
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/claim)
 	ClaimPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// DisconnectPublisherConnection close a matching publisher connection
+	// DisconnectPublisherConnection Close a matching publisher connection
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect)
 	DisconnectPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// MarkPublisherConnectionReady mark one connected publisher connection ready
+	// MarkPublisherConnectionReady Mark one connected publisher connection ready
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/ready)
 	MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// GetRelayTransportCertificate retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	// (GET /internal/v1/relay-services/{relay_service_id}/certificate)
 	GetRelayTransportCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayTransportCertificateParams)
-	// RegisterRelay register one relay process run
+	// RegisterRelay Register one relay process run
 	// (POST /internal/v1/relays/register)
 	RegisterRelay(w http.ResponseWriter, r *http.Request)
-	// DrainRelay stop a matching relay process from accepting new work
+	// DrainRelay Stop a matching relay process from accepting new work
 	// (POST /internal/v1/relays/{relay_id}/drain)
 	DrainRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
-	// RenewRelay renew a matching relay lease
+	// RenewRelay Renew a matching relay lease
 	// (POST /internal/v1/relays/{relay_id}/renew)
 	RenewRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
 }
@@ -1990,7 +1999,7 @@ func (siw *ServerInterfaceWrapper) GetRelayTransportCertificate(w http.ResponseW
 		return
 	}
 
-	// parameter object where we will unmarshal all parameters from the context
+	// Parameter object where we will unmarshal all parameters from the context
 	var params GetRelayTransportCertificateParams
 
 	// ------------- Required query parameter "relay_id" -------------

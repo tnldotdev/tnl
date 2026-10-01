@@ -325,9 +325,9 @@ func (s *Server) observeAttempt(index int, err error, started time.Time) {
 	}
 }
 
-// writeSetup counts visitor bytes separately from PROXY v2 metadata. only a
-// zero-byte ClientHello failure can be retried. join the cancellation callback
-// before clearing the deadline on a stream that will remain open.
+// writeSetup counts visitor bytes separately from PROXY v2 metadata. a failed
+// metadata write or a ClientHello failure before any visitor byte can be retried.
+// join the cancellation callback before clearing the live stream's deadline.
 func writeSetup(ctx context.Context, connection net.Conn, header, prefix []byte) (written int64, err error) {
 	deadline, _ := ctx.Deadline()
 	if err = connection.SetDeadline(deadline); err != nil {

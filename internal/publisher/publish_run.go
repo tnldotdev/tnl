@@ -126,8 +126,9 @@ func runSession(
 	if err := route.Start(); err != nil {
 		return err
 	}
-	// sessionCtx owns admissions and background work. transportCtx outlives ordinary
-	// cancellation so established visitor connections can drain before transports close.
+	// sessionCtx stops admission, heartbeats, and certificate renewals.
+	// transportCtx keeps publisher connections and the expiration watcher alive
+	// during ordinary drain so established visitor connections can finish.
 	transportCtx, cancelTransports := context.WithCancel(context.WithoutCancel(parentCtx))
 	stopAdmissions := context.AfterFunc(sessionCtx, func() {
 		route.stopAdmissions()
