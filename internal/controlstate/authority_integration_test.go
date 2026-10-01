@@ -75,6 +75,14 @@ func TestIntegrationInvitationAcceptanceAndRoles(t *testing.T) {
 	if err != nil || member.Role != "admin" || member.PolicyRevision != 3 {
 		t.Fatalf("promoted membership = %#v, %v", member, err)
 	}
+	if _, err := database.SetMembershipRole(t.Context(), owner, team.ID, member.ID, TeamRole("unknown"), now); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("unknown team role: %v", err)
+	}
+	invalidInvite := authorityInvitationRequest(owner, team.ID, "invalid-role", now)
+	invalidInvite.InitialRole = TeamRole("unknown")
+	if _, err := database.CreateTeamInvitation(t.Context(), invalidInvite, now); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("unknown invitation role: %v", err)
+	}
 	if _, err := database.SetMembershipRole(t.Context(), member.IdentityID, team.ID, owners[0].ID, "member", now); !errors.Is(err, ErrAuthorityAccess) {
 		t.Fatalf("admin demoting owner: %v", err)
 	}
@@ -303,7 +311,7 @@ func authorityInvitationRequest(owner, team, slug string, now time.Time) CreateI
 		RequestDigest: sha256.Sum256([]byte("invite-" + slug)), MemberSlug: slug, InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{1}, 32)}
 }
 
-func addAuthorityMember(t *testing.T, database *Database, now time.Time, inviter, team, slug, role string) Membership {
+func addAuthorityMember(t *testing.T, database *Database, now time.Time, inviter, team, slug string, role TeamRole) Membership {
 	t.Helper()
 	identity := "identity_" + slug
 	insertAuthorityIdentity(t, database, identity, "", false, now)

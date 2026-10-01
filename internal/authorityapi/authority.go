@@ -238,7 +238,7 @@ func (h *handler) SetMembershipRole(
 		return
 	}
 	membership, err := h.store.SetMembershipRole(
-		request.Context(), principal.IdentityID, string(teamID), string(membershipID), string(body.Role), time.Now(),
+		request.Context(), principal.IdentityID, string(teamID), string(membershipID), controlstate.TeamRole(body.Role), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "set membership role", err)
@@ -314,7 +314,7 @@ func (h *handler) CreateTeamInvitation(
 	}
 	created, err := h.store.CreateTeamInvitation(request.Context(), controlstate.CreateInvitationRequest{
 		IdentityID: principal.IdentityID, TeamID: string(teamID), IdempotencyKey: params.IdempotencyKey,
-		RequestDigest: digest, MemberSlug: body.MemberSlug, InitialRole: string(body.InitialRole),
+		RequestDigest: digest, MemberSlug: body.MemberSlug, InitialRole: controlstate.TeamRole(body.InitialRole),
 		ExpiresAt: body.ExpiresAt, EmailRestriction: email, RetrySecret: principal.RetrySecret[:],
 	}, time.Now())
 	if err != nil {

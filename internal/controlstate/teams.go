@@ -26,7 +26,7 @@ var (
 
 type Team struct {
 	ID              string
-	Kind            string
+	Kind            TeamKind
 	DisplayName     string
 	ManagedLabel    string
 	DefaultDomainID string
@@ -37,11 +37,11 @@ type Team struct {
 
 type Domain struct {
 	ID                    string
-	Kind                  string
+	Kind                  DomainKind
 	TeamID                string
 	CanonicalDomain       string
 	DNSAuthorityReference string
-	State                 string
+	State                 DomainState
 	AuthorityRevision     int64
 	RequiredRecords       []DNSRecord
 	CreatedAt             time.Time
@@ -217,11 +217,12 @@ func (d *Database) ListTeamMemberships(ctx context.Context, identityID, teamID s
 
 func (d *Database) SetMembershipRole(
 	ctx context.Context,
-	identityID, teamID, membershipID, role string,
+	identityID, teamID, membershipID string,
+	role TeamRole,
 	now time.Time,
 ) (result Membership, retErr error) {
 	if !validStateText(identityID) || !validStateText(teamID) || !validStateText(membershipID) ||
-		!validTeamRole(role) || now.IsZero() {
+		!role.valid() || now.IsZero() {
 		return Membership{}, ErrAuthorityInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -238,7 +239,7 @@ func (d *Database) SetMembershipRole(
 	if err != nil {
 		return Membership{}, err
 	}
-	if actor.Kind != "organization" || actor.ActorRole != "owner" {
+	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleOwner {
 		return Membership{}, ErrAuthorityAccess
 	}
 	target, err := queries.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{
@@ -250,13 +251,13 @@ func (d *Database) SetMembershipRole(
 	if err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: lock membership: %w", err)
 	}
-	if target.Role == role {
+	if TeamRole(target.Role) == role {
 		if err := tx.Commit(ctx); err != nil {
 			return Membership{}, fmt.Errorf("controlstate: set membership role: commit no-op: %w", err)
 		}
 		return d.getMembership(ctx, teamID, membershipID)
 	}
-	if target.Role == "owner" {
+	if TeamRole(target.Role) == TeamRoleOwner {
 		owners, err := queries.CountTeamOwners(ctx, teamID)
 		if err != nil {
 			return Membership{}, fmt.Errorf("controlstate: set membership role: count owners: %w", err)
@@ -272,7 +273,7 @@ func (d *Database) SetMembershipRole(
 		return Membership{}, fmt.Errorf("controlstate: set membership role: advance policy revision: %w", err)
 	}
 	if updated, err := queries.UpdateMembershipRole(ctx, controlstatedb.UpdateMembershipRoleParams{
-		Role: role, AuthorityRevision: revision, UpdatedAt: timestamp(now), MembershipID: membershipID, TeamID: teamID,
+		Role: string(role), AuthorityRevision: revision, UpdatedAt: timestamp(now), MembershipID: membershipID, TeamID: teamID,
 	}); err != nil || updated != 1 {
 		return Membership{}, authorityRowsError("set membership role: update membership", updated, err)
 	}
@@ -319,7 +320,7 @@ func (d *Database) RemoveMembership(
 	if err != nil {
 		return err
 	}
-	if actor.Kind != "organization" || actor.ActorRole != "owner" && actor.ActorRole != "admin" {
+	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleOwner && TeamRole(actor.ActorRole) != TeamRoleAdmin {
 		return ErrAuthorityAccess
 	}
 	target, err := queries.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{
@@ -331,10 +332,10 @@ func (d *Database) RemoveMembership(
 	if err != nil {
 		return fmt.Errorf("controlstate: remove membership: lock membership: %w", err)
 	}
-	if actor.ActorRole == "admin" && target.Role != "member" {
+	if TeamRole(actor.ActorRole) == TeamRoleAdmin && TeamRole(target.Role) != TeamRoleMember {
 		return ErrAuthorityAccess
 	}
-	if target.Role == "owner" {
+	if TeamRole(target.Role) == TeamRoleOwner {
 		owners, err := queries.CountTeamOwners(ctx, teamID)
 		if err != nil {
 			return fmt.Errorf("controlstate: remove membership: count owners: %w", err)
@@ -387,8 +388,8 @@ func (d *Database) ListTeamDomains(ctx context.Context, identityID, teamID strin
 	result := make([]Domain, len(rows))
 	for index, row := range rows {
 		result[index] = Domain{
-			ID: row.ID, Kind: row.Kind, TeamID: row.TeamID.String,
-			CanonicalDomain: row.CanonicalDomain, DNSAuthorityReference: row.DnsAuthorityReference.String, State: row.State,
+			ID: row.ID, Kind: DomainKind(row.Kind), TeamID: row.TeamID.String,
+			CanonicalDomain: row.CanonicalDomain, DNSAuthorityReference: row.DnsAuthorityReference.String, State: DomainState(row.State),
 			AuthorityRevision: row.AuthorityRevision, RequiredRecords: nameserverRecords(row.CanonicalDomain, row.Nameservers),
 			CreatedAt:  row.CreatedAt.Time,
 			VerifiedAt: row.VerifiedAt.Time, UpdatedAt: row.UpdatedAt.Time,
@@ -477,7 +478,7 @@ func membershipFromRow(
 ) Membership {
 	return Membership{
 		ID: id, TeamID: teamID, IdentityID: identityID, TeamDisplayName: teamDisplayName,
-		TeamKind: teamKind, Role: role, MemberSlug: memberSlug, ManagedLabel: managedLabel,
+		TeamKind: TeamKind(teamKind), Role: TeamRole(role), MemberSlug: memberSlug, ManagedLabel: managedLabel,
 		PolicyRevision: policyRevision, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
 }
@@ -503,10 +504,6 @@ func validIdempotencyKey(value string) bool {
 	return validStateText(value) && len(value) <= 128
 }
 
-func validTeamRole(value string) bool {
-	return value == "member" || value == "admin" || value == "owner"
-}
-
 func teamFromRow(
 	id, kind, displayName, managedLabel string,
 	defaultDomainID pgtype.Text,
@@ -514,7 +511,7 @@ func teamFromRow(
 	createdAt, updatedAt pgtype.Timestamptz,
 ) Team {
 	return Team{
-		ID: id, Kind: kind, DisplayName: displayName, ManagedLabel: managedLabel,
+		ID: id, Kind: TeamKind(kind), DisplayName: displayName, ManagedLabel: managedLabel,
 		DefaultDomainID: defaultDomainID.String, PolicyRevision: policyRevision,
 		CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}

@@ -46,7 +46,7 @@ func (d *Database) ClaimTeamDomain(
 	if err != nil {
 		return Domain{}, err
 	}
-	if actor.ActorRole != "admin" && actor.ActorRole != "owner" {
+	if TeamRole(actor.ActorRole) != TeamRoleAdmin && TeamRole(actor.ActorRole) != TeamRoleOwner {
 		return Domain{}, ErrAuthorityAccess
 	}
 	managedDomain, err := queries.LockManagedDomainForClaim(ctx)
@@ -149,7 +149,7 @@ func (d *Database) SetTeamDefaultDomain(
 	if err != nil {
 		return Team{}, err
 	}
-	if actor.ActorRole != "admin" && actor.ActorRole != "owner" {
+	if TeamRole(actor.ActorRole) != TeamRoleAdmin && TeamRole(actor.ActorRole) != TeamRoleOwner {
 		return Team{}, ErrAuthorityAccess
 	}
 	domain, err := queries.LockTeamDomain(ctx, controlstatedb.LockTeamDomainParams{
@@ -161,7 +161,7 @@ func (d *Database) SetTeamDefaultDomain(
 	if err != nil {
 		return Team{}, fmt.Errorf("controlstate: set team default domain: lock domain: %w", err)
 	}
-	if domain.State != "ready" {
+	if DomainState(domain.State) != DomainReady {
 		return Team{}, ErrAuthorityConflict
 	}
 	if actor.DefaultDomainID.String != domainID {
@@ -210,7 +210,7 @@ func (d *Database) ReleaseTeamDomain(
 	if err != nil {
 		return err
 	}
-	if actor.ActorRole != "owner" {
+	if TeamRole(actor.ActorRole) != TeamRoleOwner {
 		return ErrAuthorityAccess
 	}
 	domain, err := queries.LockTeamDomain(ctx, controlstatedb.LockTeamDomainParams{
@@ -222,13 +222,13 @@ func (d *Database) ReleaseTeamDomain(
 	if err != nil {
 		return fmt.Errorf("controlstate: release team domain: lock domain: %w", err)
 	}
-	if domain.Kind != "claimed" || domain.TeamID.String != teamID {
+	if DomainKind(domain.Kind) != DomainKindClaimed || domain.TeamID.String != teamID {
 		return ErrAuthorityAccess
 	}
 	if actor.DefaultDomainID.String == domainID {
 		return ErrAuthorityConflict
 	}
-	if domain.State == "releasing" {
+	if DomainState(domain.State) == DomainReleasing {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("controlstate: release team domain: commit replay: %w", err)
 		}
@@ -295,8 +295,8 @@ func domainFromRow(
 	createdAt, verifiedAt, updatedAt time.Time,
 ) Domain {
 	return Domain{
-		ID: id, Kind: kind, TeamID: teamID, CanonicalDomain: canonicalDomain,
-		DNSAuthorityReference: authorityReference, State: state, AuthorityRevision: authorityRevision,
+		ID: id, Kind: DomainKind(kind), TeamID: teamID, CanonicalDomain: canonicalDomain,
+		DNSAuthorityReference: authorityReference, State: DomainState(state), AuthorityRevision: authorityRevision,
 		RequiredRecords: nameserverRecords(canonicalDomain, nameservers), CreatedAt: createdAt,
 		VerifiedAt: verifiedAt, UpdatedAt: updatedAt,
 	}
