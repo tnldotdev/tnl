@@ -52,7 +52,7 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 						ID: "membership_1", TeamID: "team_1", Role: "owner", PolicyRevision: 1,
 						MemberSlug: "member", ManagedLabel: "member-unique",
 					}}},
-					domains: []controlstate.Domain{{ID: "domain_1", Kind: test.kind, State: "ready",
+					domains: []controlstate.Domain{{ID: "domain_1", Kind: controlstate.DomainKind(test.kind), State: controlstate.DomainReady,
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}

@@ -95,7 +95,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			break
 		}
 	}
-	if domain.ID == "" || domain.State != "ready" && request.Operation != authorization.OperationPublicURLDelete {
+	if domain.ID == "" || domain.State != controlstate.DomainReady && request.Operation != authorization.OperationPublicURLDelete {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
 	publicURLMembershipID := request.PublicURLMembershipID
@@ -108,16 +108,16 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			}
 		}
 		if publicURLMembershipID != acting.ID && (request.Operation != authorization.OperationPublicURLDelete ||
-			acting.Role != "admin" && acting.Role != "owner") {
+			acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner) {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 	} else if request.PublicURLScope != string(controlv1.Shared) || publicURLMembershipID != "" ||
-		acting.Role != "admin" && acting.Role != "owner" {
+		acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
 	decision := authorization.Decision{
 		IdentityID: principal.IdentityID, TeamID: request.TeamID, ActingMembershipID: acting.ID,
-		ActingRole: acting.Role, PublicURLMembershipID: publicURLMembershipID,
+		ActingRole: string(acting.Role), PublicURLMembershipID: publicURLMembershipID,
 		PolicyRevision: uint64(acting.PolicyRevision), DomainID: request.DomainID,
 		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
@@ -132,7 +132,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			plan.ChallengeMethod = string(controlv1.Dns01)
 			if request.PublicURLScope == string(controlv1.Member) {
 				label := acting.MemberSlug
-				if domain.Kind == "managed" {
+				if domain.Kind == controlstate.DomainKindManaged {
 					label = acting.ManagedLabel
 				}
 				namespace := label + "." + domain.CanonicalDomain

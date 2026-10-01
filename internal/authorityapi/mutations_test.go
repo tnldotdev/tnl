@@ -233,8 +233,8 @@ type authorityResourceStore struct {
 	mutationErr error
 }
 
-func (s *authorityResourceStore) SetMembershipRole(_ context.Context, actor, team, member, role string, _ time.Time) (controlstate.Membership, error) {
-	s.mutations = append(s.mutations, resourceMutation{"role", actor, team, member, role})
+func (s *authorityResourceStore) SetMembershipRole(_ context.Context, actor, team, member string, role controlstate.TeamRole, _ time.Time) (controlstate.Membership, error) {
+	s.mutations = append(s.mutations, resourceMutation{"role", actor, team, member, string(role)})
 	return controlstate.Membership{ID: "membership_result", Role: "admin"}, s.mutationErr
 }
 func (s *authorityResourceStore) RemoveMembership(_ context.Context, actor, team, member string, _ time.Time) error {

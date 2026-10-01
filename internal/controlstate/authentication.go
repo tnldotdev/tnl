@@ -46,8 +46,8 @@ type Membership struct {
 	TeamID          string
 	IdentityID      string
 	TeamDisplayName string
-	TeamKind        string
-	Role            string
+	TeamKind        TeamKind
+	Role            TeamRole
 	MemberSlug      string
 	ManagedLabel    string
 	PolicyRevision  int64
@@ -577,7 +577,7 @@ func loadIdentityContext(ctx context.Context, queries *controlstatedb.Queries, i
 	for index, row := range rows {
 		memberships[index] = Membership{
 			ID: row.ID, TeamID: row.TeamID, IdentityID: row.IdentityID,
-			TeamDisplayName: row.TeamDisplayName, TeamKind: row.TeamKind, Role: row.Role,
+			TeamDisplayName: row.TeamDisplayName, TeamKind: TeamKind(row.TeamKind), Role: TeamRole(row.Role),
 			MemberSlug: row.MemberSlug, ManagedLabel: row.ManagedLabel, PolicyRevision: row.PolicyRevision,
 			CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		}

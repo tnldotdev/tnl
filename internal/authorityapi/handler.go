@@ -34,7 +34,7 @@ type Store interface {
 	CreateTeam(context.Context, controlstate.CreateTeamRequest, time.Time) (controlstate.Team, error)
 	GetTeam(context.Context, string, string) (controlstate.Team, error)
 	ListTeamMemberships(context.Context, string, string) ([]controlstate.Membership, error)
-	SetMembershipRole(context.Context, string, string, string, string, time.Time) (controlstate.Membership, error)
+	SetMembershipRole(context.Context, string, string, string, controlstate.TeamRole, time.Time) (controlstate.Membership, error)
 	RemoveMembership(context.Context, string, string, string, time.Time) error
 	ListTeamInvitations(context.Context, string, string, time.Time) ([]controlstate.Invitation, error)
 	CreateTeamInvitation(context.Context, controlstate.CreateInvitationRequest, time.Time) (controlstate.InvitationSecret, error)
