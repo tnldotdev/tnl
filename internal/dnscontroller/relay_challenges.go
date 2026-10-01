@@ -42,26 +42,26 @@ func NewRelayChallengeManager(
 
 func (m *RelayChallengeManager) Present(ctx context.Context, orderID string) error {
 	started := time.Now()
-	_, err := m.reconcile(ctx, orderID, "presenting")
+	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresenting)
 	observeDNS(m.observer, "relay_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *RelayChallengeManager) Verify(ctx context.Context, orderID string) (bool, error) {
 	started := time.Now()
-	verified, err := m.reconcile(ctx, orderID, "presented")
+	verified, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresented)
 	observeDNS(m.observer, "relay_challenge", "verify", started, verified, err)
 	return verified, err
 }
 
 func (m *RelayChallengeManager) Cleanup(ctx context.Context, orderID string) error {
 	started := time.Now()
-	_, err := m.reconcile(ctx, orderID, "cleaning")
+	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificateCleaning)
 	observeDNS(m.observer, "relay_challenge", "cleanup", started, true, err)
 	return err
 }
 
-func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID, state string) (bool, error) {
+func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID string, state controlstate.RelayCertificateOrderState) (bool, error) {
 	initial, err := m.store.GetRelayDNSChallengeContext(ctx, orderID)
 	if err != nil {
 		return false, err
@@ -73,10 +73,10 @@ func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID, state st
 		if err != nil {
 			return err
 		}
-		if challenge.State != state && !(state == "cleaning" && challenge.State == "failed_cleaning") || record.RecordName != recordName {
+		if challenge.State != state && !(state == controlstate.RelayCertificateCleaning && challenge.State == controlstate.RelayCertificateFailedCleaning) || record.RecordName != recordName {
 			return terminalf("cannot reconcile relay DNS challenge in state %q for %q", challenge.State, record.RecordName)
 		}
-		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, state)
+		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, string(state))
 		return err
 	})
 	return verified, err

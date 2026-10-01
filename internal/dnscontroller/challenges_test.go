@@ -168,7 +168,7 @@ func TestChallengeManagerUsesOwnedClaimedZone(t *testing.T) {
 	for _, phase := range []string{"presenting", "presented", "cleaning"} {
 		t.Run(phase, func(t *testing.T) {
 			store := claimedChallengeStore()
-			store.challenge.State = phase
+			store.challenge.State = controlstate.ACMEAuthorizationState(phase)
 			store.challenge.Presentations[0].Active = phase != "cleaning"
 			provider := &challengeProviderStub{zone: Zone{ID: "ZCLAIMED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
 			verifier := &challengeVerifierStub{verified: true}
@@ -224,7 +224,7 @@ func TestChallengeManagerClaimedAuthorityGuards(t *testing.T) {
 				t.Run(phase, func(t *testing.T) {
 					store := claimedChallengeStore()
 					test.change(store)
-					store.challenge.State = phase
+					store.challenge.State = controlstate.ACMEAuthorizationState(phase)
 					provider, verifier := &challengeProviderStub{}, &challengeVerifierStub{}
 					manager, err := NewChallengeManager(store, provider, verifier, Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"})
 					if err != nil {
@@ -252,7 +252,7 @@ func TestChallengeManagerReleasingAuthorityAllowsOnlyCleanup(t *testing.T) {
 	for _, phase := range []string{"presenting", "presented", "cleaning"} {
 		t.Run(phase, func(t *testing.T) {
 			store := claimedChallengeStore()
-			store.authority.State, store.challenge.State = "releasing", phase
+			store.authority.State, store.challenge.State = "releasing", controlstate.ACMEAuthorizationState(phase)
 			store.challenge.Presentations[0].Active = phase != "cleaning"
 			provider, verifier := &challengeProviderStub{}, &challengeVerifierStub{}
 			manager, err := NewChallengeManager(store, provider, verifier, Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"})
@@ -303,7 +303,7 @@ func TestChallengeManagerRejectsWrongPhaseBeforeDNSWork(t *testing.T) {
 			}
 			t.Run(state+"/"+operation, func(t *testing.T) {
 				store := claimedChallengeStore()
-				store.challenge.CanonicalDomain, store.challenge.Identifier, store.challenge.State = "tunnels.example.test", "api.tunnels.example.test", state
+				store.challenge.CanonicalDomain, store.challenge.Identifier, store.challenge.State = "tunnels.example.test", "api.tunnels.example.test", controlstate.ACMEAuthorizationState(state)
 				store.challenge.DNSAuthorityReference = ""
 				provider, verifier := &challengeProviderStub{}, &challengeVerifierStub{}
 				manager, err := NewChallengeManager(store, provider, verifier, Config{ManagedDomain: "tunnels.example.test", ManagedZoneID: "ZMANAGED"})

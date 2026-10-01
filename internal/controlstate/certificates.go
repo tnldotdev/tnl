@@ -62,7 +62,7 @@ type CertificateIssuance struct {
 	PublicURLID      string
 	PublishRunNumber uint64
 	CertificatePlan  CertificatePlan
-	State            string
+	State            ACMEOrderState
 	Challenges       []CertificateChallenge
 	CertificatePEM   string
 	RetryAt          *time.Time
@@ -527,8 +527,12 @@ func loadCertificateIssuance(
 		return CertificateIssuance{}, fmt.Errorf("controlstate: list certificate challenges: %w", err)
 	}
 	method := certificateidentity.ChallengeMethod(order.ChallengeMethod)
+	state := ACMEOrderState(order.State)
 	if !method.Valid() {
 		return CertificateIssuance{}, errors.New("controlstate: invalid certificate challenge method")
+	}
+	if !state.valid() {
+		return CertificateIssuance{}, errors.New("controlstate: invalid certificate issuance state")
 	}
 	result := CertificateIssuance{
 		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
@@ -536,7 +540,7 @@ func loadCertificateIssuance(
 			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
 			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: method,
 		},
-		State: order.State, Challenges: make([]CertificateChallenge, 0, len(rows)),
+		State: state, Challenges: make([]CertificateChallenge, 0, len(rows)),
 		CertificatePEM: string(order.CertificatePem), CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
 	}
 	if order.AvailableAt.Valid && order.AvailableAt.Time.After(now) {

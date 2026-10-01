@@ -11,14 +11,14 @@ func TestCertificateIssuanceResponseWithholdsCertificateUntilInstallable(t *test
 	notBefore := time.Date(2026, 9, 15, 22, 0, 0, 0, time.UTC)
 	notAfter := notBefore.Add(24 * time.Hour)
 	for _, test := range []struct {
-		state       string
+		state       controlstate.ACMEOrderState
 		wantExposed bool
 	}{
-		{state: "finalizing"},
-		{state: "waiting_for_install", wantExposed: true},
-		{state: "installed", wantExposed: true},
+		{state: controlstate.ACMEOrderFinalizing},
+		{state: controlstate.ACMEOrderWaitingForInstall, wantExposed: true},
+		{state: controlstate.ACMEOrderInstalled, wantExposed: true},
 	} {
-		t.Run(test.state, func(t *testing.T) {
+		t.Run(string(test.state), func(t *testing.T) {
 			response := certificateIssuanceResponse(controlstate.CertificateIssuance{
 				State: test.state, CertificatePEM: "certificate", NotBefore: &notBefore, NotAfter: &notAfter,
 			})

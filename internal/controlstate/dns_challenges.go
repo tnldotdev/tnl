@@ -23,7 +23,7 @@ type DNSChallengeContext struct {
 	AuthorizationID       string
 	Identifier            string
 	PresentationReference string
-	State                 string
+	State                 ACMEAuthorizationState
 	ChallengeDigest       [32]byte
 	Presentations         []DNSChallengePresentation
 }
@@ -100,7 +100,8 @@ func (d *Database) GetDNSChallengeContext(
 	}
 	baseIdentifier := strings.TrimPrefix(row.Identifier, "*.")
 	canonical, err := naming.CanonicalizeHostname(baseIdentifier)
-	if err != nil || canonical != baseIdentifier || len(row.ChallengeDigest) != 32 ||
+	state := ACMEAuthorizationState(row.State)
+	if err != nil || canonical != baseIdentifier || len(row.ChallengeDigest) != 32 || !state.valid() ||
 		!validStateText(row.PresentationReference.String) ||
 		row.CanonicalDomain != "" && !hostnameWithin(baseIdentifier, row.CanonicalDomain) ||
 		row.CanonicalHostname != baseIdentifier && !strings.HasSuffix(row.CanonicalHostname, "."+baseIdentifier) {
@@ -114,7 +115,7 @@ func (d *Database) GetDNSChallengeContext(
 		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,
 		AuthorizationID: row.AuthorizationID, Identifier: row.Identifier,
-		PresentationReference: row.PresentationReference.String, State: row.State,
+		PresentationReference: row.PresentationReference.String, State: state,
 		Presentations: make([]DNSChallengePresentation, len(presentations)),
 	}
 	copy(result.ChallengeDigest[:], row.ChallengeDigest)
