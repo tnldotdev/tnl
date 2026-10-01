@@ -251,13 +251,14 @@ func (d *Database) SetMembershipRole(
 	if err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: lock membership: %w", err)
 	}
-	if TeamRole(target.Role) == role {
+	targetRole := TeamRole(target.Role)
+	if targetRole == role {
 		if err := tx.Commit(ctx); err != nil {
 			return Membership{}, fmt.Errorf("controlstate: set membership role: commit no-op: %w", err)
 		}
 		return d.getMembership(ctx, teamID, membershipID)
 	}
-	if TeamRole(target.Role) == TeamRoleOwner {
+	if targetRole == TeamRoleOwner {
 		owners, err := queries.CountTeamOwners(ctx, teamID)
 		if err != nil {
 			return Membership{}, fmt.Errorf("controlstate: set membership role: count owners: %w", err)
@@ -320,7 +321,8 @@ func (d *Database) RemoveMembership(
 	if err != nil {
 		return err
 	}
-	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleOwner && TeamRole(actor.ActorRole) != TeamRoleAdmin {
+	actorRole := TeamRole(actor.ActorRole)
+	if TeamKind(actor.Kind) != TeamKindOrganization || actorRole != TeamRoleOwner && actorRole != TeamRoleAdmin {
 		return ErrAuthorityAccess
 	}
 	target, err := queries.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{
@@ -332,10 +334,11 @@ func (d *Database) RemoveMembership(
 	if err != nil {
 		return fmt.Errorf("controlstate: remove membership: lock membership: %w", err)
 	}
-	if TeamRole(actor.ActorRole) == TeamRoleAdmin && TeamRole(target.Role) != TeamRoleMember {
+	targetRole := TeamRole(target.Role)
+	if actorRole == TeamRoleAdmin && targetRole != TeamRoleMember {
 		return ErrAuthorityAccess
 	}
-	if TeamRole(target.Role) == TeamRoleOwner {
+	if targetRole == TeamRoleOwner {
 		owners, err := queries.CountTeamOwners(ctx, teamID)
 		if err != nil {
 			return fmt.Errorf("controlstate: remove membership: count owners: %w", err)

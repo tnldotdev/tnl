@@ -40,6 +40,7 @@ const (
 )
 
 // DomainState is the stored state of a team domain, including released domains.
+// the team-domain query excludes released domains from public responses.
 type DomainState string
 
 const (
