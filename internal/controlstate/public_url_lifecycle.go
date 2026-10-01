@@ -181,7 +181,7 @@ type IngressRoutingTableProjection struct {
 	PublishRunNumber     uint64                                   `json:"publish_run_number"`
 	CanonicalHostname    string                                   `json:"canonical_hostname"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
-	IPPolicy             string                                   `json:"ip_policy"`
+	IPPolicy             IPPolicy                                 `json:"ip_policy"`
 	AllowedIPPrefixes    []netip.Prefix                           `json:"allowed_ip_prefixes"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	RecoveryEpisodeID    *uint64                                  `json:"recovery_episode_id,omitempty"`
@@ -730,10 +730,11 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	projectionExpiresAt time.Time,
 	now time.Time,
 ) (*publishedIngressRoutingTableEvent, error) {
+	policy := IPPolicy(route.IpPolicy)
 	projection := IngressRoutingTableProjection{
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
-		IPPolicy: route.IpPolicy, AllowedIPPrefixes: append([]netip.Prefix(nil), route.AllowedIpPrefixes...),
+		IPPolicy: policy, AllowedIPPrefixes: append([]netip.Prefix(nil), route.AllowedIpPrefixes...),
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
 	}
