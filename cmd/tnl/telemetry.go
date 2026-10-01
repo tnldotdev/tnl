@@ -9,11 +9,14 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -24,8 +27,11 @@ const (
 
 type telemetryPayload struct {
 	InstallationID string `json:"installation_id"`
+	InvocationID   string `json:"invocation_id"`
 	Event          string `json:"event"`
 	Command        string `json:"command"`
+	FailureStage   string `json:"failure_stage,omitempty"`
+	DiagnosticCode string `json:"diagnostic_code,omitempty"`
 	ServerKind     string `json:"server_kind,omitempty"`
 	Framework      string `json:"framework,omitempty"`
 	Version        string `json:"version"`
@@ -39,6 +45,52 @@ type telemetryReporter interface {
 }
 
 type telemetryReporterFactory func(string) telemetryReporter
+
+type telemetryInvocation struct {
+	reporter telemetryReporter
+	id       string
+	ready    atomic.Bool
+}
+
+func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
+	id, err := opaqueid.New("invocation_")
+	if err != nil {
+		return nil, err
+	}
+	return &telemetryInvocation{reporter: reporter, id: id}, nil
+}
+
+func (i *telemetryInvocation) Report(payload telemetryPayload) {
+	payload.InvocationID = i.id
+	if payload.Event == "publish_run_started" {
+		i.ready.Store(true)
+	}
+	i.reporter.Report(payload)
+}
+
+func (i *telemetryInvocation) failed(command, stage string, err error) {
+	if i.ready.Load() {
+		return
+	}
+	payload := newTelemetryPayload("command_failed", command, "", "")
+	if code, ok := diagnostic.CodeOf(err); ok {
+		payload.DiagnosticCode = string(code)
+		if stage != "setup" {
+			switch code {
+			case diagnostic.AuthenticationTimeout, diagnostic.AuthenticationRequired:
+				stage = "authentication"
+			case diagnostic.TargetUnavailable, diagnostic.TargetInvalid, diagnostic.FrameworkRegistrationTimeout,
+				diagnostic.TargetMismatch, diagnostic.DevCommandRecursion:
+				stage = "local_service"
+			case diagnostic.PublicURLInvalid, diagnostic.PublicURLConflict, diagnostic.DNSSetupPending,
+				diagnostic.ProvisioningStalled:
+				stage = "public_url"
+			}
+		}
+	}
+	payload.FailureStage = stage
+	i.Report(payload)
+}
 
 type asyncTelemetryReporter struct {
 	root   string
