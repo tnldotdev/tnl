@@ -196,7 +196,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		ID: publicURLID, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: membershipID,
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: request.RequestDigest[:], CanonicalHostname: request.CanonicalHostname, Target: request.Target,
-		PublicURLScope: string(request.PublicURLScope), PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
+		PublicURLScope: string(request.PublicURLScope), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPrefixes: prefixes, DnsAuthorityReference: nullableText(request.DNSAuthorityReference),
 		DnsState: string(request.DNSState), Ephemeral: request.Ephemeral,
 		ExpiresAt: ephemeralRouteExpiry(request.Ephemeral, now), CreatedAt: timestamptz(now),
@@ -300,7 +300,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 		}
 	}
 	updated, err := queries.UpdatePublicURL(ctx, controlstatedb.UpdatePublicURLParams{
-		Target: request.Target, PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
+		Target: request.Target, PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPrefixes: prefixes, UpdatedAt: timestamptz(now), PublicURLID: request.PublicURLID,
 		ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 	})
@@ -871,11 +871,11 @@ func oneLabelBeneath(hostname, domain string) bool {
 	return label != "" && !strings.Contains(label, ".")
 }
 
-func routeIPPolicy(prefixes []netip.Prefix) string {
+func routeIPPolicy(prefixes []netip.Prefix) IPPolicy {
 	if len(prefixes) == 0 {
-		return "allow_all"
+		return IPPolicyAllowAll
 	}
-	return "allowlist"
+	return IPPolicyAllowlist
 }
 
 func nullableText(value string) pgtype.Text {

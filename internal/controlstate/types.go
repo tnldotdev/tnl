@@ -8,6 +8,14 @@ const (
 	PublicURLScopeShared PublicURLScope = "shared"
 )
 
+// IPPolicy is the stored visitor address policy for a public URL.
+type IPPolicy string
+
+const (
+	IPPolicyAllowAll  IPPolicy = "allow_all"
+	IPPolicyAllowlist IPPolicy = "allowlist"
+)
+
 // PublicURLLifecycleState is the stored state of a public URL.
 type PublicURLLifecycleState string
 
