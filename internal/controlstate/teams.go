@@ -108,15 +108,15 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	if err != nil {
 		return Team{}, err
 	}
-	teamID, err := opaqueid.New("team_")
+	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
 	if err != nil {
 		return Team{}, err
 	}
-	reservationID, err := opaqueid.New("slug_reservation_")
+	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
 	if err != nil {
 		return Team{}, err
 	}
-	membershipID, err := opaqueid.New("membership_")
+	membershipID, err := opaqueid.New(opaqueid.MembershipPrefix)
 	if err != nil {
 		return Team{}, err
 	}

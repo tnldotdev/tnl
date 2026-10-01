@@ -372,7 +372,7 @@ func (t *Tunnel) heartbeat(ctx context.Context) {
 }
 
 func newTunnelID() (string, error) {
-	id, err := opaqueid.New("tunnel_")
+	id, err := opaqueid.New(opaqueid.TunnelPrefix)
 	if err != nil {
 		return "", fmt.Errorf("clientstate: generate tunnel ID: %w", err)
 	}

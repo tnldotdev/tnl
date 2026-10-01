@@ -101,7 +101,7 @@ func (d *Database) PrepareRelayCertificateOrder(
 	if err != nil {
 		return false, fmt.Errorf("controlstate: prepare relay certificate order: claim relay service: %w", err)
 	}
-	orderID, err := opaqueid.New("relay_certificate_order_")
+	orderID, err := opaqueid.New(opaqueid.RelayCertificateOrderPrefix)
 	if err != nil {
 		return false, fmt.Errorf("controlstate: prepare relay certificate order: generate ID: %w", err)
 	}

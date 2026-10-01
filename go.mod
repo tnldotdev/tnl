@@ -12,6 +12,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/libp2p/go-yamux/v5 v5.1.0
+	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/miekg/dns v1.1.73
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/pires/go-proxyproto v0.15.0

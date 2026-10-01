@@ -117,7 +117,7 @@ func validOpaqueValue(value string, maximum int) bool {
 }
 
 func validControlSessionID(value string) bool {
-	return opaqueid.Valid(value, "control_session_")
+	return opaqueid.Valid(value, opaqueid.ControlSessionPrefix)
 }
 
 func (s *Store) RemoveControlSession(ctx context.Context) error {

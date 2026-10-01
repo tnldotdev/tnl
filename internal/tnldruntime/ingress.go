@@ -106,7 +106,7 @@ func (d *daemon) startIngressRuntime(
 	runtimeConfig ingressRuntimeConfig,
 ) error {
 	runtime := &ingressRuntime{}
-	runID, err := opaqueid.New("ingress_run_")
+	runID, err := opaqueid.New(opaqueid.IngressRunPrefix)
 	if err != nil {
 		return fmt.Errorf("create ingress process run ID: %w", err)
 	}

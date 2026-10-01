@@ -347,5 +347,5 @@ func unixNanoTime(value int64) time.Time {
 }
 
 func validPublicURLID(value string) bool {
-	return opaqueid.Valid(value, "public_url_")
+	return opaqueid.Valid(value, opaqueid.PublicURLPrefix)
 }

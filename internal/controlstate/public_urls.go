@@ -184,7 +184,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		policyRevision = creation.PolicyRevision
 	}
 
-	publicURLID, err := opaqueid.New("public_url_")
+	publicURLID, err := opaqueid.New(opaqueid.PublicURLPrefix)
 	if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: generate route ID: %w", err)
 	}
@@ -310,7 +310,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: update public_url: %w", err)
 	}
-	requestID, err := opaqueid.New("request_")
+	requestID, err := opaqueid.New(opaqueid.RequestPrefix)
 	if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: generate request ID: %w", err)
 	}
@@ -572,7 +572,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	if updated != 1 {
 		return ErrPublicURLNotFound
 	}
-	requestID, err := opaqueid.New("request_")
+	requestID, err := opaqueid.New(opaqueid.RequestPrefix)
 	if err != nil {
 		return fmt.Errorf("controlstate: delete public_url: generate request ID: %w", err)
 	}

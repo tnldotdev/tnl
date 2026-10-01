@@ -101,7 +101,7 @@ func (d *daemon) startControlWorkers(
 			return err
 		}
 		for index := range cfg.PublicURLCertificateWorkers {
-			publicURLWorkerID, err := opaqueid.New("public_url_certificate_worker_")
+			publicURLWorkerID, err := opaqueid.New(opaqueid.PublicURLCertificateWorkerPrefix)
 			if err != nil {
 				return fmt.Errorf("create public URL certificate worker identity: %w", err)
 			}
@@ -117,7 +117,7 @@ func (d *daemon) startControlWorkers(
 			})
 		}
 		if relayDNSChallenges != nil {
-			relayWorkerID, err := opaqueid.New("relay_certificate_worker_")
+			relayWorkerID, err := opaqueid.New(opaqueid.RelayCertificateWorkerPrefix)
 			if err != nil {
 				return fmt.Errorf("create relay certificate worker identity: %w", err)
 			}
@@ -136,7 +136,7 @@ func (d *daemon) startControlWorkers(
 		}
 	}
 	if cfg.PublicURLUsageURL != "" {
-		workerID, err := opaqueid.New("public_url_usage_worker_")
+		workerID, err := opaqueid.New(opaqueid.PublicURLUsageWorkerPrefix)
 		if err != nil {
 			return fmt.Errorf("create public URL usage worker identity: %w", err)
 		}
@@ -150,7 +150,7 @@ func (d *daemon) startControlWorkers(
 		d.start("run public URL usage worker", func() error { return worker.Run(lifetime) })
 	}
 	if cfg.DNSAutomationEnabled() {
-		workerID, err := opaqueid.New("dns_worker_")
+		workerID, err := opaqueid.New(opaqueid.DNSWorkerPrefix)
 		if err != nil {
 			return fmt.Errorf("create DNS worker identity: %w", err)
 		}

@@ -213,7 +213,7 @@ func replacePublishRunConnection(
 	if row.ConnectionAssignmentRevision <= 0 || row.ConnectionAssignmentRevision == math.MaxInt64 {
 		return controlstatedb.ControlPublishRunConnectionSlot{}, errors.New("controlstate: replenish publish-run connections: assignment revision is exhausted")
 	}
-	publisherConnectionID, err := opaqueid.New("connection_")
+	publisherConnectionID, err := opaqueid.New(opaqueid.PublisherConnectionPrefix)
 	if err != nil {
 		return controlstatedb.ControlPublishRunConnectionSlot{}, fmt.Errorf("controlstate: replenish publish-run connections: generate publisher connection ID: %w", err)
 	}

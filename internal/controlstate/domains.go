@@ -91,11 +91,11 @@ func (d *Database) ClaimTeamDomain(
 	if err != nil {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: advance policy revision: %w", err)
 	}
-	domainID, err := opaqueid.New("domain_")
+	domainID, err := opaqueid.New(opaqueid.DomainPrefix)
 	if err != nil {
 		return Domain{}, err
 	}
-	authorityReference, err := opaqueid.New("dns_authority_")
+	authorityReference, err := opaqueid.New(opaqueid.DNSAuthorityPrefix)
 	if err != nil {
 		return Domain{}, err
 	}

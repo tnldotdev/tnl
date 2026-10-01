@@ -44,7 +44,7 @@ func (d *Database) FinalizePublicURLUsageBuckets(
 		return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: update buckets: %w", err)
 	}
 	for _, bucket := range buckets {
-		deliveryKey, err := opaqueid.New("usage_report_")
+		deliveryKey, err := opaqueid.New(opaqueid.UsageReportPrefix)
 		if err != nil {
 			return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: create delivery key: %w", err)
 		}
@@ -219,7 +219,7 @@ func publicURLUsageDeliveryWork(
 	if err != nil {
 		return PublicURLUsageDeliveryWork{}, err
 	}
-	if delivery.ID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, "usage_report_") ||
+	if delivery.ID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, opaqueid.UsageReportPrefix) ||
 		delivery.BucketRevision <= 0 || delivery.BucketRevision != bucket.BucketRevision || bucket.PublishRunNumber <= 0 ||
 		!validStateText(bucket.TeamID) || !validStateText(bucket.ActingIdentityID) ||
 		!bucket.BucketStart.Valid || !bucket.BucketEnd.Valid || !bucket.ObservedThrough.Valid ||
@@ -251,7 +251,7 @@ func publicURLUsageDeliveryWork(
 }
 
 func validatePublicURLUsageDeliveryWork(work PublicURLUsageDeliveryWork) error {
-	if work.DeliveryID == 0 || work.DeliveryID > math.MaxInt64 || !opaqueid.Valid(work.DeliveryKey, "usage_report_") ||
+	if work.DeliveryID == 0 || work.DeliveryID > math.MaxInt64 || !opaqueid.Valid(work.DeliveryKey, opaqueid.UsageReportPrefix) ||
 		!validStateText(work.WorkerID) || work.WorkEpoch == 0 || work.WorkEpoch > math.MaxInt64 || work.WorkExpiresAt.IsZero() {
 		return ErrPublicURLUsageDeliveryInvalid
 	}

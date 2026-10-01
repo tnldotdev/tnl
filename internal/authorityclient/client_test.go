@@ -19,7 +19,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
 func TestAuthenticationRequestsUseAuthorityContract(t *testing.T) {
-	const sessionJSON = `{"session_id":"control_session_0123456789abcdef0123456789abcdef","access_token":"issued-access","refresh_token":"issued-refresh","access_expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-01-02T00:00:00Z"}`
+	const sessionJSON = `{"session_id":"cs_0123456789abcdefghijkl","access_token":"issued-access","refresh_token":"issued-refresh","access_expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-01-02T00:00:00Z"}`
 	for _, test := range []struct {
 		name, path, body string
 		call             func(*Client) (authorityv1.ControlSessionResponse, error)
@@ -59,7 +59,7 @@ func TestAuthenticationRequestsUseAuthorityContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := test.call(client)
-			want := authorityv1.ControlSessionResponse{SessionId: "control_session_0123456789abcdef0123456789abcdef", AccessToken: "issued-access", RefreshToken: "issued-refresh", AccessExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), RefreshExpiresAt: time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)}
+			want := authorityv1.ControlSessionResponse{SessionId: "cs_0123456789abcdefghijkl", AccessToken: "issued-access", RefreshToken: "issued-refresh", AccessExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), RefreshExpiresAt: time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)}
 			if err != nil || !reflect.DeepEqual(got, want) || calls != 1 || !body.closed {
 				t.Fatalf("session response mismatch: calls=%d closed=%v error=%v", calls, body.closed, err)
 			}

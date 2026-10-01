@@ -100,7 +100,7 @@ func dnsRouteWork(row controlstatedb.ControlPublicUrl, requireLease bool) (DNSPu
 
 func validateDNSPublicURLWork(work DNSPublicURLWork) error {
 	canonical, err := naming.CanonicalizeHostname(work.CanonicalHostname)
-	if !opaqueid.Valid(work.PublicURLID, "public_url_") || !validStateText(work.DomainID) || err != nil || canonical != work.CanonicalHostname ||
+	if !opaqueid.Valid(work.PublicURLID, opaqueid.PublicURLPrefix) || !validStateText(work.DomainID) || err != nil || canonical != work.CanonicalHostname ||
 		work.DNSAuthorityReference != "" && !validStateText(work.DNSAuthorityReference) ||
 		work.State != PublicURLDNSPending && work.State != PublicURLDNSPublished && work.State != PublicURLDNSRemoving &&
 			work.State != PublicURLDNSRemoved && work.State != PublicURLDNSFailed ||

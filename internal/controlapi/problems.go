@@ -88,7 +88,7 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 }
 
 func newRequestID() string {
-	requestID, err := opaqueid.New("request_")
+	requestID, err := opaqueid.New(opaqueid.RequestPrefix)
 	if err != nil {
 		return "request_unavailable"
 	}

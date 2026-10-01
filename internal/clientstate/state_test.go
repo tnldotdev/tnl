@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
-const testPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
+const testPublicURLID = "url_0123456789abcdefghijkl"
 
 func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
@@ -175,7 +175,7 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 	}
 	want := ControlSession{
 		AuthorityEndpoint: "https://accounts.example",
-		SessionID:         "control_session_0123456789abcdef0123456789abcdef",
+		SessionID:         "cs_0123456789abcdefghijkl",
 		AccessToken:       token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 	}

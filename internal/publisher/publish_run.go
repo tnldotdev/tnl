@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -17,7 +18,7 @@ import (
 const activationRetry = 2 * time.Second
 
 func createPublishRun(ctx context.Context, config Config, route controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
-	idempotencyKey, err := opaqueID("publish_run_")
+	idempotencyKey, err := opaqueID(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}

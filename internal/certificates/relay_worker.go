@@ -290,7 +290,7 @@ func (w *RelayWorker) authorize(ctx context.Context, client acmeAPI, work *contr
 		work.ChallengeURL = challenge.URL
 		work.ChallengeToken = challenge.Token
 		work.ChallengeDigest = sha256.Sum256([]byte(keyAuthorization))
-		work.PresentationReference, err = opaqueid.New("relay_acme_presentation_")
+		work.PresentationReference, err = opaqueid.New(opaqueid.RelayACMEPresentationPrefix)
 		if err != nil {
 			return err
 		}

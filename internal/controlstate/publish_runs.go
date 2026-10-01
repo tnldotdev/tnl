@@ -242,7 +242,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	publishRunID, err := opaqueid.New("session_")
+	publishRunID, err := opaqueid.New(opaqueid.PublishRunPrefix)
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: generate session ID: %w", err)
 	}
@@ -281,7 +281,7 @@ func (d *Database) createPublishRun(
 		PublisherConnectionCredentialExpiresAt: timestamptz(now.Add(connectionCredentialDuration)), AssignedAt: timestamptz(now),
 	}
 	for _, placement := range placements {
-		publisherConnectionID, err := opaqueid.New("connection_")
+		publisherConnectionID, err := opaqueid.New(opaqueid.PublisherConnectionPrefix)
 		if err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: generate publisher connection ID: %w", err)
 		}

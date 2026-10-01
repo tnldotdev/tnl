@@ -222,19 +222,19 @@ func bootstrapBuiltinIdentity(
 	managedDomain string,
 	now time.Time,
 ) (controlstatedb.ControlIdentity, error) {
-	identityID, err := opaqueid.New("identity_")
+	identityID, err := opaqueid.New(opaqueid.IdentityPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	teamID, err := opaqueid.New("team_")
+	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	membershipID, err := opaqueid.New("membership_")
+	membershipID, err := opaqueid.New(opaqueid.MembershipPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	reservationID, err := opaqueid.New("slug_reservation_")
+	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
@@ -287,19 +287,19 @@ func createOIDCIdentity(
 	identity OIDCIdentity,
 	now time.Time,
 ) (controlstatedb.ControlIdentity, error) {
-	identityID, err := opaqueid.New("identity_")
+	identityID, err := opaqueid.New(opaqueid.IdentityPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	teamID, err := opaqueid.New("team_")
+	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	membershipID, err := opaqueid.New("membership_")
+	membershipID, err := opaqueid.New(opaqueid.MembershipPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	reservationID, err := opaqueid.New("slug_reservation_")
+	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
@@ -350,7 +350,7 @@ func ensureManagedDomain(
 ) (controlstatedb.ControlDomain, error) {
 	domain, err := queries.FindManagedDomain(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		domainID, idErr := opaqueid.New("domain_")
+		domainID, idErr := opaqueid.New(opaqueid.DomainPrefix)
 		if idErr != nil {
 			return controlstatedb.ControlDomain{}, idErr
 		}
@@ -396,7 +396,7 @@ func (d *Database) createControlSession(
 	refreshLifetime time.Duration,
 	now time.Time,
 ) (ControlSession, error) {
-	sessionID, err := opaqueid.New("control_session_")
+	sessionID, err := opaqueid.New(opaqueid.ControlSessionPrefix)
 	if err != nil {
 		return ControlSession{}, err
 	}

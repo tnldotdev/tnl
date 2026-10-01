@@ -38,7 +38,7 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		t.Fatalf("configuration = %#v", configured)
 	}
 	want := devConfigurationResponse{
-		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
+		Protocol: 1, TunnelID: "tun_0123456789abcdefghijkl",
 		Service: nullableService("web"), Namespace: "member.example",
 		Hostname: "agent-feature.example", PublicURL: "https://agent-feature.example",
 		Project: projectmeta.PublicMetadata{

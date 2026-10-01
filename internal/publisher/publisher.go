@@ -205,7 +205,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 			return reconciled, false, err
 		}
 	}
-	idempotencyKey, err := opaqueID("public_url_")
+	idempotencyKey, err := opaqueID(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return controlv1.PublicURL{}, false, err
 	}

@@ -3,8 +3,9 @@ package clientstate
 import (
 	"bytes"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 func TestInstallationIDIsStable(t *testing.T) {
@@ -22,8 +23,7 @@ func TestInstallationIDIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || len(first) != len("installation_")+32 ||
-		!strings.HasPrefix(first, "installation_") || first != strings.ToLower(first) {
+	if first != second || !opaqueid.Valid(first, opaqueid.InstallationPrefix) {
 		t.Fatalf("installation IDs = %q, %q", first, second)
 	}
 }

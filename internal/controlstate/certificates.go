@@ -100,7 +100,7 @@ func (d *Database) EnsureACMEAccount(
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ACMEAccount{}, fmt.Errorf("controlstate: read ACME account: %w", err)
 	}
-	accountID, err := opaqueid.New("acme_account_")
+	accountID, err := opaqueid.New(opaqueid.ACMEAccountPrefix)
 	if err != nil {
 		return ACMEAccount{}, fmt.Errorf("controlstate: generate ACME account ID: %w", err)
 	}
@@ -196,7 +196,7 @@ func (d *Database) CreateCertificateIssuance(
 	if !enabled {
 		return CertificateIssuance{}, ErrCertificateIssuanceGated
 	}
-	issuanceID, err := opaqueid.New("issuance_")
+	issuanceID, err := opaqueid.New(opaqueid.IssuancePrefix)
 	if err != nil {
 		return CertificateIssuance{}, fmt.Errorf("controlstate: generate certificate issuance ID: %w", err)
 	}

@@ -282,7 +282,7 @@ func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse,
 	if _, _, err := credentials.ParseRefreshToken(refresh); err != nil {
 		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid refresh token")
 	}
-	if !opaqueid.Valid(response.SessionId, "control_session_") || expectedSessionID != "" && response.SessionId != expectedSessionID ||
+	if !opaqueid.Valid(response.SessionId, opaqueid.ControlSessionPrefix) || expectedSessionID != "" && response.SessionId != expectedSessionID ||
 		!response.AccessExpiresAt.After(time.Now()) || response.RefreshExpiresAt.Before(response.AccessExpiresAt) ||
 		!expectedRefreshExpiry.IsZero() && !response.RefreshExpiresAt.Equal(expectedRefreshExpiry) {
 		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid control session")

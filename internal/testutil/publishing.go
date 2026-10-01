@@ -24,6 +24,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -115,11 +116,11 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	fixture.AccessToken, fixture.LoginToken = access.String(), login.String()
 	relayAddress := publishingRelay(t, tlsConfig)
 
-	const teamID = "team_00000000000000000000000000000001"
-	const domainID = "domain_00000000000000000000000000000001"
-	const membershipID = "membership_00000000000000000000000000000001"
+	const teamID = "tm_0000000000000000000001"
+	const domainID = "dom_0000000000000000000001"
+	const membershipID = "mem_0000000000000000000001"
 	identity := authorityv1.IdentityContext{
-		Identity: authorityv1.Identity{Id: "identity_00000000000000000000000000000001"}, PersonalTeamId: teamID,
+		Identity: authorityv1.Identity{Id: "ident_0000000000000000000001"}, PersonalTeamId: teamID,
 		Memberships: []authorityv1.Membership{{Id: membershipID, TeamId: teamID, ManagedLabel: "member", MemberSlug: "member", Role: authorityv1.TeamRoleOwner, TeamKind: authorityv1.Personal}},
 	}
 	team := authorityv1.Team{Id: teamID, DefaultDomainId: domainID, PolicyRevision: 1, Kind: authorityv1.Personal}
@@ -160,7 +161,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 			return
 		}
 		mu.Lock()
-		id := fmt.Sprintf("public_url_%032x", len(routes)+1)
+		id := fmt.Sprintf("%s%022x", opaqueid.PublicURLPrefix, len(routes)+1)
 		membership := membershipID
 		route := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
 		routes[id] = route
@@ -176,7 +177,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		mu.Lock()
 		defer mu.Unlock()
 		route := routes[r.PathValue("route")]
-		id := fmt.Sprintf("publish_run_%032x", len(sessions)+1)
+		id := fmt.Sprintf("%s%022x", opaqueid.PublishRunPrefix, len(sessions)+1)
 		setup := controlv1.PublishRunSetup{
 			PublicUrl: route, PublishRunToken: token.String(),
 			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: route.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
@@ -184,7 +185,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		}
 		for slot := range 2 {
 			setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{
-				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, PublisherConnectionId: fmt.Sprintf("connection_%032x", len(sessions)*2+slot+1),
+				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, PublisherConnectionId: fmt.Sprintf("%s%022x", opaqueid.PublisherConnectionPrefix, len(sessions)*2+slot+1),
 				RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: relayAddress, TlsServerName: "localhost", State: controlv1.PublisherConnectionStateAssigned,
 				PublisherConnectionCredential: "fixture-credential", PublisherConnectionCredentialExpiresAt: now.Add(time.Hour),
 			})
@@ -224,7 +225,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 			return
 		}
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) + string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
-		writeJSON(w, controlv1.CertificateIssuance{Id: "issuance_00000000000000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
+		writeJSON(w, controlv1.CertificateIssuance{Id: "iss_0000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
 	})
 	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-installed", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, lookup(r).PublishRun) })
 	mux.HandleFunc("POST /v1/publish-runs/{session}/ready", func(w http.ResponseWriter, r *http.Request) {
