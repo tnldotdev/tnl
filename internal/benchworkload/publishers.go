@@ -23,6 +23,20 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+// TransportChoice selects a benchmark publisher cohort or production fallback.
+type TransportChoice string
+
+const (
+	TransportAuto  TransportChoice = "auto"
+	TransportMixed TransportChoice = "mixed"
+	TransportQUIC  TransportChoice = "quic"
+	TransportTCP   TransportChoice = "tcp"
+)
+
+func (transport TransportChoice) Valid() bool {
+	return transport == TransportAuto || transport == TransportMixed || transport == TransportQUIC || transport == TransportTCP
+}
+
 type PublisherConfig struct {
 	Server, LoginToken, Domain, StateRoot, Target string
 	HostnamePrefix                                string
@@ -31,7 +45,7 @@ type PublisherConfig struct {
 	RelayTLS                                      *tls.Config
 	AllowedIPPrefixes                             []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
-	Transport                   string
+	Transport                   TransportChoice
 	QUICDisablePathMTUDiscovery bool
 	QUICQlog                    bool
 	QUICKeepAlive               time.Duration
@@ -85,7 +99,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if config.Parallel < 1 || config.StartParallel < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
 	}
-	if config.Transport != "auto" && config.Transport != "mixed" && config.Transport != "quic" && config.Transport != "tcp" {
+	if !config.Transport.Valid() {
 		return nil, errors.New("publisher transport must be auto, mixed, quic, or tcp")
 	}
 	database, err := clientstate.Open(ctx, config.StateRoot)
@@ -233,17 +247,17 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 			}
 		}
 		transport := g.config.Transport
-		if transport == "mixed" {
+		if transport == TransportMixed {
 			if index%2 == 0 {
-				transport = "quic"
+				transport = TransportQUIC
 			} else {
-				transport = "tcp"
+				transport = TransportTCP
 			}
 		}
-		if transport == "quic" {
+		if transport == TransportQUIC {
 			cfg.TCPConnector = disabledConnector{}
 		}
-		if transport == "tcp" {
+		if transport == TransportTCP {
 			cfg.QUICConnector = disabledConnector{}
 		}
 		go func() {

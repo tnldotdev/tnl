@@ -196,7 +196,7 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	}); err != nil {
 		return result, err
 	}
-	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes, Network: c.VisitorNetwork, SourceAddress: source}
+	visitor := benchworkload.Visitor{PayloadBytes: c.PayloadBytes, Network: string(c.VisitorNetwork), SourceAddress: source}
 	fmt.Fprintln(progress, "tnlbench: verifying each public URL")
 	for _, url := range urls {
 		if check := visitor.Request(ctx, url, time.Now()); check.Error != "" {

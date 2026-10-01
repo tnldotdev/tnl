@@ -133,14 +133,14 @@ type generatorResult struct {
 	Elapsed    time.Duration `json:"elapsed"`
 }
 
-func recordReadyPublicURLs(result *benchmarkResult, ready []benchworkload.PublishedPublicURL, transport string, count int) []string {
+func recordReadyPublicURLs(result *benchmarkResult, ready []benchworkload.PublishedPublicURL, transport benchworkload.TransportChoice, count int) []string {
 	urls := make([]string, count)
 	for _, publicURL := range ready {
 		urls[publicURL.Index] = publicURL.Ready.PublicURL
-		selected := transport
-		if selected == "tcp" || selected == "mixed" && publicURL.Index%2 != 0 {
+		selected := string(transport)
+		if transport == benchworkload.TransportTCP || transport == benchworkload.TransportMixed && publicURL.Index%2 != 0 {
 			selected = string(tunnel.TransportTLSTCP)
-		} else if selected == "quic" || selected == "mixed" {
+		} else if transport == benchworkload.TransportQUIC || transport == benchworkload.TransportMixed {
 			selected = string(tunnel.TransportQUIC)
 		}
 		result.PublicURLInfo = append(result.PublicURLInfo, benchmarkPublicURL{
