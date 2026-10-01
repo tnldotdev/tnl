@@ -343,6 +343,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Domain.Default.remoteFlags, true)
 	case "domain list":
 		apply(&flags.Domain.List.remoteFlags, true)
+	case "domain status <domain>":
+		apply(&flags.Domain.Status.remoteFlags, true)
 	case "domain release <domain>":
 		apply(&flags.Domain.Release.remoteFlags, true)
 	case "url list":

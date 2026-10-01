@@ -385,6 +385,12 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	if flags.Domain.List.ServerURL != "https://explicit.example" || flags.Domain.List.ProjectTeam != team {
 		t.Fatalf("domain flags = %#v", flags.Domain.List)
 	}
+	if err := applyProjectCommandContext("domain status <domain>", project, &flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Domain.Status.ServerURL != server || flags.Domain.Status.ProjectTeam != team {
+		t.Fatalf("domain status flags = %#v", flags.Domain.Status)
+	}
 	flags.URL.Delete.AccessToken = "explicit-token"
 	if err := applyProjectCommandContext("url delete <public-url-id>", project, &flags); err == nil {
 		t.Fatal("project server accepted an explicit access token without an invocation-level server")
