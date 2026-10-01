@@ -43,7 +43,7 @@ type ACMEAccount struct {
 
 type CertificateChallenge struct {
 	Identifier string
-	Method     string
+	Method     certificateidentity.ChallengeMethod
 	Token      string
 	Digest     [32]byte
 	ExpiresAt  time.Time
@@ -53,7 +53,7 @@ type CertificatePlan struct {
 	CacheKey        string
 	Scope           string
 	Identifiers     []string
-	ChallengeMethod string
+	ChallengeMethod certificateidentity.ChallengeMethod
 }
 
 type CertificateIssuance struct {
@@ -526,11 +526,15 @@ func loadCertificateIssuance(
 	if err != nil {
 		return CertificateIssuance{}, fmt.Errorf("controlstate: list certificate challenges: %w", err)
 	}
+	method := certificateidentity.ChallengeMethod(order.ChallengeMethod)
+	if !method.Valid() {
+		return CertificateIssuance{}, errors.New("controlstate: invalid certificate challenge method")
+	}
 	result := CertificateIssuance{
 		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
 		PublishRunNumber: uint64(order.PublishRunNumber), CertificatePlan: CertificatePlan{
 			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
-			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: order.ChallengeMethod,
+			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: method,
 		},
 		State: order.State, Challenges: make([]CertificateChallenge, 0, len(rows)),
 		CertificatePEM: string(order.CertificatePem), CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
@@ -548,12 +552,12 @@ func loadCertificateIssuance(
 		result.NotAfter = &notAfter
 	}
 	for _, row := range rows {
-		if row.ChallengeType.String != "tls-alpn-01" || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
+		if row.ChallengeType.String != string(certificateidentity.ChallengeTLSALPN01) || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
 			row.State == "complete" || row.State == "canceled" {
 			continue
 		}
 		challenge := CertificateChallenge{
-			Identifier: row.Identifier, Method: row.ChallengeType.String, Token: row.ChallengeToken.String,
+			Identifier: row.Identifier, Method: certificateidentity.ChallengeTLSALPN01, Token: row.ChallengeToken.String,
 			ExpiresAt: row.ExpiresAt.Time,
 		}
 		copy(challenge.Digest[:], row.ChallengeDigest)

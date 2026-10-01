@@ -125,11 +125,11 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	if request.Operation == authorization.OperationPublishRunCreate {
 		decision.CertificatePlan = &authorization.CertificatePlan{
 			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
-			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: string(controlv1.TlsAlpn01),
+			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
 		}
 		if a.dnsAutomation {
 			plan := decision.CertificatePlan
-			plan.ChallengeMethod = string(controlv1.Dns01)
+			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
 			if request.PublicURLScope == string(controlv1.Member) {
 				label := acting.MemberSlug
 				if domain.Kind == controlstate.DomainKindManaged {
@@ -230,7 +230,7 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 		decision.CertificatePlan = &authorization.CertificatePlan{
 			CacheKey: wire.CertificatePlan.CacheKey, Scope: wire.CertificatePlan.Scope,
 			Identifiers:     slices.Clone(wire.CertificatePlan.Identifiers),
-			ChallengeMethod: string(wire.CertificatePlan.ChallengeMethod),
+			ChallengeMethod: certificateidentity.ChallengeMethod(wire.CertificatePlan.ChallengeMethod),
 		}
 	}
 	if !validAuthorizationDecision(request, decision) {

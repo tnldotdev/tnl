@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -51,7 +52,7 @@ type PublishRunRequest struct {
 	CertificateCacheKey      string
 	CertificateScope         string
 	CertificateIdentifiers   []string
-	CertificateChallenge     string
+	CertificateChallenge     certificateidentity.ChallengeMethod
 	AuthorityIssuer          string
 	ExpectedMutationRevision uint64
 }
@@ -262,7 +263,7 @@ func (d *Database) createPublishRun(
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
 		PolicyRevision: positive(request.PolicyRevision), CertificateCacheKey: request.CertificateCacheKey,
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,
-		CertificateChallenge: request.CertificateChallenge, CreatedAt: timestamptz(now),
+		CertificateChallenge: string(request.CertificateChallenge), CreatedAt: timestamptz(now),
 		LastHeartbeatAt: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(publisherLeaseDuration)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -519,7 +520,7 @@ func validatePublishRunRequest(
 ) error {
 	for _, value := range []string{
 		request.PublicURLID, request.TeamID, request.ActingIdentityID, request.IdempotencyKey,
-		request.CertificateCacheKey, request.CertificateScope, request.CertificateChallenge,
+		request.CertificateCacheKey, request.CertificateScope, string(request.CertificateChallenge),
 	} {
 		if !validStateText(value) {
 			return errors.New("controlstate: publish-run request is invalid")
@@ -541,10 +542,10 @@ func validatePublishRunRequest(
 	if err != nil || !slices.Equal(identifiers, request.CertificateIdentifiers) {
 		return errors.New("controlstate: publish-run certificate identifiers must be a canonical sorted set")
 	}
-	if request.CertificateChallenge != "dns-01" && request.CertificateChallenge != "tls-alpn-01" {
+	if !request.CertificateChallenge.Valid() {
 		return errors.New("controlstate: publish-run certificate challenge is invalid")
 	}
-	if request.CertificateChallenge == "tls-alpn-01" && slices.ContainsFunc(identifiers, func(identifier string) bool {
+	if request.CertificateChallenge == certificateidentity.ChallengeTLSALPN01 && slices.ContainsFunc(identifiers, func(identifier string) bool {
 		return strings.HasPrefix(identifier, "*.")
 	}) {
 		return errors.New("controlstate: TLS-ALPN-01 does not support wildcard identifiers")

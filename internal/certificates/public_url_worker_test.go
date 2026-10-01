@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/acmeclient"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
@@ -563,8 +564,8 @@ func TestPublicURLWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T
 func TestPublicURLWorkerReusedAuthorizationNeedsNoChallenge(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
-	for _, method := range []string{"dns-01", "tls-alpn-01"} {
-		t.Run(method, func(t *testing.T) {
+	for _, method := range []certificateidentity.ChallengeMethod{certificateidentity.ChallengeDNS01, certificateidentity.ChallengeTLSALPN01} {
+		t.Run(string(method), func(t *testing.T) {
 			authorization := acmeclient.Authorization{
 				URL: "https://acme.example.test/authz/reused", Status: "valid",
 				Identifier: acmeclient.Identifier{Type: "dns", Value: "member.example.test"},

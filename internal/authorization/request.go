@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"slices"
 
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
@@ -34,10 +35,10 @@ type Digest [sha256.Size]byte
 func (d Digest) String() string { return base64.RawURLEncoding.EncodeToString(d[:]) }
 
 type CertificatePlan struct {
-	CacheKey        string   `json:"cache_key"`
-	Scope           string   `json:"scope"`
-	Identifiers     []string `json:"identifiers"`
-	ChallengeMethod string   `json:"challenge_method"`
+	CacheKey        string                              `json:"cache_key"`
+	Scope           string                              `json:"scope"`
+	Identifiers     []string                            `json:"identifiers"`
+	ChallengeMethod certificateidentity.ChallengeMethod `json:"challenge_method"`
 }
 
 // Request contains the user credential and exact operation facts control asks
