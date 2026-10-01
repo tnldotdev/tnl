@@ -17,26 +17,44 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
+type publishEventType string
+
+const (
+	publishEventStarting  publishEventType = "starting"
+	publishEventReady     publishEventType = "ready"
+	publishEventWarning   publishEventType = "warning"
+	publishEventCurrentIP publishEventType = "current_ip"
+	publishEventError     publishEventType = "error"
+	publishEventStopped   publishEventType = "stopped"
+)
+
+type publishOutputMode string
+
+const (
+	publishOutputHuman  publishOutputMode = "human"
+	publishOutputNDJSON publishOutputMode = "ndjson"
+)
+
 type publishEvent struct {
-	SchemaVersion    int        `json:"schema_version"`
-	Type             string     `json:"type"`
-	Cursor           uint64     `json:"cursor"`
-	TunnelID         string     `json:"tunnel_id"`
-	Target           string     `json:"target,omitempty"`
-	URL              string     `json:"url,omitempty"`
-	PublishRunNumber uint64     `json:"publish_run_number,omitempty"`
-	IP               string     `json:"ip,omitempty"`
-	Message          string     `json:"message,omitempty"`
-	Code             string     `json:"code,omitempty"`
-	HelpURL          string     `json:"help_url,omitempty"`
-	Retryable        *bool      `json:"retryable,omitempty"`
-	RetryAt          *time.Time `json:"retry_at,omitempty"`
-	Reason           string     `json:"reason,omitempty"`
-	Transport        string     `json:"transport,omitempty"`
+	SchemaVersion    int              `json:"schema_version"`
+	Type             publishEventType `json:"type"`
+	Cursor           uint64           `json:"cursor"`
+	TunnelID         string           `json:"tunnel_id"`
+	Target           string           `json:"target,omitempty"`
+	URL              string           `json:"url,omitempty"`
+	PublishRunNumber uint64           `json:"publish_run_number,omitempty"`
+	IP               string           `json:"ip,omitempty"`
+	Message          string           `json:"message,omitempty"`
+	Code             string           `json:"code,omitempty"`
+	HelpURL          string           `json:"help_url,omitempty"`
+	Retryable        *bool            `json:"retryable,omitempty"`
+	RetryAt          *time.Time       `json:"retry_at,omitempty"`
+	Reason           string           `json:"reason,omitempty"`
+	Transport        string           `json:"transport,omitempty"`
 }
 
 type publishOutput struct {
-	mode                  string
+	mode                  publishOutputMode
 	stdout                io.Writer
 	stderr                io.Writer
 	mu                    sync.Mutex
@@ -76,7 +94,7 @@ func (o *publishOutput) provisioning(hostname string, publishRunNumber uint64) e
 		return nil
 	}
 	o.provision = publishRunNumber
-	if o.mode != "human" {
+	if o.mode != publishOutputHuman {
 		return nil
 	}
 	return writeHumanTransition(
@@ -92,12 +110,12 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 		return nil
 	}
 	o.stalled = publishRunNumber
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.ProvisioningStalled)
 	}
 	retryable := true
 	return o.emitLocked(publishEvent{
-		Type: "warning", Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
+		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
 		Code: string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
 		Retryable: &retryable, PublishRunNumber: publishRunNumber,
 	})
@@ -106,12 +124,12 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 func (o *publishOutput) targetUnavailable() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.TargetUnavailable)
 	}
 	retryable := false
 	return o.emitLocked(publishEvent{
-		Type: "warning", Message: diagnostic.Summary(diagnostic.TargetUnavailable),
+		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.TargetUnavailable),
 		Code: string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
 		Retryable: &retryable,
 	})
@@ -124,7 +142,7 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 		return nil
 	}
 	o.fallbackPublicURL = publishRunNumber
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over TLS/TCP",
 			clioutput.Fields(
 				clioutput.Field{Label: "transport", Value: "TLS/TCP"},
@@ -133,7 +151,7 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 	}
 	retryable := false
 	return o.emitLocked(publishEvent{
-		Type: "warning", Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP.",
+		Type: publishEventWarning, Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP.",
 		Retryable: &retryable, PublishRunNumber: publishRunNumber, Transport: transport,
 	})
 }
@@ -150,14 +168,14 @@ func (o *publishOutput) blockedVisitors(publishRunNumber, total uint64) error {
 	}
 	increase := total - o.blocked
 	o.blocked = total
-	if o.mode != "human" {
+	if o.mode != publishOutputHuman {
 		return nil
 	}
 	return diagnostic.WritePolicyDenial(o.stderr, o.command, increase, total)
 }
 
-func newPublishOutput(mode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
-	if mode != "human" && mode != "ndjson" {
+func newPublishOutput(mode publishOutputMode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
+	if mode != publishOutputHuman && mode != publishOutputNDJSON {
 		return nil, errors.New("output must be human or ndjson")
 	}
 	return &publishOutput{mode: mode, command: command, stdout: stdout, stderr: stderr, openURL: openURL}, nil
@@ -168,17 +186,17 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
 	o.target = target
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return nil
 	}
-	return o.emitLocked(publishEvent{Type: "starting", Target: target})
+	return o.emitLocked(publishEvent{Type: publishEventStarting, Target: target})
 }
 
 func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.readyPublishRunNumber = max(o.readyPublishRunNumber, publishRunNumber)
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		if !o.printed {
 			o.printed = true
 			footer := "ctrl+c to stop"
@@ -230,10 +248,10 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				)
 			}
 		}
-	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, PublishRunNumber: publishRunNumber}); err != nil {
+	} else if err := o.emitLocked(publishEvent{Type: publishEventReady, URL: url, PublishRunNumber: publishRunNumber}); err != nil {
 		return err
 	}
-	if o.mode != "human" && o.openURL != nil && !o.opened {
+	if o.mode != publishOutputHuman && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openURL(url); err != nil {
 			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
@@ -258,13 +276,13 @@ func (o *publishOutput) setIPPolicy(policy resolvedIPPolicy) {
 }
 
 func (o *publishOutput) currentIP(ip string) error {
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		o.mu.Lock()
 		o.current = ip
 		o.mu.Unlock()
 		return nil
 	}
-	return o.emit(publishEvent{Type: "current_ip", IP: ip})
+	return o.emit(publishEvent{Type: publishEventCurrentIP, IP: ip})
 }
 
 func (o *publishOutput) setFramework(framework string) {
@@ -281,12 +299,12 @@ func (o *publishOutput) logf(format string, arguments ...any) {
 }
 
 func (o *publishOutput) failed(err error) error {
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return nil
 	}
 	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) ||
 		errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited)
-	event := publishEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
+	event := publishEvent{Type: publishEventError, Message: boundedOutputError(err), Retryable: &retryable}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		event.Code = string(code)
 		event.HelpURL = diagnostic.HelpURL(code)
@@ -319,7 +337,7 @@ func (o *publishOutput) finish(ctx context.Context, result error) error {
 	if code, render := terminalResult(result); code == 0 && render == nil {
 		return errors.Join(result, o.stopped())
 	}
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return result
 	}
 	if writeErr := o.failed(result); writeErr != nil {
@@ -329,10 +347,10 @@ func (o *publishOutput) finish(ctx context.Context, result error) error {
 }
 
 func (o *publishOutput) stopped() error {
-	if o.mode == "human" {
+	if o.mode == publishOutputHuman {
 		return nil
 	}
-	return o.emit(publishEvent{Type: "stopped", Reason: "canceled"})
+	return o.emit(publishEvent{Type: publishEventStopped, Reason: "canceled"})
 }
 
 func (o *publishOutput) emit(event publishEvent) error {

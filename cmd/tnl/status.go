@@ -13,11 +13,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
+type statusOutputMode string
+
+const (
+	statusOutputHuman statusOutputMode = "human"
+	statusOutputJSON  statusOutputMode = "json"
+)
+
 type statusCommand struct {
-	Output   string `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All      bool   `name:"all" help:"Show tunnels from every local project."`
-	Project  string `kong:"-"`
+	Output   statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	StateDir string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All      bool             `name:"all" help:"Show tunnels from every local project."`
+	Project  string           `kong:"-"`
 }
 
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
@@ -45,7 +52,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if flags.Output == "json" {
+	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(snapshot)
 	}
 	if len(snapshot.Tunnels) == 0 {

@@ -54,10 +54,10 @@ type teamInviteCommand struct {
 
 type teamInviteCreateCommand struct {
 	remoteFlags `embed:""`
-	MemberSlug  string        `name:"member-slug" required:"" help:"Reserved immutable member slug."`
-	Role        string        `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
-	Email       string        `name:"email" help:"Optional verified-email restriction."`
-	ExpiresIn   time.Duration `name:"expires-in" default:"168h" help:"Invitation lifetime."`
+	MemberSlug  string               `name:"member-slug" required:"" help:"Reserved immutable member slug."`
+	Role        authorityv1.TeamRole `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
+	Email       string               `name:"email" help:"Optional verified-email restriction."`
+	ExpiresIn   time.Duration        `name:"expires-in" default:"168h" help:"Invitation lifetime."`
 }
 
 type teamInviteListCommand struct {
@@ -81,8 +81,8 @@ type teamMemberCommand struct {
 
 type teamMemberSetRoleCommand struct {
 	remoteFlags  `embed:""`
-	MembershipID string `arg:"" name:"membership-id" required:"" help:"Membership ID to update."`
-	Role         string `name:"role" enum:"member,admin,owner" required:"" help:"New team role."`
+	MembershipID string               `arg:"" name:"membership-id" required:"" help:"Membership ID to update."`
+	Role         authorityv1.TeamRole `name:"role" enum:"member,admin,owner" required:"" help:"New team role."`
 }
 
 type teamMemberRemoveCommand struct {
@@ -230,7 +230,7 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 		return err
 	}
 	body := authorityv1.CreateInvitationRequest{
-		MemberSlug: command.MemberSlug, InitialRole: authorityv1.TeamRole(command.Role), ExpiresAt: time.Now().Add(command.ExpiresIn).UTC(),
+		MemberSlug: command.MemberSlug, InitialRole: command.Role, ExpiresAt: time.Now().Add(command.ExpiresIn).UTC(),
 	}
 	if command.Email != "" {
 		email := openapiEmail(command.Email)
@@ -323,7 +323,7 @@ func runTeamMemberSetRole(ctx context.Context, command teamMemberSetRoleCommand,
 	if err != nil {
 		return err
 	}
-	membership, err := session.api.SetMembershipRole(ctx, current.team.Id, command.MembershipID, authorityv1.TeamRole(command.Role))
+	membership, err := session.api.SetMembershipRole(ctx, current.team.Id, command.MembershipID, command.Role)
 	if err != nil {
 		return err
 	}
