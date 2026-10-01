@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/acmeclient"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
@@ -78,7 +79,7 @@ func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acme
 			var err error
 			switch phase {
 			case controlstate.ACMEAuthorizationPresenting:
-				if authorization.ChallengeType != "dns-01" {
+				if authorization.ChallengeType != certificateidentity.ChallengeDNS01 {
 					continue // control publishes tls-alpn-01 challenges before changing this state.
 				}
 				err = w.presentDNSAuthorization(ctx, work.PublicURLID, authorization, now)
@@ -109,7 +110,7 @@ func (w *PublicURLWorker) presentDNSAuthorization(ctx context.Context, publicURL
 }
 
 func (w *PublicURLWorker) acceptAuthorization(ctx context.Context, client acmeAPI, orderID, publicURLID string, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
-	if authorization.ChallengeType == "dns-01" {
+	if authorization.ChallengeType == certificateidentity.ChallengeDNS01 {
 		verified, err := w.config.DNSChallenges.Verify(ctx, publicURLID, authorization.ID)
 		if err != nil {
 			return err
@@ -119,7 +120,7 @@ func (w *PublicURLWorker) acceptAuthorization(ctx context.Context, client acmeAP
 			return nil
 		}
 	}
-	if authorization.ChallengeType == "tls-alpn-01" {
+	if authorization.ChallengeType == certificateidentity.ChallengeTLSALPN01 {
 		// wait for every live ingress to acknowledge this challenge projection
 		// before asking the CA to validate the publisher's certificate.
 		ready, err := w.store.ACMEChallengeRoutingReady(ctx, orderID, now)
@@ -188,9 +189,9 @@ func (w *PublicURLWorker) nextAuthorizationAt(work *controlstate.ACMEOrderWork, 
 	return next
 }
 
-func authorizationChallengeProblem(authorization acmeclient.Authorization, challengeType, challengeURL string) string {
+func authorizationChallengeProblem(authorization acmeclient.Authorization, challengeType certificateidentity.ChallengeMethod, challengeURL string) string {
 	for _, challenge := range authorization.Challenges {
-		if challenge.Type != challengeType || challenge.URL != challengeURL || challenge.Error == nil {
+		if challenge.Type != string(challengeType) || challenge.URL != challengeURL || challenge.Error == nil {
 			continue
 		}
 		problem := challenge.Error
@@ -229,7 +230,7 @@ func (w *PublicURLWorker) invalidOrder(ctx context.Context, client acmeAPI, work
 func authorizationWork(
 	client acmeAPI,
 	authorization acmeclient.Authorization,
-	challengeMethod string,
+	challengeMethod certificateidentity.ChallengeMethod,
 	orderExpires *time.Time,
 	now time.Time,
 ) (controlstate.ACMEAuthorizationWork, error) {
@@ -266,7 +267,7 @@ func authorizationWork(
 		return result, fmt.Errorf("certificates: unknown public URL authorization status %q", authorization.Status)
 	}
 	for _, challenge := range authorization.Challenges {
-		if challenge.Type != challengeMethod {
+		if challenge.Type != string(challengeMethod) {
 			continue
 		}
 		if challenge.URL == "" || challenge.Token == "" {
@@ -276,7 +277,7 @@ func authorizationWork(
 		if err != nil {
 			return result, err
 		}
-		result.ChallengeType = challenge.Type
+		result.ChallengeType = challengeMethod
 		result.ChallengeURL = challenge.URL
 		result.ChallengeToken = challenge.Token
 		result.ChallengeDigest = sha256.Sum256([]byte(keyAuthorization))

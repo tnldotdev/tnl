@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -260,7 +261,7 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member", RetrySecret: [32]byte{1, 2, 3},
 		CertificatePlan: &authorization.CertificatePlan{
 			CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"},
-			ChallengeMethod: string(controlv1.Dns01),
+			ChallengeMethod: certificateidentity.ChallengeDNS01,
 		},
 	}}
 	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}

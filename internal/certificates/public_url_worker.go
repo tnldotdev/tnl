@@ -203,9 +203,9 @@ func (w *PublicURLWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, 
 
 func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	work.LastError = ""
-	if w.config.DNSChallenges == nil && (work.ChallengeMethod == "dns-01" ||
+	if w.config.DNSChallenges == nil && (work.ChallengeMethod == certificateidentity.ChallengeDNS01 ||
 		slices.ContainsFunc(work.Authorizations, func(value controlstate.ACMEAuthorizationWork) bool {
-			return value.ChallengeType == "dns-01"
+			return value.ChallengeType == certificateidentity.ChallengeDNS01
 		})) {
 		return dnscontroller.ErrChallengesNotConfigured
 	}
@@ -236,7 +236,7 @@ func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *con
 }
 
 func (w *PublicURLWorker) createOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
-	if work.ChallengeMethod != "tls-alpn-01" && work.ChallengeMethod != "dns-01" {
+	if !work.ChallengeMethod.Valid() {
 		return terminalf("challenge method %q is not supported", work.ChallengeMethod)
 	}
 	order, err := client.NewOrder(ctx, work.CertificateIdentifiers, w.config.Profile)
@@ -439,7 +439,7 @@ func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operati
 		for index := range work.Authorizations {
 			authorization := &work.Authorizations[index]
 			if authorization.State != "complete" && authorization.State != "canceled" {
-				if authorization.ChallengeType == "dns-01" &&
+				if authorization.ChallengeType == certificateidentity.ChallengeDNS01 &&
 					(authorization.State == "presenting" || authorization.State == "presented" ||
 						authorization.State == "validating" || authorization.State == "cleaning" ||
 						authorization.PresentedAt != nil) {

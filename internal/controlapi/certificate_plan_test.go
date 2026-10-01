@@ -86,7 +86,7 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 			if test.dns && plan.ChallengeMethod != controlv1.Dns01 {
 				t.Errorf("DNS challenge method = %q; want dns-01", plan.ChallengeMethod)
 			}
-			if store.sessionRequest.CertificateChallenge != string(plan.ChallengeMethod) {
+			if string(store.sessionRequest.CertificateChallenge) != string(plan.ChallengeMethod) {
 				t.Errorf("stored challenge method = %q; API returned %q", store.sessionRequest.CertificateChallenge, plan.ChallengeMethod)
 			}
 			if !test.dns && plan.ChallengeMethod != controlv1.TlsAlpn01 {

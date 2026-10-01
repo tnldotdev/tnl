@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
@@ -19,7 +20,7 @@ type ACMEAuthorizationWork struct {
 	ID                    string
 	Identifier            string
 	AuthorizationURL      string
-	ChallengeType         string
+	ChallengeType         certificateidentity.ChallengeMethod
 	ChallengeURL          string
 	ChallengeToken        string
 	ChallengeDigest       [32]byte
@@ -46,7 +47,7 @@ type ACMEOrderWork struct {
 	CertificateCacheKey    string
 	CertificateScope       string
 	CertificateIdentifiers []string
-	ChallengeMethod        string
+	ChallengeMethod        certificateidentity.ChallengeMethod
 	CSRDER                 []byte
 	CSRDigest              [32]byte
 	State                  ACMEOrderState
@@ -171,7 +172,7 @@ func (d *Database) SaveACMEOrderWork(
 ) (result ACMEOrderWork, retErr error) {
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
-		if authorization.ChallengeType == "dns-01" && authorization.PresentationReference == "" {
+		if authorization.ChallengeType == certificateidentity.ChallengeDNS01 && authorization.PresentationReference == "" {
 			var err error
 			authorization.PresentationReference, err = opaqueid.New("acme_presentation_")
 			if err != nil {
@@ -223,7 +224,7 @@ func (d *Database) SaveACMEOrderWork(
 		}
 		if _, err := queries.SaveACMEAuthorizationWork(ctx, controlstatedb.SaveACMEAuthorizationWorkParams{
 			ID: authorization.ID, OrderID: work.ID, Identifier: authorization.Identifier,
-			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: nullableText(authorization.ChallengeType),
+			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: nullableText(string(authorization.ChallengeType)),
 			ChallengeUrl: nullableText(authorization.ChallengeURL), ChallengeToken: nullableText(authorization.ChallengeToken),
 			ChallengeDigest: challengeDigest, PresentationReference: nullableText(authorization.PresentationReference),
 			State:                 string(authorization.State),
@@ -293,7 +294,7 @@ func acmeOrderWork(
 		ID: order.ID, Account: account, PublishRunID: order.PublishRunID,
 		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
-		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: ACMEOrderState(order.State),
+		ChallengeMethod: certificateidentity.ChallengeMethod(order.ChallengeMethod), CSRDER: slices.Clone(order.CsrDer), State: ACMEOrderState(order.State),
 		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,
 		CertificateURL: order.CertificateUrl.String, CertificatePEM: slices.Clone(order.CertificatePem),
 		Attempts: uint64(order.Attempts), AvailableAt: order.AvailableAt.Time, LastError: order.LastError.String,
@@ -301,7 +302,7 @@ func acmeOrderWork(
 		WorkerID: order.WorkOwner.String, WorkEpoch: uint64(order.WorkEpoch), WorkExpiresAt: order.WorkExpiresAt.Time,
 		Authorizations: make([]ACMEAuthorizationWork, len(authorizations)),
 	}
-	if !work.State.valid() {
+	if !work.State.valid() || !work.ChallengeMethod.Valid() {
 		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order state")
 	}
 	copy(work.CSRDigest[:], order.CsrDigest)
@@ -317,7 +318,7 @@ func acmeOrderWork(
 		}
 		value := ACMEAuthorizationWork{
 			ID: authorization.ID, Identifier: authorization.Identifier, AuthorizationURL: authorization.AuthorizationUrl,
-			ChallengeType: authorization.ChallengeType.String, ChallengeURL: authorization.ChallengeUrl.String,
+			ChallengeType: certificateidentity.ChallengeMethod(authorization.ChallengeType.String), ChallengeURL: authorization.ChallengeUrl.String,
 			ChallengeToken: authorization.ChallengeToken.String, PresentationReference: authorization.PresentationReference.String,
 			State:    ACMEAuthorizationState(authorization.State),
 			Revision: uint64(authorization.AuthorizationRevision), Attempts: uint64(authorization.Attempts),
@@ -341,7 +342,7 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 	_, attemptsOK := nonnegativeInt64(work.Attempts)
 	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !workEpochOK || !orderRevisionOK || !attemptsOK ||
 		work.WorkExpiresAt.IsZero() ||
-		!work.State.valid() ||
+		!work.State.valid() || !work.ChallengeMethod.Valid() ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
 	}
@@ -379,8 +380,8 @@ func validateACMEAuthorizationWork(authorization ACMEAuthorizationWork) error {
 			return ErrCertificateIssuanceInvalid
 		}
 	} else if !validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
-		authorization.ChallengeType != "tls-alpn-01" && authorization.ChallengeType != "dns-01" ||
-		(authorization.ChallengeType == "dns-01") != validStateText(authorization.PresentationReference) {
+		!authorization.ChallengeType.Valid() ||
+		(authorization.ChallengeType == certificateidentity.ChallengeDNS01) != validStateText(authorization.PresentationReference) {
 		return ErrCertificateIssuanceInvalid
 	}
 	return nil

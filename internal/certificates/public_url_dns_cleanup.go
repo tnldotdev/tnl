@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
@@ -18,7 +19,7 @@ func certificateCleanupAvailableAt(work *controlstate.ACMEOrderWork, now time.Ti
 
 func hasPendingDNSCleanup(authorizations []controlstate.ACMEAuthorizationWork) bool {
 	return slices.ContainsFunc(authorizations, func(authorization controlstate.ACMEAuthorizationWork) bool {
-		return authorization.ChallengeType == "dns-01" &&
+		return authorization.ChallengeType == certificateidentity.ChallengeDNS01 &&
 			(authorization.State == controlstate.ACMEAuthorizationValid || authorization.State == controlstate.ACMEAuthorizationCleaning)
 	})
 }
@@ -33,7 +34,7 @@ func (w *PublicURLWorker) continueDNSCleanup(
 	changed := false
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
-		if authorization.ChallengeType != "dns-01" || authorization.State == controlstate.ACMEAuthorizationComplete || authorization.State == controlstate.ACMEAuthorizationCanceled {
+		if authorization.ChallengeType != certificateidentity.ChallengeDNS01 || authorization.State == controlstate.ACMEAuthorizationComplete || authorization.State == controlstate.ACMEAuthorizationCanceled {
 			continue
 		}
 		if authorization.State == controlstate.ACMEAuthorizationValid && authorization.PresentedAt == nil {
@@ -59,7 +60,7 @@ func (w *PublicURLWorker) continueDNSCleanup(
 	}
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
-		if authorization.ChallengeType != "dns-01" || authorization.State != controlstate.ACMEAuthorizationCleaning {
+		if authorization.ChallengeType != certificateidentity.ChallengeDNS01 || authorization.State != controlstate.ACMEAuthorizationCleaning {
 			continue
 		}
 		if err := w.config.DNSChallenges.Cleanup(ctx, work.PublicURLID, authorization.ID); err != nil {
@@ -70,7 +71,7 @@ func (w *PublicURLWorker) continueDNSCleanup(
 		base := strings.TrimPrefix(authorization.Identifier, "*.")
 		for otherIndex := range work.Authorizations {
 			other := &work.Authorizations[otherIndex]
-			if other.ChallengeType != "dns-01" || other.State != controlstate.ACMEAuthorizationCleaning ||
+			if other.ChallengeType != certificateidentity.ChallengeDNS01 || other.State != controlstate.ACMEAuthorizationCleaning ||
 				strings.TrimPrefix(other.Identifier, "*.") != base {
 				continue
 			}
