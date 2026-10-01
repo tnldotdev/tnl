@@ -68,7 +68,8 @@ func (d *Database) ListTeamInvitations(
 	if err != nil {
 		return nil, err
 	}
-	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleAdmin && TeamRole(actor.ActorRole) != TeamRoleOwner {
+	actorRole := TeamRole(actor.ActorRole)
+	if TeamKind(actor.Kind) != TeamKindOrganization || actorRole != TeamRoleAdmin && actorRole != TeamRoleOwner {
 		return nil, ErrAuthorityAccess
 	}
 	if err := expireTeamInvitations(ctx, queries, teamID, now); err != nil {
@@ -119,8 +120,9 @@ func (d *Database) CreateTeamInvitation(
 	if err != nil {
 		return InvitationSecret{}, err
 	}
-	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleAdmin && TeamRole(actor.ActorRole) != TeamRoleOwner ||
-		request.InitialRole != TeamRoleMember && TeamRole(actor.ActorRole) != TeamRoleOwner {
+	actorRole := TeamRole(actor.ActorRole)
+	if TeamKind(actor.Kind) != TeamKindOrganization || actorRole != TeamRoleAdmin && actorRole != TeamRoleOwner ||
+		request.InitialRole != TeamRoleMember && actorRole != TeamRoleOwner {
 		return InvitationSecret{}, ErrAuthorityAccess
 	}
 	if err := expireTeamInvitations(ctx, queries, request.TeamID, now); err != nil {
@@ -133,8 +135,9 @@ func (d *Database) CreateTeamInvitation(
 		if existing.TeamID != request.TeamID || subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
 			return InvitationSecret{}, ErrAuthorityIdempotency
 		}
-		if InvitationState(existing.State) != InvitationPending || !existing.ExpiresAt.Time.After(now) {
-			if InvitationState(existing.State) == InvitationExpired {
+		state := InvitationState(existing.State)
+		if state != InvitationPending || !existing.ExpiresAt.Time.After(now) {
+			if state == InvitationExpired {
 				if err := tx.Commit(ctx); err != nil {
 					return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: commit expiration: %w", err)
 				}
@@ -213,7 +216,8 @@ func (d *Database) RevokeTeamInvitation(
 	if err != nil {
 		return err
 	}
-	if TeamKind(actor.Kind) != TeamKindOrganization || TeamRole(actor.ActorRole) != TeamRoleAdmin && TeamRole(actor.ActorRole) != TeamRoleOwner {
+	actorRole := TeamRole(actor.ActorRole)
+	if TeamKind(actor.Kind) != TeamKindOrganization || actorRole != TeamRoleAdmin && actorRole != TeamRoleOwner {
 		return ErrAuthorityAccess
 	}
 	invitation, err := queries.LockTeamInvitation(ctx, controlstatedb.LockTeamInvitationParams{
@@ -225,16 +229,17 @@ func (d *Database) RevokeTeamInvitation(
 	if err != nil {
 		return fmt.Errorf("controlstate: revoke team invitation: lock invitation: %w", err)
 	}
-	if TeamRole(invitation.InitialRole) != TeamRoleMember && TeamRole(actor.ActorRole) != TeamRoleOwner {
+	if TeamRole(invitation.InitialRole) != TeamRoleMember && actorRole != TeamRoleOwner {
 		return ErrAuthorityAccess
 	}
-	if InvitationState(invitation.State) == InvitationRevoked {
+	state := InvitationState(invitation.State)
+	if state == InvitationRevoked {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("controlstate: revoke team invitation: commit replay: %w", err)
 		}
 		return nil
 	}
-	if InvitationState(invitation.State) == InvitationPending && !invitation.ExpiresAt.Time.After(now) {
+	if state == InvitationPending && !invitation.ExpiresAt.Time.After(now) {
 		if _, err := queries.MarkInvitationExpired(ctx, invitation.ID); err != nil {
 			return fmt.Errorf("controlstate: revoke team invitation: expire invitation: %w", err)
 		}
@@ -248,7 +253,7 @@ func (d *Database) RevokeTeamInvitation(
 		}
 		return ErrAuthorityConflict
 	}
-	if InvitationState(invitation.State) != InvitationPending {
+	if state != InvitationPending {
 		return ErrAuthorityConflict
 	}
 	updated, err := queries.RevokeTeamInvitation(ctx, controlstatedb.RevokeTeamInvitationParams{
