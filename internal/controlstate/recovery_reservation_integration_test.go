@@ -69,7 +69,7 @@ func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
 	claims := readyTestSession(t, f)
 	// model an already-routable publish run with a claimed replacement awaiting
 	// readiness. its publisher connection already consumes process capacity.
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -124,7 +124,7 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			// a stale ready assignment still contributes to its service total.
-			if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+			if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connection_slots SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 				t.Fatal(err)
 			}
 			var err error
@@ -168,7 +168,7 @@ func TestIntegrationRecoveryReservationRollback(t *testing.T) {
 	f := newPublishRunFixture(t)
 	readyTestSession(t, f)
 	ctx := t.Context()
-	if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET connected_relay_run_id = 'stale-run' WHERE connection_slot = 0`); err != nil {
+	if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connection_slots SET connected_relay_run_id = 'stale-run' WHERE connection_slot = 0`); err != nil {
 		t.Fatal(err)
 	}
 	queries := controlstatedb.New(f.database.pool)
@@ -176,7 +176,7 @@ func TestIntegrationRecoveryReservationRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE control.ingress_routing_table_events ADD CONSTRAINT reject_recovery_event CHECK (routing_table_revision <= %d)`, before.CurrentRevision)); err != nil {
+	if _, err := f.database.pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE control.ingress_routing_table_events ADD CONSTRAINT reject_recovery_event CHECK (id <= %d)`, before.CurrentRevision)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err == nil {

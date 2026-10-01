@@ -148,7 +148,7 @@ func TestIntegrationPublishRunReplacesExpiredSession(t *testing.T) {
 
 func TestIntegrationPublishRunCreationRollsBackBothAssignmentsAndVersion(t *testing.T) {
 	database, now, request, leases := newPublishRunPrerequisites(t)
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connections ADD CONSTRAINT reject_second_slot CHECK (connection_slot <> 1)`); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connection_slots ADD CONSTRAINT reject_second_slot CHECK (connection_slot <> 1)`); err != nil {
 		t.Fatal(err)
 	}
 	_, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
@@ -159,13 +159,13 @@ func TestIntegrationPublishRunCreationRollsBackBothAssignmentsAndVersion(t *test
 	var version, revision, sessions, connections, audits int64
 	err = database.pool.QueryRow(t.Context(), `SELECT next_publish_run_number, mutation_revision,
 		(SELECT count(*) FROM control.publish_runs),
-		(SELECT count(*) FROM control.publish_run_connections),
+		(SELECT count(*) FROM control.publish_run_connection_slots),
 		(SELECT count(*) FROM control.admin_audit_events WHERE operation = 'publish_run.create')
 		FROM control.public_urls WHERE id = $1`, request.PublicURLID).Scan(&version, &revision, &sessions, &connections, &audits)
 	if err != nil || version != 1 || revision != 1 || sessions != 0 || connections != 0 || audits != 0 {
 		t.Fatalf("failed creation left version/revision/sessions/connections/audits = %d/%d/%d/%d/%d, %v", version, revision, sessions, connections, audits, err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connections DROP CONSTRAINT reject_second_slot`); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connection_slots DROP CONSTRAINT reject_second_slot`); err != nil {
 		t.Fatal(err)
 	}
 	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
@@ -263,7 +263,7 @@ func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.
 		claimTestConnection(t, f, slot, now)
 	}
 	heartbeatAt := now.Add(3 * time.Second)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections SET publisher_connection_credential_expires_at = $2 WHERE publish_run_id = $1`, f.setup.PublishRunID, heartbeatAt.Add(-time.Second)); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET publisher_connection_credential_expires_at = $2 WHERE publish_run_id = $1`, f.setup.PublishRunID, heartbeatAt.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	lease := registerTestIngress(t, database, now)

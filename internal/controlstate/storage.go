@@ -21,7 +21,7 @@ func controlSessionRetrySecretContext(sessionID string) string {
 }
 
 func externalRetryMasterKeyContext() string {
-	return "control.runtime_secrets.external_retry_master_key_ciphertext\x00singleton"
+	return "control.runtime_secret.external_retry_master_key_ciphertext\x00id"
 }
 
 func acmeAccountKeyContext(accountID string) string {

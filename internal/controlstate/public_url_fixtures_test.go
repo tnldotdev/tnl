@@ -1,9 +1,48 @@
 package controlstate
 
 import (
+	"crypto/sha256"
 	"testing"
 	"time"
 )
+
+// testPublishRun describes the identity and certificate plan of a saved run.
+// tests that need to exercise the run insert itself should use direct SQL.
+type testPublishRun struct {
+	ID, PublicURLID, TeamID, MembershipID, ActingIdentityID string
+	CertificateCacheKey, CertificateScope, ChallengeMethod  string
+	CertificateIdentifiers                                  []string
+	PolicyRevision                                          int64
+	CreatedAt, ExpiresAt                                    time.Time
+}
+
+func insertTestPublishRun(t *testing.T, database *Database, run testPublishRun) {
+	t.Helper()
+	if run.PolicyRevision == 0 {
+		run.PolicyRevision = 1
+	}
+	requestDigest := sha256.Sum256([]byte(run.ID))
+	tokenDigest := sha256.Sum256([]byte("token:" + run.ID))
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
+		id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number,
+		idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest,
+		policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers,
+		certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at
+	) VALUES ($1, $2, $3, $4, $5, 1, $1, $6, $7, $8, $9, $10, $11, $12, $13,
+		'starting', $14, $14, $15)`, run.ID, run.PublicURLID, run.TeamID, nullableTestMembership(run.MembershipID),
+		run.ActingIdentityID, requestDigest[:], "token_"+run.ID, tokenDigest[:], run.PolicyRevision,
+		run.CertificateCacheKey, run.CertificateScope, run.CertificateIdentifiers, run.ChallengeMethod,
+		run.CreatedAt, run.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func nullableTestMembership(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
 
 // seedControlPublicURL supplies local authority and an enabled shared public
 // URL. it does not create relay leases, publish runs, or ACME work.

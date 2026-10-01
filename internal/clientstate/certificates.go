@@ -100,7 +100,7 @@ func (r *CertificateCache) material(ctx context.Context, hostname string, phase 
 	if len(stored.CsrDer) == 0 || !stored.RenewAt.Valid || stored.IssuanceID == "" {
 		return Material{}, true, errors.New("clientstate: certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.KeyDer)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.StoredKey)
 	if err != nil {
 		return Material{}, true, err
 	}
@@ -149,7 +149,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 	}
 	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
-		KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "",
+		StoredKey: protectedKey, CsrDer: csrDER, IssuanceID: "",
 		UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: save pending public URL certificate: %w", err)
@@ -189,7 +189,7 @@ func (r *CertificateCache) Stage(
 	}
 	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
-		KeyDer: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
+		StoredKey: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
 		CertificatePem: bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
 		IssuanceID: issuanceID,
 		UpdatedAt:  r.store.database.now().UTC().UnixNano(),
@@ -227,7 +227,7 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 	}
 	if err := queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
 		ServerOrigin: stored.ServerOrigin, TeamID: stored.TeamID, CacheKey: stored.CacheKey, Plan: stored.Plan, Phase: string(certificatePhaseCurrent),
-		KeyDer: stored.KeyDer, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
+		StoredKey: stored.StoredKey, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
 		RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID, UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return err
@@ -254,7 +254,7 @@ func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstate
 	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
 		return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.KeyDer)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.StoredKey)
 	if err != nil {
 		return Pending{}, err
 	}

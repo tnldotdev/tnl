@@ -204,23 +204,23 @@ func replenishPublishRunConnections(
 func replacePublishRunConnection(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
-	row controlstatedb.ControlPublishRunConnection,
+	row controlstatedb.ControlPublishRunConnectionSlot,
 	token credentials.PublishRunToken,
 	placement relayServicePlacement,
 	now time.Time,
 	credentialDuration time.Duration,
-) (controlstatedb.ControlPublishRunConnection, error) {
+) (controlstatedb.ControlPublishRunConnectionSlot, error) {
 	if row.ConnectionAssignmentRevision <= 0 || row.ConnectionAssignmentRevision == math.MaxInt64 {
-		return controlstatedb.ControlPublishRunConnection{}, errors.New("controlstate: replenish publish-run connections: assignment revision is exhausted")
+		return controlstatedb.ControlPublishRunConnectionSlot{}, errors.New("controlstate: replenish publish-run connections: assignment revision is exhausted")
 	}
 	publisherConnectionID, err := opaqueid.New("connection_")
 	if err != nil {
-		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: generate publisher connection ID: %w", err)
+		return controlstatedb.ControlPublishRunConnectionSlot{}, fmt.Errorf("controlstate: replenish publish-run connections: generate publisher connection ID: %w", err)
 	}
 	revision := row.ConnectionAssignmentRevision + 1
 	credential, hash, err := credentials.DerivePublisherConnectionCredential(token, publisherConnectionCredentialContext(publisherConnectionID, revision))
 	if err != nil {
-		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: derive credential: %w", err)
+		return controlstatedb.ControlPublishRunConnectionSlot{}, fmt.Errorf("controlstate: replenish publish-run connections: derive credential: %w", err)
 	}
 	updated, err := queries.ReplacePublishRunConnection(ctx, controlstatedb.ReplacePublishRunConnectionParams{
 		NewPublisherConnectionID: publisherConnectionID, NewConnectionAssignmentRevision: revision,
@@ -231,10 +231,10 @@ func replacePublishRunConnection(
 		PreviousPublisherConnectionID: row.PublisherConnectionID, PreviousConnectionAssignmentRevision: row.ConnectionAssignmentRevision,
 	})
 	if err != nil {
-		return controlstatedb.ControlPublishRunConnection{}, fmt.Errorf("controlstate: replenish publish-run connections: replace slot %d: %w", row.ConnectionSlot, err)
+		return controlstatedb.ControlPublishRunConnectionSlot{}, fmt.Errorf("controlstate: replenish publish-run connections: replace slot %d: %w", row.ConnectionSlot, err)
 	}
 	if _, err := connectionAssignment(updated, credential); err != nil {
-		return controlstatedb.ControlPublishRunConnection{}, err
+		return controlstatedb.ControlPublishRunConnectionSlot{}, err
 	}
 	return updated, nil
 }

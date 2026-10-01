@@ -23,7 +23,7 @@ func TestIntegrationPublicURLRecovery(t *testing.T) {
 	}
 	var recoveryEpisodeID int64
 	var openedAt time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT recovery_episode_id, opened_at FROM control.public_url_recovery_episodes
+	if err := database.pool.QueryRow(t.Context(), `SELECT id, opened_at FROM control.public_url_recovery_episodes
 		WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'open'`, f.setup.PublicURLID, f.setup.PublishRunNumber).Scan(&recoveryEpisodeID, &openedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestIntegrationPublicURLRecovery(t *testing.T) {
 	claimTestConnection(t, f, 0, recoveredAt)
 	var payload []byte
 	if err := database.pool.QueryRow(t.Context(), `SELECT projection FROM control.ingress_routing_table_events
-		WHERE public_url_id = $1 AND publish_run_number = $2 ORDER BY routing_table_revision DESC LIMIT 1`, f.setup.PublicURLID, f.setup.PublishRunNumber).Scan(&payload); err != nil {
+		WHERE public_url_id = $1 AND publish_run_number = $2 ORDER BY id DESC LIMIT 1`, f.setup.PublicURLID, f.setup.PublishRunNumber).Scan(&payload); err != nil {
 		t.Fatal(err)
 	}
 	var projection IngressRoutingTableProjection
@@ -70,7 +70,7 @@ func TestIntegrationPublicURLRecovery(t *testing.T) {
 	var sum float64
 	if err := database.pool.QueryRow(t.Context(), `
 		SELECT observation_count, observation_sum_seconds, bucket_le_0_5, bucket_le_1, bucket_le_10, bucket_le_120
-		FROM control.public_url_recovery_histogram WHERE singleton = true
+		FROM control.public_url_recovery_histogram WHERE id = 1
 	`).Scan(&count, &sum, &half, &one, &ten, &infinite); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 	if events != len(wantKinds) {
 		t.Fatalf("routing lifecycle emitted %d events, want %d", events, len(wantKinds))
 	}
-	rows, err := database.pool.Query(t.Context(), `SELECT entry_revision, projection FROM control.ingress_routing_table_events WHERE public_url_id = $1 ORDER BY routing_table_revision`, f.setup.PublicURLID)
+	rows, err := database.pool.Query(t.Context(), `SELECT entry_revision, projection FROM control.ingress_routing_table_events WHERE public_url_id = $1 ORDER BY id`, f.setup.PublicURLID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 	if read != events {
 		t.Fatalf("persisted events %d, paged %d", read, events)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET retained_after_revision = $1, updated_at = $2 WHERE singleton = true`, cursor, now); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET retained_after_revision = $1, updated_at = $2 WHERE id = 1`, cursor, now); err != nil {
 		t.Fatal(err)
 	}
 	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, cursor-1, 10, now.Add(3*time.Second))

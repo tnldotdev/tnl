@@ -133,15 +133,12 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 		team.ID, team.DefaultDomainID, member.ID, member.IdentityID, member.PolicyRevision, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
-		id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key,
-		request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key,
-		certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
-	) VALUES ('session_member', 'public_url_member', $1, $2, $3, 1, 'member-session', decode(repeat('32', 32), 'hex'),
-		'member-token', decode(repeat('33', 32), 'hex'), $4, 'member-cert', 'route', ARRAY['second.example.test'],
-		'tls-alpn-01', 'starting', $5, $5, $6)`, team.ID, member.ID, member.IdentityID, member.PolicyRevision, now, now.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	insertTestPublishRun(t, database, testPublishRun{
+		ID: "session_member", PublicURLID: "public_url_member", TeamID: team.ID,
+		MembershipID: member.ID, ActingIdentityID: member.IdentityID, PolicyRevision: int64(member.PolicyRevision),
+		CertificateCacheKey: "member-cert", CertificateScope: "route", CertificateIdentifiers: []string{"second.example.test"},
+		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
 	if err := database.RemoveMembership(t.Context(), admin.IdentityID, team.ID, member.ID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}

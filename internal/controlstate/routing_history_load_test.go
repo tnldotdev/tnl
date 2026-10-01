@@ -23,20 +23,20 @@ func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPu
 				seed.entry_revision + sweep - 1, seed.projection, seed.public_url_expires_at, seed.created_at
 			FROM control.ingress_routing_table_events AS seed
 			CROSS JOIN generate_series($1::integer, $2::integer) AS sweep
-			WHERE seed.routing_table_revision <= $3::bigint
-			ORDER BY sweep, seed.routing_table_revision`, previous+1, perPublicURL, f.routes)
+			WHERE seed.id <= $3::bigint
+			ORDER BY sweep, seed.id`, previous+1, perPublicURL, f.routes)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `
 		UPDATE control.ingress_routing_table_clock
-		SET current_revision = (SELECT max(routing_table_revision) FROM control.ingress_routing_table_events);
+		SET current_revision = (SELECT max(id) FROM control.ingress_routing_table_events);
 		ANALYZE control.ingress_routing_table_events`); err != nil {
 		t.Fatal(err)
 	}
 	var total, revision, bytes int64
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT count(*), max(routing_table_revision),
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT count(*), max(id),
 		pg_total_relation_size('control.ingress_routing_table_events')
 		FROM control.ingress_routing_table_events`).Scan(&total, &revision, &bytes); err != nil {
 		t.Fatal(err)

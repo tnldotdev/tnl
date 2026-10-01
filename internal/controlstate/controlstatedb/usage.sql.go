@@ -213,7 +213,7 @@ func (q *Queries) ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressU
 
 const claimPublicURLUsageDeliveries = `-- name: ClaimPublicURLUsageDeliveries :many
 WITH candidates AS (
-    SELECT delivery_id
+    SELECT id
     FROM control.public_url_usage_deliveries
     WHERE (
         state IN ('pending', 'failed')
@@ -222,7 +222,7 @@ WITH candidates AS (
         state = 'delivering'
         AND work_expires_at <= $3
     )
-    ORDER BY available_at, delivery_id
+    ORDER BY available_at, id
     LIMIT $4
     FOR UPDATE SKIP LOCKED
 )
@@ -235,8 +235,8 @@ SET state = 'delivering',
     last_attempted_at = $3,
     last_error = NULL
 FROM candidates
-WHERE deliveries.delivery_id = candidates.delivery_id
-RETURNING deliveries.delivery_id, deliveries.bucket_id, deliveries.source_revision, deliveries.delivery_key, deliveries.state, deliveries.work_owner, deliveries.work_epoch, deliveries.work_expires_at, deliveries.attempts, deliveries.available_at, deliveries.last_attempted_at, deliveries.delivered_at, deliveries.last_error, deliveries.created_at
+WHERE deliveries.id = candidates.id
+RETURNING deliveries.id, deliveries.bucket_id, deliveries.bucket_revision, deliveries.delivery_key, deliveries.state, deliveries.work_owner, deliveries.work_epoch, deliveries.work_expires_at, deliveries.attempts, deliveries.available_at, deliveries.last_attempted_at, deliveries.delivered_at, deliveries.last_error, deliveries.created_at
 `
 
 type ClaimPublicURLUsageDeliveriesParams struct {
@@ -261,9 +261,9 @@ func (q *Queries) ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPu
 	for rows.Next() {
 		var i ControlPublicUrlUsageDelivery
 		if err := rows.Scan(
-			&i.DeliveryID,
+			&i.ID,
 			&i.BucketID,
-			&i.SourceRevision,
+			&i.BucketRevision,
 			&i.DeliveryKey,
 			&i.State,
 			&i.WorkOwner,
@@ -293,12 +293,12 @@ SET state = 'delivered',
     work_expires_at = NULL,
     delivered_at = $1,
     last_error = NULL
-WHERE delivery_id = $2
+WHERE id = $2
   AND state = 'delivering'
   AND work_owner = $3
   AND work_epoch = $4
   AND work_expires_at > $1
-RETURNING delivery_id, bucket_id, source_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
+RETURNING id, bucket_id, bucket_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
 `
 
 type CompletePublicURLUsageDeliveryParams struct {
@@ -317,9 +317,9 @@ func (q *Queries) CompletePublicURLUsageDelivery(ctx context.Context, arg Comple
 	)
 	var i ControlPublicUrlUsageDelivery
 	err := row.Scan(
-		&i.DeliveryID,
+		&i.ID,
 		&i.BucketID,
-		&i.SourceRevision,
+		&i.BucketRevision,
 		&i.DeliveryKey,
 		&i.State,
 		&i.WorkOwner,
@@ -355,7 +355,7 @@ ON CONFLICT (ingress_id, ingress_run_id) DO UPDATE SET
     ingress_lease_revision = EXCLUDED.ingress_lease_revision,
     lease_expires_at = GREATEST(control.ingress_usage_runs.lease_expires_at, EXCLUDED.lease_expires_at)
 WHERE control.ingress_usage_runs.ingress_lease_revision = EXCLUDED.ingress_lease_revision
-RETURNING ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
 `
 
 type EnsureIngressUsageRunParams struct {
@@ -378,6 +378,7 @@ func (q *Queries) EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUs
 	)
 	var i ControlIngressUsageRun
 	err := row.Scan(
+		&i.ID,
 		&i.IngressID,
 		&i.IngressRunID,
 		&i.IngressLeaseRevision,
@@ -395,16 +396,16 @@ func (q *Queries) EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUs
 
 const ensurePublicURLUsageConfiguration = `-- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
-    singleton,
+    id,
     visitor_network_hash_master_key,
     created_at
 ) VALUES (
-    true,
+    1,
     $1,
     $2
 )
-ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
-RETURNING singleton, visitor_network_hash_master_key, created_at
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+RETURNING id, visitor_network_hash_master_key, created_at
 `
 
 type EnsurePublicURLUsageConfigurationParams struct {
@@ -415,14 +416,14 @@ type EnsurePublicURLUsageConfigurationParams struct {
 func (q *Queries) EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error) {
 	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKey, arg.CreatedAt)
 	var i ControlPublicUrlUsageConfiguration
-	err := row.Scan(&i.Singleton, &i.VisitorNetworkHashMasterKey, &i.CreatedAt)
+	err := row.Scan(&i.ID, &i.VisitorNetworkHashMasterKey, &i.CreatedAt)
 	return i, err
 }
 
 const finalizePublicURLUsageBuckets = `-- name: FinalizePublicURLUsageBuckets :many
 WITH finalizable AS (
     SELECT
-        buckets.bucket_id,
+        buckets.id,
         NOT EXISTS (
             SELECT 1
             FROM control.ingress_usage_runs AS incomplete
@@ -439,7 +440,7 @@ WITH finalizable AS (
             AND runs.started_at < buckets.bucket_end
             AND runs.observed_through < buckets.bucket_end
       )
-    ORDER BY buckets.bucket_start, buckets.bucket_id
+    ORDER BY buckets.bucket_start, buckets.id
     LIMIT 256
     FOR UPDATE OF buckets
 )
@@ -453,8 +454,8 @@ SET finalized = true,
     finalized_at = $1,
     updated_at = $1
 FROM finalizable
-WHERE buckets.bucket_id = finalizable.bucket_id
-RETURNING buckets.bucket_id, buckets.public_url_id, buckets.publish_run_number, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.visitor_stream_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.complete, buckets.finalized_at, buckets.updated_at
+WHERE buckets.id = finalizable.id
+RETURNING buckets.id, buckets.public_url_id, buckets.publish_run_number, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.visitor_stream_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.complete, buckets.finalized_at, buckets.updated_at
 `
 
 type FinalizePublicURLUsageBucketsParams struct {
@@ -472,7 +473,7 @@ func (q *Queries) FinalizePublicURLUsageBuckets(ctx context.Context, arg Finaliz
 	for rows.Next() {
 		var i ControlPublicUrlUsageBucket
 		if err := rows.Scan(
-			&i.BucketID,
+			&i.ID,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
 			&i.TeamID,
@@ -506,7 +507,7 @@ func (q *Queries) FinalizePublicURLUsageBuckets(ctx context.Context, arg Finaliz
 }
 
 const getIngressUsageReport = `-- name: GetIngressUsageReport :one
-SELECT report_id, ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
+SELECT id, ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
 FROM control.ingress_usage_reports
 WHERE ingress_id = $1
   AND ingress_run_id = $2
@@ -536,7 +537,7 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 	)
 	var i ControlIngressUsageReport
 	err := row.Scan(
-		&i.ReportID,
+		&i.ID,
 		&i.IngressID,
 		&i.IngressRunID,
 		&i.PublicURLID,
@@ -561,9 +562,9 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 }
 
 const getPublicURLUsageBucketByID = `-- name: GetPublicURLUsageBucketByID :one
-SELECT bucket_id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 FROM control.public_url_usage_buckets
-WHERE bucket_id = $1
+WHERE id = $1
   AND finalized
 `
 
@@ -571,7 +572,7 @@ func (q *Queries) GetPublicURLUsageBucketByID(ctx context.Context, bucketID int6
 	row := q.db.QueryRow(ctx, getPublicURLUsageBucketByID, bucketID)
 	var i ControlPublicUrlUsageBucket
 	err := row.Scan(
-		&i.BucketID,
+		&i.ID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
 		&i.TeamID,
@@ -598,7 +599,7 @@ func (q *Queries) GetPublicURLUsageBucketByID(ctx context.Context, bucketID int6
 }
 
 const getPublicURLUsageBucketForUpdate = `-- name: GetPublicURLUsageBucketForUpdate :one
-SELECT bucket_id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 FROM control.public_url_usage_buckets
 WHERE public_url_id = $1
   AND publish_run_number = $2
@@ -616,7 +617,7 @@ func (q *Queries) GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetP
 	row := q.db.QueryRow(ctx, getPublicURLUsageBucketForUpdate, arg.PublicURLID, arg.PublishRunNumber, arg.BucketStart)
 	var i ControlPublicUrlUsageBucket
 	err := row.Scan(
-		&i.BucketID,
+		&i.ID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
 		&i.TeamID,
@@ -645,7 +646,7 @@ func (q *Queries) GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetP
 const insertPublicURLUsageDelivery = `-- name: InsertPublicURLUsageDelivery :one
 INSERT INTO control.public_url_usage_deliveries (
     bucket_id,
-    source_revision,
+    bucket_revision,
     delivery_key,
     state,
     available_at,
@@ -658,14 +659,14 @@ INSERT INTO control.public_url_usage_deliveries (
     $4,
     $5
 )
-ON CONFLICT (bucket_id, source_revision) DO UPDATE SET
+ON CONFLICT (bucket_id, bucket_revision) DO UPDATE SET
     delivery_key = control.public_url_usage_deliveries.delivery_key
-RETURNING delivery_id, bucket_id, source_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
+RETURNING id, bucket_id, bucket_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
 `
 
 type InsertPublicURLUsageDeliveryParams struct {
 	BucketID       int64
-	SourceRevision int64
+	BucketRevision int64
 	DeliveryKey    string
 	AvailableAt    pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
@@ -674,16 +675,16 @@ type InsertPublicURLUsageDeliveryParams struct {
 func (q *Queries) InsertPublicURLUsageDelivery(ctx context.Context, arg InsertPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error) {
 	row := q.db.QueryRow(ctx, insertPublicURLUsageDelivery,
 		arg.BucketID,
-		arg.SourceRevision,
+		arg.BucketRevision,
 		arg.DeliveryKey,
 		arg.AvailableAt,
 		arg.CreatedAt,
 	)
 	var i ControlPublicUrlUsageDelivery
 	err := row.Scan(
-		&i.DeliveryID,
+		&i.ID,
 		&i.BucketID,
-		&i.SourceRevision,
+		&i.BucketRevision,
 		&i.DeliveryKey,
 		&i.State,
 		&i.WorkOwner,
@@ -712,7 +713,7 @@ SELECT reports.public_url_id, reports.publish_run_number, reports.bucket_start, 
        reports.egress_bytes, reports.final
 FROM requested
 CROSS JOIN LATERAL (
-    SELECT history.report_id, history.ingress_id, history.ingress_run_id, history.public_url_id, history.publish_run_number, history.bucket_start, history.bucket_end, history.observed_through, history.report_revision, history.connection_attempts, history.policy_denials, history.capacity_denials, history.visitor_stream_open_failures, history.successful_streams, history.connection_nanoseconds, history.ingress_bytes, history.egress_bytes, history.histogram_data, history.final, history.received_at FROM control.ingress_usage_reports AS history
+    SELECT history.id, history.ingress_id, history.ingress_run_id, history.public_url_id, history.publish_run_number, history.bucket_start, history.bucket_end, history.observed_through, history.report_revision, history.connection_attempts, history.policy_denials, history.capacity_denials, history.visitor_stream_open_failures, history.successful_streams, history.connection_nanoseconds, history.ingress_bytes, history.egress_bytes, history.histogram_data, history.final, history.received_at FROM control.ingress_usage_reports AS history
     WHERE history.ingress_id = $1
       AND history.ingress_run_id = $2
       AND history.public_url_id = requested.public_url_id
@@ -813,7 +814,7 @@ WITH public_url_guard AS MATERIALIZED (
     WHERE routes.id = $2
     FOR KEY SHARE
 )
-SELECT sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.request_digest, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
+SELECT sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.request_digest, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge_method, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
 FROM control.publish_runs AS sessions
 JOIN public_url_guard ON public_url_guard.id = sessions.public_url_id
 WHERE sessions.publish_run_number = $1
@@ -847,7 +848,7 @@ func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRun
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -891,7 +892,7 @@ SET ended_at = lease_expires_at,
     incomplete_until = lease_expires_at
 WHERE ended_at IS NULL
   AND lease_expires_at <= $1
-RETURNING ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
 `
 
 func (q *Queries) MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, now pgtype.Timestamptz) ([]ControlIngressUsageRun, error) {
@@ -904,6 +905,7 @@ func (q *Queries) MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, now
 	for rows.Next() {
 		var i ControlIngressUsageRun
 		if err := rows.Scan(
+			&i.ID,
 			&i.IngressID,
 			&i.IngressRunID,
 			&i.IngressLeaseRevision,
@@ -943,7 +945,7 @@ WHERE runs.ingress_id = $4
           AND runs.observed_through = $2::timestamptz
       )
   )
-RETURNING ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, started_at, lease_expires_at, last_reported_at, observed_through, ended_at, coverage_complete, incomplete_from, incomplete_until
 `
 
 type MarkIngressUsageRunReportedParams struct {
@@ -966,6 +968,7 @@ func (q *Queries) MarkIngressUsageRunReported(ctx context.Context, arg MarkIngre
 	)
 	var i ControlIngressUsageRun
 	err := row.Scan(
+		&i.ID,
 		&i.IngressID,
 		&i.IngressRunID,
 		&i.IngressLeaseRevision,
@@ -987,12 +990,12 @@ SET state = 'rejected',
     work_owner = NULL,
     work_expires_at = NULL,
     last_error = $1
-WHERE delivery_id = $2
+WHERE id = $2
   AND state = 'delivering'
   AND work_owner = $3
   AND work_epoch = $4
   AND work_expires_at > $5
-RETURNING delivery_id, bucket_id, source_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
+RETURNING id, bucket_id, bucket_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
 `
 
 type RejectPublicURLUsageDeliveryParams struct {
@@ -1013,9 +1016,9 @@ func (q *Queries) RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPu
 	)
 	var i ControlPublicUrlUsageDelivery
 	err := row.Scan(
-		&i.DeliveryID,
+		&i.ID,
 		&i.BucketID,
-		&i.SourceRevision,
+		&i.BucketRevision,
 		&i.DeliveryKey,
 		&i.State,
 		&i.WorkOwner,
@@ -1038,12 +1041,12 @@ SET state = 'failed',
     work_expires_at = NULL,
     available_at = $1,
     last_error = $2
-WHERE delivery_id = $3
+WHERE id = $3
   AND state = 'delivering'
   AND work_owner = $4
   AND work_epoch = $5
   AND work_expires_at > $6
-RETURNING delivery_id, bucket_id, source_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
+RETURNING id, bucket_id, bucket_revision, delivery_key, state, work_owner, work_epoch, work_expires_at, attempts, available_at, last_attempted_at, delivered_at, last_error, created_at
 `
 
 type RetryPublicURLUsageDeliveryParams struct {
@@ -1066,9 +1069,9 @@ func (q *Queries) RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPubl
 	)
 	var i ControlPublicUrlUsageDelivery
 	err := row.Scan(
-		&i.DeliveryID,
+		&i.ID,
 		&i.BucketID,
-		&i.SourceRevision,
+		&i.BucketRevision,
 		&i.DeliveryKey,
 		&i.State,
 		&i.WorkOwner,

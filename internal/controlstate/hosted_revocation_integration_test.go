@@ -108,7 +108,7 @@ func TestIntegrationHostedPolicyRevocation(t *testing.T) {
 func readAuthorityRevisions(t *testing.T, database *Database, issuer, team string) (int64, int64) {
 	t.Helper()
 	var observed, applied int64
-	if err := database.pool.QueryRow(t.Context(), `SELECT observed_policy_revision, applied_policy_revision FROM control.authority_revision_state WHERE issuer = $1 AND team_id = $2`, issuer, team).Scan(&observed, &applied); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT observed_policy_revision, applied_policy_revision FROM control.authority_revision_states WHERE issuer = $1 AND team_id = $2`, issuer, team).Scan(&observed, &applied); err != nil {
 		t.Fatal(err)
 	}
 	return observed, applied

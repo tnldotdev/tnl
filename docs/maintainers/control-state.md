@@ -4,15 +4,24 @@ Audience: tnl maintainers working on `internal/controlstate`, routing
 publication, usage aggregation, or recovery. Product and operator documentation
 does not depend on these implementation details.
 
-## keep migrations backward compatible
+## start from the baseline, then keep migrations compatible
 
-`tnld migrate` applies migrations through the direct database URL before the
-new control release rolls out. Each migration must preserve the reads and
-writes of control and standalone processes still serving traffic. Add new
-schema first; remove old schema only after all its users have been replaced.
-The runtime checks a minimum schema version and accepts newer versions; an
-older `tnld migrate` still rejects databases newer than its embedded migrations.
-Runtime v4 also accepts v3 because the v4 migration only changes an index.
+The current baseline is for fresh databases; old staging and production schemas
+must be reset before installing it. `tnld migrate` applies that baseline through
+the direct database URL. For later changes, preserve the reads and writes of
+control and standalone processes still serving traffic: add schema before
+switching its users, and remove old schema after those users stop. The runtime
+checks a minimum schema version and accepts newer versions; an older
+`tnld migrate` rejects databases newer than its embedded migrations.
+
+The two publisher connection slots are stored in
+`control.publish_run_connection_slots`. A slot keeps its `id` and
+`(publish_run_id, connection_slot)` identity when its connection assignment is
+replaced; `publisher_connection_id` changes with that assignment. Tables use
+`id` as their primary key and retain natural lookup keys as unique constraints.
+Foreign keys cover saved control-owned relationships, including publish run
+usage and certificate orders. External authority IDs and historical process-run
+IDs do not require local authority or current-lease rows.
 
 ## acquire locks in one order
 

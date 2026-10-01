@@ -169,15 +169,12 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now); !errors.Is(err, ErrPublicURLInvalid) {
 		t.Fatalf("noncanonical policy: %v", err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
-		id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key,
-		request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key,
-		certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
-	) VALUES ('session_stale_update', $1, $2, $3, $4, 1, 'stale-update', decode(repeat('08', 32), 'hex'),
-		'token_stale_update', decode(repeat('09', 32), 'hex'), 2, 'stale-update', 'route', ARRAY[$5], 'tls-alpn-01', 'starting', $6, $6, $7)`,
-		route.ID, route.TeamID, route.MembershipID, request.ActingIdentityID, route.CanonicalHostname, now, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	insertTestPublishRun(t, database, testPublishRun{
+		ID: "session_stale_update", PublicURLID: route.ID, TeamID: route.TeamID,
+		MembershipID: route.MembershipID, ActingIdentityID: request.ActingIdentityID, PolicyRevision: 2,
+		CertificateCacheKey: "stale-update", CertificateScope: "route", CertificateIdentifiers: []string{route.CanonicalHostname},
+		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Second),
+	})
 	update.Target, update.AllowedIPPrefixes = "http://127.0.0.1:5000", []string{}
 	updated, err = database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(2*time.Second))
 	if err != nil || updated.Target != update.Target {

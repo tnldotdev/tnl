@@ -181,10 +181,10 @@ func TestIntegrationPublicURLUsageTerminalRejection(t *testing.T) {
 	}
 	// a newer report revision for the same bucket is a distinct delivery.
 	var bucketID, revision int64
-	if err := database.pool.QueryRow(t.Context(), `UPDATE control.public_url_usage_buckets SET bucket_revision = bucket_revision + 1 WHERE public_url_id = $1 RETURNING bucket_id, bucket_revision`, work.PublicURLID).Scan(&bucketID, &revision); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `UPDATE control.public_url_usage_buckets SET bucket_revision = bucket_revision + 1 WHERE public_url_id = $1 RETURNING id, bucket_revision`, work.PublicURLID).Scan(&bucketID, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_deliveries (bucket_id, source_revision, delivery_key, state, available_at, created_at) VALUES ($1, $2, 'usage_report_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'pending', $3, $3)`, bucketID, revision, claimedAt.Add(24*time.Hour)); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_deliveries (bucket_id, bucket_revision, delivery_key, state, available_at, created_at) VALUES ($1, $2, 'usage_report_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'pending', $3, $3)`, bucketID, revision, claimedAt.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	newer, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "newer", 1, claimedAt.Add(24*time.Hour), time.Minute)
@@ -198,14 +198,11 @@ func newIngressUsageFixture(t *testing.T) (*Database, time.Time, IngressLease, I
 	database, now := newControlStateIntegrationDatabase(t, "usage")
 	base := now.Truncate(time.Minute)
 	seedControlPublicURL(t, database, base, "usage")
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.publish_runs (
-		id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key, request_digest,
-		publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope,
-		certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at)
-		VALUES ('session_usage', 'public_url_usage', 'team_usage', 'identity_usage', 1, 'usage', decode(repeat('01',32),'hex'),
-		'token_usage', decode(repeat('02',32),'hex'), 1, 'usage', 'usage', ARRAY['public-url-usage.example.test'], 'dns-01', 'starting', $1, $1, $2)`, base, base.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	insertTestPublishRun(t, database, testPublishRun{
+		ID: "session_usage", PublicURLID: "public_url_usage", TeamID: "team_usage", ActingIdentityID: "identity_usage",
+		CertificateCacheKey: "usage", CertificateScope: "usage", CertificateIdentifiers: []string{"public-url-usage.example.test"},
+		ChallengeMethod: "dns-01", CreatedAt: base, ExpiresAt: base.Add(time.Hour),
+	})
 	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{IngressID: "ingress_usage", IngressRunID: "run_usage", ProtocolVersion: 1, ConnectionCapacity: 10}, base, time.Minute)
 	if err != nil {
 		t.Fatal(err)

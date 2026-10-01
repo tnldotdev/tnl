@@ -11,7 +11,7 @@ import (
 )
 
 const deleteCertificateMaterial = `-- name: DeleteCertificateMaterial :exec
-DELETE FROM certificate_material
+DELETE FROM certificate_materials
 WHERE server_origin = ?1
   AND team_id = ?2
   AND cache_key = ?3
@@ -96,8 +96,8 @@ func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int
 }
 
 const getCertificateMaterial = `-- name: GetCertificateMaterial :one
-SELECT server_origin, team_id, cache_key, "plan", phase, key_der, csr_der, certificate_pem, renew_at, issuance_id, updated_at
-FROM certificate_material
+SELECT id, server_origin, team_id, cache_key, "plan", phase, stored_key, csr_der, certificate_pem, renew_at, issuance_id, updated_at
+FROM certificate_materials
 WHERE server_origin = ?1
   AND team_id = ?2
   AND cache_key = ?3
@@ -123,12 +123,13 @@ func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificate
 	)
 	var i CertificateMaterial
 	err := row.Scan(
+		&i.ID,
 		&i.ServerOrigin,
 		&i.TeamID,
 		&i.CacheKey,
 		&i.Plan,
 		&i.Phase,
-		&i.KeyDer,
+		&i.StoredKey,
 		&i.CsrDer,
 		&i.CertificatePem,
 		&i.RenewAt,
@@ -139,7 +140,7 @@ func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificate
 }
 
 const getControlSession = `-- name: GetControlSession :one
-SELECT server_origin, authority_endpoint, session_id, access_token, access_expires_at, refresh_token, refresh_expires_at, updated_at
+SELECT id, server_origin, authority_endpoint, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -148,12 +149,13 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 	row := q.db.QueryRowContext(ctx, getControlSession, serverOrigin)
 	var i ControlSession
 	err := row.Scan(
+		&i.ID,
 		&i.ServerOrigin,
 		&i.AuthorityEndpoint,
 		&i.SessionID,
-		&i.AccessToken,
+		&i.StoredAccessToken,
 		&i.AccessExpiresAt,
-		&i.RefreshToken,
+		&i.StoredRefreshToken,
 		&i.RefreshExpiresAt,
 		&i.UpdatedAt,
 	)
@@ -162,7 +164,7 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 
 const getInstallationID = `-- name: GetInstallationID :one
 SELECT installation_id
-FROM client_settings
+FROM client_setting
 WHERE id = 1
 `
 
@@ -175,7 +177,7 @@ func (q *Queries) GetInstallationID(ctx context.Context) (string, error) {
 
 const getSelectedServer = `-- name: GetSelectedServer :one
 SELECT selected_server_origin
-FROM client_settings
+FROM client_setting
 WHERE id = 1
 `
 
@@ -201,7 +203,7 @@ func (q *Queries) GetSelectedTeam(ctx context.Context, origin string) (string, e
 
 const getTelemetryEnabled = `-- name: GetTelemetryEnabled :one
 SELECT telemetry_enabled
-FROM client_settings
+FROM client_setting
 WHERE id = 1
 `
 
@@ -214,7 +216,7 @@ func (q *Queries) GetTelemetryEnabled(ctx context.Context) (int64, error) {
 
 const getWorktreeHashSalt = `-- name: GetWorktreeHashSalt :one
 SELECT worktree_hash_salt
-FROM client_settings
+FROM client_setting
 WHERE id = 1
 `
 
@@ -411,7 +413,7 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 }
 
 const setInstallationID = `-- name: SetInstallationID :exec
-UPDATE client_settings
+UPDATE client_setting
 SET installation_id = ?1
 WHERE id = 1 AND installation_id = ''
 `
@@ -422,7 +424,7 @@ func (q *Queries) SetInstallationID(ctx context.Context, installationID string) 
 }
 
 const setSelectedServer = `-- name: SetSelectedServer :exec
-UPDATE client_settings
+UPDATE client_setting
 SET selected_server_origin = ?1
 WHERE id = 1
 `
@@ -451,7 +453,7 @@ func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams
 }
 
 const setTelemetryEnabled = `-- name: SetTelemetryEnabled :exec
-UPDATE client_settings
+UPDATE client_setting
 SET telemetry_enabled = ?1
 WHERE id = 1
 `
@@ -589,7 +591,7 @@ func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) 
 }
 
 const setWorktreeHashSalt = `-- name: SetWorktreeHashSalt :exec
-UPDATE client_settings
+UPDATE client_setting
 SET worktree_hash_salt = ?1
 WHERE id = 1 AND length(worktree_hash_salt) = 0
 `
@@ -600,13 +602,13 @@ func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []by
 }
 
 const upsertCertificateMaterial = `-- name: UpsertCertificateMaterial :exec
-INSERT INTO certificate_material (
+INSERT INTO certificate_materials (
     server_origin,
     team_id,
     cache_key,
     plan,
     phase,
-    key_der,
+    stored_key,
     csr_der,
     certificate_pem,
     renew_at,
@@ -626,7 +628,7 @@ INSERT INTO certificate_material (
     ?11
 )
 ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
-    key_der = excluded.key_der,
+    stored_key = excluded.stored_key,
     csr_der = excluded.csr_der,
     certificate_pem = excluded.certificate_pem,
     renew_at = excluded.renew_at,
@@ -640,7 +642,7 @@ type UpsertCertificateMaterialParams struct {
 	CacheKey       string
 	Plan           string
 	Phase          string
-	KeyDer         []byte
+	StoredKey      []byte
 	CsrDer         []byte
 	CertificatePem []byte
 	RenewAt        sql.NullInt64
@@ -655,7 +657,7 @@ func (q *Queries) UpsertCertificateMaterial(ctx context.Context, arg UpsertCerti
 		arg.CacheKey,
 		arg.Plan,
 		arg.Phase,
-		arg.KeyDer,
+		arg.StoredKey,
 		arg.CsrDer,
 		arg.CertificatePem,
 		arg.RenewAt,
@@ -670,9 +672,9 @@ INSERT INTO control_sessions (
     server_origin,
     authority_endpoint,
     session_id,
-    access_token,
+    stored_access_token,
     access_expires_at,
-    refresh_token,
+    stored_refresh_token,
     refresh_expires_at,
     updated_at
 ) VALUES (
@@ -688,22 +690,22 @@ INSERT INTO control_sessions (
 ON CONFLICT (server_origin) DO UPDATE SET
     authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
-    access_token = excluded.access_token,
+    stored_access_token = excluded.stored_access_token,
     access_expires_at = excluded.access_expires_at,
-    refresh_token = excluded.refresh_token,
+    stored_refresh_token = excluded.stored_refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
     updated_at = excluded.updated_at
 `
 
 type UpsertControlSessionParams struct {
-	ServerOrigin      string
-	AuthorityEndpoint string
-	SessionID         string
-	AccessToken       []byte
-	AccessExpiresAt   int64
-	RefreshToken      []byte
-	RefreshExpiresAt  int64
-	UpdatedAt         int64
+	ServerOrigin       string
+	AuthorityEndpoint  string
+	SessionID          string
+	StoredAccessToken  []byte
+	AccessExpiresAt    int64
+	StoredRefreshToken []byte
+	RefreshExpiresAt   int64
+	UpdatedAt          int64
 }
 
 func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSessionParams) error {
@@ -711,9 +713,9 @@ func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSes
 		arg.ServerOrigin,
 		arg.AuthorityEndpoint,
 		arg.SessionID,
-		arg.AccessToken,
+		arg.StoredAccessToken,
 		arg.AccessExpiresAt,
-		arg.RefreshToken,
+		arg.StoredRefreshToken,
 		arg.RefreshExpiresAt,
 		arg.UpdatedAt,
 	)

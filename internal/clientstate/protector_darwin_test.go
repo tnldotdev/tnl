@@ -191,13 +191,13 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(storedCredential.AccessToken, []byte(token)) {
+	if bytes.Contains(storedCredential.StoredAccessToken, []byte(token)) {
 		t.Fatal("credential state contains the access token")
 	}
-	if !bytes.HasPrefix(storedCredential.AccessToken, sealedValuePrefix) {
+	if !bytes.HasPrefix(storedCredential.StoredAccessToken, sealedValuePrefix) {
 		t.Fatal("access token is not encrypted")
 	}
-	if !bytes.HasPrefix(storedCredential.RefreshToken, sealedValuePrefix) {
+	if !bytes.HasPrefix(storedCredential.StoredRefreshToken, sealedValuePrefix) {
 		t.Fatal("refresh token is not encrypted")
 	}
 
@@ -217,7 +217,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(storedPending.KeyDer, keyDER) || !bytes.HasPrefix(storedPending.KeyDer, sealedValuePrefix) {
+	if bytes.Equal(storedPending.StoredKey, keyDER) || !bytes.HasPrefix(storedPending.StoredKey, sealedValuePrefix) {
 		t.Fatal("pending state contains an unencrypted private key")
 	}
 	renewAt := time.Now().Add(time.Hour).UTC()
@@ -234,7 +234,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(storedCurrent.KeyDer, keyDER) || !bytes.HasPrefix(storedCurrent.KeyDer, sealedValuePrefix) {
+	if bytes.Equal(storedCurrent.StoredKey, keyDER) || !bytes.HasPrefix(storedCurrent.StoredKey, sealedValuePrefix) {
 		t.Fatal("current state contains an unencrypted private key")
 	}
 	if err := database.Close(); err != nil {

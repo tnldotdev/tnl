@@ -89,7 +89,7 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 	}
 	for _, row := range rows {
 		event, err := ingressRoutingTableEvent(
-			row.RoutingTableRevision, row.EventKind, row.PublicURLID, row.PublishRunNumber,
+			row.ID, row.EventKind, row.PublicURLID, row.PublishRunNumber,
 			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {
@@ -168,7 +168,7 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	page.Events = make([]IngressRoutingTableEvent, 0, len(rows))
 	for _, row := range rows {
 		event, err := ingressRoutingTableEvent(
-			row.RoutingTableRevision, row.EventKind, row.PublicURLID, row.PublishRunNumber,
+			row.ID, row.EventKind, row.PublicURLID, row.PublishRunNumber,
 			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {

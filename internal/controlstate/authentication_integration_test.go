@@ -117,7 +117,7 @@ func TestIntegrationExternalAuthoritySecret(t *testing.T) {
 		t.Fatalf("external retry master key was not stable: %v", err)
 	}
 	var ciphertext []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT external_retry_master_key_ciphertext FROM control.runtime_secrets WHERE singleton = true`).Scan(&ciphertext); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT external_retry_master_key_ciphertext FROM control.runtime_secret WHERE id = 1`).Scan(&ciphertext); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(ciphertext, first[:]) {

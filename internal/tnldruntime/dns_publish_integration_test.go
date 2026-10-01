@@ -190,7 +190,7 @@ func assertIntegrationPublishedPublicURL(t *testing.T, database *sql.DB, visitor
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT r.team_id, r.domain_id, coalesce(r.membership_id, ''), r.public_url_scope,
 			json_build_object('cache_key', s.certificate_cache_key, 'scope', s.certificate_scope,
-				'identifiers', s.certificate_identifiers, 'challenge_method', s.certificate_challenge)
+				'identifiers', s.certificate_identifiers, 'challenge_method', s.certificate_challenge_method)
 		FROM control.public_urls r JOIN control.publish_runs s ON s.public_url_id = r.id
 		WHERE r.id = $1 AND s.publish_run_number = $2
 	`, ready.PublicURLID, ready.PublishRunNumber).Scan(&teamID, &domainID, &membershipID, &scope, &planJSON); err != nil {

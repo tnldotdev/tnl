@@ -14,6 +14,52 @@ import (
 
 const testPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
 
+func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if filepath.Base(DatabasePath(root)) != "client-v1.db" {
+		t.Fatalf("client database path = %q", DatabasePath(root))
+	}
+	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {
+		var key string
+		if err := database.db.QueryRowContext(t.Context(), `SELECT name FROM pragma_table_info(?) WHERE pk = 1`, table).Scan(&key); err != nil || key != "id" {
+			t.Fatalf("%s primary key = %q, %v; want id", table, key, err)
+		}
+	}
+	if _, err := database.Server(t.Context(), "https://server.example"); err != nil {
+		t.Fatal(err)
+	}
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	for _, query := range []string{
+		`UPDATE local_tunnels SET state = 'ready' WHERE id = ?`,
+		`UPDATE local_tunnels SET state = 'stopped' WHERE id = ?`,
+	} {
+		if _, err := database.db.ExecContext(t.Context(), query, tunnel.ID()); err == nil {
+			t.Fatalf("incomplete tunnel state accepted: %s", query)
+		}
+	}
+	for _, query := range []string{
+		`INSERT INTO certificate_materials (server_origin, team_id, cache_key, plan, phase, stored_key, csr_der, issuance_id, updated_at)
+		 VALUES ('https://server.example', 'team', 'key', '{}', 'current', x'01', x'02', '', 1)`,
+		`INSERT INTO certificate_materials (server_origin, team_id, cache_key, plan, phase, stored_key, csr_der, certificate_pem, issuance_id, updated_at)
+		 VALUES ('https://server.example', 'team', 'key', '{}', 'pending', x'01', x'02', x'03', '', 1)`,
+	} {
+		if _, err := database.db.ExecContext(t.Context(), query); err == nil {
+			t.Fatalf("incomplete certificate material accepted: %s", query)
+		}
+	}
+}
+
 func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	parent := t.TempDir()
 	real := filepath.Join(parent, "real")

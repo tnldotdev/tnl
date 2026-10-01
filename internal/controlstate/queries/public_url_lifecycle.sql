@@ -34,7 +34,7 @@ WHERE sessions.id = sqlc.arg(publish_run_id)
   AND sessions.certificate_installed_at IS NOT NULL
   AND (
       SELECT count(*)
-      FROM control.publish_run_connections AS connections
+      FROM control.publish_run_connection_slots AS connections
       WHERE connections.publish_run_id = sqlc.arg(publish_run_id)
         AND connections.state = 'ready'
   ) = 2
@@ -65,7 +65,7 @@ SELECT connections.publish_run_id,
     relays.internal_relay_address,
     services.tls_server_name,
     relays.lease_expires_at
-FROM control.publish_run_connections AS connections
+FROM control.publish_run_connection_slots AS connections
 JOIN control.relay_leases AS relays
   ON relays.relay_service_id = connections.relay_service_id
  AND relays.relay_id = connections.connected_relay_id
@@ -85,7 +85,7 @@ ORDER BY connections.connection_slot;
 
 -- name: LockInvalidReadyPublisherConnections :many
 SELECT connections.*
-FROM control.publish_run_connections AS connections
+FROM control.publish_run_connection_slots AS connections
 LEFT JOIN control.relay_leases AS relays
   ON relays.relay_service_id = connections.relay_service_id
  AND relays.relay_id = connections.connected_relay_id
@@ -104,7 +104,7 @@ ORDER BY connections.publish_run_id, connections.connection_slot
 FOR UPDATE OF connections SKIP LOCKED;
 
 -- name: ExpirePublisherConnection :one
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET state = 'expired',
     disconnected_at = COALESCE(disconnected_at, sqlc.arg(expired_at)),
     closed_at = COALESCE(closed_at, sqlc.arg(expired_at))
@@ -147,7 +147,7 @@ RETURNING *;
 -- name: LockPublicURLRecoveryEpisode :one
 SELECT *
 FROM control.public_url_recovery_episodes
-WHERE recovery_episode_id = sqlc.arg(recovery_episode_id)
+WHERE id = sqlc.arg(recovery_episode_id)
 FOR UPDATE;
 
 -- name: ObservePublicURLRecoveryEpisode :one
@@ -155,7 +155,7 @@ UPDATE control.public_url_recovery_episodes
 SET state = 'observed',
     observed_at = sqlc.arg(observed_at),
     observed_seconds = sqlc.arg(observed_seconds)
-WHERE recovery_episode_id = sqlc.arg(recovery_episode_id)
+WHERE id = sqlc.arg(recovery_episode_id)
   AND public_url_id = sqlc.arg(public_url_id)
   AND publish_run_number = sqlc.arg(publish_run_number)
   AND state = 'open'
@@ -177,5 +177,5 @@ SET observation_count = observation_count + 1,
     bucket_le_60 = bucket_le_60 + CASE WHEN sqlc.arg(observed_seconds) <= 60 THEN 1 ELSE 0 END,
     bucket_le_120 = bucket_le_120 + CASE WHEN sqlc.arg(observed_seconds) <= 120 THEN 1 ELSE 0 END,
     updated_at = sqlc.arg(updated_at)
-WHERE singleton = true
+WHERE id = 1
 RETURNING *;

@@ -9,12 +9,13 @@ import (
 )
 
 type CertificateMaterial struct {
+	ID             int64
 	ServerOrigin   string
 	TeamID         string
 	CacheKey       string
 	Plan           string
 	Phase          string
-	KeyDer         []byte
+	StoredKey      []byte
 	CsrDer         []byte
 	CertificatePem []byte
 	RenewAt        sql.NullInt64
@@ -31,14 +32,15 @@ type ClientSetting struct {
 }
 
 type ControlSession struct {
-	ServerOrigin      string
-	AuthorityEndpoint string
-	SessionID         string
-	AccessToken       []byte
-	AccessExpiresAt   int64
-	RefreshToken      []byte
-	RefreshExpiresAt  int64
-	UpdatedAt         int64
+	ID                 int64
+	ServerOrigin       string
+	AuthorityEndpoint  string
+	SessionID          string
+	StoredAccessToken  []byte
+	AccessExpiresAt    int64
+	StoredRefreshToken []byte
+	RefreshExpiresAt   int64
+	UpdatedAt          int64
 }
 
 type LocalTunnel struct {
@@ -63,6 +65,7 @@ type LocalTunnel struct {
 }
 
 type ServerProfile struct {
+	ID             int64
 	Origin         string
 	SelectedTeamID string
 	CreatedAt      int64

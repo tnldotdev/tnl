@@ -65,7 +65,7 @@ func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, publicURLI
 	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 		var ready int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*) FROM control.publish_run_connections AS connections
+			SELECT count(*) FROM control.publish_run_connection_slots AS connections
 			JOIN control.relay_leases AS leases
 			  ON leases.relay_id = connections.connected_relay_id
 			 AND leases.relay_run_id = connections.connected_relay_run_id
@@ -112,7 +112,7 @@ func readSplitConnectionState(t *testing.T, database *sql.DB, publicURLID string
 	var state splitConnectionState
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT publisher_connection_id, connection_assignment_revision, connected_relay_run_id
-		FROM control.publish_run_connections
+		FROM control.publish_run_connection_slots
 		WHERE public_url_id = $1 AND publish_run_number = $2 AND relay_service_id = $3 AND state = 'ready'
 	`, publicURLID, publishRunNumber, relayServiceID).Scan(&state.publisherConnectionID, &state.assignmentRevision, &state.connectedRelayRunID); err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func assertSplitRoutePlacement(t *testing.T, database *sql.DB, publicURLID strin
 	var connections, services, relays int
 	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT count(*), count(DISTINCT relay_service_id), count(DISTINCT connected_relay_id)
-		FROM control.publish_run_connections WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'ready'
+		FROM control.publish_run_connection_slots WHERE public_url_id = $1 AND publish_run_number = $2 AND state = 'ready'
 	`, publicURLID, publishRunNumber).Scan(&connections, &services, &relays); err != nil {
 		t.Fatal(err)
 	}

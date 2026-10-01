@@ -77,7 +77,7 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	var allocated int64
 	if err := database.pool.QueryRow(ctx, `
 		SELECT pg_sequence_last_value(pg_get_serial_sequence(
-			'control.ingress_routing_table_events', 'routing_table_revision')::regclass)
+			'control.ingress_routing_table_events', 'id')::regclass)
 	`).Scan(&allocated); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&baselineEvents); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton`).Scan(&baselineClock); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE id = 1`).Scan(&baselineClock); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := database.pool.Begin(t.Context())
@@ -242,7 +242,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&events); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton`).Scan(&clock); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE id = 1`).Scan(&clock); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.pool.QueryRow(t.Context(), `SELECT target FROM control.public_urls WHERE id = $1`, routeA.ID).Scan(&target); err != nil {
@@ -302,7 +302,7 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2 WHERE id = $1`, authentication.PublishRunID, now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections AS connections
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots AS connections
 			SET state = 'ready', connected_relay_id = leases.relay_id,
 			    connected_relay_run_id = leases.relay_run_id,
 			    connected_relay_lease_revision = leases.relay_lease_revision,
@@ -313,7 +313,7 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 			t.Fatal(err)
 		}
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots
 		SET state = 'closed', disconnected_at = $2, closed_at = $2
 		WHERE publish_run_id = $1 AND connection_slot = 0`, heartbeatAuthentication.PublishRunID, now); err != nil {
 		t.Fatal(err)

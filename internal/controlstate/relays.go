@@ -403,7 +403,7 @@ func validatePublisherConnectionClaim(request PublisherConnectionClaimRequest) e
 	return nil
 }
 
-func claimedPublisherConnection(row controlstatedb.ControlPublishRunConnection) (ClaimedPublisherConnection, error) {
+func claimedPublisherConnection(row controlstatedb.ControlPublishRunConnectionSlot) (ClaimedPublisherConnection, error) {
 	if row.PublishRunNumber <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||
 		row.ConnectionSlot >= publishRunConnectionCount || !row.ConnectedRelayID.Valid ||
 		!row.ConnectedRelayRunID.Valid || !row.ConnectedRelayLeaseRevision.Valid ||
@@ -433,7 +433,7 @@ func claimedPublisherConnection(row controlstatedb.ControlPublishRunConnection) 
 }
 
 func publisherConnectionClaimMatches(
-	connection controlstatedb.ControlPublishRunConnection,
+	connection controlstatedb.ControlPublishRunConnectionSlot,
 	request PublisherConnectionClaimRequest,
 ) bool {
 	return connection.ConnectedRelayID.Valid && connection.ConnectedRelayID.String == request.RelayID &&
@@ -444,7 +444,7 @@ func publisherConnectionClaimMatches(
 }
 
 func storedConnectionAssignmentMatches(
-	connection controlstatedb.ControlPublishRunConnection,
+	connection controlstatedb.ControlPublishRunConnectionSlot,
 	identity ConnectionAssignmentIdentity,
 ) bool {
 	return connection.PublishRunID == identity.PublishRunID && connection.PublicURLID == identity.PublicURLID &&

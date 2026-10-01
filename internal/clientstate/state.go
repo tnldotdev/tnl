@@ -19,7 +19,8 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
-const databaseName = "client.db"
+// bump this only when the local SQLite schema intentionally starts fresh.
+const databaseFormatVersion = 1
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -65,7 +66,9 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 }
 
 // DatabasePath returns the shared client database path within root.
-func DatabasePath(root string) string { return filepath.Join(root, databaseName) }
+func DatabasePath(root string) string {
+	return filepath.Join(root, fmt.Sprintf("client-v%d.db", databaseFormatVersion))
+}
 
 func DefaultDir() (string, error) {
 	root, err := os.UserConfigDir()

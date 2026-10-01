@@ -53,7 +53,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.control_tls_cache WHERE cache_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.runtime_secrets WHERE external_retry_master_key_storage_key_id = $1)
+			(SELECT count(*) FROM control.runtime_secret WHERE external_retry_master_key_storage_key_id = $1)
 	`, previousKeyID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: count previous-key secrets: %w", err)
@@ -246,7 +246,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 
 	if err := rotate(`
 		SELECT ctid::text, external_retry_master_key_ciphertext
-		FROM control.runtime_secrets
+		FROM control.runtime_secret
 		WHERE external_retry_master_key_storage_key_id = $1
 		FOR UPDATE SKIP LOCKED
 		LIMIT $2
@@ -257,7 +257,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return rowID, externalRetryMasterKeyContext(), ciphertext, err
 	}, func(rowID, keyID string, ciphertext []byte) error {
 		_, err := tx.Exec(ctx, `
-			UPDATE control.runtime_secrets
+			UPDATE control.runtime_secret
 			SET external_retry_master_key_ciphertext = $1, external_retry_master_key_storage_key_id = $2
 			WHERE ctid = $3::tid AND external_retry_master_key_storage_key_id = $4
 		`, ciphertext, keyID, rowID, previousKeyID)

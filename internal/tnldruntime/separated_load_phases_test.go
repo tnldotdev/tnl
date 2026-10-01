@@ -160,7 +160,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		if phase == "publisher-blackhole" {
 			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connections WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
+				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
 				return count == 0, err
 			})
 			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
@@ -273,7 +273,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 		var active int
 		err := database.QueryRowContext(ctx, `SELECT
 			(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open) +
-			(SELECT count(*) FROM control.publish_run_connections WHERE state <> 'closed') +
+			(SELECT count(*) FROM control.publish_run_connection_slots WHERE state <> 'closed') +
 			(SELECT coalesce(sum(assignment_count), 0) FROM control.relay_service_assignment_totals)`).Scan(&active)
 		return active == 0, err
 	})

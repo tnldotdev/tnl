@@ -164,7 +164,7 @@ INSERT INTO control.admin_audit_events (
     sqlc.arg(actor_identity_id),
     sqlc.arg(request_id),
     'public_url.create',
-    'route',
+    'public_url',
     sqlc.arg(public_url_id),
     sqlc.arg(occurred_at)
 );
@@ -275,7 +275,7 @@ INSERT INTO control.admin_audit_events (
     sqlc.arg(actor_identity_id),
     sqlc.arg(request_id),
     'public_url.delete',
-    'route',
+    'public_url',
     sqlc.arg(public_url_id),
     sqlc.arg(occurred_at)
 );
@@ -294,7 +294,7 @@ INSERT INTO control.admin_audit_events (
     sqlc.arg(actor_identity_id),
     sqlc.arg(request_id),
     'public_url.update',
-    'route',
+    'public_url',
     sqlc.arg(public_url_id),
     sqlc.arg(occurred_at)
 );
@@ -311,7 +311,7 @@ INSERT INTO control.admin_audit_events (
     'system',
     sqlc.arg(request_id),
     'public_url.delete',
-    'route',
+    'public_url',
     sqlc.arg(public_url_id),
     sqlc.arg(occurred_at)
 );
@@ -326,7 +326,7 @@ WHERE id = sqlc.arg(publish_run_id)
 RETURNING *;
 
 -- name: ClosePublishRunConnections :exec
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET state = 'closed',
     closed_at = COALESCE(closed_at, sqlc.arg(closed_at))
 WHERE publish_run_id = sqlc.arg(publish_run_id)

@@ -205,7 +205,7 @@ func TestIntegrationTLSChallengeRoutingAndFailedCleanup(t *testing.T) {
 		t.Fatalf("work before ingress applied = %t, %v", found, err)
 	}
 	var revision uint64
-	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton = true`).Scan(&revision); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE id = 1`).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity, RoutingTableRevision: revision}, now, time.Hour); err != nil {

@@ -45,7 +45,7 @@ FOR SHARE OF m, t;
 
 -- name: ListPublishRunConnections :many
 SELECT *
-FROM control.publish_run_connections
+FROM control.publish_run_connection_slots
 WHERE publish_run_id = sqlc.arg(publish_run_id)
 ORDER BY connection_slot;
 
@@ -83,7 +83,7 @@ INSERT INTO control.publish_runs (
     certificate_cache_key,
     certificate_scope,
     certificate_identifiers,
-    certificate_challenge,
+    certificate_challenge_method,
     state,
     created_at,
     last_heartbeat_at,
@@ -103,7 +103,7 @@ INSERT INTO control.publish_runs (
     sqlc.arg(certificate_cache_key),
     sqlc.arg(certificate_scope),
     sqlc.arg(certificate_identifiers),
-    sqlc.arg(certificate_challenge),
+    sqlc.arg(certificate_challenge_method),
     'starting',
     sqlc.arg(created_at),
     sqlc.arg(last_heartbeat_at),
@@ -112,7 +112,7 @@ FROM version
 RETURNING *;
 
 -- name: InsertPublishRunConnections :many
-INSERT INTO control.publish_run_connections (
+INSERT INTO control.publish_run_connection_slots (
     publish_run_id,
     public_url_id,
     publish_run_number,
@@ -152,7 +152,7 @@ RETURNING *;
 -- and process capacity under its exclusive lease guard. no capacity is added here.
 -- closed or expired slots have no reservation and require guarded placement first.
 -- name: ReplacePublishRunConnection :one
-UPDATE control.publish_run_connections AS connections
+UPDATE control.publish_run_connection_slots AS connections
 SET publisher_connection_id = sqlc.arg(new_publisher_connection_id),
     connection_assignment_revision = sqlc.arg(new_connection_assignment_revision),
     relay_service_id = sqlc.arg(relay_service_id),

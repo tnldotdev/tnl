@@ -32,7 +32,7 @@ func (d *Database) SetTelemetryEnabled(ctx context.Context, enabled bool) error 
 }
 
 // TelemetryEnabledAt checks an existing database without creating client state
-// or migrating it. An absent database and the old schema default to enabled.
+// or migrating it. an absent database defaults to enabled.
 func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 	path := DatabasePath(root)
 	info, err := os.Lstat(path)
@@ -49,16 +49,8 @@ func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 }
 
 func readTelemetryPreference(ctx context.Context, path string) (bool, error) {
-	db, err := tnlsqlite.OpenReadOnly(ctx, path, 2)
+	db, err := tnlsqlite.OpenReadOnly(ctx, path, 1)
 	if err != nil {
-		// a client that has not migrated yet has no saved preference.
-		legacy, legacyErr := tnlsqlite.OpenReadOnly(ctx, path, 1)
-		if legacyErr == nil {
-			if err := legacy.Close(); err != nil {
-				return false, fmt.Errorf("clientstate: close telemetry preference: %w", err)
-			}
-			return true, nil
-		}
 		return false, fmt.Errorf("clientstate: open telemetry preference: %w", err)
 	}
 	defer db.Close()

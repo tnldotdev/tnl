@@ -176,7 +176,7 @@ func (f *integrationViteFixture) assertCertificatePlan(t *testing.T, tunnel clie
 	defer cancel()
 	var challenge, scope string
 	var identifiers []byte
-	if err := f.database.QueryRowContext(ctx, `SELECT certificate_challenge, certificate_scope, to_json(certificate_identifiers)
+	if err := f.database.QueryRowContext(ctx, `SELECT certificate_challenge_method, certificate_scope, to_json(certificate_identifiers)
 		FROM control.publish_runs WHERE public_url_id = $1 AND publish_run_number = $2`, tunnel.PublicURLID, tunnel.PublishRunNumber).Scan(&challenge, &scope, &identifiers); err != nil {
 		t.Fatal(err)
 	}
