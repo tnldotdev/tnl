@@ -256,6 +256,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	telemetryCommand, collectTelemetry := selectedTelemetryCommand(parsed)
+	var telemetry *telemetryInvocation
+	if !flags.NoTelemetry && collectTelemetry &&
+		len(reporterFactories) != 0 && reporterFactories[0] != nil {
+		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
+			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
+				if reporter := reporterFactories[0](root); reporter != nil {
+					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
+						telemetry = invocation
+					}
+				}
+			}
+		}
+	}
+	failureStage := telemetrySetupStage
+	if telemetry != nil {
+		telemetry.Report(newTelemetryStarted(telemetryCommand))
+		defer func() {
+			if result != nil {
+				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
+			} else if telemetryCommand == telemetryInit || telemetryCommand == telemetryLogin {
+				telemetry.Report(newTelemetryCompleted(telemetryCommand))
+			}
+		}()
+	}
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
@@ -291,21 +316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	var telemetry telemetryReporter
-	if !flags.NoTelemetry && parsedCommand != "config path" && !strings.HasPrefix(parsedCommand, "telemetry ") &&
-		len(reporterFactories) != 0 && reporterFactories[0] != nil {
-		root, stateErr := commandStateRoot(parsed)
-		if stateErr == nil {
-			enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root)
-			if preferenceErr == nil && enabled {
-				telemetry = reporterFactories[0](root)
-				command := canonicalTelemetryCommand(parsed)
-				if telemetry != nil && command != "" {
-					telemetry.Report(newTelemetryPayload("command", command, "", ""))
-				}
-			}
-		}
-	}
+	failureStage = telemetryCommandStage
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)

@@ -50,7 +50,7 @@ func TestTelemetryCommandControlsFutureCommandEvents(t *testing.T) {
 	}
 	t.Setenv("TNL_NO_TELEMETRY", "false")
 	invoke("version")
-	if len(events) != 1 || events[0].Event != "command" || events[0].Command != "version" {
-		t.Fatalf("reenabled command events = %#v", events)
+	if len(events) != 0 {
+		t.Fatalf("version sent telemetry: %#v", events)
 	}
 }
