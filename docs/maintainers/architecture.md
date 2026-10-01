@@ -134,6 +134,11 @@ Initial routability requires the public URL certificate and both publisher
 connections. After that first transition, one ready connection can keep the
 public URL serving while the publisher replaces the other.
 
+The publisher waits for one connection before certificate work, then both
+connections before asking control to mark the publish run ready. A normal stop
+drains admitted visitors before closing publisher connections. A rejected
+heartbeat or expired certificate closes those connections immediately.
+
 Publishers try QUIC first. After a short delay, they also try TLS/TCP with yamux
 and keep the first authenticated transport that completes.
 If a claimed QUIC publisher connection fails, the publisher waits for control's

@@ -130,7 +130,7 @@ func runSession(
 	transportCtx, cancelTransports := context.WithCancel(context.WithoutCancel(parentCtx))
 	stopAdmissions := context.AfterFunc(sessionCtx, func() {
 		route.stopAdmissions()
-		if parentCtx.Err() == nil || !errors.Is(context.Cause(sessionCtx), context.Cause(parentCtx)) {
+		if !parentCanceledSession(parentCtx, sessionCtx) {
 			cancelTransports()
 		}
 	})
@@ -166,18 +166,8 @@ func runSession(
 		cancelSession(nil)
 		<-fallbackDone
 	}()
-	expirationDone := make(chan struct{})
-	go func() {
-		defer close(expirationDone)
-		select {
-		case <-transportCtx.Done():
-		case <-route.certificateExpiration():
-			cancelSession(errCertificateExpired)
-			cancelTransports()
-			_ = route.Close()
-		}
-	}()
 	heartbeatDone := make(chan error, 1)
+	expirationDone := make(chan struct{})
 	cleanup := publishRunCleanup{
 		parentCtx: parentCtx, sessionCtx: sessionCtx,
 		cancelSession: cancelSession, cancelTransports: cancelTransports,
@@ -185,6 +175,14 @@ func runSession(
 		heartbeatDone: heartbeatDone, expirationDone: expirationDone,
 	}
 	defer func() { result = cleanup.finish(result) }()
+	go func() {
+		defer close(expirationDone)
+		select {
+		case <-transportCtx.Done():
+		case <-route.certificateExpiration():
+			cleanup.abort(errCertificateExpired)
+		}
+	}()
 	if err := connections.Update(setup.PublisherConnections); err != nil {
 		return err
 	}
@@ -193,14 +191,12 @@ func runSession(
 			sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, heartbeat.PublishRun.ExpiresAt,
 			connections.Update, observePolicyDenials, config.heartbeatInterval,
 		)
-		if err != nil && parentCtx.Err() != nil && errors.Is(context.Cause(sessionCtx), context.Cause(parentCtx)) {
+		if err != nil && parentCanceledSession(parentCtx, sessionCtx) {
 			err = nil
 		}
 		if err != nil {
 			err = fmt.Errorf("publisher: heartbeat: %w", err)
-			cancelSession(err)
-			cancelTransports()
-			_ = route.Close()
+			cleanup.abort(err)
 		}
 		heartbeatDone <- err
 	}()
@@ -223,29 +219,42 @@ func runSession(
 		}
 	default:
 	}
+	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, ready); err != nil {
+		return err
+	}
+	cancelProvisioning()
+	return runCertificateRenewals(ctx, config, setup, route, state, material)
+}
+
+func confirmPublishRunReady(
+	ctx context.Context,
+	control PublicURLControlClient,
+	setup controlv1.PublishRunSetup,
+	route *PublicURLServer,
+	token credentials.PublishRunToken,
+	ready func() error,
+) error {
 	for {
-		serverReady := false
-		err = route.withValidCertificate(func() error {
-			if err := config.Control.MarkPublishRunReady(ctx, setup.PublishRun.Id, version, publishRunToken); err != nil {
+		confirmed := false
+		err := route.withValidCertificate(func() error {
+			if err := control.MarkPublishRunReady(ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), token); err != nil {
 				return err
 			}
-			serverReady = true
+			confirmed = true
 			return ready()
 		})
-		if err == nil {
-			cancelProvisioning()
-			break
+		if err == nil || confirmed {
+			return err
 		}
-		if serverReady || !errors.Is(err, controlclient.ErrUnavailable) && !errors.Is(err, controlclient.ErrStatusConflict) {
+		if !errors.Is(err, controlclient.ErrUnavailable) && !errors.Is(err, controlclient.ErrStatusConflict) {
 			return err
 		}
 		select {
 		case <-ctx.Done():
-			return nil
+			return context.Cause(ctx)
 		case <-time.After(activationRetry):
 		}
 	}
-	return runCertificateRenewals(ctx, config, setup, route, state, material)
 }
 
 // publishRunCleanup owns the teardown after the public URL and connection manager have
@@ -267,8 +276,7 @@ type publishRunCleanup struct {
 
 func (s *publishRunCleanup) finish(result error) error {
 	s.cancelSession(nil)
-	if s.heartbeatStarted && s.parentCtx.Err() != nil &&
-		errors.Is(context.Cause(s.sessionCtx), context.Cause(s.parentCtx)) &&
+	if s.heartbeatStarted && parentCanceledSession(s.parentCtx, s.sessionCtx) &&
 		!errors.Is(result, controlclient.ErrStatusConflict) && !errors.Is(result, controlclient.ErrUnauthenticated) &&
 		!errors.Is(result, errCertificateExpired) {
 		result = s.drain(result)
@@ -286,6 +294,16 @@ func (s *publishRunCleanup) finish(result error) error {
 	s.connections.Close()
 	<-s.expirationDone
 	return result
+}
+
+func (s *publishRunCleanup) abort(err error) {
+	s.cancelSession(err)
+	s.cancelTransports()
+	_ = s.route.Close()
+}
+
+func parentCanceledSession(parent, session context.Context) bool {
+	return parent.Err() != nil && errors.Is(context.Cause(session), context.Cause(parent))
 }
 
 func (s *publishRunCleanup) drain(result error) error {
