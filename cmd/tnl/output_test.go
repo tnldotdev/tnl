@@ -54,7 +54,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	decoder := json.NewDecoder(&stdout)
-	wantTypes := []string{"starting", "current_ip", "ready", "ready", "error", "stopped"}
+	wantTypes := []publishEventType{publishEventStarting, publishEventCurrentIP, publishEventReady, publishEventReady, publishEventError, publishEventStopped}
 	for index, wantType := range wantTypes {
 		var event publishEvent
 		if err := decoder.Decode(&event); err != nil {

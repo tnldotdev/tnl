@@ -58,7 +58,7 @@ type adminMaintenanceListCommand struct {
 
 type adminMaintenanceSetCommand struct {
 	remoteFlags `embed:""`
-	Name        string `arg:"" name:"name" required:"" enum:"public_url_creation,publish_run_creation,certificate_issuance" help:"Maintenance control to change."`
+	Name        controlv1.MaintenanceControlName `arg:"" name:"name" required:"" enum:"public_url_creation,publish_run_creation,certificate_issuance" help:"Maintenance control to change."`
 }
 
 func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand, stdout, stderr io.Writer) error {
@@ -163,7 +163,7 @@ func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetComm
 	}
 	commandName := "tnl admin maintenance " + action
 	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *controlclient.Client) error {
-		value, err := client.AdminSetMaintenanceControl(ctx, controlv1.MaintenanceControlName(command.Name), allowed)
+		value, err := client.AdminSetMaintenanceControl(ctx, command.Name, allowed)
 		if err != nil {
 			return err
 		}
