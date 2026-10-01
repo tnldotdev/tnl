@@ -119,10 +119,10 @@ func (w *Worker) publicURLRecord(
 		work.CanonicalHostname != authority.CanonicalDomain && !strings.HasSuffix(work.CanonicalHostname, "."+authority.CanonicalDomain) {
 		return PublicURLRecord{}, nil, false, terminalf("public URL does not match its DNS authority")
 	}
-	if authority.State == "pending" {
+	if authority.State == controlstate.DNSAuthorityPending {
 		return PublicURLRecord{}, nil, false, nil
 	}
-	if authority.State != "ready" && authority.State != "releasing" || authority.ProviderZoneID == "" {
+	if authority.State != controlstate.DNSAuthorityReady && authority.State != controlstate.DNSAuthorityReleasing || authority.ProviderZoneID == "" {
 		return PublicURLRecord{}, nil, false, terminalf("DNS authority is not available")
 	}
 	record.ZoneID, record.ZoneDomain, record.ClaimedZone = authority.ProviderZoneID, authority.CanonicalDomain, true

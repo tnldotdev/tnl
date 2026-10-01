@@ -41,7 +41,7 @@ func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, err
 		observeDNS(w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
 	}
 	if w.config.Observer != nil && initial != saved.State {
-		w.config.Observer.ObserveDNSTransition("authority", saved.State)
+		w.config.Observer.ObserveDNSTransition("authority", string(saved.State))
 	}
 	return true, nil
 }
@@ -49,7 +49,7 @@ func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, err
 func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAuthorityWork, now time.Time) error {
 	work.LastError = ""
 	switch work.State {
-	case "pending":
+	case controlstate.DNSAuthorityPending:
 		if work.ProviderZoneID == "" {
 			started := time.Now()
 			zone, err := w.provider.EnsureClaimedZone(ctx, *work)
@@ -73,13 +73,13 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 			return err
 		}
 		if verified {
-			work.State = "ready"
+			work.State = controlstate.DNSAuthorityReady
 			work.AvailableAt = now
 		} else {
 			work.AvailableAt = now.Add(w.config.PollInterval)
 		}
 		return nil
-	case "releasing":
+	case controlstate.DNSAuthorityReleasing:
 		ready, err := w.store.DNSAuthorityReleaseReady(ctx, work.DomainID, now)
 		if err != nil {
 			return err
@@ -94,7 +94,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 		if err != nil {
 			return err
 		}
-		work.State = "released"
+		work.State = controlstate.DNSAuthorityReleased
 		work.AvailableAt = now
 		return nil
 	default:
@@ -107,7 +107,7 @@ func (w *Worker) applyAuthorityFailure(work *controlstate.DNSAuthorityWork, oper
 	work.AvailableAt = w.retryAvailableAt(work.Attempts, now)
 	var terminal *terminalError
 	if errors.As(operationErr, &terminal) {
-		work.State = "failed"
+		work.State = controlstate.DNSAuthorityFailed
 		work.AvailableAt = now
 	}
 }

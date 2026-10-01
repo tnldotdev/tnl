@@ -35,7 +35,7 @@ type DNSAuthority struct {
 	TeamID          string
 	DomainID        string
 	CanonicalDomain string
-	State           string
+	State           DNSAuthorityState
 	RequiredRecords []DNSRecord
 	LastError       string
 	ProviderZoneID  string
@@ -142,7 +142,7 @@ func (d *Database) ReleaseDNSAuthority(
 	if err != nil {
 		return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: lock: %w", err)
 	}
-	if row.State != "releasing" && row.State != "released" {
+	if state := DNSAuthorityState(row.State); state != DNSAuthorityReleasing && state != DNSAuthorityReleased {
 		row, err = queries.BeginDNSAuthorityRelease(ctx, controlstatedb.BeginDNSAuthorityReleaseParams{
 			ReleaseIdempotencyKey: text(idempotencyKey), UpdatedAt: timestamptz(now), AuthorityReference: reference,
 		})
@@ -212,7 +212,7 @@ func (d *Database) SaveDNSAuthorityWork(
 		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: lock local domain: %w", err)
 	}
 	row, err := queries.SaveDNSAuthorityWork(ctx, controlstatedb.SaveDNSAuthorityWorkParams{
-		ProviderZoneID: nullableText(work.ProviderZoneID), State: work.State, Nameservers: slices.Clone(work.Nameservers),
+		ProviderZoneID: nullableText(work.ProviderZoneID), State: string(work.State), Nameservers: slices.Clone(work.Nameservers),
 		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError), CompletedAt: timestamptz(now),
 		AuthorityReference: work.Reference, WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch),
 		ExpectedWorkRevision: positive(work.WorkRevision),
@@ -224,12 +224,12 @@ func (d *Database) SaveDNSAuthorityWork(
 		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: %w", err)
 	}
 	localDomain, err := queries.UpdateLocalDomainForDNSAuthority(ctx, controlstatedb.UpdateLocalDomainForDNSAuthorityParams{
-		State: work.State, UpdatedAt: timestamptz(now), AuthorityReference: text(work.Reference),
+		State: string(work.State), UpdatedAt: timestamptz(now), AuthorityReference: text(work.Reference),
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: update local domain: %w", err)
 	}
-	if err == nil && work.State == "ready" && localDomain.MakeDefaultWhenReady {
+	if err == nil && work.State == DNSAuthorityReady && localDomain.MakeDefaultWhenReady {
 		revision, revisionErr := queries.SetDNSReadyDomainDefault(ctx, controlstatedb.SetDNSReadyDomainDefaultParams{
 			UpdatedAt: timestamptz(now), AuthorityReference: text(work.Reference),
 		})
@@ -274,12 +274,13 @@ func (d *Database) DNSAuthorityReleaseReady(ctx context.Context, domainID string
 }
 
 func dnsAuthority(row controlstatedb.ControlDnsAuthority) (DNSAuthority, error) {
-	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid || len(row.CreateRequestDigest) != 32 {
+	state := DNSAuthorityState(row.State)
+	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid || len(row.CreateRequestDigest) != 32 || !state.valid() {
 		return DNSAuthority{}, errors.New("controlstate: invalid DNS authority row")
 	}
 	return DNSAuthority{
 		Reference: row.AuthorityReference, TeamID: row.TeamID, DomainID: row.DomainID,
-		CanonicalDomain: row.CanonicalDomain, State: row.State,
+		CanonicalDomain: row.CanonicalDomain, State: state,
 		RequiredRecords: nameserverRecords(row.CanonicalDomain, row.Nameservers), LastError: row.LastError.String,
 		ProviderZoneID: row.ProviderZoneID.String, Nameservers: slices.Clone(row.Nameservers),
 		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
@@ -306,8 +307,7 @@ func validateDNSAuthorityWork(work DNSAuthorityWork) error {
 		!validStateText(work.WorkerID) || work.WorkRevision == 0 || work.WorkRevision > math.MaxInt64 ||
 		work.Attempts == 0 || work.Attempts > math.MaxInt64 || work.WorkEpoch == 0 || work.WorkEpoch > math.MaxInt64 ||
 		work.WorkExpiresAt.IsZero() || work.AvailableAt.IsZero() || len(work.LastError) > 1024 ||
-		work.State != "pending" && work.State != "ready" && work.State != "releasing" &&
-			work.State != "released" && work.State != "failed" {
+		!work.State.valid() {
 		return ErrDNSAuthorityInvalid
 	}
 	canonical, err := naming.CanonicalizeHostname(work.CanonicalDomain)
