@@ -105,6 +105,27 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 	}
 }
 
+func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
+	name, publicURL, domain, open := "preview", "https://preview.example.test", "example.test", true
+	for _, tunnel := range []*Tunnel{{Name: &name}, {PublicURL: &publicURL}} {
+		if err := ValidateTNL(TNL{Tunnel: tunnel, Services: Services{"web": {}}}); err == nil ||
+			!strings.Contains(err.Error(), "belong under services.NAME.tunnel") {
+			t.Fatalf("root fixed address with named services: %v", err)
+		}
+		if err := ValidateTNL(TNL{Tunnel: tunnel}); err != nil {
+			t.Fatalf("unnamed service fixed address: %v", err)
+		}
+	}
+	if err := ValidateTNL(TNL{Tunnel: &Tunnel{Domain: &domain, Open: &open}, Services: Services{
+		"web": {Tunnel: &Tunnel{Name: &name}}, "api": {},
+	}}); err != nil {
+		t.Fatalf("per-service fixed address: %v", err)
+	}
+	if err := ValidateTNL(TNL{Services: Services{"web": {Tunnel: &Tunnel{Name: &name, PublicURL: &publicURL}}}}); err == nil {
+		t.Fatal("name and exact public URL were accepted together")
+	}
+}
+
 func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) {
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
@@ -140,8 +161,11 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"negative request limit": {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
 		"duration":               {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
 		"server URL":             {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
-		"uppercase host":         {`{"version":1,"tnl":{"tunnel":{"host":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    host: API.EXAMPLE.TEST\n", "tunnel.host must be a canonical hostname"},
-		"multi-label subdomain":  {`{"version":1,"tnl":{"tunnel":{"subdomain":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api.example\n", "tunnel.subdomain must be one lowercase ASCII DNS label"},
+		"uppercase domain":       {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},
+		"multi-label name":       {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},
+		"public URL path":        {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be an HTTPS public URL"},
+		"root name with service": {`{"version":1,"tnl":{"tunnel":{"name":"api"},"services":{"api":{}}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api\n  services:\n    api: {}\n", "tunnel.name and tunnel.public_url belong under services.NAME.tunnel"},
+		"obsolete subdomain":     {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
 		"target":                 {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
 		"ip":                     {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":              {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},

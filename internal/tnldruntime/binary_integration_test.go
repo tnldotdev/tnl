@@ -18,7 +18,7 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 	}))
 	cleanupIntegrationHTTPServer(t, target, nil)
 	publish := startIntegrationBinaryPublish(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
-		"--no-config", "publish", target.URL, "--host", "binary.routes.127.0.0.1.nip.io",
+		"--no-config", "publish", target.URL, "--public-url", "https://binary.routes.127.0.0.1.nip.io",
 		"--allow-ip", "127.0.0.1/32", "--output", "ndjson")
 	ready := waitForIntegrationBinaryPublishEvent(t, publish, "ready", 45*time.Second)
 	if ready.SchemaVersion != 1 || ready.URL != "https://binary.routes.127.0.0.1.nip.io" || ready.PublishRunNumber != 1 {

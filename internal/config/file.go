@@ -137,6 +137,11 @@ func ValidateTNL(config TNL) error {
 	if err := validateServiceValues(config.Server, config.Team, config.Tunnel, config.Publish, config.Dev); err != nil {
 		return err
 	}
+	if len(config.Services) != 0 && config.Tunnel != nil {
+		if config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil {
+			return errors.New("tunnel.name and tunnel.public_url belong under services.NAME.tunnel when services are configured")
+		}
+	}
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
 	}
@@ -176,19 +181,26 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 		if tunnel.RequestLimit != nil && *tunnel.RequestLimit <= 0 {
 			return errors.New("tunnel.request_limit must be greater than zero")
 		}
-		if tunnel.Host != nil && tunnel.Subdomain != nil {
-			return errors.New("tunnel.host and tunnel.subdomain are mutually exclusive")
+		if tunnel.Name != nil && tunnel.PublicURL != nil {
+			return errors.New("tunnel.name and tunnel.public_url are mutually exclusive")
 		}
-		if tunnel.Host != nil {
-			canonical, err := naming.CanonicalizeHostname(*tunnel.Host)
-			if err != nil || canonical != *tunnel.Host {
-				return errors.New("tunnel.host must be a canonical hostname")
+		if tunnel.Domain != nil {
+			canonical, err := naming.CanonicalizeHostname(*tunnel.Domain)
+			if err != nil || canonical != *tunnel.Domain {
+				return errors.New("tunnel.domain must be a canonical domain name")
 			}
 		}
-		if tunnel.Subdomain != nil {
-			canonical, err := naming.CanonicalizeHostname(*tunnel.Subdomain)
-			if err != nil || canonical != *tunnel.Subdomain || strings.Contains(*tunnel.Subdomain, ".") {
-				return errors.New("tunnel.subdomain must be one lowercase ASCII DNS label")
+		if tunnel.Name != nil {
+			canonical, err := naming.CanonicalizeHostname(*tunnel.Name)
+			if err != nil || canonical != *tunnel.Name || strings.Contains(*tunnel.Name, ".") {
+				return errors.New("tunnel.name must be one lowercase ASCII DNS label")
+			}
+		}
+		if tunnel.PublicURL != nil {
+			hostname := strings.TrimPrefix(*tunnel.PublicURL, "https://")
+			canonical, err := naming.CanonicalizeHostname(hostname)
+			if err != nil || canonical != hostname || "https://"+hostname != *tunnel.PublicURL {
+				return errors.New("tunnel.public_url must be an HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
 		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && (tunnel.AllowIP != nil || tunnel.AllowProviders != nil) {

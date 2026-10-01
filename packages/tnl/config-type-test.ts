@@ -6,14 +6,14 @@ import {
 } from "@tnldotdev/tnl/config";
 
 const staticConfig = {
-  tunnel: { allowIP: ["192.0.2.0/24"], subdomain: "review", requestLimit: 750 },
+  tunnel: { allowIP: ["192.0.2.0/24"], domain: "example.test", requestLimit: 750 },
   publish: { target: 3000 },
   dev: { command: ["pnpm", "dev"], startupTimeout: "30s" },
 } satisfies TnlConfigInput;
 
 const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
   ...staticConfig,
-  tunnel: { subdomain: `${env.USER ?? "user"}-${worktree.label}-${cwd.length}` },
+  tunnel: { name: `${env.USER ?? "user"}-${worktree.label}-${cwd.length}` },
 }));
 
 declare const environment: TnlConfigContext["env"];
@@ -29,10 +29,13 @@ if (service) service.directory satisfies string | undefined;
 
 const literalConfig = defineConfig({
   dev: { port: 4173 },
-  tunnel: { subdomain: "api" },
+  tunnel: { name: "api" },
 } as const);
 literalConfig.dev.port satisfies 4173;
-literalConfig.tunnel.subdomain satisfies "api";
+literalConfig.tunnel.name satisfies "api";
+
+const exactConfig = defineConfig({ tunnel: { publicURL: "https://api.example.test" } } as const);
+exactConfig.tunnel.publicURL satisfies "https://api.example.test";
 
 // @ts-expect-error TypeScript configuration has an implicit version.
 defineConfig({ version: 1 });
@@ -40,4 +43,4 @@ defineConfig({ version: 1 });
 // @ts-expect-error server configuration is static-only.
 defineConfig({ tnld: { role: "relay" } });
 
-export { dynamicConfig, literalConfig, staticConfig };
+export { dynamicConfig, exactConfig, literalConfig, staticConfig };

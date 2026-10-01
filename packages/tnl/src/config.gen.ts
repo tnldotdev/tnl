@@ -14,13 +14,17 @@ export interface TnlConfig {
    */
   tunnel?: {
     /**
-     * Complete public URL hostname to publish.
+     * Ready team domain used for generated public URL hostnames.
      */
-    host?: string;
+    domain?: string;
     /**
-     * One DNS label beneath the current namespace.
+     * One DNS label beneath the member namespace.
      */
-    subdomain?: string;
+    name?: string;
+    /**
+     * Open the public URL in a browser once ready.
+     */
+    open?: boolean;
     /**
      * Remove the public URL when this tunnel stops.
      */
@@ -37,6 +41,10 @@ export interface TnlConfig {
      * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
      */
     allowProviders?: ("github" | "stripe")[];
+    /**
+     * Exact HTTPS public URL to publish.
+     */
+    publicURL?: string;
     /**
      * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
      */
@@ -67,13 +75,17 @@ export interface TnlConfig {
            */
           tunnel?: {
             /**
-             * Complete public URL hostname to publish.
+             * Ready team domain used for generated public URL hostnames.
              */
-            host?: string;
+            domain?: string;
             /**
-             * One DNS label beneath the current namespace.
+             * One DNS label beneath the member namespace.
              */
-            subdomain?: string;
+            name?: string;
+            /**
+             * Open the public URL in a browser once ready.
+             */
+            open?: boolean;
             /**
              * Remove the public URL when this tunnel stops.
              */
@@ -90,6 +102,10 @@ export interface TnlConfig {
              * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
              */
             allowProviders?: ("github" | "stripe")[];
+            /**
+             * Exact HTTPS public URL to publish.
+             */
+            publicURL?: string;
             /**
              * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
              */

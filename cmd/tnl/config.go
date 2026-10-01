@@ -104,6 +104,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.Target = string(*effective.Publish.Target)
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.Target == "" {
 		if service != "" {
@@ -168,10 +169,13 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 		flags.StartupTimeout = effective.Dev.StartupTimeout.Value()
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
+	_, domainFromEnvironment := os.LookupEnv("TNL_DOMAIN")
 	runtimeServerOverride := flags.ServerURL != "" && !flags.serverFromConfig
-	flags.useMetadataHostname = flags.Host == "" && flags.Subdomain == "" && flags.Team == "" &&
+	flags.useMetadataHostname = flags.PublicURL == "" && flags.Name == "" && flags.Team == "" &&
 		flags.Ephemeral && !runtimeServerOverride && !ephemeralFromEnvironment &&
+		!flags.domainFromCLI && !domainFromEnvironment &&
 		effective.Tunnel != nil && effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
 	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.StartupTimeout == 0 {
@@ -199,8 +203,14 @@ func (c projectConfiguration) defaultService() (string, error) {
 }
 
 func applyBuiltInHostname(flags *tunnelFlags, service string, worktree projectconfig.Worktree) {
-	if flags.Host == "" && flags.Subdomain == "" && !flags.Ephemeral {
-		flags.Subdomain = projectconfig.ServiceWorktreeLabel(service, worktree)
+	if flags.PublicURL == "" && flags.Name == "" && !flags.Ephemeral {
+		flags.Name = projectconfig.ServiceWorktreeLabel(service, worktree)
+	}
+}
+
+func applyOpenConfiguration(flags *openOptions, tunnel *config.Tunnel) {
+	if !flags.openFromCLI && tunnel != nil && tunnel.Open != nil {
+		flags.Open = *tunnel.Open
 	}
 }
 
@@ -211,12 +221,15 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	if flags.RequestLimit == nil {
 		flags.RequestLimit = tunnel.RequestLimit
 	}
-	if flags.Host == "" && flags.Subdomain == "" {
-		if tunnel.Host != nil {
-			flags.Host = *tunnel.Host
+	if flags.Domain == "" && tunnel.Domain != nil {
+		flags.Domain = *tunnel.Domain
+	}
+	if flags.PublicURL == "" && flags.Name == "" {
+		if tunnel.PublicURL != nil {
+			flags.PublicURL = *tunnel.PublicURL
 		}
-		if tunnel.Subdomain != nil {
-			flags.Subdomain = *tunnel.Subdomain
+		if tunnel.Name != nil {
+			flags.Name = *tunnel.Name
 		}
 	}
 	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
@@ -241,8 +254,8 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	if flags.RequestLimit != nil && *flags.RequestLimit <= 0 {
 		return errors.New("--request-limit must be greater than zero")
 	}
-	if flags.Host != "" && flags.Subdomain != "" {
-		return errors.New("--host and --subdomain are mutually exclusive")
+	if flags.PublicURL != "" && flags.Name != "" {
+		return errors.New("--public-url and --name are mutually exclusive")
 	}
 	if flags.AllowAllIPs && (flags.AllowIP != nil || flags.AllowProvider != nil) {
 		return errors.New("--allow-all-ips cannot be combined with --allow-ip or --allow-provider")

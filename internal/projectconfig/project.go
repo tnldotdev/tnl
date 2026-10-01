@@ -156,11 +156,17 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if result == nil {
 		result = &config.Tunnel{}
 	}
-	if override.Host != nil {
-		result.Host, result.Subdomain = override.Host, nil
+	if override.Domain != nil {
+		result.Domain = override.Domain
 	}
-	if override.Subdomain != nil {
-		result.Subdomain, result.Host = override.Subdomain, nil
+	if override.Name != nil {
+		result.Name, result.PublicURL = override.Name, nil
+	}
+	if override.PublicURL != nil {
+		result.PublicURL, result.Name = override.PublicURL, nil
+	}
+	if override.Open != nil {
+		result.Open = override.Open
 	}
 	if override.AllowIP != nil {
 		result.AllowIP = slices.Clone(override.AllowIP)

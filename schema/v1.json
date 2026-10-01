@@ -61,7 +61,7 @@
           "allOf": [
             {
               "not": {
-                "required": ["host", "subdomain"]
+                "required": ["name", "public_url"]
               }
             },
             {
@@ -88,13 +88,21 @@
             }
           ],
           "properties": {
-            "host": {
+            "domain": {
               "type": "string",
-              "description": "Complete public URL hostname to publish."
+              "description": "Ready team domain used for generated public URL hostnames."
             },
-            "subdomain": {
+            "name": {
               "type": "string",
-              "description": "One DNS label beneath the current namespace."
+              "description": "One DNS label beneath the member namespace."
+            },
+            "public_url": {
+              "type": "string",
+              "description": "Exact HTTPS public URL to publish."
+            },
+            "open": {
+              "type": "boolean",
+              "description": "Open the public URL in a browser once ready."
             },
             "allow_ip": {
               "items": {
@@ -158,7 +166,7 @@
                 "allOf": [
                   {
                     "not": {
-                      "required": ["host", "subdomain"]
+                      "required": ["name", "public_url"]
                     }
                   },
                   {
@@ -185,13 +193,21 @@
                   }
                 ],
                 "properties": {
-                  "host": {
+                  "domain": {
                     "type": "string",
-                    "description": "Complete public URL hostname to publish."
+                    "description": "Ready team domain used for generated public URL hostnames."
                   },
-                  "subdomain": {
+                  "name": {
                     "type": "string",
-                    "description": "One DNS label beneath the current namespace."
+                    "description": "One DNS label beneath the member namespace."
+                  },
+                  "public_url": {
+                    "type": "string",
+                    "description": "Exact HTTPS public URL to publish."
+                  },
+                  "open": {
+                    "type": "boolean",
+                    "description": "Open the public URL in a browser once ready."
                   },
                   "allow_ip": {
                     "items": {

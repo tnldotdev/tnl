@@ -17,7 +17,8 @@ tnl:
   server: https://root.example
   team: Root Team
   tunnel:
-    subdomain: root
+    domain: routes.example.test
+    open: true
     allow_ip: [192.0.2.0/24]
     ephemeral: true
   publish:
@@ -29,7 +30,7 @@ tnl:
     web:
       team: Web Team
       tunnel:
-        subdomain: web
+        name: web
         allow_all_ips: true
       publish:
         target: 4000
@@ -50,7 +51,9 @@ tnl:
 	}
 	if effective.Server == nil || *effective.Server != "https://root.example" ||
 		effective.Team == nil || *effective.Team != "Web Team" ||
-		effective.Tunnel == nil || effective.Tunnel.Subdomain == nil || *effective.Tunnel.Subdomain != "web" ||
+		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "web" ||
+		effective.Tunnel.Domain == nil || *effective.Tunnel.Domain != "routes.example.test" ||
+		effective.Tunnel.Open == nil || !*effective.Tunnel.Open ||
 		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||

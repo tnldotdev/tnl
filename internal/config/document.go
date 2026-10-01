@@ -53,8 +53,10 @@ type Service struct {
 }
 
 type Tunnel struct {
-	Host           *string  `json:"host,omitempty" yaml:"host,omitempty"`
-	Subdomain      *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
+	Domain         *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Name           *string  `json:"name,omitempty" yaml:"name,omitempty"`
+	PublicURL      *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Open           *bool    `json:"open,omitempty" yaml:"open,omitempty"`
 	AllowIP        []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowProviders []string `json:"allow_providers,omitempty" yaml:"allow_providers,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs    *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`

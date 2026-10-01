@@ -45,7 +45,7 @@ func TestDevLateFrameworkIsIncludedInReadyTelemetry(t *testing.T) {
 	root, stateRoot := t.TempDir(), filepath.Join(t.TempDir(), "state")
 	flags := devCommand{
 		remoteFlags: remoteFlags{ServerURL: fixture.URL, StateDir: stateRoot, AccessToken: fixture.AccessToken},
-		tunnelFlags: tunnelFlags{Host: "late." + fixture.Namespace, AllowAllIPs: true},
+		tunnelFlags: tunnelFlags{PublicURL: "https://late." + fixture.Namespace, AllowAllIPs: true},
 		Command:     []string{"sh", "-c", "sleep 30"}, Port: origin.Listener.Addr().(*net.TCPAddr).Port,
 		StartupTimeout: 3 * time.Second, projectRoot: root, commandDir: root,
 	}

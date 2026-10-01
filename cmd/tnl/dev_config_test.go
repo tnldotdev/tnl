@@ -17,7 +17,7 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	arguments, command, err := splitDevPassthrough([]string{"dev", "web", "--host", "demo", "--", "npm", "run", "dev", "--", "--host"})
+	arguments, command, err := splitDevPassthrough([]string{"dev", "web", "--name", "demo", "--", "npm", "run", "dev", "--", "--host"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +30,8 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 		t.Fatalf("command = %q", parsed.Command())
 	}
 	want := []string{"npm", "run", "dev", "--", "--host"}
-	if flags.Dev.Service != "web" || flags.Dev.Host != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
-		t.Fatalf("host = %q, command = %#v", flags.Dev.Host, flags.Dev.Command)
+	if flags.Dev.Service != "web" || flags.Dev.Name != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
+		t.Fatalf("name = %q, command = %#v", flags.Dev.Name, flags.Dev.Command)
 	}
 }
 

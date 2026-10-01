@@ -38,13 +38,15 @@ type cli struct {
 }
 
 type openOptions struct {
-	Open bool `name:"open" help:"Open the public URL in the default browser once ready."`
+	Open        bool `name:"open" help:"Open the public URL in the default browser once ready."`
+	openFromCLI bool
 }
 
 type tunnelFlags struct {
 	Team          string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host          string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to a project/worktree label prefixed by the service in the current namespace."`
-	Subdomain     string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current namespace."`
+	Domain        string   `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name          string   `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
+	PublicURL     string   `name:"public-url" help:"Exact HTTPS public URL to publish."`
 	AllowIP       []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
 	AllowProvider []string `name:"allow-provider" help:"Allow webhook IPs from stripe or github. Repeat for each provider."`
 	AllowAllIPs   bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
@@ -53,6 +55,7 @@ type tunnelFlags struct {
 
 	allowAllIPsFromCLI bool
 	ephemeralFromCLI   bool
+	domainFromCLI      bool
 }
 
 type remoteFlags struct {
@@ -390,16 +393,20 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	host, subdomain, allowIP, allowProvider, allowAllIPs, ephemeral := false, false, false, false, false, false
+	publicURL, name, domain, allowIP, allowProvider, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
 		}
 		switch path.Flag.Name {
-		case "host":
-			host = true
-		case "subdomain":
-			subdomain = true
+		case "public-url":
+			publicURL = true
+		case "name":
+			name = true
+		case "domain":
+			domain = true
+		case "open":
+			open = true
 		case "allow-ip":
 			allowIP = true
 		case "allow-provider":
@@ -417,11 +424,12 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	apply := func(tunnel *tunnelFlags) {
 		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
-		if host && !subdomain {
-			tunnel.Subdomain = ""
+		tunnel.domainFromCLI = domain
+		if publicURL && !name {
+			tunnel.Name = ""
 		}
-		if subdomain && !host {
-			tunnel.Host = ""
+		if name && !publicURL {
+			tunnel.PublicURL = ""
 		}
 		if (allowIP || allowProvider) && !allowAllIPs {
 			tunnel.AllowAllIPs = false
@@ -430,8 +438,10 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	switch canonicalParsedCommand(parsed.Command()) {
 	case "publish <service-or-target>":
 		apply(&flags.Publish.tunnelFlags)
+		flags.Publish.openFromCLI = open
 	case "dev <service>":
 		apply(&flags.Dev.tunnelFlags)
+		flags.Dev.openFromCLI = open
 	}
 }
 
