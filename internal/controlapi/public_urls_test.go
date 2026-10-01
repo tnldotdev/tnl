@@ -86,7 +86,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 	if authorized.AccessToken != "access-token" || authorized.Operation != authorization.OperationPublicURLUpdate || authorized.PublicURLID != store.route.ID ||
 		authorized.TeamID != store.route.TeamID || authorized.DomainID != store.route.DomainID ||
 		authorized.PublicURLMembershipID != store.route.MembershipID || authorized.CanonicalHostname != store.route.CanonicalHostname ||
-		authorized.PublicURLScope != string(store.route.PublicURLScope) || !authorized.Ephemeral ||
+		authorized.PublicURLScope != authorization.PublicURLScope(store.route.PublicURLScope) || !authorized.Ephemeral ||
 		authorized.PublicURLMutationRevision != store.route.MutationRevision ||
 		authorized.Target != "http://127.0.0.1:4000" || !slices.Equal(authorized.AllowedIPPrefixes, wantPrefixes) {
 		t.Fatalf("authorization request = %#v", authorized)

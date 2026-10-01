@@ -99,7 +99,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
 	publicURLMembershipID := request.PublicURLMembershipID
-	if request.PublicURLScope == string(controlv1.Member) {
+	if request.PublicURLScope == authorization.PublicURLScopeMember {
 		if publicURLMembershipID == "" {
 			if request.Operation == authorization.OperationPublicURLCreate {
 				publicURLMembershipID = acting.ID
@@ -111,7 +111,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner) {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
-	} else if request.PublicURLScope != string(controlv1.Shared) || publicURLMembershipID != "" ||
+	} else if request.PublicURLScope != authorization.PublicURLScopeShared || publicURLMembershipID != "" ||
 		acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
@@ -130,7 +130,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		if a.dnsAutomation {
 			plan := decision.CertificatePlan
 			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
-			if request.PublicURLScope == string(controlv1.Member) {
+			if request.PublicURLScope == authorization.PublicURLScopeMember {
 				label := acting.MemberSlug
 				if domain.Kind == controlstate.DomainKindManaged {
 					label = acting.ManagedLabel
@@ -181,6 +181,9 @@ func (a hostedAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessTok
 }
 
 func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
+	if !request.PublicURLScope.Valid() {
+		return authorization.Decision{}, authorization.ErrForbidden
+	}
 	body := authorityv1.ServiceAuthorizationRequest{
 		AccessToken: request.AccessToken, Operation: authorityv1.AuthorizationOperation(request.Operation),
 		TeamId: request.TeamID, DomainId: request.DomainID, CanonicalHostname: request.CanonicalHostname,
@@ -220,7 +223,7 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 	decision := authorization.Decision{
 		IdentityID: wire.IdentityId, TeamID: wire.TeamId, ActingMembershipID: wire.ActingMembershipId,
 		ActingRole: string(wire.ActingRole), PolicyRevision: uint64(wire.PolicyRevision),
-		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, PublicURLScope: string(wire.PublicUrlScope),
+		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(wire.PublicUrlScope),
 		DNSAuthorityReference: wire.DnsAuthorityReference,
 	}
 	if wire.PublicUrlMembershipId != nil {
@@ -247,14 +250,14 @@ func validAuthorizationDecision(request authorization.Request, decision authoriz
 	if decision.IdentityID == "" || decision.TeamID != request.TeamID || decision.ActingMembershipID == "" ||
 		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
 		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
-		decision.CanonicalHostname != request.CanonicalHostname || decision.PublicURLScope != request.PublicURLScope ||
+		decision.CanonicalHostname != request.CanonicalHostname || !decision.PublicURLScope.Valid() || decision.PublicURLScope != request.PublicURLScope ||
 		strings.TrimSpace(decision.DNSAuthorityReference) == "" {
 		return false
 	}
 	if request.ActingMembershipID != "" && decision.ActingMembershipID != request.ActingMembershipID ||
 		request.PublicURLMembershipID != "" && decision.PublicURLMembershipID != request.PublicURLMembershipID ||
-		request.PublicURLScope == string(controlv1.Member) && decision.PublicURLMembershipID == "" ||
-		request.PublicURLScope == string(controlv1.Shared) && decision.PublicURLMembershipID != "" {
+		request.PublicURLScope == authorization.PublicURLScopeMember && decision.PublicURLMembershipID == "" ||
+		request.PublicURLScope == authorization.PublicURLScopeShared && decision.PublicURLMembershipID != "" {
 		return false
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {

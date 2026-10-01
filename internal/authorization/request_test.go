@@ -101,3 +101,20 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 		t.Fatalf("route update digest = %s, error = %v", updateDigest, err)
 	}
 }
+
+func TestCanonicalRequestRejectsUnknownPublicURLScope(t *testing.T) {
+	for _, operation := range []Operation{OperationPublicURLCreate, OperationPublicURLUpdate, OperationPublishRunCreate} {
+		t.Run(string(operation), func(t *testing.T) {
+			request := OperationRequest{
+				Operation: operation, TeamID: "team_1", DomainID: "domain_1", CanonicalHostname: "route.example",
+				PublicURLScope: PublicURLScope("unknown"), PublicURLID: "public_url_1",
+				PolicyRevision: 1, PublicURLMutationRevision: 1, PublishRunNumber: 1,
+				Target: "http://127.0.0.1:3000", AllowedIPPrefixes: []string{},
+				CertificatePlan: &CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"},
+			}
+			if _, err := CanonicalRequestHash(request); err == nil {
+				t.Fatal("unknown public URL scope was hashed")
+			}
+		})
+	}
+}
