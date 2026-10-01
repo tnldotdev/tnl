@@ -86,7 +86,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	decision, ok := h.authorizeMutation(response, request, authorization.Request{
 		Operation: authorization.OperationPublicURLCreate, TeamID: body.TeamId,
 		PublicURLMembershipID: membershipID, DomainID: body.DomainId,
-		CanonicalHostname: body.CanonicalHostname, PublicURLScope: string(body.PublicUrlScope),
+		CanonicalHostname: body.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(body.PublicUrlScope),
 		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: ephemeral,
 	})
 	if !ok {
@@ -158,7 +158,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
 		Operation: authorization.OperationPublicURLUpdate, TeamID: route.TeamID,
 		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: string(route.PublicURLScope),
+		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral, PublicURLID: route.ID,
 		PublicURLMutationRevision: route.MutationRevision,
 	})
@@ -216,7 +216,7 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
 		Operation: authorization.OperationPublicURLDelete, TeamID: route.TeamID,
 		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: string(route.PublicURLScope),
+		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 		Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral, PublicURLID: route.ID,
 		PublicURLMutationRevision: route.MutationRevision,
 	})
@@ -261,7 +261,7 @@ func (h *handler) CreatePublishRun(
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
 		Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
 		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: string(route.PublicURLScope),
+		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 		Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral,
 		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
 		PublicURLMutationRevision: route.MutationRevision,

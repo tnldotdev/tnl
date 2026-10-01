@@ -23,6 +23,18 @@ const (
 	OperationPublicURLDelete  Operation = "public_url.delete"
 )
 
+// PublicURLScope identifies the ownership boundary for an authorized public URL.
+type PublicURLScope string
+
+const (
+	PublicURLScopeMember PublicURLScope = "member"
+	PublicURLScopeShared PublicURLScope = "shared"
+)
+
+func (scope PublicURLScope) Valid() bool {
+	return scope == PublicURLScopeMember || scope == PublicURLScopeShared
+}
+
 var (
 	ErrInvalid         = errors.New("authorization: invalid request")
 	ErrUnauthenticated = errors.New("authorization: unauthenticated")
@@ -51,7 +63,7 @@ type Request struct {
 	PublicURLMembershipID     string
 	DomainID                  string
 	CanonicalHostname         string
-	PublicURLScope            string
+	PublicURLScope            PublicURLScope
 	Target                    string
 	AllowedIPPrefixes         []string
 	Ephemeral                 bool
@@ -71,7 +83,7 @@ type Decision struct {
 	PolicyRevision        uint64
 	DomainID              string
 	CanonicalHostname     string
-	PublicURLScope        string
+	PublicURLScope        PublicURLScope
 	DNSAuthorityReference string
 	CertificatePlan       *CertificatePlan
 	RetrySecret           [32]byte
@@ -88,7 +100,7 @@ type OperationRequest struct {
 	MembershipID              string
 	DomainID                  string
 	CanonicalHostname         string
-	PublicURLScope            string
+	PublicURLScope            PublicURLScope
 	PublicURLID               string
 	PublishRunNumber          uint64
 	PublicURLMutationRevision uint64
@@ -106,6 +118,9 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	var value any
 	switch request.Operation {
 	case OperationPublicURLCreate:
+		if !request.PublicURLScope.Valid() {
+			return Digest{}, invalid("public URL scope is invalid")
+		}
 		value = struct {
 			AllowedIPPrefixes []string `json:"allowed_ip_prefixes,omitempty"`
 			CanonicalHostname string   `json:"canonical_hostname"`
@@ -115,12 +130,15 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			PublicURLScope    string   `json:"public_url_scope"`
 			Target            string   `json:"target"`
 			TeamID            string   `json:"team_id"`
-		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, request.PublicURLScope, request.Target, request.TeamID}
+		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.Target, request.TeamID}
 	case OperationPublicURLUpdate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||
 			request.Target == "" || request.AllowedIPPrefixes == nil {
 			return Digest{}, invalid("public URL update bindings are required")
+		}
+		if !request.PublicURLScope.Valid() {
+			return Digest{}, invalid("public URL scope is invalid")
 		}
 		value = struct {
 			AllowedIPPrefixes         []string `json:"allowed_ip_prefixes"`
@@ -137,13 +155,16 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 		}{
 			request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral,
 			request.MembershipID, request.PolicyRevision, request.PublicURLID, request.PublicURLMutationRevision,
-			request.PublicURLScope, request.Target, request.TeamID,
+			string(request.PublicURLScope), request.Target, request.TeamID,
 		}
 	case OperationPublishRunCreate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublishRunNumber == 0 || request.PolicyRevision == 0 ||
 			request.Target == "" || request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
 			return Digest{}, invalid("publish run bindings are required")
+		}
+		if !request.PublicURLScope.Valid() {
+			return Digest{}, invalid("public URL scope is invalid")
 		}
 		value = struct {
 			AllowedIPPrefixes []string        `json:"allowed_ip_prefixes"`
@@ -160,7 +181,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			TeamID            string          `json:"team_id"`
 		}{
 			request.AllowedIPPrefixes, request.CanonicalHostname, *request.CertificatePlan, request.DomainID,
-			request.Ephemeral, request.MembershipID, request.PolicyRevision, request.PublicURLID, request.PublicURLScope,
+			request.Ephemeral, request.MembershipID, request.PolicyRevision, request.PublicURLID, string(request.PublicURLScope),
 			request.PublishRunNumber, request.Target, request.TeamID,
 		}
 	case OperationPublicURLDelete:
