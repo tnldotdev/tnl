@@ -20,10 +20,10 @@ func newDisposableControlStateDatabaseURL(t *testing.T, suffix string) string {
 	return testutil.NewDisposablePostgresDatabaseURL(t, "controlstate_"+suffix)
 }
 
-// Register after opening the database so workers are joined before the pool is
-// closed. Tests that hand a transaction to a worker also defer stop after its
+// register after opening the database so workers are joined before the pool is
+// closed. tests that hand a transaction to a worker also defer stop after its
 // rollback defer: cancel and join the worker before reusing its pgx connection
-// for rollback. All waits and transaction cleanup have independent bounds.
+// for rollback. all waits and transaction cleanup have independent bounds.
 type integrationWorkers struct {
 	sync.WaitGroup
 	t        *testing.T
@@ -100,7 +100,7 @@ func newControlStateIntegrationDatabaseWithURL(t *testing.T, suffix string) (*Da
 	return database, databaseURL, time.Now().UTC().Truncate(time.Second)
 }
 
-// Poll PostgreSQL's actual wait graph, rather than assuming a goroutine has
+// poll PostgreSQL's actual wait graph, rather than assuming a goroutine has
 // reached a lock after an arbitrary scheduling delay.
 func waitForPostgresBlock(t *testing.T, ctx context.Context, database *Database, blocker int32, done <-chan error, otherBlockers ...int32) int32 {
 	t.Helper()

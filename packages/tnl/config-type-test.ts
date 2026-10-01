@@ -18,11 +18,11 @@ const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
 
 declare const environment: TnlConfigContext["env"];
 environment.ARBITRARY_VARIABLE satisfies string | undefined;
-// @ts-expect-error Environment variables need not exist.
+// @ts-expect-error environment variables need not exist.
 environment.ARBITRARY_VARIABLE satisfies string;
 
 declare const services: NonNullable<TnlConfig["services"]>;
-// @ts-expect-error Configured services need not exist for an arbitrary name.
+// @ts-expect-error configured services need not exist for an arbitrary name.
 services.arbitraryService.directory satisfies string | undefined;
 const service = services.arbitraryService;
 if (service) service.directory satisfies string | undefined;
@@ -37,7 +37,7 @@ literalConfig.tunnel.subdomain satisfies "api";
 // @ts-expect-error TypeScript configuration has an implicit version.
 defineConfig({ version: 1 });
 
-// @ts-expect-error Server configuration is static-only.
+// @ts-expect-error server configuration is static-only.
 defineConfig({ tnld: { role: "relay" } });
 
 export { dynamicConfig, literalConfig, staticConfig };

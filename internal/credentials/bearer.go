@@ -8,7 +8,7 @@ import (
 
 var ErrInvalidAuthorization = errors.New("invalid authorization header")
 
-// Bearer extracts one opaque token from exactly one Authorization header. The
+// Bearer extracts one opaque token from exactly one Authorization header. the
 // scheme is case-insensitive; whitespace and comma-combined tokens are rejected.
 // It does not validate a credential class or authenticate its holder.
 func Bearer(headers http.Header) (string, error) {

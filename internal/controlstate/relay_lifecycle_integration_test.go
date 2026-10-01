@@ -148,7 +148,7 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 				}
 				completed <- err
 			})
-			// Registration holds the service and waits for the lease. The other
+			// registration holds the service and waits for the lease. the other
 			// operation must wait on registration, not take a lease first.
 			waitForPostgresBlock(t, ctx, database, registrationPID, completed)
 			if operation == "placement" {

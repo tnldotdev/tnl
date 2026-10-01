@@ -170,8 +170,8 @@ WHERE order_id = sqlc.arg(issuance_id)
   AND state = 'presenting';
 
 -- name: WakeACMEOrder :exec
--- A publisher transition invalidates the worker's authorization snapshot.
--- Call only after changing authorizations while holding the order lock.
+-- a publisher transition invalidates the worker's authorization snapshot.
+-- call only after changing authorizations while holding the order lock.
 UPDATE control.acme_orders
 SET available_at = LEAST(available_at, sqlc.arg(available_at)),
     work_owner = NULL,
@@ -271,8 +271,8 @@ WITH candidate AS (
       )
       AND orders.available_at <= sqlc.arg(claimed_at)
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= sqlc.arg(claimed_at))
-      -- Wait for this challenge's current forwarding projection, not unrelated
-      -- publications at the global head. Select the latest event before testing
+      -- wait for this challenge's current forwarding projection, not unrelated
+      -- publications at the global head. select the latest event before testing
       -- kind/expiry so an older upsert cannot bypass a tombstone or expiration.
       AND (
           NOT EXISTS (
@@ -339,8 +339,8 @@ WHERE orders.id = candidate.id
 RETURNING orders.*;
 
 -- name: CheckACMEChallengeRoutingReady :one
--- Claim-time checks can precede a publisher's challenge-ready transition.
--- Recheck the current projection and every live ingress immediately before
+-- claim-time checks can precede a publisher's challenge-ready transition.
+-- recheck the current projection and every live ingress immediately before
 -- asking the CA to validate, while the authorization is still presented.
 SELECT coalesce(
     events.event_kind = 'challenge_upsert'

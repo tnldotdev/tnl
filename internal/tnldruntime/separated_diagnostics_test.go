@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Capture each process's own counters before its test cleanup stops the daemon.
-// A peer may already be exiting when the coordinator observes the failure.
+// capture each process's own counters before test cleanup stops the daemon.
+// a peer may already be exiting when the coordinator observes the failure.
 func captureSeparatedFailure(t *testing.T, component string) {
 	t.Helper()
 	if !t.Failed() {

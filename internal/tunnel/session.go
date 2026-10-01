@@ -22,7 +22,7 @@ type ProtocolError struct {
 func (e *ProtocolError) Error() string { return "tunnel: " + string(e.Code) }
 
 // StreamHeaderError belongs to one rejected stream, not its authenticated
-// publisher connection. The acceptor may keep serving other streams.
+// publisher connection. the acceptor may keep serving other streams.
 type StreamHeaderError struct {
 	Kind string
 	Err  error
@@ -141,7 +141,7 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 }
 
 // OpenVisitorStream opens a visitor stream and waits for the publisher to
-// accept it. It returns before sending PROXY v2 metadata or visitor bytes.
+// accept it. it returns before sending PROXY v2 metadata or visitor bytes.
 func (s *Session) OpenVisitorStream(ctx context.Context, header tunnelv1.VisitorStreamHeader) (muxsession.Stream, error) {
 	return s.openAcknowledgedStream(ctx, "visitor", func(stream muxsession.Stream) error {
 		return tunnelv1.WriteVisitorStreamHeader(stream, header)
@@ -149,7 +149,7 @@ func (s *Session) OpenVisitorStream(ctx context.Context, header tunnelv1.Visitor
 }
 
 // OpenInternalForwardingStream opens one visitor stream from ingress to a relay
-// and waits for acceptance before returning it. No visitor bytes are sent here.
+// and waits for acceptance before returning it. no visitor bytes are sent here.
 func (s *Session) OpenInternalForwardingStream(
 	ctx context.Context,
 	header tunnelv1.InternalForwardingHeader,
@@ -379,7 +379,7 @@ func (s *Session) Err() error { return s.transport.Err() }
 
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
-		// The transport owns all streams. Closing a control stream first can
+		// the transport owns all streams. closing a control stream first can
 		// block enqueueing its FIN behind a failed transport writer.
 		s.closeErr = s.transport.Close()
 	})

@@ -180,7 +180,7 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 	t.Cleanup(func() {
 		cancel()
 		h.unblock()
-		finish() // Interrupt real relay I/O as well as the session on failure.
+		finish() // interrupt real relay I/O as well as the session on failure.
 		awaitPublisherTest(t, joined)
 	})
 	select {

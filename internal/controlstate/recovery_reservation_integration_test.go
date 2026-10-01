@@ -16,7 +16,7 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	database, now := f.database, f.now
 	previous := f.setup.PublisherConnections[0]
 	registration := relayLifecycleRegistration(previous.RelayServiceID)
-	registration.ConnectionCapacity = 1 // The existing reservation fills this service.
+	registration.ConnectionCapacity = 1 // the existing reservation fills this service.
 	registration.RelayRunID += "-restart"
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at = $1 WHERE relay_id = $2`, now.Add(time.Second), registration.RelayID); err != nil {
 		t.Fatal(err)
@@ -33,8 +33,8 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	// An unrelated allocator holds the reservation, service, and lease guards.
-	// Replacing an already-reserved slot must not join that queue or write totals.
+	// an unrelated allocator holds the assignment-total, service, and lease guards.
+	// replacing an already-reserved slot must not join that queue or write totals.
 	if _, _, err := availableRelayServicePlacements(ctx, controlstatedb.New(gate), now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,8 @@ func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
 	fixtures, _ := relayServiceProgressSessions(t)
 	f := fixtures[0]
 	claims := readyTestSession(t, f)
-	// Model an already-routable session with a claimed replacement awaiting
-	// readiness. Its publisher connection already consumes process capacity.
+	// model an already-routable publish run with a claimed replacement awaiting
+	// readiness. its publisher connection already consumes process capacity.
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_run_connections SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
 	if _, err := f.database.ClaimPublisherConnection(callCtx, sessionClaim(t, fixtures[1]), f.now); err != nil {
 		t.Fatalf("independent claim waited for readiness publication: %v", err)
 	}
-	// Drain can overlap readiness that already validated this lease; a later
+	// drain can overlap readiness that already validated this lease; a later
 	// readiness request must observe the drain rather than reuse that decision.
 	if _, err := f.database.BeginRelayDrain(callCtx, claims[0].RelayLeaseIdentity, f.now, f.now.Add(time.Minute)); err != nil {
 		t.Fatalf("drain waited for readiness publication: %v", err)
@@ -123,7 +123,7 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 			if _, err := f.database.RegisterRelay(ctx, relayLifecycleRegistration("spare"), at, time.Hour); err != nil {
 				t.Fatal(err)
 			}
-			// A stale ready assignment still contributes to its service total.
+			// a stale ready assignment still contributes to its service total.
 			if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 			case "draining":
 				_, err = f.database.BeginRelayDrain(ctx, claims[0].RelayLeaseIdentity, at, at.Add(time.Minute))
 			case "capacity_reduced":
-				registration.ConnectionCapacity = 4 // Five reservations no longer fit.
+				registration.ConnectionCapacity = 4 // five reservations no longer fit.
 				_, err = f.database.RegisterRelay(ctx, registration, at, time.Hour)
 			case "mixed_closed_slot":
 				_, err = f.database.DisconnectPublisherConnection(ctx, claims[1], at, true)

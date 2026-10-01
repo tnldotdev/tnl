@@ -114,7 +114,7 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 	}
 	drainedProcess := drainedRelay.process
 	drainedProcess.cancel()
-	// Listener closure acknowledges that local shutdown reached the drain phase;
+	// listener closure shows that local shutdown reached the drain phase;
 	// a scheduler delay after cancel is not evidence that an active stream lives.
 	waitForIntegrationCondition(t, time.Second, func(ctx context.Context) (bool, error) {
 		connection, err := new(net.Dialer).DialContext(ctx, "tcp", drainedRelay.config.RelayTCPListen)

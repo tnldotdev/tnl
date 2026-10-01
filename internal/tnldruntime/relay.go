@@ -219,6 +219,8 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
 			}
 			if !previous.Draining && current.Draining && current.DrainDeadline != nil {
+				// the lease callback starts one background drain. d.background joins
+				// it during process shutdown even if the controller has already exited.
 				deadline := *current.DrainDeadline
 				runtime.drainOnce.Do(func() {
 					d.background(func() {

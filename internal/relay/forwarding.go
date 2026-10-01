@@ -30,7 +30,7 @@ type ForwardingAcceptorConfig struct {
 }
 
 // ForwardingAcceptor carries internal visitor streams from ingress to locally
-// connected publishers. It never receives the ingress routing table.
+// connected publishers. it never receives the ingress routing table.
 type ForwardingAcceptor struct {
 	registry         *Registry
 	currentLease     func() relayv1.RelayLease
@@ -85,8 +85,8 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 		_ = session.Close()
 		return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	// Several bounded readers keep a slow stream header from blocking other
-	// visitors on the same authenticated publisher connection.
+	// bounded concurrent header readers keep one slow ingress stream from
+	// blocking others on the same ingress session. accepted streams run independently.
 	const headerReaders = 4
 	acceptCtx, cancel := context.WithCancel(ctx)
 	var group sync.WaitGroup

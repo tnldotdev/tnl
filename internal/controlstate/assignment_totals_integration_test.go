@@ -12,8 +12,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-// Use the original full recount as an oracle, including zero-total services.
-// Both sides are read in one statement so concurrent commits cannot skew it.
+// use the full recount as an oracle, including zero-total relay services.
+// read both sides in one statement so concurrent commits cannot skew them.
 func assertAssignmentTotals(t *testing.T, db controlstatedb.DBTX, want int64) {
 	t.Helper()
 	var mismatches, total int64
@@ -146,7 +146,7 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 func TestIntegrationAssignmentTotalsRollbackAndStoredReservations(t *testing.T) {
 	database, now, request, _ := newPublishRunPrerequisites(t)
 	ctx := t.Context()
-	// Fail after the assignment triggers have run, at the final audit insertion.
+	// fail after the assignment triggers have run, at the final audit insertion.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.admin_audit_events ADD CONSTRAINT reject_session_audit CHECK (operation <> 'publish_run.create')`); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestIntegrationAssignmentTotalsRollbackAndStoredReservations(t *testing.T) 
 		t.Fatal(err)
 	}
 	assertAssignmentTotals(t, database.pool, 2)
-	// Time and live-lease availability do not release stored reservations.
+	// time and live-lease availability do not release stored reservations.
 	tx, err := database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestIntegrationAssignmentTotalsParentTransitionRace(t *testing.T) {
 					parentQuery = `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL WHERE id = $1`
 				}
 				workers.Go(func() { _, err := database.pool.Exec(ctx, parentQuery, f.setup.PublishRunID); done <- err })
-				// The parent holds its row while its eligibility cascade waits for
+				// the parent holds its row while its eligibility cascade waits for
 				// this slot. A slot delta must not acquire the parent in reverse.
 				waitForPostgresBlock(t, ctx, database, int32(child.Conn().PgConn().PID()), done)
 				query := `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 0`
@@ -297,7 +297,7 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 		_, err := database.CreatePublishRun(ctx, request, now.Add(2*time.Second), time.Hour, time.Hour)
 		replacement <- err
 	})
-	// Expiry has released reservations and holds the totals guard, but placement
+	// expiry has released reservations and holds the totals guard, but placement
 	// is paused at the maintenance row before taking any service locks.
 	replacementPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), replacement)
 	workers.Go(func() {
@@ -305,8 +305,8 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 		heartbeat <- err
 	})
 	waitForPostgresBlock(t, ctx, database, replacementPID, heartbeat)
-	// A queued placement must not hold service locks ahead of the totals guard;
-	// claim/readiness retries on another route must also avoid the totals guard.
+	// queued placement must not hold service locks ahead of the totals guard;
+	// claim/readiness retries on another public URL must avoid the totals guard.
 	claim := sessionClaim(t, fixtures[2])
 	for range 2 {
 		if _, err := database.ClaimPublisherConnection(ctx, claim, now); err != nil {
@@ -340,8 +340,8 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Bulk closure visits y/z before a/b; the competing single closure
-			// visits a/z. Per-statement ordered counter locks alone would cycle.
+			// bulk closure visits y/z before a/b; the competing single closure
+			// visits a/z. per-statement ordered counter locks alone would cycle.
 			for index, services := range [][2]string{{"y", "z"}, {"a", "b"}, {"a", "z"}} {
 				if _, err := database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET relay_service_id = CASE connection_slot WHEN 0 THEN $2 ELSE $3 END WHERE publish_run_id = $1`, fixtures[index].setup.PublishRunID, services[0], services[1]); err != nil {
 					t.Fatal(err)

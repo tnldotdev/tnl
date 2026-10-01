@@ -302,7 +302,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 							if err != nil {
 								return issuance, err
 							}
-							// Control idempotency is session-scoped, even for identical CSRs.
+							// control idempotency is publish-run-scoped, even for identical CSRs.
 							issuance.Id = fmt.Sprintf("issuance_%032x", len(orders)+100)
 							orders[id], requests[id] = issuance, bytes.Clone(csr)
 						} else if !bytes.Equal(csr, requests[id]) {
@@ -445,7 +445,8 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A recreated route has a new identity but the same server-authorized certificate cache key and plan.
+	// a recreated public URL has a new identity but may share the same
+	// server-authorized certificate cache key and plan.
 	control.setup.PublicUrl.Id = "public_url_22222222222222222222222222222222"
 	control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 	control.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"

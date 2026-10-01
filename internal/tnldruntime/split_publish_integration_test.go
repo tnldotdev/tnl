@@ -168,7 +168,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	if !errors.Is(authorizationContext.Err(), context.Canceled) {
 		t.Fatalf("blocked certificate worker was not canceled by control shutdown: %v", authorizationContext.Err())
 	}
-	// The canceled operation retains its work lease. Expire only that stopped
+	// the canceled operation retains its work lease. expire only that stopped
 	// worker's lease instead of waiting two minutes; data-plane leases stay real.
 	result, err := fixture.inspect.ExecContext(integrationOperationContext(t), `
 		UPDATE control.acme_orders SET work_expires_at = now()

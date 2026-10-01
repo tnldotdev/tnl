@@ -125,7 +125,7 @@ func waitForIntegrationBinaryReady(t *testing.T, process *integrationBinaryProce
 			return
 		}
 		t.Logf("tnld output before readiness failure:\n%s", process.output.String())
-		// Migration success does not prove that the database is still reachable.
+		// migration success does not prove that the database is still reachable.
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		database := inspectStandaloneTestDatabase(t, databaseURL)
@@ -172,7 +172,7 @@ type integrationBinaryPublish struct {
 }
 
 // exec's stdout pump always gets a successful Write, including malformed or
-// oversized lines. Parsing failure is observable without stopping pipe draining.
+// oversized lines. parsing failure is observable without stopping pipe draining.
 type binaryEventWriter struct {
 	events     *eventRecorder[integrationBinaryPublishEvent]
 	line       []byte

@@ -1,9 +1,8 @@
--- Blocking service operations acquire a transaction advisory guard before any
--- service/lease row locks. Shared row readers alone can bypass a queued writer;
--- the advisory queue lets registration, placement and certificate writes progress.
--- SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
--- row-only writers: they never wait for a service row or acquire this guard after
--- holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
+-- blocking relay-service operations take the transaction advisory guard before
+-- service and lease rows. row readers can bypass a waiting writer without this
+-- queue, starving registration, placement, or certificate updates.
+-- SKIP LOCKED certificate preparation and key rotation only take row locks;
+-- they must not wait for this guard while holding a row.
 -- name: RegisterRelay :one
 WITH service_guard AS MATERIALIZED (
     SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
@@ -188,12 +187,10 @@ SELECT relay_lease.*, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id);
 
--- Claims and readiness read service configuration without changing it. Share
--- that guard across processes. Claims exclusively lock the selected lease's
--- non-key fields so capacity checks cannot race each other, renewal, or drain.
--- NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
--- not consume another connection. Registration and placement take the service
--- exclusively before leases; keep that order here too.
+-- claims and readiness share the relay-service guard across processes.
+-- claims take NO KEY UPDATE on the selected lease to serialize capacity with
+-- other claims, renewal, and drain. readiness takes compatible KEY SHARE
+-- because it uses an existing reservation. service guards precede lease rows.
 -- name: GetRelayLeaseForClaim :one
 WITH service_guard AS MATERIALIZED (
     SELECT relay_service_id,
@@ -212,11 +209,10 @@ JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = sqlc.arg(relay_id)
 FOR NO KEY UPDATE OF leases;
 
--- Readiness retains the service guard through routing publication so process
--- registration/replacement cannot change its identity. KEY SHARE protects the
--- lease's existence without serializing claims or other readiness publications.
--- Renewal/drain may overlap; readiness validates the lease it reads, and routing
--- projection reads independently exclude a lease that has since drained.
+-- keep the service guard through routing publication so registration cannot
+-- replace the relay process between readiness and the published projection.
+-- KEY SHARE does not block claims or other readiness work. renewal or drain may
+-- overlap; readiness checks its lease, and projection reads exclude drained leases.
 -- name: GetRelayLeaseForReady :one
 WITH service_guard AS MATERIALIZED (
     SELECT relay_service_id,
@@ -243,8 +239,9 @@ WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND state IN ('connected', 'ready', 'draining');
 
--- Acquire the reservation guard before service guards and rows, in one command.
--- Callers finish locking all services before locking leases or checking capacity.
+-- callers hold affected public URL rows and any existing publish run rows.
+-- take the assignment-total guard before relay-service guards and lease rows;
+-- lock all services before checking capacity or locking leases.
 -- name: LockRelayServicesForPlacement :many
 WITH assignment_guard AS MATERIALIZED (
     SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))
@@ -285,7 +282,7 @@ FROM control.relay_services AS services CROSS JOIN service_guard
 WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
--- Diagnostic/test oracle only; placement reads the trigger-maintained totals.
+-- diagnostic/test oracle only; placement reads trigger-maintained totals.
 -- name: CountOpenPublishRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count

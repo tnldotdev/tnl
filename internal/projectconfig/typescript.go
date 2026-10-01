@@ -28,7 +28,7 @@ const (
 //go:embed loader.mjs
 var loaderSource string
 
-// loadTypeScript evaluates trusted project-local TypeScript configuration. The
+// loadTypeScript evaluates trusted project-local TypeScript configuration. the
 // returned object is implicitly configuration version 1 and contains only tnl
 // fields.
 func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (config.TNL, error) {
@@ -147,8 +147,8 @@ func readBoundedPipe(reader io.Reader, limit int) <-chan result {
 		data, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 		overflow := len(data) > limit
 		if err == nil && overflow {
-			// Keep draining so the loader's synchronous write can finish before
-			// Wait, without retaining oversized project-controlled data.
+			// keep draining so the loader's synchronous write can finish before
+			// wait without retaining oversized project-controlled data.
 			_, err = io.Copy(io.Discard, reader)
 		}
 		channel <- result{data: data, err: err, overflow: overflow}

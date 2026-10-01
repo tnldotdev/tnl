@@ -7,13 +7,13 @@ import (
 )
 
 // Instrument sends completed state operations and request-pool queries to one
-// process registry. Configure it after Open and before serving requests.
+// process registry. configure it after Open and before serving requests.
 func (d *Database) Instrument(metrics *observability.Metrics) {
 	d.activity.metrics.Store(metrics)
 }
 
 // PrometheusMetrics supplies the same passive database snapshot to runtime
-// scrapes and local load tests. It never acquires a database connection.
+// scrapes and local load tests. it never acquires a database connection.
 func (d *Database) PrometheusMetrics(now time.Time) observability.DatabaseSnapshot {
 	local := d.Metrics(now)
 	result := observability.DatabaseSnapshot{
@@ -32,7 +32,7 @@ func (d *Database) PrometheusMetrics(now time.Time) observability.DatabaseSnapsh
 	return result
 }
 
-// Register this defer before transaction cleanup so the duration and outcome
+// register this defer before transaction cleanup so the duration and outcome
 // include rollback and any error it adds to the returned error.
 func (d *Database) observeOperation(operation string, err *error) func() {
 	if d == nil || d.activity == nil {

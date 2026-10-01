@@ -156,7 +156,7 @@ func certificateTestChallenge() controlv1.CertificateChallenge {
 	return controlv1.CertificateChallenge{Token: "challenge_1", Identifier: "route.example", Method: controlv1.TlsAlpn01, Digest: base64.RawURLEncoding.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(10 * time.Minute)}
 }
 
-// Sign only the submitted key and only when the CSR matches the certificate plan.
+// sign only the submitted key and only when the CSR matches the certificate plan.
 func (c *certificateTestControl) issue(csrDER []byte) (controlv1.CertificateIssuance, error) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {

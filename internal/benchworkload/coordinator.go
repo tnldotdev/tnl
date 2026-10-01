@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Coordinator stores immutable run events. The runner owns the phase sequence;
+// Coordinator stores immutable run events. the runner owns the phase sequence;
 // participants acknowledge readiness/results under their own event names.
 type Coordinator struct {
 	mu      sync.Mutex
@@ -172,8 +172,8 @@ func (c *Coordination) Wait(ctx context.Context, name string, value any) error {
 	}
 }
 
-// WorkloadContext also stops participants already running a measurement. Stop
-// joins the watcher; cleanup uses a separate context to report its outcome.
+// WorkloadContext also stops participants measuring when a failure occurs.
+// Stop joins its watcher; cleanup reports its outcome with a separate context.
 func (c *Coordination) WorkloadContext(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	done := make(chan struct{})
@@ -213,8 +213,8 @@ func (c *Coordination) request(ctx context.Context, method, name string, wait bo
 	return body, response.StatusCode, err
 }
 
-// Phase is sent by the coordinator. Participants do not carry their own copy of
-// the scenario sequence. A zero duration requests correctness probes only.
+// Phase is sent by the coordinator; participants do not copy the scenario
+// sequence. a zero duration requests correctness probes only.
 type Phase struct {
 	Name        string           `json:"name"`
 	Start       time.Time        `json:"start"`

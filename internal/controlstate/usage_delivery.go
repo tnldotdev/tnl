@@ -19,7 +19,7 @@ var (
 )
 
 // FinalizePublicURLUsageBuckets closes aggregate buckets through a cutoff and
-// creates one stored delivery record for each finalized revision.
+// creates delivery work for each finalized revision.
 func (d *Database) FinalizePublicURLUsageBuckets(
 	ctx context.Context,
 	through time.Time,

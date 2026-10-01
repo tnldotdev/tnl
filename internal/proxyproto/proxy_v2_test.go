@@ -72,7 +72,7 @@ func TestDecodeAllowsTLVsAndReplaysPayload(t *testing.T) {
 			Destination: netip.MustParseAddrPort("[2001:db8::2]:443"),
 		},
 	}
-	// A registered ALPN TLV followed by an application-specific TLV.
+	// a registered ALPN TLV followed by an application-specific TLV.
 	tlvs := []byte{0x01, 0x00, 0x02, 'h', '2', 0xee, 0x00, 0x01, 0xff}
 	for _, want := range tests {
 		encoded, err := Encode(want)

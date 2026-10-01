@@ -85,7 +85,7 @@ func TestBlockingLockWaitsForRelease(t *testing.T) {
 		lock, err := Acquire(path, Blocking, os.Geteuid())
 		acquired <- errors.Join(err, lock.Close())
 	}()
-	// This synchronizes the acquisition attempt, not entry into the kernel.
+	// this synchronizes the acquisition attempt, not entry into the kernel.
 	<-attempting
 	select {
 	case err := <-acquired:

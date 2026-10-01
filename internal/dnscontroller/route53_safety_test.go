@@ -28,7 +28,7 @@ func TestRoute53ProviderRecoversLostZoneCreateResponseAcrossPages(t *testing.T) 
 	if client.createCalls != 1 || len(client.addedTags) != 0 {
 		t.Fatalf("create calls %d, tags %#v", client.createCalls, client.addedTags)
 	}
-	// The zone exists remotely, but its ID and tags were never persisted locally.
+	// the zone exists remotely, but its ID and tags were never persisted locally.
 	pages := 0
 	client.listZones = func(input *route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error) {
 		pages++
@@ -278,7 +278,7 @@ func TestRoute53ProviderReleaseHTTPResponseRecovery(t *testing.T) {
 						return
 					}
 					absent.Store(true)
-					// The delete took effect, but the response was cut off in transit.
+					// the delete took effect, but the response was cut off in transit.
 					_, _ = io.WriteString(w, `<DeleteHostedZoneResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/"><ChangeInfo>`)
 				default:
 					t.Errorf("unexpected Route 53 request: %s %s", r.Method, r.URL.Path)

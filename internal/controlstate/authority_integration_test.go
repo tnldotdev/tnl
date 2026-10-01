@@ -92,7 +92,7 @@ func TestIntegrationMembershipListDoesNotOutliveActorMembership(t *testing.T) {
 	database, now, owner, team := newAuthorityTeam(t)
 	reader := addAuthorityMember(t, database, now, owner, team.ID, "reader", "member")
 	queries := controlstatedb.New(database.pool)
-	// Reproduce revocation between the actor lookup and the membership list.
+	// reproduce revocation between the actor lookup and the membership list.
 	if _, err := queries.GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{
 		IdentityID: reader.IdentityID, TeamID: team.ID,
 	}); err != nil {

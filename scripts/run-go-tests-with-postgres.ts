@@ -10,7 +10,7 @@ if (separator === -1 || separator === process.argv.length - 1) {
 
 const root = path.resolve(import.meta.dirname, "..");
 const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
-// Distinct invocations from one checkout must not remove each other's database.
+// distinct invocations from one checkout must not remove each other's database.
 const container = `tnl-test-postgres-${identity}-${randomUUID()}`;
 const image =
   "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
@@ -68,7 +68,7 @@ try {
     const logs = await output("docker", ["logs", container]);
     if (logs !== "") process.stderr.write(logs);
   } catch {
-    // The container may have failed before it was created.
+    // the container may have failed before it was created.
   }
   throw error;
 } finally {

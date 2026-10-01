@@ -206,7 +206,7 @@ func TestRoute53ProviderWaitsForItsChallengeChange(t *testing.T) {
 	if ready, err := provider.ChangeReady(t.Context(), zone.ChangeID); err != nil || !ready {
 		t.Fatalf("synced change = %t, %v", ready, err)
 	}
-	// A lost receipt must be recoverable even when Route 53 already lists
+	// a lost receipt must be recoverable even when Route 53 already lists
 	// the desired TXT record, without changing any foreign TXT values.
 	client.recordSets[dnsName(record.RecordName)] = []types.ResourceRecordSet{
 		*simpleRecordSet(record.RecordName, types.RRTypeTxt, []string{`"foreign"`, `"owned"`}),

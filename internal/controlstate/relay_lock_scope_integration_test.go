@@ -51,7 +51,7 @@ func TestIntegrationPublisherConnectionsShareRelayServiceGuard(t *testing.T) {
 			first := make(chan error, 1)
 			workers.Go(func() { first <- perform(ctx, claims[0]) })
 			firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), first)
-			// The first operation holds the service guard while waiting on its lease.
+			// the first operation holds the service guard while waiting on its lease.
 			independent, stop := context.WithTimeout(ctx, 2*time.Second)
 			defer stop()
 			if err := perform(independent, claims[1]); err != nil {
@@ -62,7 +62,7 @@ func TestIntegrationPublisherConnectionsShareRelayServiceGuard(t *testing.T) {
 				_, err := database.RegisterRelay(ctx, registration, now, time.Hour)
 				registered <- err
 			})
-			// Registration targets the other lease, but must still wait on the service.
+			// registration targets the other lease but must still wait on the service.
 			waitForPostgresBlock(t, ctx, database, firstPID, registered)
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
@@ -98,9 +98,9 @@ func TestIntegrationRelayServiceWritersProgressDuringPublisherRetries(t *testing
 			var retries atomic.Int64
 			var readerPIDs []int32
 			blocker := int32(gate.Conn().PgConn().PID())
-			// Queue four real readers on the lease before starting the writer.
-			// Once the gate opens every transaction can finish; later retries must
-			// not keep the service writer waiting indefinitely. This tests bounded
+			// queue four real readers on the lease before starting the writer.
+			// once the gate opens every transaction can finish; later retries must
+			// not keep the service writer waiting indefinitely. this tests bounded
 			// progress, not FIFO ordering between individual row-lock requests.
 			for _, fixture := range fixtures[:len(fixtures)-1] {
 				claim := sessionClaim(t, fixture)
@@ -211,7 +211,7 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 				registered <- err
 			})
 			waitForPostgresBlock(t, ctx, database, int32(reader.Conn().PgConn().PID()), registered)
-			// Opportunistic maintenance must skip relay-a and finish relay-b even
+			// opportunistic maintenance must skip relay-a and finish relay-b even
 			// while relay-a has both an active reader and a queued service writer.
 			maintenanceCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 			defer stop()
@@ -224,7 +224,7 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 			if err := awaitIntegrationResult(t, ctx, registered); err != nil {
 				t.Fatal(err)
 			}
-			// The skipped service remains eligible once its reader and writer drain.
+			// the skipped service remains eligible once its reader and writer drain.
 			if err := maintain(maintenanceCtx); err != nil {
 				t.Fatal(err)
 			}
@@ -334,8 +334,8 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 	}
 }
 
-// Four independent routes retry on one relay process while the fifth route
-// needs placement. Every service has exactly enough capacity for all five.
+// four independent public URLs retry on one relay process while a fifth
+// needs placement. every service has exactly enough capacity for all five.
 func relayServiceProgressSessions(t *testing.T) ([5]publishRunFixture, RelayRegistration) {
 	t.Helper()
 	database, now := newRelayLifecycleDatabase(t)
@@ -398,7 +398,7 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 		})
 	}
 	firstPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), done[0])
-	// The other claim must queue behind the first lease-lock waiter.
+	// the other claim must queue behind the first lease-lock waiter.
 	waitForPostgresBlock(t, ctx, database, firstPID, done[1])
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestIntegrationConcurrentClaimsRespectRelayProcessCapacity(t *testing.T) {
 	}
 }
 
-// Two routes, two services, two capacity-one processes per service. Each route
+// two public URLs, two relay services, two capacity-one processes per service. each public URL
 // claims a different process, unless a test explicitly selects the same process.
 func relayServiceSessions(t *testing.T) ([2]publishRunFixture, RelayRegistration) {
 	t.Helper()

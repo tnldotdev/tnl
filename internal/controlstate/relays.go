@@ -221,7 +221,7 @@ func (d *Database) BeginRelayDrain(
 }
 
 // ClaimPublisherConnection authenticates and claims one assignment in a
-// transaction. The winning relay can repeat its claim; all other relays are
+// transaction. the winning relay can repeat its claim; all other relays are
 // rejected.
 func (d *Database) ClaimPublisherConnection(
 	ctx context.Context,

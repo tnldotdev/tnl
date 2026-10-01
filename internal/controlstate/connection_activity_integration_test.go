@@ -54,7 +54,7 @@ func TestIntegrationConnectionAccountingIncludesDedicatedLifetimes(t *testing.T)
 	if len(snapshot.ActiveOperations) != 0 {
 		t.Fatalf("dedicated operations leaked into request activity: %+v", snapshot.ActiveOperations)
 	}
-	// This disposable PostgreSQL server has no PgBouncer admin database.
+	// this disposable PostgreSQL server has no PgBouncer admin database.
 	if snapshot.Pooler == nil || snapshot.Pooler.Error == "" || snapshot.Pooler.Clients != nil || snapshot.Pooler.Settings != nil {
 		t.Fatalf("missing pooler reported inferred values: %+v", snapshot.Pooler)
 	}

@@ -2,7 +2,7 @@ package observability
 
 import "time"
 
-// Visitor outcomes describe the last ingress boundary reached, not a completed
+// visitor outcomes describe the last ingress boundary reached, not a completed
 // TLS handshake or a successful HTTP request at the local service.
 func (m *Metrics) ObserveVisitor(outcome string) {
 	if m == nil {

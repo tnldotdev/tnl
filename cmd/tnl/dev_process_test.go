@@ -304,7 +304,7 @@ func TestDevProcessHelper(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
-	// On assertion failure reap the helper. Successful os.Exit deliberately leaves
+	// on assertion failure reap the helper. successful os.Exit deliberately leaves
 	// descendants for the process-group cleanup under test.
 	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
 	if err := readyWriter.Close(); err != nil {

@@ -19,7 +19,7 @@ import (
 const certificateIssuanceTimeout = 5 * time.Minute
 
 // runIssuer owns all issuance, renewal, and challenge cleanup for one tenure.
-// The ACME client performs context-aware requests and polling synchronously;
+// the ACME client performs context-aware requests and polling synchronously;
 // there are no renewal or cleanup goroutines that can outlive leadership.
 func (s *Source) runIssuer(ctx context.Context) error {
 	timer := time.NewTimer(0)
@@ -170,7 +170,7 @@ func (s *Source) authorize(ctx context.Context, hostname, url string, authorizat
 		return fmt.Errorf("controltls: cache challenge certificate: %w", err)
 	}
 	defer func() {
-		// Never use a detached cleanup context: after leadership loss the
+		// never use a detached cleanup context: after leadership loss the
 		// replacement leader may already have installed its own challenge.
 		if ctx.Err() == nil {
 			retErr = errors.Join(retErr, s.cache.Delete(ctx, key))
@@ -183,7 +183,7 @@ func (s *Source) authorize(ctx context.Context, hostname, url string, authorizat
 	return err
 }
 
-// Keep the autocert PEM cache format so existing certificates and cross-process
+// keep the autocert PEM cache format so existing certificates and cross-process
 // TLS-ALPN challenge responses remain readable during an upgrade.
 func certificatePEM(certificate *tls.Certificate) ([]byte, error) {
 	key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)

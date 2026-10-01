@@ -19,7 +19,7 @@ var (
 )
 
 // RelayTransportCertificate contains a relay transport certificate and private
-// key. It is returned only to a relay process with a current lease for the
+// key. it is returned only to a relay process with a current lease for the
 // matching relay service.
 type RelayTransportCertificate struct {
 	RelayServiceID string

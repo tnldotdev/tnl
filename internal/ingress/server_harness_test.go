@@ -109,7 +109,7 @@ func ingressClient(t *testing.T, address, hostname, source string, protos ...str
 			t.Fatal(err)
 		}
 	}
-	return tls.Client(c, &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12, NextProtos: protos, InsecureSkipVerify: true}) // Local self-signed fixture.
+	return tls.Client(c, &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12, NextProtos: protos, InsecureSkipVerify: true}) // local self-signed fixture.
 }
 
 func exchangePing(t *testing.T, c *tls.Conn) {

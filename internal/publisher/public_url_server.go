@@ -31,7 +31,7 @@ import (
 type PublicURLServerConfig struct {
 	Hostname        string
 	Target          string
-	RequestLimit    int // Zero selects localproxy.DefaultRequestLimit.
+	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
 	Certificate     tls.Certificate
 	CertificatePlan controlv1.CertificatePlan
@@ -57,7 +57,7 @@ type PublicURLServer struct {
 	closeOnce          sync.Once
 	closeErr           error
 
-	// Certificate transactions retain challenge identity across lost control responses.
+	// certificate transactions retain challenge identity across lost control responses.
 	challengeIssuanceID string
 	challengeID         string
 }
@@ -109,11 +109,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}
 				}
-				// An unrecognized connection must never bypass visitor policy.
+				// an unrecognized connection must never bypass visitor policy.
 				return context.WithValue(ctx, denialContextKey{}, true)
 			},
 			ReadHeaderTimeout: 10 * time.Second,
-			// Bound incomplete bodies with a real read deadline. For HTTP/2,
+			// bound incomplete bodies with a real read deadline. for HTTP/2,
 			// net/http enforces this independently on each request stream.
 			ReadTimeout:    30 * time.Second,
 			IdleTimeout:    2 * time.Minute,
@@ -266,7 +266,7 @@ func (r *PublicURLServer) start() error {
 }
 
 // ServePublisherConnection accepts visitor streams for one exact publisher
-// connection. On exit it closes the session to stop pending header reads;
+// connection. on exit it closes the session to stop pending header reads;
 // callers may also close it to interrupt active streams.
 func (r *PublicURLServer) ServePublisherConnection(
 	ctx context.Context,
@@ -279,7 +279,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	// Bound header parsing while letting a slow or invalid stream coexist with
+	// bound header parsing while letting a slow or invalid stream coexist with
 	// healthy streams on the same publisher connection.
 	const headerReaders = 4
 	acceptCtx, cancel := context.WithCancel(ctx)

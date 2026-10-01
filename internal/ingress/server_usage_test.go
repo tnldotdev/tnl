@@ -126,7 +126,7 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
-	// Write malformed bytes on the underlying connection, before TLS.
+	// write malformed bytes on the underlying connection, before TLS.
 	_, _ = malformed.NetConn().Write([]byte("not TLS"))
 	_ = malformed.Close()
 	allowed := ingressClient(t, address, "route.example", "198.51.100.2:40002")
@@ -228,7 +228,7 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	usage := newUsageRecorder()
 	config := publicURLConfig(backend)
 	config.OpenUsage = usage.Open
-	config.MaxConnections = 2 // One public URL receives half of this ingress budget.
+	config.MaxConnections = 2 // one public URL receives half of this ingress budget.
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)

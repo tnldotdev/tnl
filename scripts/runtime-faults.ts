@@ -272,7 +272,7 @@ export async function applyFault(scenario: Fault, runtime: FaultRuntime): Promis
         if (evidence.qdisc.some((q) => q.kind === "netem" && (q.packets ?? 0) > 0))
           matched.add(endpoint.service);
       }
-      // a healthy route may use only one relay. require both directions of an
+      // a healthy public URL may use only one connected relay. require both directions of an
       // exercised path, while retaining zero counters for the unused alternate.
       if (
         (network.path === "forwarding"

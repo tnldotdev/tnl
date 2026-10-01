@@ -63,7 +63,7 @@ func TestRelayControlMetricsRecordCanceledAndTimedOutCalls(t *testing.T) {
 	}
 	assertRelayOperation(t, metrics, "RelayRegister", "canceled", 1)
 	assertRelayOperation(t, metrics, "RelayRenewLease", "deadline_exceeded", 1)
-	// Unknown or dynamic names must not create cardinality from user input.
+	// unknown or dynamic names must not create cardinality from user input.
 	metrics.ObserveOperation("route-private-id", nil, time.Second)
 	assertRelayOperation(t, metrics, "route-private-id", "success", 0)
 }
@@ -150,7 +150,7 @@ func TestRegisteredPublisherGaugeTracksReplacementAndClose(t *testing.T) {
 	if err := registry.Insert(second); err != nil {
 		t.Fatal(err)
 	}
-	assertRegistered(1) // Replacing one slot never creates a second registration.
+	assertRegistered(1) // replacing one slot never creates a second registration.
 	if registry.Remove(first) {
 		t.Fatal("old publisher connection removed the replacement")
 	}

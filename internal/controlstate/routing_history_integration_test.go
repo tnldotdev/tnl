@@ -53,7 +53,7 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 		{IngressPublicURLTombstone, 2, old, -time.Second},
 		{IngressChallengeTombstone, 2, old, -time.Second},
 		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
-		{IngressPublicURLUpsert, 3, old, time.Hour}, // Old timestamp after a recent revision.
+		{IngressPublicURLUpsert, 3, old, time.Hour}, // old timestamp after a recent revision.
 		{IngressChallengeUpsert, 3, time.Minute, time.Hour},
 	})
 	ingress := registerTestIngress(t, f.database, f.now)
@@ -89,7 +89,7 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 			t.Fatalf("incomplete retained suffix: %+v", page)
 		}
 	}
-	// An older policy cutoff must not move the published floor backward.
+	// an older policy cutoff must not move the published floor backward.
 	if again, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now.Add(-2*time.Hour)); err != nil || again != floor {
 		t.Fatalf("floor regressed: %d %v", again, err)
 	}
@@ -219,7 +219,7 @@ func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
 
 func TestIntegrationRoutingRetentionBoundsScannedAnchors(t *testing.T) {
 	f := newPublishRunFixture(t)
-	// Different publish run numbers each need their own latest entry-revision anchor.
+	// different publish run numbers each need their own latest entry-revision anchor.
 	if _, err := f.database.pool.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events
 		(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, created_at)
 		SELECT 'public_url_tombstone', $1, n, $2, 1, '{}'::bytea, $3 FROM generate_series(1, 2001) AS n`, f.setup.PublicURLID, f.request.CertificateIdentifiers[0], f.now.Add(-time.Hour)); err != nil {
@@ -290,7 +290,7 @@ func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Age genuine projections without expiring the session or its connections.
+	// age genuine projections without expiring the publish run or its connections.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events SET created_at = $1`, now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}

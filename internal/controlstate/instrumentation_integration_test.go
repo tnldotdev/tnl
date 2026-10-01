@@ -45,7 +45,7 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	}}}, now); err != nil {
 		t.Fatal(err)
 	}
-	// Validation and pool-acquisition failures belong to the state operation,
+	// validation and pool-acquisition failures belong to the state operation,
 	// even when no SQL has started.
 	if _, err := database.CreatePublishRun(t.Context(), PublishRunRequest{}, now, time.Hour, time.Hour); err == nil {
 		t.Fatal("invalid request succeeded")
@@ -102,8 +102,8 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), "SELECT 1/0 /* private-query */"); err == nil {
 		t.Fatal("SQL error expected")
 	}
-	// Retain every pool slot, then exercise a state operation that times out
-	// acquiring one. Export must still complete without a connection or query.
+	// retain every pool slot, then exercise a state operation that times out
+	// acquiring one. export must still complete without a connection or query.
 	var held []*pgxpool.Conn
 	defer func() {
 		for _, conn := range held {
@@ -269,7 +269,7 @@ func assertDurationCount(t *testing.T, families []*dto.MetricFamily, name, opera
 				t.Fatalf("%s %v: got %v, want count=%d", name, labels, h, count)
 			}
 			bounds := observability.DurationBucketsSeconds()
-			// Parsed exposition also contains the implicit +Inf bucket.
+			// parsed exposition also contains the implicit +Inf bucket.
 			if len(h.Bucket) != len(bounds)+1 {
 				t.Fatalf("%s buckets=%v", name, h.Bucket)
 			}

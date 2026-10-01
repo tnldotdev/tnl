@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
-// This child only runs when selected explicitly by the harness unit tests. It
+// this child only runs when selected explicitly by the harness unit tests. it
 // needs neither the integration gate nor a built product binary or database.
 func TestRuntimeHarnessChild(t *testing.T) {
 	mode := os.Getenv("TNL_RUNTIME_HARNESS_CHILD")
@@ -139,7 +139,7 @@ func TestBinaryRecorderConsumerCancellationAndShutdown(t *testing.T) {
 	if _, err := recorder.next(canceled, &cursor); !errors.Is(err, context.Canceled) || cursor != 1 {
 		t.Fatalf("canceled cursor = %d, %v", cursor, err)
 	}
-	// Abandon the consumer after one event, while the child emits thousands more.
+	// abandon the consumer after one event while the child emits thousands more.
 	if err := owner.shutdown(5*time.Second, 3*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestBinaryRecorderConsumerCancellationAndShutdown(t *testing.T) {
 	if err != nil || len(events) != 4098 || events[len(events)-1].Type != "stopped" {
 		t.Fatalf("shutdown lost output: %d events, %v", len(events), err)
 	}
-	// A new reader can replay the complete history; the old reader didn't steal it.
+	// a new reader can replay the complete history; the old reader did not steal it.
 	replay := 0
 	for index := range events {
 		event, err := recorder.next(ctx, &replay)
@@ -186,7 +186,7 @@ func TestCommandOwnerEscalatesAndReaps(t *testing.T) {
 	if owner.result() == nil {
 		t.Fatal("forced exit error was hidden")
 	}
-	// Repeated cleanup returns promptly and does not signal a reaped process.
+	// repeated cleanup returns promptly and does not signal a reaped process.
 	if err := owner.shutdown(time.Hour, time.Hour); err == nil {
 		t.Fatal("shutdown failure was not retained")
 	}

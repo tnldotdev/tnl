@@ -163,6 +163,8 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 	w.observeWork("deliver", err)
 	completedAt := w.now()
 	if errors.Is(err, errBatchTooLarge) {
+		// split an oversized batch without dropping its work leases. a single
+		// oversized report cannot be delivered and is rejected permanently.
 		if len(work) > 1 {
 			middle := len(work) / 2
 			return errors.Join(w.deliver(ctx, work[:middle]), w.deliver(ctx, work[middle:]))
@@ -175,6 +177,7 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 		return errors.Join(err, rejectErr)
 	}
 	if err != nil {
+		// a transport or response failure leaves every item eligible for retry.
 		return errors.Join(err, w.retry(ctx, work, completedAt, err.Error()))
 	}
 	var result error
@@ -191,6 +194,7 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 		}
 		rejection := fmt.Errorf("publicurlusageworker: receiver rejected %s with %s", item.DeliveryKey, *response.Code)
 		if *response.Code == publicurlusagev1.BatchProblemCodeInvalidArgument {
+			// reject only this invalid item; retryable items keep their own leases.
 			rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, item, string(*response.Code), completedAt)
 			w.observeWork("reject", rejectErr)
 			if rejectErr == nil {

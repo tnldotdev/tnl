@@ -369,8 +369,8 @@ func (d *Database) updateCertificateChallenge(
 		if err != nil {
 			return CertificateIssuance{}, fmt.Errorf("controlstate: mark certificate challenge presented: %w", err)
 		}
-		// A real transition supersedes a claimed authorization snapshot. Replayed
-		// acknowledgements must preserve a newer claim and its next poll time.
+		// a state transition supersedes the claimed authorization snapshot.
+		// replayed acknowledgements must preserve a newer claim and poll deadline.
 		if presented > 0 {
 			if err := queries.WakeACMEOrder(ctx, controlstatedb.WakeACMEOrderParams{
 				AvailableAt: timestamptz(now), IssuanceID: issuanceID,

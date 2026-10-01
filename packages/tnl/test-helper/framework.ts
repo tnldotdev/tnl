@@ -9,7 +9,7 @@ export async function startFrameworkFixture(
   arguments_: readonly string[] = [],
   environment: Readonly<Record<string, string | undefined>> = {},
 ) {
-  // Stay beneath the package: Node and Turbopack resolve the installed matrix version,
+  // stay beneath the package: Node and Turbopack resolve the installed matrix version,
   // React, and tnl's real package exports through the same ancestors as the source fixture.
   const base = new URL(`../fixtures/${framework}/`, import.meta.url);
   const directory = await mkdtemp(fileURLToPath(new URL("workspace-", base)));

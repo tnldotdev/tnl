@@ -10,7 +10,7 @@ import (
 )
 
 func TestDurationHistogramBoundaries(t *testing.T) {
-	// These are API boundaries, independent of the implementation's array.
+	// these are API boundaries, independent of the implementation's array.
 	for index, boundary := range []time.Duration{
 		time.Millisecond, 5 * time.Millisecond, 10 * time.Millisecond, 25 * time.Millisecond,
 		50 * time.Millisecond, 100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond,

@@ -16,8 +16,8 @@ import (
 
 const (
 	defaultUsageReportInterval = 10 * time.Second
-	// Each server transaction retains an ingress lease and all reported session
-	// locks. Bound that footprint without changing atomic replay semantics.
+	// each report transaction holds the ingress lease and publish run locks.
+	// bound the page to limit that footprint without splitting atomic replay.
 	usageReportPageSize = 16
 )
 
@@ -149,7 +149,7 @@ func (r *UsageReporter) Run(ctx context.Context) error {
 }
 
 // Close advances active accounting through now and acknowledges final reports.
-// The caller must first stop and drain public ingress connections.
+// the caller must first stop and drain public ingress connections.
 func (r *UsageReporter) Close(ctx context.Context) error {
 	started := time.Now()
 	err := r.flush(ctx, started.UTC(), true)
@@ -219,8 +219,8 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 			r.observer.ObserveOperation("IngressUsagePage", err, time.Since(started))
 		}
 		if err != nil {
-			// Idle watermarks contain no accounting state. Regenerate a rejected
-			// watermark so startup does not remain pinned before lease registration.
+			// idle watermarks carry no accounting state. regenerate a rejected
+			// watermark so startup can proceed after lease registration.
 			if len(batch.reports) == 0 && !batch.complete {
 				r.mu.Lock()
 				r.pendingPages = nil
@@ -240,8 +240,8 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 	}
 }
 
-// prepare freezes one finite checkpoint under the mutation lock. Acknowledged
-// pages never reselect live dirty buckets; mutations belong to the next checkpoint.
+// prepare freezes one checkpoint under the mutation lock. acknowledged pages
+// do not reselect live dirty buckets; later mutations enter the next checkpoint.
 func (r *UsageReporter) prepare(now time.Time, final bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

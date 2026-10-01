@@ -94,8 +94,8 @@ func TestAuthorizationDecodesChallengeProblem(t *testing.T) {
 	}
 }
 
-// Each step supplies a response and records the request for assertions on the
-// test goroutine. Distinct nonces make stale reuse and extra HEADs observable.
+// each step supplies a response and records the request for assertions on the
+// test goroutine. distinct nonces make stale reuse and extra HEADs observable.
 type acmeStep struct {
 	method, path, nonce, kid, payload     string
 	status                                int

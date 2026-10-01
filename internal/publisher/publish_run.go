@@ -82,7 +82,7 @@ func runSession(
 		cancelProvisioning()
 		<-provisioningDone
 	}()
-	// refresh before setup consumes the publish run, then continue heartbeats in the background.
+	// refresh before setup consumes the publish run; the heartbeat loop takes over after the connections start.
 	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
 		sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, setup.PublishRun.ExpiresAt,
 	)
@@ -126,7 +126,8 @@ func runSession(
 	if err := route.Start(); err != nil {
 		return err
 	}
-	// stop admitting work on publish run cancellation, but retain transports until HTTP drains.
+	// sessionCtx owns admissions and background work. transportCtx outlives ordinary
+	// cancellation so established visitor connections can drain before transports close.
 	transportCtx, cancelTransports := context.WithCancel(context.WithoutCancel(parentCtx))
 	stopAdmissions := context.AfterFunc(sessionCtx, func() {
 		route.stopAdmissions()
@@ -257,9 +258,9 @@ func confirmPublishRunReady(
 	}
 }
 
-// publishRunCleanup owns the teardown after the public URL and connection manager have
-// started. A normal parent cancellation drains before transport cancellation;
-// a heartbeat or certificate failure closes transports immediately.
+// publishRunCleanup joins the workers started after the public URL server and
+// connection manager. parent cancellation drains before transport cancellation;
+// heartbeat and certificate failures close transports immediately.
 type publishRunCleanup struct {
 	parentCtx, sessionCtx context.Context
 	cancelSession         context.CancelCauseFunc
@@ -336,7 +337,8 @@ func runCertificateRenewals(
 	state *clientstate.CertificateCache,
 	material clientstate.Material,
 ) error {
-	// Keep renewal ownership across retry waits, but release it before the next renewal is due.
+	// keep the cache lock across retries of one renewal, then release it before
+	// waiting for the next renewal so another worktree can use the certificate.
 	var renewalLock *clientstate.Lock
 	defer func() { _ = renewalLock.Close() }()
 	renewalTimer := time.NewTimer(max(time.Until(material.RenewAt), 0))

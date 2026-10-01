@@ -128,8 +128,8 @@ func TestStagedWriteRollbackReportsRestoreFailure(t *testing.T) {
 	if err := write.commit(); err != nil {
 		t.Fatal(err)
 	}
-	// Force an actual filesystem failure after commit, rather than invalid input
-	// rejected before any write. Restoring cannot overwrite a directory.
+	// force a filesystem failure after commit, rather than invalid input
+	// rejected before any write. restoring cannot overwrite a directory.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,7 @@ var (
 const transactionRollbackTimeout = 5 * time.Second
 
 // PublishRunNotReadyError reports the prerequisites checked under the public URL
-// and publish run locks. It does not contain credentials or certificate material.
+// and publish run locks. it does not contain credentials or certificate material.
 type PublishRunNotReadyError struct {
 	CertificateInstalled          bool
 	ReadyPublisherConnectionCount int
@@ -204,7 +204,7 @@ type IngressRoutingTablePublisherConnection struct {
 }
 
 // MarkPublicURLCertificateInstalled records publisher acknowledgement of the
-// installed public URL certificate. First routability still requires both connections.
+// installed public URL certificate. first routability still requires both connections.
 func (d *Database) MarkPublicURLCertificateInstalled(
 	ctx context.Context,
 	authentication PublishRunAuthentication,
@@ -784,8 +784,8 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 	if len(pending.events) == 0 {
 		return nil
 	}
-	// Callers hold each event's route row through commit, so same-route
-	// publishers cannot change these entry revisions concurrently.
+	// callers hold each public URL row through commit, so another transaction
+	// cannot allocate an entry revision for that public URL concurrently.
 	type publishRunNumber struct {
 		publicURLID      string
 		publishRunNumber int64
@@ -812,10 +812,10 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 		entryRevisionsByPublicURL[key] = entryRevision
 		entryRevisions[index] = entryRevision
 	}
-	// This is the transaction's final phase. The clock remains held through
-	// commit, and callers must not perform further database work after it.
-	// The final insert takes the clock before allocating its revision. Only a
-	// multi-event publication needs an earlier, separate clock acquisition.
+	// publish only after connection and challenge projections are complete.
+	// hold the routing clock through commit so revision order matches commit order;
+	// callers must not perform further database work. the final insert acquires
+	// the clock itself when there is only one event.
 	if len(pending.events) > 1 {
 		if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
 			return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)

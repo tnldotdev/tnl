@@ -79,8 +79,8 @@ func serveWithRelayClientTLS(
 	if err != nil {
 		return err
 	}
-	// Caller cancellation starts graceful shutdown; component contexts remain
-	// live until shutdown has drained admitted work or reached its deadline.
+	// caller cancellation starts shutdown. component contexts stay live until
+	// admitted work drains or the shutdown deadline expires.
 	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &daemon{
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
@@ -128,9 +128,8 @@ func serveWithRelayClientTLS(
 			return err
 		}
 	}
-	// Reserve the configured observability address before standalone or split
-	// roles allocate listeners on port 0. Do not serve it until startup finishes:
-	// readiness inspects the role's listeners while they are being assigned.
+	// reserve the observability address before role listeners allocate port 0.
+	// serve it only after startup; readiness reads those listeners during setup.
 	var metricsListener net.Listener
 	if cfg.MetricsListen != "" {
 		metricsListener, err = net.Listen("tcp", cfg.MetricsListen)
@@ -295,7 +294,7 @@ func runtimeCapacity(name string, value int64) (int, error) {
 	return converted, nil
 }
 
-// start supervises a component for the process lifetime. Only its first exit
+// start supervises a component for the process lifetime. only its first exit
 // determines the result of Serve; shutdown joins every component, including
 // those that exit after the result has been selected.
 func (d *daemon) start(name string, run func() error) {

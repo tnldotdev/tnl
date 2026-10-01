@@ -291,7 +291,7 @@ func configureDevBootstrapTest(t *testing.T, ctx context.Context, bootstrap *dev
 		defer close(joined)
 		result := postDevRequest(bootstrap, "/v1/configure", request)
 		done <- result
-		// A failed HTTP request must also release Configuration's receive.
+		// a failed HTTP request must also release Configuration's receive.
 		if result.err != nil || result.status != http.StatusOK {
 			cancel()
 		}

@@ -164,7 +164,7 @@ func TestIntegrationRelayDrainRejectsExpiredRun(t *testing.T) {
 		restarted.RelayLeaseRevision != lease.RelayLeaseRevision+1 {
 		t.Fatalf("restarted relay lease = %#v", restarted)
 	}
-	// Ordinary lease expiry still permits recovery by a run that has not drained.
+	// ordinary lease expiry still permits recovery by a process run that has not drained.
 	recovered, err := database.RegisterRelay(t.Context(), registration, restarted.LeaseExpiresAt, time.Minute)
 	if err != nil || recovered.Draining || recovered.RelayLeaseRevision != restarted.RelayLeaseRevision+1 {
 		t.Fatalf("recovered relay lease = %#v, %v", recovered, err)

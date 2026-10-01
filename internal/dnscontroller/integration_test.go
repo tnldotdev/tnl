@@ -155,7 +155,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "public_url_old", "authorization_old") })
-	// Observe PostgreSQL contention rather than assuming a goroutine was scheduled.
+	// observe PostgreSQL contention rather than assuming a goroutine was scheduled.
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -177,7 +177,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	if err := otherDatabase.WithDNSChallengeLock(ctx, "_acme-challenge.unrelated.example.test", func() error { return otherDatabase.Health(ctx) }); err != nil {
 		t.Fatalf("unrelated record or pool read was blocked: %v", err)
 	}
-	// This presentation did not exist in either caller's pre-lock snapshot.
+	// this presentation did not exist in either caller's pre-lock snapshot.
 	seedHostedChallenge(t, database, sql, "third", "tunnels.example.test", hostedManagedAuthorityReference)
 	release()
 	for _, done := range []chan error{firstDone, secondDone} {

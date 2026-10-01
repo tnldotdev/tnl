@@ -116,8 +116,8 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 	if err != nil || len(empty.Entries) != 0 || empty.RoutingTableRevision <= snapshot.RoutingTableRevision {
 		t.Fatalf("disconnected snapshot = %#v, %v", empty, err)
 	}
-	// Read one event at a time to exercise cursor boundaries and prove no event
-	// is skipped. Entry revisions remain contiguous within this publish run number.
+	// read one event at a time to exercise cursor boundaries and prove no event
+	// is skipped. entry revisions remain contiguous within this publish run number.
 	var cursor uint64
 	var events int
 	wantKinds := []IngressRoutingTableEventKind{IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLTombstone}

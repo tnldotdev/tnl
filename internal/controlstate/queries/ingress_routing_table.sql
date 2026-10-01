@@ -10,8 +10,8 @@ WHERE singleton = true
 FOR UPDATE;
 
 -- name: ListIngressRoutingTableSnapshot :many
--- Group only entry keys and revisions across history, then fetch the selected
--- payloads. Filter after selection so tombstones/expiry cannot revive old rows.
+-- select the latest revision for each entry before filtering kind or expiry;
+-- filtering first could revive a superseded public URL or challenge.
 WITH latest AS (
     SELECT max(history.routing_table_revision) AS routing_table_revision
     FROM control.ingress_routing_table_events AS history
@@ -67,9 +67,9 @@ INSERT INTO control.ingress_routing_table_events (
 RETURNING routing_table_revision;
 
 -- name: InsertFinalIngressRoutingTableEvent :one
--- Acquire the clock before identity allocation in this same command. Single-event
--- publishers avoid a separate round trip while holding the global clock; callers
--- with earlier events already hold it. Keep the lock through transaction commit.
+-- take the routing clock before allocating the revision in this command.
+-- single-event publishers avoid an extra round trip; multi-event publishers
+-- already hold the clock. keep it through commit to preserve revision order.
 WITH clock_guard AS MATERIALIZED (
     SELECT current_revision
     FROM control.ingress_routing_table_clock

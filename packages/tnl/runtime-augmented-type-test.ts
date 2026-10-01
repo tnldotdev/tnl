@@ -18,9 +18,9 @@ declare module "@tnldotdev/tnl" {
   }
 }
 
-// @ts-expect-error Augmentation does not make metadata always present.
+// @ts-expect-error augmentation does not make metadata always present.
 tnl.namespace satisfies "member.example";
-// @ts-expect-error Known services still require narrowing the root value.
+// @ts-expect-error known services still require narrowing the root value.
 void tnl.services.api;
 
 if (tnl.namespace && tnl.services) {
@@ -30,20 +30,20 @@ if (tnl.namespace && tnl.services) {
   tnl.services.api.url satisfies "https://api.member.example";
   tnl.dev satisfies boolean;
 
-  // Assign valid literal values so these errors specifically check readonly ownership.
-  // @ts-expect-error Project metadata is readonly after augmentation.
+  // assign valid literal values so these errors specifically check readonly ownership.
+  // @ts-expect-error project metadata is readonly after augmentation.
   tnl.namespace = "member.example";
-  // @ts-expect-error The services collection is readonly.
+  // @ts-expect-error the services collection is readonly.
   tnl.services = { ...tnl.services };
-  // @ts-expect-error Generated service entries are readonly.
+  // @ts-expect-error generated service entries are readonly.
   tnl.services.api = { ...tnl.services.api };
-  // @ts-expect-error Generated service fields are readonly.
+  // @ts-expect-error generated service fields are readonly.
   tnl.services.api.hostname = "api.member.example";
-  // @ts-expect-error Generated service URLs are readonly.
+  // @ts-expect-error generated service URLs are readonly.
   tnl.services.api.url = "https://api.member.example";
-  // @ts-expect-error Runtime lifecycle metadata is readonly.
+  // @ts-expect-error runtime lifecycle metadata is readonly.
   tnl.dev = false;
 
-  // @ts-expect-error Generated project declarations reject unknown services.
+  // @ts-expect-error generated project declarations reject unknown services.
   void tnl.services.worker;
 }

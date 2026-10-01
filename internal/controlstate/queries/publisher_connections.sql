@@ -4,6 +4,8 @@ FROM control.publish_run_connections
 WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
 FOR UPDATE;
 
+-- require the exact publish run, assignment revision, and relay service. only
+-- the same process and claim ID may repeat a connected or ready claim.
 -- name: ClaimPublisherConnection :one
 UPDATE control.publish_run_connections
 SET connected_relay_id = sqlc.arg(relay_id),
@@ -33,6 +35,7 @@ WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
   )
 RETURNING *;
 
+-- ready is idempotent for the exact claim; a replaced assignment cannot revive.
 -- name: MarkPublisherConnectionReady :one
 UPDATE control.publish_run_connections
 SET state = 'ready',
@@ -53,6 +56,7 @@ WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
   AND state IN ('connected', 'ready')
 RETURNING *;
 
+-- close only the exact claim so a late disconnect cannot close its replacement.
 -- name: DisconnectPublisherConnection :one
 UPDATE control.publish_run_connections
 SET state = 'closed',

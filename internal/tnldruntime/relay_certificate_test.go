@@ -15,7 +15,7 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Keep the same live config through both installs; recreating it would not
+	// keep the same live config through both installs; recreating it would not
 	// demonstrate that existing listeners observe a certificate replacement.
 	config := source.TLSConfig()
 	if _, err := config.GetCertificate(nil); err == nil {

@@ -18,7 +18,7 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(20 * time.Second)
 	wantIdentity := controlstate.RelayLeaseIdentity{RelayServiceID: "service-1", RelayID: "relay-1", RelayRunID: "run-1", RelayLeaseRevision: 7}
-	// The store result deliberately differs from the submitted identity and counters.
+	// the store result deliberately differs from the submitted identity and counters.
 	lease := controlstate.RelayLease{
 		RelayLeaseIdentity: controlstate.RelayLeaseIdentity{RelayServiceID: "service-result", RelayID: "relay-result", RelayRunID: "run-result", RelayLeaseRevision: 9},
 		ProtocolVersion:    1, RelayAddress: "relay.example.test:443", TLSServerName: "relay.example.test", InternalRelayAddress: "10.0.0.10:8443",

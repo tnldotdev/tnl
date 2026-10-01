@@ -25,7 +25,7 @@ interface TestWebSocketOptions {
   readonly protocol?: string;
 }
 
-// The returned port is available only at the instant we close the probe listener.
+// the returned port is available only at the instant we close the probe listener.
 export async function findAvailableLoopbackPort(host = "127.0.0.1"): Promise<number> {
   const reservation = await holdLoopbackPort(host);
   await reservation.close();
@@ -93,7 +93,7 @@ export async function requestOnce(
   options: TestRequestOptions = {},
 ): Promise<TestResponse> {
   return await new Promise<TestResponse>((resolve, reject) => {
-    // A wall-clock deadline also bounds a server that keeps trickling response bytes.
+    // a wall-clock deadline also bounds a server that keeps trickling response bytes.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const fail = (error: Error) => {
       clearTimeout(timer);
@@ -155,7 +155,7 @@ export async function openTestWebSocketWithMessage(
 ): Promise<{ message: string; socket: WebSocket }> {
   const socket = createTestWebSocket(port, path, options);
   try {
-    // Attach both waiters before the handshake; handle either rejection immediately.
+    // attach both waiters before the handshake; handle either rejection immediately.
     const [, message] = await Promise.all([
       waitForWebSocketOpen(socket),
       waitForWebSocketMessage(socket),

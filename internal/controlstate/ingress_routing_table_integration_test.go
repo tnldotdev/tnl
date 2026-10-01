@@ -19,7 +19,7 @@ func TestIntegrationRoutingSnapshotSelectsLatestBeforeFiltering(t *testing.T) {
 		name    string
 		events  []event
 		through int
-		want    []int // One-based positions in events, independent of SQL row order.
+		want    []int // one-based positions in events, independent of SQL row order.
 	}{
 		{
 			name:    "route tombstone suppresses live history",
@@ -102,7 +102,7 @@ func TestIntegrationRoutingSnapshotSelectsLatestBeforeFiltering(t *testing.T) {
 					EntryRevision: uint64(index + 1), Projection: projection, PublicUrlExpiresAt: &expires, CreatedAt: f.now,
 				})
 			}
-			// Select a high-water revision explicitly, including older boundaries,
+			// select a high-water revision explicitly, including older boundaries,
 			// to exercise snapshot selection independently of event publication.
 			var through uint64
 			if tc.through != 0 {

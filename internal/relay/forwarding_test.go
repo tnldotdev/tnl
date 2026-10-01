@@ -78,7 +78,7 @@ func testForwardingHeaderIsolation(t *testing.T, malformed bool) {
 		t.Fatal(err)
 	}
 	if malformed {
-		// A zero-length frame fails header validation on this stream only.
+		// a zero-length frame fails header validation on this stream only.
 		if _, err := stalledClient.Write([]byte{0, 0, 0, 0}); err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func testForwardingHeaderIsolation(t *testing.T, malformed bool) {
 			t.Fatalf("malformed stream response = %+v, %v", response, err)
 		}
 	}
-	// A stalled or malformed first stream must not prevent the next stream from
+	// a stalled or malformed first stream must not prevent the next stream from
 	// receiving a relay response before the first stream's setup deadline.
 	_ = healthyClient.SetDeadline(time.Now().Add(time.Second))
 	if err := tunnelv1.WriteInternalForwardingHeader(healthyClient, tunnelv1.InternalForwardingHeader{

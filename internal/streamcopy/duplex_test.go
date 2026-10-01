@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Real TCP is necessary here because net.Pipe cannot half-close a connection.
+// real TCP is needed because net.Pipe cannot half-close a connection.
 func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -93,7 +93,7 @@ func TestCopyHalfCloseAndExactAccounting(t *testing.T) {
 	if err != nil || !bytes.Equal(got, request) {
 		t.Fatalf("request: %d bytes, %v", len(got), err)
 	}
-	// The EOF in this direction must leave the reverse direction usable.
+	// EOF in this direction must leave the reverse direction usable.
 	select {
 	case r := <-result:
 		t.Fatalf("copy finished before response: %+v", r)
@@ -116,7 +116,7 @@ func TestCopyHalfCloseAndExactAccounting(t *testing.T) {
 }
 
 type failingConn struct {
-	net.Conn          // Hide TCP ReaderFrom/WriterTo so the injected error is actually exercised.
+	net.Conn          // hide TCP ReaderFrom/WriterTo so the injected error is exercised.
 	readErr, writeErr error
 	closed            atomic.Bool
 }

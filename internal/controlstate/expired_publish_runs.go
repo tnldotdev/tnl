@@ -10,7 +10,7 @@ import (
 )
 
 // ExpireSavedPublishRuns closes at most one batch of expired runs, including
-// runs on saved public URLs that no publisher will touch again. Each closure
+// runs on saved public URLs that no publisher will touch again. each closure
 // also releases its relay reservations and publishes routing tombstones.
 func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (count int, retErr error) {
 	if err := d.requireOpen(); err != nil {
@@ -30,8 +30,8 @@ func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (c
 		return 0, fmt.Errorf("controlstate: expire saved publish runs: lock public URLs: %w", err)
 	}
 	for _, route := range routes {
-		// The candidate may have been renewed after the query's snapshot.
-		// Recheck the run under its public URL lock before closing it.
+		// the candidate may have been renewed after the query's snapshot.
+		// recheck the publish run under its public URL lock before closing it.
 		_, closed, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
 		if err != nil {
 			return 0, err

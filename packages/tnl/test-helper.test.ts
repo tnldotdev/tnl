@@ -66,8 +66,8 @@ describe("test resource ownership", () => {
     `,
     ]);
     let stdout = "";
-    // The bounded combined output can lose this marker if pending stderr
-    // arrives afterward. Observe stdout directly to prove both pipes drained.
+    // bounded combined output can lose this marker if pending stderr
+    // arrives afterward. observe stdout directly to prove both pipes drained.
     child.child.stdout?.on("data", (chunk: Buffer | string) => {
       stdout = `${stdout}${chunk.toString()}`.slice(-64);
     });

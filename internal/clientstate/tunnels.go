@@ -102,7 +102,8 @@ type TunnelInfo struct {
 	LeaseExpiresAt   time.Time     `json:"lease_expires_at"`
 }
 
-// BeginTunnel registers a local tunnel and maintains its liveness lease until Finish.
+// BeginTunnel registers a local tunnel and maintains its liveness lease until
+// Finish joins the heartbeat worker.
 func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) (*Tunnel, error) {
 	if options.Command != TunnelCommandPublish && options.Command != TunnelCommandDev {
 		return nil, errors.New("clientstate: invalid tunnel command")
@@ -158,7 +159,8 @@ INSERT INTO local_tunnels (
 
 func (t *Tunnel) ID() string { return t.id }
 
-// Context is canceled if the parent context ends or the tunnel lease cannot be maintained.
+// Context is canceled if the parent ends or a failed heartbeat leaves the
+// tunnel's local lease unmaintained.
 func (t *Tunnel) Context() context.Context { return t.ctx }
 
 func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) error {
@@ -224,7 +226,8 @@ func (t *Tunnel) SetDraining(ctx context.Context) error {
 	return tunnelUpdateResult(rows, err)
 }
 
-// Finish stops lease maintenance and records a terminal state.
+// Finish cancels and joins lease maintenance before recording the terminal
+// state so a late heartbeat cannot overwrite it.
 func (t *Tunnel) Finish(ctx context.Context, runErr error) error {
 	t.finishOnce.Do(func() {
 		t.cancel(nil)

@@ -179,7 +179,7 @@ func TestIntegrationPublicURLUsageTerminalRejection(t *testing.T) {
 	if remaining, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "next", 1, claimedAt.Add(24*time.Hour), time.Minute); err != nil || len(remaining) != 0 {
 		t.Fatalf("rejected delivery reclaimed = %#v, %v", remaining, err)
 	}
-	// A newer report revision for the same bucket is a distinct delivery.
+	// a newer report revision for the same bucket is a distinct delivery.
 	var bucketID, revision int64
 	if err := database.pool.QueryRow(t.Context(), `UPDATE control.public_url_usage_buckets SET bucket_revision = bucket_revision + 1 WHERE public_url_id = $1 RETURNING bucket_id, bucket_revision`, work.PublicURLID).Scan(&bucketID, &revision); err != nil {
 		t.Fatal(err)

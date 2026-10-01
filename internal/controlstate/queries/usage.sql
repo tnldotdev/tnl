@@ -34,8 +34,8 @@ WHERE control.ingress_usage_runs.ingress_lease_revision = EXCLUDED.ingress_lease
 RETURNING *;
 
 -- name: ListLatestIngressUsageReports :many
--- The ingress/run guards serialize this source's append-only history. Fetch only
--- bounded metadata, not histogram blobs; exact replays still load their payload.
+-- ingress and usage-run guards serialize this source's append-only history.
+-- fetch bounded metadata; exact replays load histogram payloads separately.
 WITH requested AS (
     SELECT DISTINCT unnest(sqlc.arg(public_url_ids)::text[]) AS public_url_id,
                     unnest(sqlc.arg(publish_run_numbers)::bigint[]) AS publish_run_number,
@@ -69,9 +69,9 @@ WHERE ingress_id = sqlc.arg(ingress_id)
   AND report_revision = sqlc.arg(report_revision);
 
 -- name: LockPublishRunForUsage :one
--- Acquire the immutable public URL reference before the publish run, in one round trip.
--- Read the bucket in a LATER statement: a competing ingress may create it while
--- this statement waits for the publish run lock, after this statement's snapshot.
+-- acquire the public URL reference before the publish run in one statement.
+-- read the bucket later: another ingress may create it while this statement
+-- waits for the publish run lock, after this statement's snapshot was taken.
 WITH public_url_guard AS MATERIALIZED (
     SELECT routes.id FROM control.public_urls AS routes
     WHERE routes.id = sqlc.arg(public_url_id)
@@ -98,10 +98,10 @@ WHERE public_url_id = sqlc.arg(public_url_id)
 FOR UPDATE;
 
 -- name: ApplyIngressUsageReport :one
--- The caller holds the ingress/run, public URL/publish run and existing bucket guards.
--- Dependencies make the immutable report, aggregate delta and denial update
--- one ordered write command. The caller checks insertion/aggregation and any
--- nonzero denial delta, rolling back all writes if a required step was rejected.
+-- callers hold the ingress/run, public URL/publish run, and existing bucket
+-- guards. dependent writes insert the immutable report, apply its aggregate
+-- delta, and update denials atomically. reject any missing required step and
+-- roll back the whole page.
 WITH report AS (
 INSERT INTO control.ingress_usage_reports (
     ingress_id,

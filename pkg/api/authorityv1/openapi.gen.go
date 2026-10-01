@@ -20,7 +20,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for AuthorizationOperation.
+// defines values for AuthorizationOperation.
 const (
 	PublicUrlCreate  AuthorizationOperation = "public_url.create"
 	PublicUrlDelete  AuthorizationOperation = "public_url.delete"
@@ -44,7 +44,7 @@ func (e AuthorizationOperation) Valid() bool {
 	}
 }
 
-// Defines values for CertificateChallengeMethod.
+// defines values for CertificateChallengeMethod.
 const (
 	Dns01     CertificateChallengeMethod = "dns-01"
 	TlsAlpn01 CertificateChallengeMethod = "tls-alpn-01"
@@ -62,7 +62,7 @@ func (e CertificateChallengeMethod) Valid() bool {
 	}
 }
 
-// Defines values for DNSRecordType.
+// defines values for DNSRecordType.
 const (
 	A     DNSRecordType = "A"
 	AAAA  DNSRecordType = "AAAA"
@@ -89,7 +89,7 @@ func (e DNSRecordType) Valid() bool {
 	}
 }
 
-// Defines values for DomainKind.
+// defines values for DomainKind.
 const (
 	Claimed DomainKind = "claimed"
 	Managed DomainKind = "managed"
@@ -107,7 +107,7 @@ func (e DomainKind) Valid() bool {
 	}
 }
 
-// Defines values for DomainState.
+// defines values for DomainState.
 const (
 	DomainStateFailed    DomainState = "failed"
 	DomainStatePending   DomainState = "pending"
@@ -131,7 +131,7 @@ func (e DomainState) Valid() bool {
 	}
 }
 
-// Defines values for InvitationState.
+// defines values for InvitationState.
 const (
 	InvitationStateAccepted InvitationState = "accepted"
 	InvitationStateExpired  InvitationState = "expired"
@@ -155,7 +155,7 @@ func (e InvitationState) Valid() bool {
 	}
 }
 
-// Defines values for ProblemCode.
+// defines values for ProblemCode.
 const (
 	Conflict            ProblemCode = "conflict"
 	DnsSetupPending     ProblemCode = "dns_setup_pending"
@@ -200,7 +200,7 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLScope.
+// defines values for PublicURLScope.
 const (
 	PublicURLScopeMember PublicURLScope = "member"
 	PublicURLScopeShared PublicURLScope = "shared"
@@ -218,7 +218,7 @@ func (e PublicURLScope) Valid() bool {
 	}
 }
 
-// Defines values for TeamKind.
+// defines values for TeamKind.
 const (
 	Organization TeamKind = "organization"
 	Personal     TeamKind = "personal"
@@ -236,7 +236,7 @@ func (e TeamKind) Valid() bool {
 	}
 }
 
-// Defines values for TeamRole.
+// defines values for TeamRole.
 const (
 	TeamRoleAdmin  TeamRole = "admin"
 	TeamRoleMember TeamRole = "member"
@@ -582,48 +582,39 @@ type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
 // Doer performs HTTP requests.
 //
-// The standard http.Client implements this interface.
+// the standard http.Client implements this interface.
 type HttpRequestDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client which conforms to the OpenAPI3 specification for this service.
+// Client calls this service's HTTP API.
 type Client struct {
-	// The endpoint of the server conforming to this interface, with scheme,
-	// https://api.deepmap.com for example. This can contain a path relative
-	// to the server, such as https://api.deepmap.com/dev-test, and all the
-	// paths in the swagger spec will be appended to the server.
+	// server URL; operation paths are appended to it.
 	Server string
 
-	// Doer for performing requests, typically a *http.Client with any
-	// customized settings, such as certificate chains.
+	// Client sends requests; callers can supply an http.Client with custom settings.
 	Client HttpRequestDoer
 
-	// A list of callbacks for modifying requests which are generated before sending over
-	// the network.
+	// RequestEditors modify requests before they are sent.
 	RequestEditors []RequestEditorFn
 }
 
 // ClientOption allows setting custom parameters during construction
 type ClientOption func(*Client) error
 
-// Creates a new Client, with reasonable defaults
+// NewClient creates a client with default options.
 func NewClient(server string, opts ...ClientOption) (*Client, error) {
-	// create a client with sane default values
 	client := Client{
 		Server: server,
 	}
-	// mutate client and add all optional params
 	for _, o := range opts {
 		if err := o(&client); err != nil {
 			return nil, err
 		}
 	}
-	// ensure the server URL always has a trailing slash
 	if !strings.HasSuffix(client.Server, "/") {
 		client.Server += "/"
 	}
-	// create httpClient, if not already present
 	if client.Client == nil {
 		client.Client = &http.Client{}
 	}
@@ -631,7 +622,7 @@ func NewClient(server string, opts ...ClientOption) (*Client, error) {
 }
 
 // WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. This is useful for tests.
+// automatically created using http.Client. this is useful for tests.
 func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 	return func(c *Client) error {
 		c.Client = doer
@@ -640,7 +631,7 @@ func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 }
 
 // WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. This can be used to mutate the request.
+// called right before sending the request. this can be used to mutate the request.
 func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	return func(c *Client) error {
 		c.RequestEditors = append(c.RequestEditors, fn)
@@ -648,194 +639,194 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	}
 }
 
-// The interface specification for the client above.
+// the interface specification for the client above.
 type ClientInterface interface {
 
-	// LogoutControlSession Revoke the authenticated control session
+	// LogoutControlSession revoke the authenticated control session
 	//
-	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+	// corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 	LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
+	// ExchangeOIDCTokenWithBody exchange an OIDC ID token for a control session
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 	ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
+	// ExchangeOIDCToken exchange an OIDC ID token for a control session
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 	ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RefreshControlSessionWithBody Rotate a control session's access and refresh tokens
+	// RefreshControlSessionWithBody rotate a control session's access and refresh tokens
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RefreshControlSession Rotate a control session's access and refresh tokens
+	// RefreshControlSession rotate a control session's access and refresh tokens
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginTokenWithBody Exchange a login token for a control session
+	// ExchangeLoginTokenWithBody exchange a login token for a control session
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginToken Exchange a login token for a control session
+	// ExchangeLoginToken exchange a login token for a control session
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetIdentityContext Read the authenticated identity and memberships
+	// GetIdentityContext read the authenticated identity and memberships
 	//
-	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
+	// corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 	GetIdentityContext(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptInvitationWithBody Accept an invitation with its secret
+	// AcceptInvitationWithBody accept an invitation with its secret
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+	// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptInvitation Accept an invitation with its secret
+	// AcceptInvitation accept an invitation with its secret
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+	// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
+	// AuthorizeServiceOperationWithBody authorize a control operation using current authority state
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceOperation Authorize a control operation using current authority state
+	// AuthorizeServiceOperation authorize a control operation using current authority state
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeams List teams for the authenticated identity
+	// ListTeams list teams for the authenticated identity
 	//
-	// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+	// corresponds with GET /v1/teams (the `ListTeams` operationId).
 	ListTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeamWithBody Create an organization team
+	// CreateTeamWithBody create an organization team
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+	// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 	CreateTeamWithBody(ctx context.Context, params *CreateTeamParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeam Create an organization team
+	// CreateTeam create an organization team
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+	// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 	CreateTeam(ctx context.Context, params *CreateTeamParams, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetTeam Read one team
+	// GetTeam read one team
 	//
-	// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
+	// corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 	GetTeam(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeamDomains List domains available to the team
+	// ListTeamDomains list domains available to the team
 	//
-	// Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
+	// corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 	ListTeamDomains(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimTeamDomainWithBody Begin claiming one domain
+	// ClaimTeamDomainWithBody begin claiming one domain
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomainWithBody(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimTeamDomain Begin claiming one domain
+	// ClaimTeamDomain begin claiming one domain
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomain(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseTeamDomain Release one claimed domain
+	// ReleaseTeamDomain release one claimed domain
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 	ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetTeamDefaultDomain Select a ready default domain
+	// SetTeamDefaultDomain select a ready default domain
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeamInvitations List team invitations
+	// ListTeamInvitations list team invitations
 	//
-	// Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
+	// corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
 	ListTeamInvitations(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeamInvitationWithBody Create an expiring invitation
+	// CreateTeamInvitationWithBody create an expiring invitation
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+	// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 	CreateTeamInvitationWithBody(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeamInvitation Create an expiring invitation
+	// CreateTeamInvitation create an expiring invitation
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+	// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 	CreateTeamInvitation(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, body CreateTeamInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeTeamInvitation Revoke one pending invitation
+	// RevokeTeamInvitation revoke one pending invitation
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 	RevokeTeamInvitation(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeamMemberships List team memberships
+	// ListTeamMemberships list team memberships
 	//
-	// Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
+	// corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
 	ListTeamMemberships(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RemoveMembership Remove one membership
+	// RemoveMembership remove one membership
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
 	RemoveMembership(ctx context.Context, teamId TeamID, membershipId MembershipID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetMembershipRoleWithBody Change one membership's team role
+	// SetMembershipRoleWithBody change one membership's team role
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+	// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithBody(ctx context.Context, teamId TeamID, membershipId MembershipID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetMembershipRole Change one membership's team role
+	// SetMembershipRole change one membership's team role
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+	// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// LogoutControlSession Revoke the authenticated control session
+// LogoutControlSession revoke the authenticated control session
 //
-// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+// corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 func (c *Client) LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewLogoutControlSessionRequest(c.Server)
 	if err != nil {
@@ -848,11 +839,11 @@ func (c *Client) LogoutControlSession(ctx context.Context, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
+// ExchangeOIDCTokenWithBody exchange an OIDC ID token for a control session
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 func (c *Client) ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExchangeOIDCTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -865,11 +856,11 @@ func (c *Client) ExchangeOIDCTokenWithBody(ctx context.Context, contentType stri
 	return c.Client.Do(req)
 }
 
-// ExchangeOIDCToken Exchange an OIDC ID token for a control session
+// ExchangeOIDCToken exchange an OIDC ID token for a control session
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 func (c *Client) ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExchangeOIDCTokenRequest(c.Server, body)
 	if err != nil {
@@ -882,11 +873,11 @@ func (c *Client) ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJS
 	return c.Client.Do(req)
 }
 
-// RefreshControlSessionWithBody Rotate a control session's access and refresh tokens
+// RefreshControlSessionWithBody rotate a control session's access and refresh tokens
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 func (c *Client) RefreshControlSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshControlSessionRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -899,11 +890,11 @@ func (c *Client) RefreshControlSessionWithBody(ctx context.Context, contentType 
 	return c.Client.Do(req)
 }
 
-// RefreshControlSession Rotate a control session's access and refresh tokens
+// RefreshControlSession rotate a control session's access and refresh tokens
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 func (c *Client) RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshControlSessionRequest(c.Server, body)
 	if err != nil {
@@ -916,11 +907,11 @@ func (c *Client) RefreshControlSession(ctx context.Context, body RefreshControlS
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginTokenWithBody Exchange a login token for a control session
+// ExchangeLoginTokenWithBody exchange a login token for a control session
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExchangeLoginTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -933,11 +924,11 @@ func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginToken Exchange a login token for a control session
+// ExchangeLoginToken exchange a login token for a control session
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 func (c *Client) ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExchangeLoginTokenRequest(c.Server, body)
 	if err != nil {
@@ -950,9 +941,9 @@ func (c *Client) ExchangeLoginToken(ctx context.Context, body ExchangeLoginToken
 	return c.Client.Do(req)
 }
 
-// GetIdentityContext Read the authenticated identity and memberships
+// GetIdentityContext read the authenticated identity and memberships
 //
-// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
+// corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 func (c *Client) GetIdentityContext(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetIdentityContextRequest(c.Server)
 	if err != nil {
@@ -965,11 +956,11 @@ func (c *Client) GetIdentityContext(ctx context.Context, reqEditors ...RequestEd
 	return c.Client.Do(req)
 }
 
-// AcceptInvitationWithBody Accept an invitation with its secret
+// AcceptInvitationWithBody accept an invitation with its secret
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -982,11 +973,11 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 	return c.Client.Do(req)
 }
 
-// AcceptInvitation Accept an invitation with its secret
+// AcceptInvitation accept an invitation with its secret
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
 	if err != nil {
@@ -999,11 +990,11 @@ func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSON
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
+// AuthorizeServiceOperationWithBody authorize a control operation using current authority state
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceOperationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -1016,11 +1007,11 @@ func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentT
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceOperation Authorize a control operation using current authority state
+// AuthorizeServiceOperation authorize a control operation using current authority state
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceOperationRequest(c.Server, body)
 	if err != nil {
@@ -1033,9 +1024,9 @@ func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeSe
 	return c.Client.Do(req)
 }
 
-// ListTeams List teams for the authenticated identity
+// ListTeams list teams for the authenticated identity
 //
-// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+// corresponds with GET /v1/teams (the `ListTeams` operationId).
 func (c *Client) ListTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamsRequest(c.Server)
 	if err != nil {
@@ -1048,11 +1039,11 @@ func (c *Client) ListTeams(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-// CreateTeamWithBody Create an organization team
+// CreateTeamWithBody create an organization team
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 func (c *Client) CreateTeamWithBody(ctx context.Context, params *CreateTeamParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -1065,11 +1056,11 @@ func (c *Client) CreateTeamWithBody(ctx context.Context, params *CreateTeamParam
 	return c.Client.Do(req)
 }
 
-// CreateTeam Create an organization team
+// CreateTeam create an organization team
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 func (c *Client) CreateTeam(ctx context.Context, params *CreateTeamParams, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamRequest(c.Server, params, body)
 	if err != nil {
@@ -1082,9 +1073,9 @@ func (c *Client) CreateTeam(ctx context.Context, params *CreateTeamParams, body 
 	return c.Client.Do(req)
 }
 
-// GetTeam Read one team
+// GetTeam read one team
 //
-// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
+// corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 func (c *Client) GetTeam(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamRequest(c.Server, teamId)
 	if err != nil {
@@ -1097,9 +1088,9 @@ func (c *Client) GetTeam(ctx context.Context, teamId TeamID, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
-// ListTeamDomains List domains available to the team
+// ListTeamDomains list domains available to the team
 //
-// Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
+// corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 func (c *Client) ListTeamDomains(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamDomainsRequest(c.Server, teamId)
 	if err != nil {
@@ -1112,11 +1103,11 @@ func (c *Client) ListTeamDomains(ctx context.Context, teamId TeamID, reqEditors 
 	return c.Client.Do(req)
 }
 
-// ClaimTeamDomainWithBody Begin claiming one domain
+// ClaimTeamDomainWithBody begin claiming one domain
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 func (c *Client) ClaimTeamDomainWithBody(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimTeamDomainRequestWithBody(c.Server, teamId, params, contentType, body)
 	if err != nil {
@@ -1129,11 +1120,11 @@ func (c *Client) ClaimTeamDomainWithBody(ctx context.Context, teamId TeamID, par
 	return c.Client.Do(req)
 }
 
-// ClaimTeamDomain Begin claiming one domain
+// ClaimTeamDomain begin claiming one domain
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 func (c *Client) ClaimTeamDomain(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimTeamDomainRequest(c.Server, teamId, params, body)
 	if err != nil {
@@ -1146,9 +1137,9 @@ func (c *Client) ClaimTeamDomain(ctx context.Context, teamId TeamID, params *Cla
 	return c.Client.Do(req)
 }
 
-// ReleaseTeamDomain Release one claimed domain
+// ReleaseTeamDomain release one claimed domain
 //
-// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 func (c *Client) ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleaseTeamDomainRequest(c.Server, teamId, domainId)
 	if err != nil {
@@ -1161,9 +1152,9 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId 
 	return c.Client.Do(req)
 }
 
-// SetTeamDefaultDomain Select a ready default domain
+// SetTeamDefaultDomain select a ready default domain
 //
-// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetTeamDefaultDomainRequest(c.Server, teamId, domainId)
 	if err != nil {
@@ -1176,9 +1167,9 @@ func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domain
 	return c.Client.Do(req)
 }
 
-// ListTeamInvitations List team invitations
+// ListTeamInvitations list team invitations
 //
-// Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
+// corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
 func (c *Client) ListTeamInvitations(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamInvitationsRequest(c.Server, teamId)
 	if err != nil {
@@ -1191,11 +1182,11 @@ func (c *Client) ListTeamInvitations(ctx context.Context, teamId TeamID, reqEdit
 	return c.Client.Do(req)
 }
 
-// CreateTeamInvitationWithBody Create an expiring invitation
+// CreateTeamInvitationWithBody create an expiring invitation
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 func (c *Client) CreateTeamInvitationWithBody(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamInvitationRequestWithBody(c.Server, teamId, params, contentType, body)
 	if err != nil {
@@ -1208,11 +1199,11 @@ func (c *Client) CreateTeamInvitationWithBody(ctx context.Context, teamId TeamID
 	return c.Client.Do(req)
 }
 
-// CreateTeamInvitation Create an expiring invitation
+// CreateTeamInvitation create an expiring invitation
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 func (c *Client) CreateTeamInvitation(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, body CreateTeamInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamInvitationRequest(c.Server, teamId, params, body)
 	if err != nil {
@@ -1225,9 +1216,9 @@ func (c *Client) CreateTeamInvitation(ctx context.Context, teamId TeamID, params
 	return c.Client.Do(req)
 }
 
-// RevokeTeamInvitation Revoke one pending invitation
+// RevokeTeamInvitation revoke one pending invitation
 //
-// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 func (c *Client) RevokeTeamInvitation(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeTeamInvitationRequest(c.Server, teamId, invitationId)
 	if err != nil {
@@ -1240,9 +1231,9 @@ func (c *Client) RevokeTeamInvitation(ctx context.Context, teamId TeamID, invita
 	return c.Client.Do(req)
 }
 
-// ListTeamMemberships List team memberships
+// ListTeamMemberships list team memberships
 //
-// Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
+// corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
 func (c *Client) ListTeamMemberships(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamMembershipsRequest(c.Server, teamId)
 	if err != nil {
@@ -1255,9 +1246,9 @@ func (c *Client) ListTeamMemberships(ctx context.Context, teamId TeamID, reqEdit
 	return c.Client.Do(req)
 }
 
-// RemoveMembership Remove one membership
+// RemoveMembership remove one membership
 //
-// Corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
 func (c *Client) RemoveMembership(ctx context.Context, teamId TeamID, membershipId MembershipID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveMembershipRequest(c.Server, teamId, membershipId)
 	if err != nil {
@@ -1270,11 +1261,11 @@ func (c *Client) RemoveMembership(ctx context.Context, teamId TeamID, membership
 	return c.Client.Do(req)
 }
 
-// SetMembershipRoleWithBody Change one membership's team role
+// SetMembershipRoleWithBody change one membership's team role
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 func (c *Client) SetMembershipRoleWithBody(ctx context.Context, teamId TeamID, membershipId MembershipID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetMembershipRoleRequestWithBody(c.Server, teamId, membershipId, contentType, body)
 	if err != nil {
@@ -1287,11 +1278,11 @@ func (c *Client) SetMembershipRoleWithBody(ctx context.Context, teamId TeamID, m
 	return c.Client.Do(req)
 }
 
-// SetMembershipRole Change one membership's team role
+// SetMembershipRole change one membership's team role
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 func (c *Client) SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetMembershipRoleRequest(c.Server, teamId, membershipId, body)
 	if err != nil {
@@ -2156,207 +2147,207 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// LogoutControlSessionWithResponse Revoke the authenticated control session
+	// LogoutControlSessionWithResponse revoke the authenticated control session
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+	// corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 	LogoutControlSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutControlSessionResponse, error)
 
-	// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
+	// ExchangeOIDCTokenWithBodyWithResponse exchange an OIDC ID token for a control session
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 	ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
 
-	// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
+	// ExchangeOIDCTokenWithResponse exchange an OIDC ID token for a control session
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 	ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
 
-	// RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
+	// RefreshControlSessionWithBodyWithResponse rotate a control session's access and refresh tokens
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
 
-	// RefreshControlSessionWithResponse Rotate a control session's access and refresh tokens
+	// RefreshControlSessionWithResponse rotate a control session's access and refresh tokens
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
 
-	// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+	// ExchangeLoginTokenWithBodyWithResponse exchange a login token for a control session
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
 
-	// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+	// ExchangeLoginTokenWithResponse exchange a login token for a control session
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
 
-	// GetIdentityContextWithResponse Read the authenticated identity and memberships
+	// GetIdentityContextWithResponse read the authenticated identity and memberships
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
+	// corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 	GetIdentityContextWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetIdentityContextResponse, error)
 
-	// AcceptInvitationWithBodyWithResponse Accept an invitation with its secret
+	// AcceptInvitationWithBodyWithResponse accept an invitation with its secret
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+	// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
-	// AcceptInvitationWithResponse Accept an invitation with its secret
+	// AcceptInvitationWithResponse accept an invitation with its secret
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+	// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
-	// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
+	// AuthorizeServiceOperationWithBodyWithResponse authorize a control operation using current authority state
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
-	// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
+	// AuthorizeServiceOperationWithResponse authorize a control operation using current authority state
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
-	// ListTeamsWithResponse List teams for the authenticated identity
+	// ListTeamsWithResponse list teams for the authenticated identity
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+	// corresponds with GET /v1/teams (the `ListTeams` operationId).
 	ListTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListTeamsResponse, error)
 
-	// CreateTeamWithBodyWithResponse Create an organization team
+	// CreateTeamWithBodyWithResponse create an organization team
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+	// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 	CreateTeamWithBodyWithResponse(ctx context.Context, params *CreateTeamParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamResponse, error)
 
-	// CreateTeamWithResponse Create an organization team
+	// CreateTeamWithResponse create an organization team
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+	// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 	CreateTeamWithResponse(ctx context.Context, params *CreateTeamParams, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamResponse, error)
 
-	// GetTeamWithResponse Read one team
+	// GetTeamWithResponse read one team
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
+	// corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 	GetTeamWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*GetTeamResponse, error)
 
-	// ListTeamDomainsWithResponse List domains available to the team
+	// ListTeamDomainsWithResponse list domains available to the team
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
+	// corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 	ListTeamDomainsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamDomainsResponse, error)
 
-	// ClaimTeamDomainWithBodyWithResponse Begin claiming one domain
+	// ClaimTeamDomainWithBodyWithResponse begin claiming one domain
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomainWithBodyWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error)
 
-	// ClaimTeamDomainWithResponse Begin claiming one domain
+	// ClaimTeamDomainWithResponse begin claiming one domain
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomainWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error)
 
-	// ReleaseTeamDomainWithResponse Release one claimed domain
+	// ReleaseTeamDomainWithResponse release one claimed domain
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 	ReleaseTeamDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*ReleaseTeamDomainResponse, error)
 
-	// SetTeamDefaultDomainWithResponse Select a ready default domain
+	// SetTeamDefaultDomainWithResponse select a ready default domain
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
+	// corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*SetTeamDefaultDomainResponse, error)
 
-	// ListTeamInvitationsWithResponse List team invitations
+	// ListTeamInvitationsWithResponse list team invitations
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
+	// corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
 	ListTeamInvitationsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamInvitationsResponse, error)
 
-	// CreateTeamInvitationWithBodyWithResponse Create an expiring invitation
+	// CreateTeamInvitationWithBodyWithResponse create an expiring invitation
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+	// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 	CreateTeamInvitationWithBodyWithResponse(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamInvitationResponse, error)
 
-	// CreateTeamInvitationWithResponse Create an expiring invitation
+	// CreateTeamInvitationWithResponse create an expiring invitation
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+	// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 	CreateTeamInvitationWithResponse(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, body CreateTeamInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamInvitationResponse, error)
 
-	// RevokeTeamInvitationWithResponse Revoke one pending invitation
+	// RevokeTeamInvitationWithResponse revoke one pending invitation
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 	RevokeTeamInvitationWithResponse(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*RevokeTeamInvitationResponse, error)
 
-	// ListTeamMembershipsWithResponse List team memberships
+	// ListTeamMembershipsWithResponse list team memberships
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
+	// corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
 	ListTeamMembershipsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamMembershipsResponse, error)
 
-	// RemoveMembershipWithResponse Remove one membership
+	// RemoveMembershipWithResponse remove one membership
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
+	// corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
 	RemoveMembershipWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, reqEditors ...RequestEditorFn) (*RemoveMembershipResponse, error)
 
-	// SetMembershipRoleWithBodyWithResponse Change one membership's team role
+	// SetMembershipRoleWithBodyWithResponse change one membership's team role
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+	// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithBodyWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
 
-	// SetMembershipRoleWithResponse Change one membership's team role
+	// SetMembershipRoleWithResponse change one membership's team role
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+	// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
 }
 
@@ -3313,11 +3304,11 @@ func (r SetMembershipRoleResponse) ContentType() string {
 	return ""
 }
 
-// LogoutControlSessionWithResponse Revoke the authenticated control session
+// LogoutControlSessionWithResponse revoke the authenticated control session
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+// corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 func (c *ClientWithResponses) LogoutControlSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutControlSessionResponse, error) {
 	rsp, err := c.LogoutControlSession(ctx, reqEditors...)
 	if err != nil {
@@ -3326,11 +3317,11 @@ func (c *ClientWithResponses) LogoutControlSessionWithResponse(ctx context.Conte
 	return ParseLogoutControlSessionResponse(rsp)
 }
 
-// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
+// ExchangeOIDCTokenWithBodyWithResponse exchange an OIDC ID token for a control session
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 func (c *ClientWithResponses) ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
 	rsp, err := c.ExchangeOIDCTokenWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -3339,11 +3330,11 @@ func (c *ClientWithResponses) ExchangeOIDCTokenWithBodyWithResponse(ctx context.
 	return ParseExchangeOIDCTokenResponse(rsp)
 }
 
-// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
+// ExchangeOIDCTokenWithResponse exchange an OIDC ID token for a control session
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+// corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
 func (c *ClientWithResponses) ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
 	rsp, err := c.ExchangeOIDCToken(ctx, body, reqEditors...)
 	if err != nil {
@@ -3352,11 +3343,11 @@ func (c *ClientWithResponses) ExchangeOIDCTokenWithResponse(ctx context.Context,
 	return ParseExchangeOIDCTokenResponse(rsp)
 }
 
-// RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
+// RefreshControlSessionWithBodyWithResponse rotate a control session's access and refresh tokens
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 func (c *ClientWithResponses) RefreshControlSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error) {
 	rsp, err := c.RefreshControlSessionWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -3365,11 +3356,11 @@ func (c *ClientWithResponses) RefreshControlSessionWithBodyWithResponse(ctx cont
 	return ParseRefreshControlSessionResponse(rsp)
 }
 
-// RefreshControlSessionWithResponse Rotate a control session's access and refresh tokens
+// RefreshControlSessionWithResponse rotate a control session's access and refresh tokens
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+// corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 func (c *ClientWithResponses) RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error) {
 	rsp, err := c.RefreshControlSession(ctx, body, reqEditors...)
 	if err != nil {
@@ -3378,11 +3369,11 @@ func (c *ClientWithResponses) RefreshControlSessionWithResponse(ctx context.Cont
 	return ParseRefreshControlSessionResponse(rsp)
 }
 
-// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+// ExchangeLoginTokenWithBodyWithResponse exchange a login token for a control session
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 func (c *ClientWithResponses) ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
 	rsp, err := c.ExchangeLoginTokenWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -3391,11 +3382,11 @@ func (c *ClientWithResponses) ExchangeLoginTokenWithBodyWithResponse(ctx context
 	return ParseExchangeLoginTokenResponse(rsp)
 }
 
-// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+// ExchangeLoginTokenWithResponse exchange a login token for a control session
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+// corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 func (c *ClientWithResponses) ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
 	rsp, err := c.ExchangeLoginToken(ctx, body, reqEditors...)
 	if err != nil {
@@ -3404,11 +3395,11 @@ func (c *ClientWithResponses) ExchangeLoginTokenWithResponse(ctx context.Context
 	return ParseExchangeLoginTokenResponse(rsp)
 }
 
-// GetIdentityContextWithResponse Read the authenticated identity and memberships
+// GetIdentityContextWithResponse read the authenticated identity and memberships
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
+// corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 func (c *ClientWithResponses) GetIdentityContextWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetIdentityContextResponse, error) {
 	rsp, err := c.GetIdentityContext(ctx, reqEditors...)
 	if err != nil {
@@ -3417,11 +3408,11 @@ func (c *ClientWithResponses) GetIdentityContextWithResponse(ctx context.Context
 	return ParseGetIdentityContextResponse(rsp)
 }
 
-// AcceptInvitationWithBodyWithResponse Accept an invitation with its secret
+// AcceptInvitationWithBodyWithResponse accept an invitation with its secret
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *ClientWithResponses) AcceptInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error) {
 	rsp, err := c.AcceptInvitationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -3430,11 +3421,11 @@ func (c *ClientWithResponses) AcceptInvitationWithBodyWithResponse(ctx context.C
 	return ParseAcceptInvitationResponse(rsp)
 }
 
-// AcceptInvitationWithResponse Accept an invitation with its secret
+// AcceptInvitationWithResponse accept an invitation with its secret
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
+// corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error) {
 	rsp, err := c.AcceptInvitation(ctx, body, reqEditors...)
 	if err != nil {
@@ -3443,11 +3434,11 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 	return ParseAcceptInvitationResponse(rsp)
 }
 
-// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
+// AuthorizeServiceOperationWithBodyWithResponse authorize a control operation using current authority state
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 func (c *ClientWithResponses) AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
 	rsp, err := c.AuthorizeServiceOperationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -3456,11 +3447,11 @@ func (c *ClientWithResponses) AuthorizeServiceOperationWithBodyWithResponse(ctx 
 	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
-// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
+// AuthorizeServiceOperationWithResponse authorize a control operation using current authority state
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+// corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
 	rsp, err := c.AuthorizeServiceOperation(ctx, body, reqEditors...)
 	if err != nil {
@@ -3469,11 +3460,11 @@ func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.
 	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
-// ListTeamsWithResponse List teams for the authenticated identity
+// ListTeamsWithResponse list teams for the authenticated identity
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/teams (the `ListTeams` operationId).
+// corresponds with GET /v1/teams (the `ListTeams` operationId).
 func (c *ClientWithResponses) ListTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListTeamsResponse, error) {
 	rsp, err := c.ListTeams(ctx, reqEditors...)
 	if err != nil {
@@ -3482,11 +3473,11 @@ func (c *ClientWithResponses) ListTeamsWithResponse(ctx context.Context, reqEdit
 	return ParseListTeamsResponse(rsp)
 }
 
-// CreateTeamWithBodyWithResponse Create an organization team
+// CreateTeamWithBodyWithResponse create an organization team
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 func (c *ClientWithResponses) CreateTeamWithBodyWithResponse(ctx context.Context, params *CreateTeamParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamResponse, error) {
 	rsp, err := c.CreateTeamWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -3495,11 +3486,11 @@ func (c *ClientWithResponses) CreateTeamWithBodyWithResponse(ctx context.Context
 	return ParseCreateTeamResponse(rsp)
 }
 
-// CreateTeamWithResponse Create an organization team
+// CreateTeamWithResponse create an organization team
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams (the `CreateTeam` operationId).
+// corresponds with POST /v1/teams (the `CreateTeam` operationId).
 func (c *ClientWithResponses) CreateTeamWithResponse(ctx context.Context, params *CreateTeamParams, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamResponse, error) {
 	rsp, err := c.CreateTeam(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -3508,11 +3499,11 @@ func (c *ClientWithResponses) CreateTeamWithResponse(ctx context.Context, params
 	return ParseCreateTeamResponse(rsp)
 }
 
-// GetTeamWithResponse Read one team
+// GetTeamWithResponse read one team
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
+// corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 func (c *ClientWithResponses) GetTeamWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*GetTeamResponse, error) {
 	rsp, err := c.GetTeam(ctx, teamId, reqEditors...)
 	if err != nil {
@@ -3521,11 +3512,11 @@ func (c *ClientWithResponses) GetTeamWithResponse(ctx context.Context, teamId Te
 	return ParseGetTeamResponse(rsp)
 }
 
-// ListTeamDomainsWithResponse List domains available to the team
+// ListTeamDomainsWithResponse list domains available to the team
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
+// corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 func (c *ClientWithResponses) ListTeamDomainsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamDomainsResponse, error) {
 	rsp, err := c.ListTeamDomains(ctx, teamId, reqEditors...)
 	if err != nil {
@@ -3534,11 +3525,11 @@ func (c *ClientWithResponses) ListTeamDomainsWithResponse(ctx context.Context, t
 	return ParseListTeamDomainsResponse(rsp)
 }
 
-// ClaimTeamDomainWithBodyWithResponse Begin claiming one domain
+// ClaimTeamDomainWithBodyWithResponse begin claiming one domain
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 func (c *ClientWithResponses) ClaimTeamDomainWithBodyWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error) {
 	rsp, err := c.ClaimTeamDomainWithBody(ctx, teamId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -3547,11 +3538,11 @@ func (c *ClientWithResponses) ClaimTeamDomainWithBodyWithResponse(ctx context.Co
 	return ParseClaimTeamDomainResponse(rsp)
 }
 
-// ClaimTeamDomainWithResponse Begin claiming one domain
+// ClaimTeamDomainWithResponse begin claiming one domain
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 func (c *ClientWithResponses) ClaimTeamDomainWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error) {
 	rsp, err := c.ClaimTeamDomain(ctx, teamId, params, body, reqEditors...)
 	if err != nil {
@@ -3560,11 +3551,11 @@ func (c *ClientWithResponses) ClaimTeamDomainWithResponse(ctx context.Context, t
 	return ParseClaimTeamDomainResponse(rsp)
 }
 
-// ReleaseTeamDomainWithResponse Release one claimed domain
+// ReleaseTeamDomainWithResponse release one claimed domain
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 func (c *ClientWithResponses) ReleaseTeamDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*ReleaseTeamDomainResponse, error) {
 	rsp, err := c.ReleaseTeamDomain(ctx, teamId, domainId, reqEditors...)
 	if err != nil {
@@ -3573,11 +3564,11 @@ func (c *ClientWithResponses) ReleaseTeamDomainWithResponse(ctx context.Context,
 	return ParseReleaseTeamDomainResponse(rsp)
 }
 
-// SetTeamDefaultDomainWithResponse Select a ready default domain
+// SetTeamDefaultDomainWithResponse select a ready default domain
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
+// corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 func (c *ClientWithResponses) SetTeamDefaultDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*SetTeamDefaultDomainResponse, error) {
 	rsp, err := c.SetTeamDefaultDomain(ctx, teamId, domainId, reqEditors...)
 	if err != nil {
@@ -3586,11 +3577,11 @@ func (c *ClientWithResponses) SetTeamDefaultDomainWithResponse(ctx context.Conte
 	return ParseSetTeamDefaultDomainResponse(rsp)
 }
 
-// ListTeamInvitationsWithResponse List team invitations
+// ListTeamInvitationsWithResponse list team invitations
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
+// corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
 func (c *ClientWithResponses) ListTeamInvitationsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamInvitationsResponse, error) {
 	rsp, err := c.ListTeamInvitations(ctx, teamId, reqEditors...)
 	if err != nil {
@@ -3599,11 +3590,11 @@ func (c *ClientWithResponses) ListTeamInvitationsWithResponse(ctx context.Contex
 	return ParseListTeamInvitationsResponse(rsp)
 }
 
-// CreateTeamInvitationWithBodyWithResponse Create an expiring invitation
+// CreateTeamInvitationWithBodyWithResponse create an expiring invitation
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 func (c *ClientWithResponses) CreateTeamInvitationWithBodyWithResponse(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamInvitationResponse, error) {
 	rsp, err := c.CreateTeamInvitationWithBody(ctx, teamId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -3612,11 +3603,11 @@ func (c *ClientWithResponses) CreateTeamInvitationWithBodyWithResponse(ctx conte
 	return ParseCreateTeamInvitationResponse(rsp)
 }
 
-// CreateTeamInvitationWithResponse Create an expiring invitation
+// CreateTeamInvitationWithResponse create an expiring invitation
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
+// corresponds with POST /v1/teams/{team_id}/invitations (the `CreateTeamInvitation` operationId).
 func (c *ClientWithResponses) CreateTeamInvitationWithResponse(ctx context.Context, teamId TeamID, params *CreateTeamInvitationParams, body CreateTeamInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamInvitationResponse, error) {
 	rsp, err := c.CreateTeamInvitation(ctx, teamId, params, body, reqEditors...)
 	if err != nil {
@@ -3625,11 +3616,11 @@ func (c *ClientWithResponses) CreateTeamInvitationWithResponse(ctx context.Conte
 	return ParseCreateTeamInvitationResponse(rsp)
 }
 
-// RevokeTeamInvitationWithResponse Revoke one pending invitation
+// RevokeTeamInvitationWithResponse revoke one pending invitation
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 func (c *ClientWithResponses) RevokeTeamInvitationWithResponse(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*RevokeTeamInvitationResponse, error) {
 	rsp, err := c.RevokeTeamInvitation(ctx, teamId, invitationId, reqEditors...)
 	if err != nil {
@@ -3638,11 +3629,11 @@ func (c *ClientWithResponses) RevokeTeamInvitationWithResponse(ctx context.Conte
 	return ParseRevokeTeamInvitationResponse(rsp)
 }
 
-// ListTeamMembershipsWithResponse List team memberships
+// ListTeamMembershipsWithResponse list team memberships
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
+// corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
 func (c *ClientWithResponses) ListTeamMembershipsWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*ListTeamMembershipsResponse, error) {
 	rsp, err := c.ListTeamMemberships(ctx, teamId, reqEditors...)
 	if err != nil {
@@ -3651,11 +3642,11 @@ func (c *ClientWithResponses) ListTeamMembershipsWithResponse(ctx context.Contex
 	return ParseListTeamMembershipsResponse(rsp)
 }
 
-// RemoveMembershipWithResponse Remove one membership
+// RemoveMembershipWithResponse remove one membership
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
+// corresponds with DELETE /v1/teams/{team_id}/memberships/{membership_id} (the `RemoveMembership` operationId).
 func (c *ClientWithResponses) RemoveMembershipWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, reqEditors ...RequestEditorFn) (*RemoveMembershipResponse, error) {
 	rsp, err := c.RemoveMembership(ctx, teamId, membershipId, reqEditors...)
 	if err != nil {
@@ -3664,11 +3655,11 @@ func (c *ClientWithResponses) RemoveMembershipWithResponse(ctx context.Context, 
 	return ParseRemoveMembershipResponse(rsp)
 }
 
-// SetMembershipRoleWithBodyWithResponse Change one membership's team role
+// SetMembershipRoleWithBodyWithResponse change one membership's team role
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 func (c *ClientWithResponses) SetMembershipRoleWithBodyWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error) {
 	rsp, err := c.SetMembershipRoleWithBody(ctx, teamId, membershipId, contentType, body, reqEditors...)
 	if err != nil {
@@ -3677,11 +3668,11 @@ func (c *ClientWithResponses) SetMembershipRoleWithBodyWithResponse(ctx context.
 	return ParseSetMembershipRoleResponse(rsp)
 }
 
-// SetMembershipRoleWithResponse Change one membership's team role
+// SetMembershipRoleWithResponse change one membership's team role
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
+// corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 func (c *ClientWithResponses) SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error) {
 	rsp, err := c.SetMembershipRole(ctx, teamId, membershipId, body, reqEditors...)
 	if err != nil {
@@ -4375,64 +4366,64 @@ func ParseSetMembershipRoleResponse(rsp *http.Response) (*SetMembershipRoleRespo
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// LogoutControlSession Revoke the authenticated control session
+	// LogoutControlSession revoke the authenticated control session
 	// (POST /v1/auth/logout)
 	LogoutControlSession(w http.ResponseWriter, r *http.Request)
-	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
+	// ExchangeOIDCToken exchange an OIDC ID token for a control session
 	// (POST /v1/auth/oidc)
 	ExchangeOIDCToken(w http.ResponseWriter, r *http.Request)
-	// RefreshControlSession Rotate a control session's access and refresh tokens
+	// RefreshControlSession rotate a control session's access and refresh tokens
 	// (POST /v1/auth/refresh)
 	RefreshControlSession(w http.ResponseWriter, r *http.Request)
-	// ExchangeLoginToken Exchange a login token for a control session
+	// ExchangeLoginToken exchange a login token for a control session
 	// (POST /v1/auth/token)
 	ExchangeLoginToken(w http.ResponseWriter, r *http.Request)
-	// GetIdentityContext Read the authenticated identity and memberships
+	// GetIdentityContext read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
-	// AcceptInvitation Accept an invitation with its secret
+	// AcceptInvitation accept an invitation with its secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
-	// AuthorizeServiceOperation Authorize a control operation using current authority state
+	// AuthorizeServiceOperation authorize a control operation using current authority state
 	// (POST /v1/service/authorize)
 	AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request)
-	// ListTeams List teams for the authenticated identity
+	// ListTeams list teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
-	// CreateTeam Create an organization team
+	// CreateTeam create an organization team
 	// (POST /v1/teams)
 	CreateTeam(w http.ResponseWriter, r *http.Request, params CreateTeamParams)
-	// GetTeam Read one team
+	// GetTeam read one team
 	// (GET /v1/teams/{team_id})
 	GetTeam(w http.ResponseWriter, r *http.Request, teamId TeamID)
-	// ListTeamDomains List domains available to the team
+	// ListTeamDomains list domains available to the team
 	// (GET /v1/teams/{team_id}/domains)
 	ListTeamDomains(w http.ResponseWriter, r *http.Request, teamId TeamID)
-	// ClaimTeamDomain Begin claiming one domain
+	// ClaimTeamDomain begin claiming one domain
 	// (POST /v1/teams/{team_id}/domains)
 	ClaimTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, params ClaimTeamDomainParams)
-	// ReleaseTeamDomain Release one claimed domain
+	// ReleaseTeamDomain release one claimed domain
 	// (DELETE /v1/teams/{team_id}/domains/{domain_id})
 	ReleaseTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
-	// SetTeamDefaultDomain Select a ready default domain
+	// SetTeamDefaultDomain select a ready default domain
 	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
 	SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
-	// ListTeamInvitations List team invitations
+	// ListTeamInvitations list team invitations
 	// (GET /v1/teams/{team_id}/invitations)
 	ListTeamInvitations(w http.ResponseWriter, r *http.Request, teamId TeamID)
-	// CreateTeamInvitation Create an expiring invitation
+	// CreateTeamInvitation create an expiring invitation
 	// (POST /v1/teams/{team_id}/invitations)
 	CreateTeamInvitation(w http.ResponseWriter, r *http.Request, teamId TeamID, params CreateTeamInvitationParams)
-	// RevokeTeamInvitation Revoke one pending invitation
+	// RevokeTeamInvitation revoke one pending invitation
 	// (DELETE /v1/teams/{team_id}/invitations/{invitation_id})
 	RevokeTeamInvitation(w http.ResponseWriter, r *http.Request, teamId TeamID, invitationId InvitationID)
-	// ListTeamMemberships List team memberships
+	// ListTeamMemberships list team memberships
 	// (GET /v1/teams/{team_id}/memberships)
 	ListTeamMemberships(w http.ResponseWriter, r *http.Request, teamId TeamID)
-	// RemoveMembership Remove one membership
+	// RemoveMembership remove one membership
 	// (DELETE /v1/teams/{team_id}/memberships/{membership_id})
 	RemoveMembership(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID)
-	// SetMembershipRole Change one membership's team role
+	// SetMembershipRole change one membership's team role
 	// (PATCH /v1/teams/{team_id}/memberships/{membership_id})
 	SetMembershipRole(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID)
 }
@@ -4564,7 +4555,7 @@ func (siw *ServerInterfaceWrapper) CreateTeam(w http.ResponseWriter, r *http.Req
 	var err error
 	_ = err
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreateTeamParams
 
 	headers := r.Header
@@ -4670,7 +4661,7 @@ func (siw *ServerInterfaceWrapper) ClaimTeamDomain(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params ClaimTeamDomainParams
 
 	headers := r.Header
@@ -4820,7 +4811,7 @@ func (siw *ServerInterfaceWrapper) CreateTeamInvitation(w http.ResponseWriter, r
 		return
 	}
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreateTeamInvitationParams
 
 	headers := r.Header

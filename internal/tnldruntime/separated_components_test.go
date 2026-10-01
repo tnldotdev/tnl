@@ -116,7 +116,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			stopIntegrationProcess(t, process)
 			stopped.Exited = time.Now()
 			separatedWrite(t, "control-a.stopped", stopped)
-			// Keep one control unavailable beyond a process lease while the
+			// keep one control unavailable beyond a process lease while the
 			// surviving control must continue renewing ingress and relay leases.
 			wait := time.NewTimer(35 * time.Second)
 			select {
@@ -627,7 +627,7 @@ func runSeparatedVisitorFresh(ctx context.Context, visitor benchworkload.Visitor
 func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, total, index int) []*benchworkload.HeldStream {
 	t.Helper()
 	var streams []*benchworkload.HeldStream
-	interval := time.Second / 500 // Offered held-stream opening workload per visitor.
+	interval := time.Second / 500 // offered held-stream opening workload per visitor.
 	pacer := time.NewTicker(interval)
 	defer pacer.Stop()
 	for i := index; i < total; i += 4 {
@@ -650,8 +650,8 @@ func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.
 	return streams
 }
 
-// Decode resources through a bounded request; no Docker socket is mounted in a
-// workload container. The HTTP listener is only on the disposable Compose network.
+// decode resources through a bounded request; no Docker socket is mounted in a
+// workload container. the HTTP listener is only on the disposable Compose network.
 func separatedResource(t *testing.T, component string) separatedResources {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}

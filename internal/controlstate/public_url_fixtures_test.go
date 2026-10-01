@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// seedControlPublicURL supplies local authority and an enabled shared route. It
-// deliberately does not create relay leases, route sessions, or ACME work.
+// seedControlPublicURL supplies local authority and an enabled shared public
+// URL. it does not create relay leases, publish runs, or ACME work.
 func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffix string) {
 	t.Helper()
 	identityID, teamID := "identity_"+suffix, "team_"+suffix

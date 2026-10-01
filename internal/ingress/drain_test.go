@@ -51,7 +51,7 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 
 func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		// Admission is entirely in memory; a real listener adds no behavior here.
+		// admission is entirely in memory; a real listener adds no behavior here.
 		server := &Server{config: Config{MaxClientHelloConnections: 1}, connections: make(map[net.Conn]struct{})}
 		a, b := net.Pipe()
 		ownIngressConn(t, a)

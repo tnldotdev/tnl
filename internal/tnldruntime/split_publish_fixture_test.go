@@ -99,7 +99,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	if err := controlConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// Dependencies outlive every incarnation of control, ingress, and relay.
+	// dependencies outlive every incarnation of control, ingress, and relay.
 	owner := newRuntimeTopology(t)
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
 	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)

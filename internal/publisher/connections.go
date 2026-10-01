@@ -41,9 +41,9 @@ type managedPublisherConnection struct {
 	phase      publisherConnectionPhase
 }
 
-// publisherConnectionManager owns the two independently assigned publisher
-// connections for one publish run. A claimed connection is not silently
-// reconnected after it closes; its replacement arrives in a heartbeat.
+// publisherConnectionManager owns both publisher connection slots and joins
+// their workers on Close. after a claimed connection closes, it waits for a
+// new connection assignment from a heartbeat rather than reconnecting it.
 type publisherConnectionManager struct {
 	ctx              context.Context
 	config           publisherConnectionManagerConfig
@@ -112,8 +112,8 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 		if current != nil && sameConnectionAssignment(current.assignment, assignment) {
 			continue
 		}
-		// A relay can replace a QUIC claim before the publisher notices its
-		// transport failure. Prefer TCP for the replacement in either case.
+		// a relay may replace a QUIC claim before the publisher sees the failure.
+		// prefer TCP for that replacement; a later healthy TCP slot returns to QUIC-first.
 		preferTCP := current != nil && (current.preferTCP || current.phase == connectionServing && current.transport == tunnel.TransportQUIC)
 		if current != nil {
 			current.cancel()
@@ -187,7 +187,7 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 			if err == nil {
 				err = session.RequestPublisherDrain(ctx, requestID)
 			}
-			// A lost transport has already stopped admissions and closed its streams.
+			// a lost transport already stopped admission and closed its visitor streams.
 			if err != nil && context.Cause(ctx) == nil && errors.Is(session.Err(), muxsession.ErrClosed) {
 				err = nil
 			}
@@ -239,6 +239,8 @@ func (m *publisherConnectionManager) run(
 		Role: tunnelv1.Publisher, Credential: assignment.PublisherConnectionCredential,
 		PublisherConnection: &ref,
 	}
+	// dial failures can retry this unclaimed assignment until its credential
+	// expires; a claimed connection waits for a new assignment after loss.
 	for time.Now().Before(assignment.PublisherConnectionCredentialExpiresAt) {
 		quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
 			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,

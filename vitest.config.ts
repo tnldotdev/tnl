@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => ({
     ? {
         resolve: {
           alias: [
-            // Internal tests normally exercise dist too; coverage deliberately uses the
+            // internal tests normally exercise dist too; coverage deliberately uses the
             // same source graph as the public aliases below. Framework subprocesses
             // still resolve the built package, outside Vitest's coverage instrumentation.
             {

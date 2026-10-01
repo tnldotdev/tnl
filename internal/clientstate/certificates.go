@@ -156,7 +156,7 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 }
 
 // Stage retains issued material without replacing the last acknowledged certificate.
-// The caller holds Lock through staging, control acknowledgement, and promotion.
+// the caller holds Lock through staging, control acknowledgement, and promotion.
 func (r *CertificateCache) Stage(
 	ctx context.Context,
 	hostname string,

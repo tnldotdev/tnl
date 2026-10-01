@@ -170,7 +170,7 @@ func TestAuthoritativeVerifierVerifyRequiresDelegationAndAuthority(t *testing.T)
 				t.Fatal(err)
 			}
 			unavailable := errors.New("authoritative DNS unavailable")
-			// Verify hardcodes authoritative port 53. Fail at the real dial boundary
+			// Verify hardcodes authoritative port 53. fail at the real dial boundary
 			// rather than binding a privileged port or contacting machine DNS.
 			v.dialer.Control = func(_, address string, _ syscall.RawConn) error {
 				authorityQueries.Add(1)

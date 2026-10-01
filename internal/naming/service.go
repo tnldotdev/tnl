@@ -1,8 +1,8 @@
 package naming
 
 // ValidServiceName accepts 1-32 lowercase ASCII letters, digits, and hyphens,
-// beginning with a letter and ending with a letter or digit. Unlike hostname
-// canonicalization it does not normalize input. Callers own optionality.
+// beginning with a letter and ending with a letter or digit. unlike hostname
+// canonicalization it does not normalize input. callers own optionality.
 func ValidServiceName(value string) bool {
 	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' || value[len(value)-1] == '-' {
 		return false

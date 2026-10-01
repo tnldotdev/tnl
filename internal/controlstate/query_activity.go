@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-// Only names compiled from our sqlc sources may leave the process. Never retain
+// only names compiled from our sqlc sources may leave the process. never retain
 // SQL, arguments, errors, connection configuration, or request context here.
 //
 //go:embed queries/*.sql
@@ -63,11 +63,11 @@ func diagnosticQueryName(sql string) string {
 	fields := strings.Fields(line)
 	if len(fields) == 4 && fields[0] == "--" && fields[1] == "name:" {
 		if _, ok := diagnosticQueryNames[fields[2]]; ok {
-			return strings.Clone(fields[2]) // Do not retain the SQL backing string.
+			return strings.Clone(fields[2]) // do not retain the SQL backing string.
 		}
 	}
 	// pgx appends isolation, access, and deferrability options to BEGIN.
-	// Return a fixed label regardless of those options or custom BeginQuery text.
+	// return a fixed label regardless of those options or custom BeginQuery text.
 	if sql == "begin" || strings.HasPrefix(sql, "begin ") {
 		return "begin"
 	}
@@ -117,8 +117,8 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 		return
 	}
 	defer q.reapGuards()
-	// These queries explicitly acquire guards held until the transaction ends.
-	// Driver completion excludes the acquiring query's own wait; it cannot
+	// these queries explicitly acquire guards held until the transaction ends.
+	// driver completion excludes the acquiring query's own wait; it cannot
 	// identify the exact instant PostgreSQL acquired or released a lock.
 	switch query.operation {
 	case "LockLocalTeamForSession", "LockRelayServicesForPlacement", "GetRelayLeaseForClaim", "GetRelayLeaseForReady", "LockIngressRoutingTableClock", "InsertFinalIngressRoutingTableEvent", "LockPublishRunForUsage", "LockIngressLease":
@@ -144,8 +144,8 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 	}
 }
 
-// Socket cleanup without a final driver callback has no observed completion
-// time. Discard those unfinished windows rather than inventing a duration.
+// socket cleanup without a final driver callback has no observed completion
+// time. discard those unfinished windows rather than inventing a duration.
 func (q *queryActivity) reapGuards() {
 	for conn, guards := range q.guards {
 		select {

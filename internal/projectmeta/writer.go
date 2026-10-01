@@ -22,8 +22,8 @@ const (
 )
 
 // Write validates project metadata and replaces both generated files while
-// holding the writer lock. Each file replacement is atomic, but both files do
-// not become visible at the same instant. If the second replacement fails,
+// holding the writer lock. each file replacement is atomic, but both files do
+// not become visible at the same instant. if the second replacement fails,
 // Write tries to restore the first file.
 func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 	if cause := context.Cause(ctx); cause != nil {

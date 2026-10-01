@@ -39,7 +39,7 @@ func TestControlProxyListenerUsesVisitorAddressWithoutBlockingOtherConnections(t
 		return conn
 	}
 
-	// A connection that never sends its PROXY header must not stall Accept.
+	// a connection that never sends its PROXY header must not stall Accept.
 	_ = connect()
 	if err := tls.Client(connect(), clientTLS).Handshake(); err == nil {
 		t.Fatal("public control accepted TLS without the required PROXY v2 header")

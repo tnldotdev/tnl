@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Keep the resource curve, not just the endpoints of a long held-stream phase.
-// In particular, memory.peak is cumulative across phases and cannot establish
+// keep the resource curve, not just the endpoints of a long held-stream phase.
+// in particular, memory.peak is cumulative across phases and cannot establish
 // whether memory stopped growing during the measured window.
 type separatedResourceSample struct {
 	At         time.Time                           `json:"at"`
@@ -113,8 +113,8 @@ func TestSummarizeSeparatedResourceSamples(t *testing.T) {
 
 func sampleSeparatedResources(t *testing.T, phase string) func() {
 	t.Helper()
-	// The runner stops the coordinator when another container exits unexpectedly.
-	// Persist samples as they arrive so an OOM still leaves a partial memory curve.
+	// the runner stops the coordinator when another container exits unexpectedly.
+	// persist samples as they arrive so an OOM still leaves a partial memory curve.
 	file, err := os.Create(filepath.Join("/results", phase+"-resource-samples.jsonl"))
 	if err != nil {
 		t.Fatal(err)

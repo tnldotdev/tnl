@@ -14,7 +14,7 @@ func TestIntegrationBuiltinAuthentication(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
-	// Preserve nanoseconds here to exercise PostgreSQL's microsecond round trip.
+	// preserve nanoseconds here to exercise PostgreSQL's microsecond round trip.
 	now := time.Now().UTC().Truncate(time.Second).Add(123456789 * time.Nanosecond)
 	type result struct {
 		session ControlSession

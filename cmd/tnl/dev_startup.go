@@ -24,6 +24,8 @@ func awaitDevStartup(
 	bootstrap *devBootstrap, child *devProcess, tunnel *clientstate.Tunnel,
 	assignment devConfigurationResponse,
 ) (devStartupResult, error) {
+	// child exit, framework registration, and target readiness compete during
+	// startup. cancel the losing wait without blocking its buffered result.
 	var configuration *devConfigurationRequest
 	target := forcedTarget
 	targetIsReady := false

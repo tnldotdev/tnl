@@ -14,7 +14,7 @@ import (
 var ErrHostedPolicyRevocationInvalid = errors.New("controlstate: hosted policy revocation is invalid")
 
 // ApplyHostedPolicyRevocation advances one hosted team revision and closes
-// older publish runs affected by that revision. Equal and older deliveries
+// older publish runs affected by that revision. equal and older deliveries
 // are successful no-ops.
 func (d *Database) ApplyHostedPolicyRevocation(
 	ctx context.Context,
@@ -60,8 +60,8 @@ func (d *Database) ApplyHostedPolicyRevocation(
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 
-	// Hosted mutations share the persisted issuer/team revision guard before
-	// locking routes, including routes created while this revocation is waiting.
+	// hosted mutations share the persisted issuer/team revision guard before
+	// locking public URLs, including those created while this revocation waits.
 	if _, err := queries.AdvanceAuthorityRevision(ctx, controlstatedb.AdvanceAuthorityRevisionParams{
 		Issuer: issuer, TeamID: teamID, PolicyRevision: int64(policyRevision), UpdatedAt: timestamptz(now),
 	}); errors.Is(err, pgx.ErrNoRows) {

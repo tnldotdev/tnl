@@ -102,7 +102,7 @@ func TestResponseStatusPrecedenceAndRetryAfter(t *testing.T) {
 		{"7", 7 * time.Second}, {"999999", 24 * time.Hour}, {"9999999999999999999999", time.Second},
 	} {
 		t.Run(test.header, func(t *testing.T) {
-			// The status takes precedence even over a conflicting valid problem.
+			// the status takes precedence even over a conflicting valid problem.
 			err := responseError(429, http.Header{"Retry-After": {test.header}}, []byte(`{"code":"unauthenticated"}`))
 			var rate *RateLimitError
 			if !errors.As(err, &rate) || !errors.Is(err, ErrRateLimited) || rate.RetryAfter != test.want || errors.Is(err, ErrUnauthenticated) {

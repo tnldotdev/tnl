@@ -53,7 +53,7 @@ type ClientHello struct {
 	Remainder   io.Reader
 }
 
-// Replay returns the inspected prefix followed by the unread connection. The
+// Replay returns the inspected prefix followed by the unread connection. the
 // prefix can be replayed independently until a visitor byte is committed.
 func (h ClientHello) Replay() io.Reader {
 	return io.MultiReader(bytes.NewReader(h.Prefix), h.Remainder)

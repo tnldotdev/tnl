@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-// Profiles are explicitly selected with RUN=^TestProfile. They use the load
+// profiles are explicitly selected with RUN=^TestProfile. they use the load
 // fixture, but measure isolated SQL plans, not the concurrent load workload.
 func TestProfilePlacementQueries(t *testing.T) {
 	f := newControlLoadFixture(t)
@@ -58,15 +58,15 @@ func TestProfileRoutingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Measure read amplification with a fixed set of genuine ready routes.
-	// No concurrent writers run during these profiles.
+	// measure read amplification with a fixed set of routable public URLs.
+	// no concurrent writers run during these profiles.
 	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
 	previous := 1
 	for _, perPublicURL := range []int{4, 10, 100} {
 		total := seedLoadRoutingHistory(t, f, previous, perPublicURL)
-		// Snapshot timing comes from the same production histograms as load runs.
-		// Scope the defer to this stage so failures retain its completed samples.
+		// snapshot timing comes from the same production histograms as load runs.
+		// scope the defer to this stage so failures retain its completed samples.
 		func() {
 			f.startMetrics(t)
 			defer f.logStats(t)
@@ -110,8 +110,8 @@ func TestProfileRoutingHistory(t *testing.T) {
 	}
 }
 
-// Record the actual sqlc query and its parameters instead of maintaining a
-// second copy of production SQL in a profiling fixture. Calls are serial.
+// record the actual sqlc query and its parameters instead of maintaining a
+// second copy of production SQL in a profiling fixture. calls are serial.
 type loadQueryPlan struct {
 	controlstatedb.DBTX
 	sql  string

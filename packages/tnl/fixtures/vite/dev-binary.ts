@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { renameSync, writeFileSync } from "node:fs";
 import { createServer } from "vite";
 
-// Observe the real fixture without replacing either tnl development handshake.
+// observe the real fixture without replacing either tnl development handshake.
 const reportPath = process.argv[2];
 assert(reportPath, "report path is required");
 

@@ -8,7 +8,7 @@ import (
 const mebibyte int64 = 1 << 20
 
 // resourceBudget is the process allocation, not the number of Go scheduler
-// threads. In particular, GOMAXPROCS may exceed a container's CPU quota.
+// threads. in particular, GOMAXPROCS may exceed a container's CPU quota.
 type resourceBudget struct {
 	CPUs        float64
 	MemoryBytes int64
@@ -24,8 +24,8 @@ func processResources() resourceBudget {
 }
 
 func (c *Config) resolveCapacities(resources resourceBudget) {
-	// Reserve 35% of available memory and another 64 MiB for the runtime,
-	// certificates, buffers, and transient work. The remaining memory is split
+	// reserve 35% of available memory and another 64 MiB for the runtime,
+	// certificates, buffers, and transient work. the remaining memory is split
 	// between simultaneous admitted classes, rather than independently
 	// granting every class the entire process budget.
 	usable := max(int64(16*mebibyte), int64(float64(resources.MemoryBytes)*0.65)-64*mebibyte)

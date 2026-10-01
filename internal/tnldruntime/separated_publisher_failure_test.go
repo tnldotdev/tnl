@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// Capture the failed publisher's state before the group cancels its processes.
-// Select only non-secret fields; the disposable database disappears on cleanup.
+// capture the failed publisher's state before the group cancels its processes.
+// select only non-secret fields; the disposable database disappears on cleanup.
 func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

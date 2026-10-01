@@ -10,9 +10,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 )
 
-// A Fly public control listener receives PROXY v2 before TLS. Decode it in the
+// a Fly public control listener receives PROXY v2 before TLS. decode it in the
 // connection's goroutine, not in Accept, so an idle connection cannot block
-// other control requests. The private control listener does not use this wrapper.
+// other control requests. the private control listener does not use this wrapper.
 type controlProxyListener struct{ net.Listener }
 
 func (l controlProxyListener) Accept() (net.Conn, error) {

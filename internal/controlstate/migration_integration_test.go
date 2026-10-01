@@ -150,7 +150,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
-	// A newer additive migration must not make serving processes unready.
+	// a newer additive migration must not make serving processes unready.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +169,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 
 func TestIntegrationPublisherConnectionSchemaConstraints(t *testing.T) {
 	f := newPublishRunFixture(t)
-	// Exercise the constraints on real rows, rather than matching SQL source
-	// spelling. Each failing statement is atomic and leaves the fixture intact.
+	// exercise the constraints on real rows, rather than matching SQL source
+	// spelling. each failing statement is atomic and leaves the fixture intact.
 	for _, test := range []struct{ name, query, code string }{
 		{"slot_lower_bound", `UPDATE control.publish_run_connections SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
 		{"slot_upper_bound", `UPDATE control.publish_run_connections SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},

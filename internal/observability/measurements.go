@@ -14,8 +14,8 @@ import (
 )
 
 // DurationSummary describes observations between two process-local snapshots.
-// Quantiles are linear estimates within classic histogram buckets, not exact
-// samples or maxima. They are nil for an empty interval or the unbounded bucket.
+// quantiles are linear estimates within classic histogram buckets, not exact
+// samples or maxima. they are nil for an empty interval or the unbounded bucket.
 type DurationSummary struct {
 	Name        string            `json:"name"`
 	Labels      map[string]string `json:"labels"`
@@ -53,11 +53,11 @@ func ParseMetrics(reader io.Reader) ([]*dto.MetricFamily, error) {
 }
 
 // DurationSummaries differences classic histogram counts, sums, and cumulative
-// buckets before estimating quantiles. Inputs must describe the same process;
+// buckets before estimating quantiles. inputs must describe the same process;
 // process_start_time_seconds and histogram creation timestamps, when present,
-// also detect restarts. New lazy series start at zero. Missing end series,
+// also detect restarts. new lazy series start at zero. missing end series,
 // changed layouts, invalid samples, and detectable resets invalidate the interval.
-// All histogram families are included; callers should supply durations in seconds.
+// all histogram families are included; callers should supply durations in seconds.
 func DurationSummaries(before, after []*dto.MetricFamily) ([]DurationSummary, error) {
 	start, err := measurementSeries(before)
 	if err != nil {

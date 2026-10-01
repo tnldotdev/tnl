@@ -24,7 +24,7 @@ import (
 
 type pairFactory func(*testing.T) (Session, Session)
 
-// The local equivalent of Fly's basic UDP listener survives a bounded amount
+// the local equivalent of Fly's basic UDP listener survives a bounded amount
 // of packet loss while held streams and fresh responses share a QUIC session.
 func TestQUICHeldAndFreshStreamsWithPacketLoss(t *testing.T) {
 	serverTLS, clientTLS := testTLSConfigs(t)
@@ -304,7 +304,7 @@ func TestBasicQUICPacketConn(t *testing.T) {
 		t.Fatalf("connect basic QUIC: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	// Dial can return before the server has accepted the connection. Keep both
+	// Dial can return before the server has accepted the connection. keep both
 	// sessions alive until acceptance is observed before testing closure.
 	server := muxAwait(t, accepted)
 	if server.err != nil {

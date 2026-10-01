@@ -297,9 +297,9 @@ func (r *Registry) Candidate(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	connection := r.connections[header.PublisherConnectionID]
-	// Ingress copied the lease deadline when control published the route. Use
-	// this process's current lease instead: ordinary renewals do not republish
-	// every route, but an expired or replaced lease must still reject work.
+	// ingress copied the deadline when control published this public URL.
+	// relay renewals do not republish it; check this process's current lease
+	// so an expired or replaced relay cannot accept a visitor stream.
 	if r.closed || r.draining || connection == nil || !header.PublicUrlExpiresAt.After(now) ||
 		lease.RelayLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(now) || lease.Draining ||
 		lease.RelayServiceId != header.RelayServiceID || lease.RelayId != header.RelayID ||

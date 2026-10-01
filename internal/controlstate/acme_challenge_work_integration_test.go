@@ -14,7 +14,7 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	ingress := registerTestIngress(t, database, now)
-	// A second, fully ready route publishes genuine heartbeat projections.
+	// a second, fully ready public URL publishes heartbeat projections.
 	seedControlPublicURL(t, database, now, "unrelated")
 	healthy := f
 	healthy.request.PublicURLID, healthy.request.TeamID = "public_url_unrelated", "team_unrelated"
@@ -49,12 +49,12 @@ func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
 		if err != nil || !found || work.ID != prepared.ID {
 			t.Fatalf("unrelated heartbeat %d blocked an acknowledged challenge: found=%t error=%v", step, found, err)
 		}
-		// Keep the authorization presented to exercise the next publication too.
+		// keep the authorization presented to exercise the next publication too.
 		if _, err := database.SaveACMEOrderWork(t.Context(), work, at); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Changes to the challenge's own forwarding projection still need acknowledgement.
+	// changes to the challenge's own forwarding projection still need acknowledgement.
 	at := now.Add(4 * time.Second)
 	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), at, time.Minute, time.Minute); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 				t.Fatalf("claim presenting work: found %t, error %v", found, err)
 			}
 
-			// The worker has a snapshot, then the publisher acknowledges the challenge
+			// the worker has a snapshot, then the publisher acknowledges the challenge
 			// while the worker is outside PostgreSQL talking to the CA.
 			at := now.Add(time.Second)
 			if _, err := database.MarkCertificateChallengeReady(t.Context(), original.ID, f.setup.PublishRunToken, at); err != nil {
@@ -129,7 +129,7 @@ func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 				t.Fatal("reclaim did not preserve the order and load the acknowledged authorization with a new work epoch")
 			}
 
-			// A late save must also reject an old epoch when the same worker reclaims.
+			// a late save must also reject an old epoch when the same worker reclaims.
 			if _, err := database.SaveACMEOrderWork(t.Context(), original, at); !errors.Is(err, ErrACMEWorkStale) {
 				t.Fatalf("old worker overwrote the replacement claim: %v", err)
 			}
@@ -207,8 +207,8 @@ func TestIntegrationACMEChallengeReadyRollbackPreservesClaim(t *testing.T) {
 		_, err := database.MarkCertificateChallengeReady(operationCtx, work.ID, f.setup.PublishRunToken, now.Add(time.Second))
 		done <- err
 	})
-	// Publication is the final command, after both the authorization transition
-	// and work invalidation. Cancel there to exercise rollback of all three.
+	// publication is the final command, after both the authorization transition
+	// and work invalidation. cancel there to exercise rollback of all three.
 	waitForPostgresBlock(t, ctx, database, int32(clock.Conn().PgConn().PID()), done)
 	stopOperation()
 	if err := awaitIntegrationResult(t, ctx, done); !errors.Is(err, context.Canceled) {

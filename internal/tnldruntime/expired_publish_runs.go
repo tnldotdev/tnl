@@ -14,7 +14,7 @@ type expiredPublishRunStore interface {
 	ExpireSavedPublishRuns(context.Context, time.Time) (int, error)
 }
 
-// Run on startup as well as periodically: a control restart must not leave
+// run on startup as well as periodically: a control restart must not leave
 // saved expired runs reserving relay capacity until their public URLs are used.
 func runExpiredPublishRunCleanup(ctx context.Context, store expiredPublishRunStore, metrics *observability.Metrics) error {
 	return runBatchCleanup(ctx, expiredPublishRunCleanupInterval, store.ExpireSavedPublishRuns, func(closed int, err error) {

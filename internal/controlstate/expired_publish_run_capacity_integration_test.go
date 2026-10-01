@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// A publisher can disappear without closing its publish run. Its expired
+// a publisher can disappear without closing its publish run. its expired
 // reservations must not exhaust placement for unrelated public URLs.
 func TestIntegrationExpiredPublishRunReleasesPlacementForOtherPublicURL(t *testing.T) {
 	database, now, first, _ := newPublishRunPrerequisites(t)
@@ -35,7 +35,7 @@ func TestIntegrationExpiredPublishRunReleasesPlacementForOtherPublicURL(t *testi
 		t.Fatalf("live publish run must hold both placement slots: %v", err)
 	}
 
-	// No publisher retry or mutation of the first public URL occurs after expiry.
+	// no publisher retry or mutation of the first public URL occurs after expiry.
 	later := now.Add(31 * time.Second)
 	if _, err := database.CreatePublishRun(t.Context(), second, later, 30*time.Second, time.Minute); err != nil {
 		t.Fatalf("expired publish run %s still holds unrelated relay capacity: %v", setup.PublishRunID, err)
@@ -53,7 +53,7 @@ func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
 	readyTestSession(t, f)
 	assertAssignmentTotals(t, f.database.pool, 2)
 
-	// The cleanup works without an API request for this public URL, as when a
+	// cleanup works without an API request for this public URL, as when a
 	// control starts after an idle publisher has disappeared.
 	count, err := f.database.ExpireSavedPublishRuns(t.Context(), f.now.Add(31*time.Second))
 	if err != nil || count != 1 {

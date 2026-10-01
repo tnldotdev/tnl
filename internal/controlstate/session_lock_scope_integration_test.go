@@ -33,7 +33,7 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 		_, err := f.database.CreatePublishRun(ctx, f.sessionRequest, f.now, time.Hour, time.Hour)
 		first <- err
 	})
-	// The first start holds its team guard while blocked on its own route.
+	// the first start holds its team guard while blocked on its own public URL.
 	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), first)
 	independent, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
@@ -60,8 +60,8 @@ func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
 	if _, err := controlstatedb.New(usage).LockPublicURLForUsage(ctx, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	// Usage retains this reference until its page commits. A heartbeat may
-	// serialize on the session, but must not wait for a route identity reference.
+	// usage retains this reference until its page commits. a heartbeat may
+	// serialize on the publish run, but must not wait for a public URL identity reference.
 	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
 		t.Fatalf("heartbeat blocked behind usage's route reference: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 			requests := []PublishRunRequest{f.sessionRequest, siblingSessionRequest(t, f)}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			// Hold both route rows so both starts can acquire their team guards.
+			// hold both public URL rows so both starts can acquire their team guards.
 			firstGate, err := f.database.pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -124,7 +124,7 @@ func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.
 			if err := awaitIntegrationResult(t, ctx, started[0]); err != nil {
 				t.Fatal(err)
 			}
-			// Releasing one reader must not let the mutation miss the other start.
+			// releasing one reader must not let the mutation miss the other start.
 			waitForPostgresBlock(t, ctx, f.database, secondPID, mutated)
 			if err := secondGate.Commit(ctx); err != nil {
 				t.Fatal(err)

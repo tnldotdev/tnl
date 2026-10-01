@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// Seed before starting workload actors. The first f.routes events are genuine
-// ready-route projections, one per route. Copy them to grow retained history
+// seed before starting workload actors. the first f.routes events are genuine
+// routable public URL projections, one per public URL. copy them to grow history
 // without changing current connections or simulating elapsed lease time.
 func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPublicURL int) int64 {
 	t.Helper()

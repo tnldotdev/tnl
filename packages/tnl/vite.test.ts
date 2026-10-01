@@ -225,7 +225,7 @@ test(
       const { environmentPath, token } = viteClientConnection(client.body);
       const environment = await requestTestServer(port, { path: environmentPath });
       expect(environment.status).toBe(200);
-      // Execute the browser defines without depending on Vite's serialization or host globals.
+      // execute the browser defines without depending on Vite's serialization or host globals.
       const payload = runInNewContext(
         `${environment.body}\nprocess.env.TNL_PROJECT_RUNTIME`,
         {},

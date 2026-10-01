@@ -116,7 +116,7 @@ func (f *controlLoadFixture) request(index int) PublishRunRequest {
 	return request
 }
 
-// Capture after fixture setup, before starting actors. End collection happens
+// capture after fixture setup, before starting actors. end collection happens
 // only after actors join, including failure paths, and before pools close.
 func (f *controlLoadFixture) startMetrics(t *testing.T) {
 	t.Helper()

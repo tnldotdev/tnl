@@ -16,8 +16,8 @@ func hostMemoryBytes() int64 {
 }
 
 func constrainProcessResources(resources *resourceBudget) {
-	// The cgroup filesystem is namespaced inside containers on Linux. Prefer
-	// v2, then v1 where supported. Missing/unlimited values keep OS limits.
+	// the cgroup filesystem is namespaced inside containers on Linux. prefer
+	// v2, then v1 where supported. missing or unlimited values keep OS limits.
 	for _, name := range []string{"/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"} {
 		data, err := os.ReadFile(name)
 		if err != nil {

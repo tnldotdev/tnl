@@ -32,7 +32,7 @@ import (
 
 // IsolatedPublishingTest runs a command regression in its own test process so
 // its private TLS roots cannot affect other tests or the machine's trust store.
-// The caller returns immediately when this returns false.
+// the caller returns immediately when this returns false.
 func IsolatedPublishingTest(t *testing.T) bool {
 	t.Helper()
 	if os.Getenv("GO_TEST_PUBLISHING_HELPER") == t.Name() {
@@ -61,7 +61,7 @@ type PublishingHooks struct {
 }
 
 // PublishingFixture supplies local control/authority responses and real
-// TLS/yamux publisher connections. It drives the unmodified command and
+// TLS/yamux publisher connections. it drives the unmodified command and
 // publisher implementations without PostgreSQL, DNS, ACME, or paid resources.
 type PublishingFixture struct {
 	URL         string

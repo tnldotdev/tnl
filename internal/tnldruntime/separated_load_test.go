@@ -114,7 +114,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	defer stopTrace()
 	separatedWrite(t, "publish.start", activation)
 	publishers := separatedPublishers{URLs: make([]string, routes), Ready: make([]publisher.Event, routes)}
-	// Each publisher retains its own readiness deadline, starting at launch.
+	// each publisher retains its own readiness deadline, starting at launch.
 	parallel := min(routes, *runtimeLoadStartParallel)
 	waves := (routes + parallel - 1) / parallel
 	for shard := range separatedPublisherComponents() {
@@ -273,7 +273,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			}
 			separatedWrite(t, "fault.request", phase)
 			separatedWait(t, "fault.applied", 15*time.Second, &restart)
-			// These held streams are opened through the healthy path while the
+			// these held streams are opened through the healthy path while the
 			// drop is installed, before the measured offer window begins.
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-healthy-held", URLs: publishers.URLs, OpenHeld: true})
 			start = time.Now().Add(time.Second)
@@ -317,7 +317,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-			// A killed relay waits out its 30-second lease. The next 15-second
+			// a killed relay waits out its 30-second lease. the next 15-second
 			// publisher heartbeat can then assign replacement connections.
 			repaired = separatedWaitForRecovery(t, database, publishers, 45*time.Second)
 			var currentRelayRun string
@@ -375,7 +375,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
 			assertRelayOpenedVisitors(t, before, after, "relay-a")
 		}
-		// Cover every live route, not only routes sampled late in a traffic window.
+		// cover every live public URL, not only those sampled late in a traffic window.
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
 		if phase == "steady" && *runtimeLoadCapacityOnly && *runtimeLoadHeldStreams > 0 {
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: "tunnel-held-close", URLs: publishers.URLs, CloseHeld: true})
@@ -429,7 +429,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
 	}
-	// Stop ingress while control and PostgreSQL remain available. Its production
+	// stop ingress while control and PostgreSQL remain available. its production
 	// reporter flushes final checkpoints and marks this process run complete.
 	stoppingIngress := time.Now()
 	ingressStopTimeout := 10 * time.Second
@@ -472,7 +472,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
-	// Validate admission inputs with the production configuration rules before
+	// validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress-a")
 	routes, rate, duration := *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration
@@ -787,7 +787,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	for _, component := range separatedActiveComponents() {
 		result.Resources[component] = separatedResource(t, component)
 	}
-	// Read the PostgreSQL process's own cgroup/proc files through the disposable
+	// read the PostgreSQL process's own cgroup/proc files through the disposable
 	// superuser connection, avoiding a metrics sidecar in its memory budget.
 	postgres, err := readSeparatedResourceFiles(func(path string) (string, error) {
 		var text string
@@ -874,7 +874,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 	for _, role := range separatedServerRoles() {
 		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") || role == "control-a" && phase == "control-restart" {
 			continue
-		} // New runtime registry.
+		} // new runtime registry.
 		summaries, err := separatedDurationSummaries(before, after, role)
 		if err != nil {
 			t.Fatal(err)
@@ -887,7 +887,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 	}
 }
 
-// The observer's process run ID is stable across clock adjustments. On Docker
+// the observer's process run ID is stable across clock adjustments. on Docker
 // Desktop, process_start_time_seconds can move by a second for every process
 // without any process restarting; retain the run-ID check and difference only
 // the histograms when the same process produced both snapshots.
@@ -1084,8 +1084,8 @@ func assertRelayOpenedVisitors(t *testing.T, before, after separatedSnapshot, ro
 	}
 }
 
-// Sample production freshness/connection/stream gauges during traffic rather than
-// inferring their peaks from the idle phase endpoints. Raw endpoint scrapes retain
+// sample production freshness, connection, and stream gauges during traffic rather than
+// inferring their peaks from the idle phase endpoints. raw endpoint scrapes retain
 // all counters, including source/capacity rejections and database pool waiting.
 func sampleSeparatedGauges(t *testing.T, phase string) func() {
 	ctx, cancel := context.WithCancel(t.Context())

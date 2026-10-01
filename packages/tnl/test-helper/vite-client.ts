@@ -1,4 +1,4 @@
-// Compatibility adapter for the served Vite client (6/7/8), not a tnl runtime assertion.
+// compatibility adapter for the served Vite client (6/7/8), not a tnl runtime assertion.
 // Vite doesn't expose the browser WebSocket token through a public client API.
 export function viteClientConnection(client: string): { environmentPath: string; token: string } {
   const environment = client.match(/\bimport\s*(["'])(\/[^"']*\/env\.mjs(?:\?[^"']*)?)\1/);

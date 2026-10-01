@@ -33,7 +33,7 @@ func TestIntegrationACMEChallengeAcknowledgementDuringWork(t *testing.T) {
 				if response != nil {
 					acknowledgementStatus.Store(int64(response.StatusCode))
 				}
-				// Headers arrive after the acknowledgement transaction commits. Only
+				// headers arrive after the acknowledgement transaction commits. only
 				// then may the worker finish its CA request and try its stale save.
 				release()
 				return response, err
@@ -53,7 +53,7 @@ func TestIntegrationACMEChallengeAcknowledgementDuringWork(t *testing.T) {
 				select {
 				case <-acknowledgementPending:
 					if gatedWorker.CompareAndSwap(false, true) {
-						// The publisher's acknowledgement is waiting, so this
+						// the publisher's acknowledgement is waiting, so this
 						// worker has claimed a still-presenting authorization.
 						close(workerClaimed)
 						select {

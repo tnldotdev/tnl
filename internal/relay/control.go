@@ -436,7 +436,7 @@ func (c *Controller) setLease(lease relayv1.RelayLease) error {
 
 func (c *Controller) clearLease() {
 	c.mu.Lock()
-	// Drain acknowledgement is terminal for this process run, even after expiry.
+	// drain acknowledgement is terminal for this process run, even after expiry.
 	if c.lease.Draining {
 		c.mu.Unlock()
 		return

@@ -2,96 +2,96 @@
 
 export interface TnlConfig {
   /**
-   * Control URL used by this project.
+   * control URL used by this project.
    */
   server?: string;
   /**
-   * Team ID or unambiguous display name used by this project.
+   * team ID or unambiguous display name used by this project.
    */
   team?: string;
   /**
-   * Default public URL and tunnel settings.
+   * default public URL and tunnel settings.
    */
   tunnel?: {
     /**
-     * Complete public URL hostname to publish.
+     * complete public URL hostname to publish.
      */
     host?: string;
     /**
-     * One DNS label beneath the current namespace.
+     * one DNS label beneath the current namespace.
      */
     subdomain?: string;
     /**
-     * Remove the public URL when this tunnel stops.
+     * remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
     /**
-     * Allow visitors from every IP address.
+     * allow visitors from every IP address.
      */
     allowAllIPs?: boolean;
     /**
-     * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+     * visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
      */
     allowIP?: string[];
     /**
-     * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
+     * webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
      */
     allowProviders?: ("github" | "stripe")[];
     /**
-     * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
+     * maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
      */
     requestLimit?: number;
   };
   publish?: Publish;
   dev?: Dev;
   /**
-   * Named local services with optional project-setting overrides.
+   * named local services with optional project-setting overrides.
    */
   services?: {
     [k: string]:
       | {
           /**
-           * Service directory relative to the project configuration.
+           * service directory relative to the project configuration.
            */
           directory?: string;
           /**
-           * Control URL override for this service.
+           * control URL override for this service.
            */
           server?: string;
           /**
-           * Team override for this service.
+           * team override for this service.
            */
           team?: string;
           /**
-           * PublicURL and tunnel overrides for this service.
+           * public URL and tunnel overrides for this service.
            */
           tunnel?: {
             /**
-             * Complete public URL hostname to publish.
+             * complete public URL hostname to publish.
              */
             host?: string;
             /**
-             * One DNS label beneath the current namespace.
+             * one DNS label beneath the current namespace.
              */
             subdomain?: string;
             /**
-             * Remove the public URL when this tunnel stops.
+             * remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
             /**
-             * Allow visitors from every IP address.
+             * allow visitors from every IP address.
              */
             allowAllIPs?: boolean;
             /**
-             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             * visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
              */
             allowIP?: string[];
             /**
-             * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
+             * webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
              */
             allowProviders?: ("github" | "stripe")[];
             /**
-             * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
+             * maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
              */
             requestLimit?: number;
           };
@@ -103,28 +103,28 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local HTTP URL or port reached by the publisher.
+   * local HTTP URL or port reached by the publisher.
    */
   target?: string | number;
 }
 export interface Dev {
   /**
-   * Child command and arguments run by tnl dev.
+   * child command and arguments run by tnl dev.
    *
    * @minItems 1
    */
   command?: [string, ...string[]];
   /**
-   * Required local service port for tnl dev.
+   * required local service port for tnl dev.
    */
   port?: number;
   /**
-   * Maximum time to wait for the local service to start.
+   * maximum time to wait for the local service to start.
    */
   startupTimeout?: string;
 }
 
-/** The Git worktree or project directory that contains tnl.config.ts. */
+/** the Git worktree or project directory that contains tnl.config.ts. */
 export interface TnlWorktree {
   readonly isGit: boolean;
   /** DNS-safe project/worktree label derived from this checkout and client state. */
@@ -133,7 +133,7 @@ export interface TnlWorktree {
   readonly root: string;
 }
 
-/** Values passed to a tnl.config.ts configuration factory. */
+/** values passed to a tnl.config.ts configuration factory. */
 export interface TnlConfigContext {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;

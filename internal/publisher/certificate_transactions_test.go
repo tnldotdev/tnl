@@ -105,7 +105,8 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 				if !lost {
 					t.Fatal("response-loss boundary was not reached")
 				}
-				// Reopen the cache and route to include recovery of locally committed, unacknowledged material.
+				// reopen the cache and public URL server to recover locally committed,
+				// unacknowledged certificate material.
 				var err error
 				state, err = control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
 				if err != nil {

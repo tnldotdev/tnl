@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// Wire v1: TNLU/version, four uint16-sized sections. Each histogram has a
+// wire v1: TNLU/version, four uint16-sized sections. each histogram has a
 // uint64 nanosecond sum followed by 22 cumulative uint64 counts, big endian.
-// The three observations are 1ns, 2ns, 3ns; sparse sketch register 0 is 1.
+// the three observations are 1ns, 2ns, 3ns; sparse sketch register 0 is 1.
 const populatedCheckpointHex = `
 544e4c5501
 00b8
@@ -65,7 +65,7 @@ func TestCheckpointBinaryGolden(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("parse = %#v, %v; want %#v", got, err, want)
 	}
-	// Empty sections are absent histograms, but the sketch still has a header.
+	// empty sections are absent histograms, but the sketch still has a header.
 	empty := []byte{'T', 'N', 'L', 'U', 1, 0, 0, 0, 0, 0, 0, 0, 5, 1, 12, 0, 0, 0}
 	if !bytes.Equal((Checkpoint{}).MarshalBinary(), empty) {
 		t.Fatal("empty checkpoint encoding changed")

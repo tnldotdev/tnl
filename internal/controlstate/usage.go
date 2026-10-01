@@ -180,9 +180,9 @@ func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Querie
 	return latest, nil
 }
 
-// The caller holds the current ingress lease and usage-run guards, serializing
-// this run's append-only report history. Routes and runs are FK-protected and
-// sessions are retained, so replays need no route/session locks.
+// the caller holds the ingress lease and usage-run guards, serializing this
+// run's append-only report history. public URLs and publish runs are retained
+// by foreign keys, so replays need no additional row locks.
 func applyIngressUsageReport(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -260,8 +260,8 @@ func applyIngressUsageReport(
 	if delta.policyDenials != 0 && !applied.PolicyDenialsUpdated {
 		return errors.New("controlstate: publish-run policy denial counter is exhausted")
 	}
-	// Later entries in the same page may advance or replay this key again.
-	// Match PostgreSQL timestamp precision, just as a fresh read would.
+	// later entries in this page may advance or replay the same key. match
+	// PostgreSQL timestamp precision as though each entry were read separately.
 	latest[key] = controlstatedb.ListLatestIngressUsageReportsRow{
 		PublicURLID: report.PublicURLID, PublishRunNumber: publishRunNumber, BucketStart: timestamptz(key.bucketStart),
 		BucketEnd: timestamptz(report.BucketEnd.Truncate(time.Microsecond)), ObservedThrough: timestamptz(report.ObservedThrough.Truncate(time.Microsecond)),
@@ -440,8 +440,8 @@ func ingressUsageReportMatches(stored controlstatedb.ControlIngressUsageReport, 
 	return ok && stored.PublicURLID == report.PublicURLID && matchesPositiveInt64(stored.PublishRunNumber, report.PublishRunNumber) &&
 		stored.BucketStart.Valid && stored.BucketStart.Time.Equal(report.BucketStart) &&
 		stored.BucketEnd.Valid && stored.BucketEnd.Time.Equal(report.BucketEnd) &&
-		// PostgreSQL stores timestamptz at microsecond precision. Reporter clocks
-		// can carry nanoseconds, including on an otherwise identical retry.
+		// PostgreSQL stores timestamptz at microsecond precision. reporter clocks
+		// can include nanoseconds even on an otherwise identical retry.
 		stored.ObservedThrough.Valid && stored.ObservedThrough.Time.Equal(report.ObservedThrough.Truncate(time.Microsecond)) &&
 		matchesPositiveInt64(stored.ReportRevision, report.ReportRevision) &&
 		stored.ConnectionAttempts == counters.connectionAttempts && stored.PolicyDenials == counters.policyDenials &&

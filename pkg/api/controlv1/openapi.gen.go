@@ -20,7 +20,7 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for AdminServerStatusRole.
+// defines values for AdminServerStatusRole.
 const (
 	Control    AdminServerStatusRole = "control"
 	Standalone AdminServerStatusRole = "standalone"
@@ -38,7 +38,7 @@ func (e AdminServerStatusRole) Valid() bool {
 	}
 }
 
-// Defines values for AuthenticationFactsMethods.
+// defines values for AuthenticationFactsMethods.
 const (
 	LoginToken AuthenticationFactsMethods = "login_token"
 	Oidc       AuthenticationFactsMethods = "oidc"
@@ -56,7 +56,7 @@ func (e AuthenticationFactsMethods) Valid() bool {
 	}
 }
 
-// Defines values for CertificateChallengeMethod.
+// defines values for CertificateChallengeMethod.
 const (
 	Dns01     CertificateChallengeMethod = "dns-01"
 	TlsAlpn01 CertificateChallengeMethod = "tls-alpn-01"
@@ -74,7 +74,7 @@ func (e CertificateChallengeMethod) Valid() bool {
 	}
 }
 
-// Defines values for CertificateIssuanceState.
+// defines values for CertificateIssuanceState.
 const (
 	CertificateIssuanceStateAuthorizing       CertificateIssuanceState = "authorizing"
 	CertificateIssuanceStateCanceled          CertificateIssuanceState = "canceled"
@@ -110,7 +110,7 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
-// Defines values for DNSAuthorityState.
+// defines values for DNSAuthorityState.
 const (
 	DNSAuthorityStateFailed    DNSAuthorityState = "failed"
 	DNSAuthorityStatePending   DNSAuthorityState = "pending"
@@ -137,7 +137,7 @@ func (e DNSAuthorityState) Valid() bool {
 	}
 }
 
-// Defines values for DNSRecordType.
+// defines values for DNSRecordType.
 const (
 	A    DNSRecordType = "A"
 	AAAA DNSRecordType = "AAAA"
@@ -164,7 +164,7 @@ func (e DNSRecordType) Valid() bool {
 	}
 }
 
-// Defines values for HealthResponseStatus.
+// defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
 )
@@ -179,7 +179,7 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for MaintenanceControlName.
+// defines values for MaintenanceControlName.
 const (
 	MaintenanceControlNameCertificateIssuance MaintenanceControlName = "certificate_issuance"
 	MaintenanceControlNamePublicUrlCreation   MaintenanceControlName = "public_url_creation"
@@ -200,7 +200,7 @@ func (e MaintenanceControlName) Valid() bool {
 	}
 }
 
-// Defines values for OIDCAuthenticationFactsLoginFlow.
+// defines values for OIDCAuthenticationFactsLoginFlow.
 const (
 	AuthorizationCodePkce OIDCAuthenticationFactsLoginFlow = "authorization_code_pkce"
 	DeviceCode            OIDCAuthenticationFactsLoginFlow = "device_code"
@@ -218,7 +218,7 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 	}
 }
 
-// Defines values for ProblemCode.
+// defines values for ProblemCode.
 const (
 	Conflict             ProblemCode = "conflict"
 	DnsSetupPending      ProblemCode = "dns_setup_pending"
@@ -272,7 +272,7 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLLifecycleState.
+// defines values for PublicURLLifecycleState.
 const (
 	Enabled   PublicURLLifecycleState = "enabled"
 	Suspended PublicURLLifecycleState = "suspended"
@@ -290,7 +290,7 @@ func (e PublicURLLifecycleState) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLScope.
+// defines values for PublicURLScope.
 const (
 	Member PublicURLScope = "member"
 	Shared PublicURLScope = "shared"
@@ -308,7 +308,7 @@ func (e PublicURLScope) Valid() bool {
 	}
 }
 
-// Defines values for PublishRunState.
+// defines values for PublishRunState.
 const (
 	PublishRunStateCanceled PublishRunState = "canceled"
 	PublishRunStateClosed   PublishRunState = "closed"
@@ -338,7 +338,7 @@ func (e PublishRunState) Valid() bool {
 	}
 }
 
-// Defines values for PublisherConnectionState.
+// defines values for PublisherConnectionState.
 const (
 	PublisherConnectionStateAssigned  PublisherConnectionState = "assigned"
 	PublisherConnectionStateConnected PublisherConnectionState = "connected"
@@ -362,7 +362,7 @@ func (e PublisherConnectionState) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseChecksControl.
+// defines values for ReadinessResponseChecksControl.
 const (
 	ReadinessResponseChecksControlFailed ReadinessResponseChecksControl = "failed"
 	ReadinessResponseChecksControlOk     ReadinessResponseChecksControl = "ok"
@@ -380,7 +380,7 @@ func (e ReadinessResponseChecksControl) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseChecksDatabase.
+// defines values for ReadinessResponseChecksDatabase.
 const (
 	ReadinessResponseChecksDatabaseFailed ReadinessResponseChecksDatabase = "failed"
 	ReadinessResponseChecksDatabaseOk     ReadinessResponseChecksDatabase = "ok"
@@ -398,7 +398,7 @@ func (e ReadinessResponseChecksDatabase) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseChecksIngress.
+// defines values for ReadinessResponseChecksIngress.
 const (
 	ReadinessResponseChecksIngressFailed ReadinessResponseChecksIngress = "failed"
 	ReadinessResponseChecksIngressOk     ReadinessResponseChecksIngress = "ok"
@@ -416,7 +416,7 @@ func (e ReadinessResponseChecksIngress) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseChecksRelay.
+// defines values for ReadinessResponseChecksRelay.
 const (
 	ReadinessResponseChecksRelayFailed ReadinessResponseChecksRelay = "failed"
 	ReadinessResponseChecksRelayOk     ReadinessResponseChecksRelay = "ok"
@@ -434,7 +434,7 @@ func (e ReadinessResponseChecksRelay) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseChecksRoute53Credentials.
+// defines values for ReadinessResponseChecksRoute53Credentials.
 const (
 	ReadinessResponseChecksRoute53CredentialsFailed ReadinessResponseChecksRoute53Credentials = "failed"
 	ReadinessResponseChecksRoute53CredentialsOk     ReadinessResponseChecksRoute53Credentials = "ok"
@@ -452,7 +452,7 @@ func (e ReadinessResponseChecksRoute53Credentials) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessResponseStatus.
+// defines values for ReadinessResponseStatus.
 const (
 	ReadinessResponseStatusNotReady ReadinessResponseStatus = "not_ready"
 	ReadinessResponseStatusReady    ReadinessResponseStatus = "ready"
@@ -778,7 +778,7 @@ type PublishRun struct {
 
 // PublishRunHeartbeat defines model for PublishRunHeartbeat.
 type PublishRunHeartbeat struct {
-	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
+	// PolicyDenials total IP policy denials reported so far for this publish run number. the total may lag.
 	PolicyDenials        int64                  `json:"policy_denials"`
 	PublishRun           PublishRun             `json:"publish_run"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
@@ -813,35 +813,35 @@ type PublisherConnectionState string
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
 	Checks struct {
-		// Control Control listeners and public control certificate are ready.
+		// Control control listeners and public control certificate are ready.
 		Control  ReadinessResponseChecksControl  `json:"control"`
 		Database ReadinessResponseChecksDatabase `json:"database"`
 
-		// Ingress Present in standalone; checks the ingress lease, routing table, and listener.
+		// Ingress present in standalone; checks the ingress lease, routing table, and listener.
 		Ingress *ReadinessResponseChecksIngress `json:"ingress,omitempty"`
 
-		// Relay Present in standalone; checks both relay services and their listeners.
+		// Relay present in standalone; checks both relay services and their listeners.
 		Relay *ReadinessResponseChecksRelay `json:"relay,omitempty"`
 
-		// Route53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
+		// Route53Credentials present when control uses Route 53; checks that its AWS credentials can be obtained.
 		Route53Credentials *ReadinessResponseChecksRoute53Credentials `json:"route53_credentials,omitempty"`
 	} `json:"checks"`
 	Status ReadinessResponseStatus `json:"status"`
 }
 
-// ReadinessResponseChecksControl Control listeners and public control certificate are ready.
+// ReadinessResponseChecksControl control listeners and public control certificate are ready.
 type ReadinessResponseChecksControl string
 
 // ReadinessResponseChecksDatabase defines model for ReadinessResponse.Checks.Database.
 type ReadinessResponseChecksDatabase string
 
-// ReadinessResponseChecksIngress Present in standalone; checks the ingress lease, routing table, and listener.
+// ReadinessResponseChecksIngress present in standalone; checks the ingress lease, routing table, and listener.
 type ReadinessResponseChecksIngress string
 
-// ReadinessResponseChecksRelay Present in standalone; checks both relay services and their listeners.
+// ReadinessResponseChecksRelay present in standalone; checks both relay services and their listeners.
 type ReadinessResponseChecksRelay string
 
-// ReadinessResponseChecksRoute53Credentials Present when control uses Route 53; checks that its AWS credentials can be obtained.
+// ReadinessResponseChecksRoute53Credentials present when control uses Route 53; checks that its AWS credentials can be obtained.
 type ReadinessResponseChecksRoute53Credentials string
 
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
@@ -892,7 +892,7 @@ type ListPublicURLsParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
 
-	// CanonicalHostname Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
+	// CanonicalHostname exact canonical hostname within the selected team. returns zero or one non-deleted public URL with no next cursor. cannot be combined with cursor.
 	CanonicalHostname *CanonicalHostnameQuery `form:"canonical_hostname,omitempty" json:"canonical_hostname,omitempty"`
 }
 
@@ -956,48 +956,39 @@ type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
 // Doer performs HTTP requests.
 //
-// The standard http.Client implements this interface.
+// the standard http.Client implements this interface.
 type HttpRequestDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client which conforms to the OpenAPI3 specification for this service.
+// Client calls this service's HTTP API.
 type Client struct {
-	// The endpoint of the server conforming to this interface, with scheme,
-	// https://api.deepmap.com for example. This can contain a path relative
-	// to the server, such as https://api.deepmap.com/dev-test, and all the
-	// paths in the swagger spec will be appended to the server.
+	// server URL; operation paths are appended to it.
 	Server string
 
-	// Doer for performing requests, typically a *http.Client with any
-	// customized settings, such as certificate chains.
+	// Client sends requests; callers can supply an http.Client with custom settings.
 	Client HttpRequestDoer
 
-	// A list of callbacks for modifying requests which are generated before sending over
-	// the network.
+	// RequestEditors modify requests before they are sent.
 	RequestEditors []RequestEditorFn
 }
 
 // ClientOption allows setting custom parameters during construction
 type ClientOption func(*Client) error
 
-// Creates a new Client, with reasonable defaults
+// NewClient creates a client with default options.
 func NewClient(server string, opts ...ClientOption) (*Client, error) {
-	// create a client with sane default values
 	client := Client{
 		Server: server,
 	}
-	// mutate client and add all optional params
 	for _, o := range opts {
 		if err := o(&client); err != nil {
 			return nil, err
 		}
 	}
-	// ensure the server URL always has a trailing slash
 	if !strings.HasSuffix(client.Server, "/") {
 		client.Server += "/"
 	}
-	// create httpClient, if not already present
 	if client.Client == nil {
 		client.Client = &http.Client{}
 	}
@@ -1005,7 +996,7 @@ func NewClient(server string, opts ...ClientOption) (*Client, error) {
 }
 
 // WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. This is useful for tests.
+// automatically created using http.Client. this is useful for tests.
 func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 	return func(c *Client) error {
 		c.Client = doer
@@ -1014,7 +1005,7 @@ func WithHTTPClient(doer HttpRequestDoer) ClientOption {
 }
 
 // WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. This can be used to mutate the request.
+// called right before sending the request. this can be used to mutate the request.
 func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	return func(c *Client) error {
 		c.RequestEditors = append(c.RequestEditors, fn)
@@ -1022,238 +1013,238 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 	}
 }
 
-// The interface specification for the client above.
+// the interface specification for the client above.
 type ClientInterface interface {
 
-	// ListMaintenanceControls List maintenance controls
+	// ListMaintenanceControls list maintenance controls
 	//
-	// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
+	// corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 	ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetMaintenanceControlWithBody Set one maintenance control
+	// SetMaintenanceControlWithBody set one maintenance control
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+	// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 	SetMaintenanceControlWithBody(ctx context.Context, controlName MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetMaintenanceControl Set one maintenance control
+	// SetMaintenanceControl set one maintenance control
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+	// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 	SetMaintenanceControl(ctx context.Context, controlName MaintenanceControlName, body SetMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAdminRelays List relay leases
+	// ListAdminRelays list relay leases
 	//
-	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
+	// corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 	ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
+	// DrainAdminRelayWithBody remove a matching relay lease from placement and begin draining
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+	// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainAdminRelay Remove a matching relay lease from placement and begin draining
+	// DrainAdminRelay remove a matching relay lease from placement and begin draining
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+	// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelay(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAdminServerStatus Read control, ingress, and relay status
+	// GetAdminServerStatus read control, ingress, and relay status
 	//
-	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+	// corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetCertificateIssuance Read one publish-run certificate issuance
+	// GetCertificateIssuance read one publish-run certificate issuance
 	//
-	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
+	// corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 	GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkCertificateChallengeReady Confirm a TLS-ALPN-01 challenge is installed
+	// MarkCertificateChallengeReady confirm a TLS-ALPN-01 challenge is installed
 	//
-	// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+	// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
 	MarkCertificateChallengeReady(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkCertificateChallengeRemoved Confirm a TLS-ALPN-01 challenge is removed
+	// MarkCertificateChallengeRemoved confirm a TLS-ALPN-01 challenge is removed
 	//
-	// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+	// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
 	MarkCertificateChallengeRemoved(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetClientIP Return the requesting client's public IP address
+	// GetClientIP return the requesting client's public IP address
 	//
-	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+	// corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetControlDiscovery Describe control and its authentication methods
+	// GetControlDiscovery describe control and its authentication methods
 	//
-	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
+	// corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetHealth Confirm that the control HTTP server is serving
+	// GetHealth confirm that the control HTTP server is serving
 	//
-	// Corresponds with GET /v1/health (the `GetHealth` operationId).
+	// corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPublicURLs List public URLs for one team
+	// ListPublicURLs list public URLs for one team
 	//
-	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+	// corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 	ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublicURLWithBody Create one team public URL
+	// CreatePublicURLWithBody create one team public URL
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublicURL Create one team public URL
+	// CreatePublicURL create one team public URL
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeletePublicURL Delete one public URL and close its publish run
+	// DeletePublicURL delete one public URL and close its publish run
 	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+	// corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 	DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPublicURL Read one public URL
+	// GetPublicURL read one public URL
 	//
-	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+	// corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 	GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdatePublicURLWithBody Update a public URL's target and IP policy
+	// UpdatePublicURLWithBody update a public URL's target and IP policy
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdatePublicURL Update a public URL's target and IP policy
+	// UpdatePublicURL update a public URL's target and IP policy
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublishRun Create a publish run and allocate its publish run number
+	// CreatePublishRun create a publish run and allocate its publish run number
 	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	// corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClosePublishRun Close and drain a publish run without deleting its public URL
+	// ClosePublishRun close and drain a publish run without deleting its public URL
 	//
-	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+	// corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 	ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+	// MarkPublishRunCertificateInstalledWithBody record installation of the current public URL certificate
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+	// MarkPublishRunCertificateInstalled record installation of the current public URL certificate
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+	// CreateCertificateIssuanceWithBody begin issuance for the publish run's certificate plan
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+	// CreateCertificateIssuance begin issuance for the publish run's certificate plan
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+	// HeartbeatPublishRunWithBody renew a publish run and replace missing publisher connections
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+	// HeartbeatPublishRun renew a publish run and replace missing publisher connections
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+	// MarkPublishRunReadyWithBody mark a publish run ready after its certificate and two publisher connections are ready
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+	// MarkPublishRunReady mark a publish run ready after its certificate and two publisher connections are ready
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetReadiness Confirm that the tnld role is ready to serve
+	// GetReadiness confirm that the tnld role is ready to serve
 	//
-	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+	// corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
+	// CreateDNSAuthorityWithBody create a DNS authority for one claimed domain
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDNSAuthority Create a DNS authority for one claimed domain
+	// CreateDNSAuthority create a DNS authority for one claimed domain
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
+	// ReleaseDNSAuthority begin releasing a claimed domain's DNS authority
 	//
-	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+	// corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 	ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetDNSAuthority Read a claimed domain's DNS authority
+	// GetDNSAuthority read a claimed domain's DNS authority
 	//
-	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+	// corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
+	// RevokeHostedPolicyWithBody apply a policy revision from the external authority and close affected publish runs
 	//
-	// Takes any type of body and a specified content type.
+	// takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
+	// RevokeHostedPolicy apply a policy revision from the external authority and close affected publish runs
 	//
-	// Takes a body of the `application/json` content type.
+	// takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// ListMaintenanceControls List maintenance controls
+// ListMaintenanceControls list maintenance controls
 //
-// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
+// corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 func (c *Client) ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListMaintenanceControlsRequest(c.Server)
 	if err != nil {
@@ -1266,11 +1257,11 @@ func (c *Client) ListMaintenanceControls(ctx context.Context, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
-// SetMaintenanceControlWithBody Set one maintenance control
+// SetMaintenanceControlWithBody set one maintenance control
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 func (c *Client) SetMaintenanceControlWithBody(ctx context.Context, controlName MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetMaintenanceControlRequestWithBody(c.Server, controlName, contentType, body)
 	if err != nil {
@@ -1283,11 +1274,11 @@ func (c *Client) SetMaintenanceControlWithBody(ctx context.Context, controlName 
 	return c.Client.Do(req)
 }
 
-// SetMaintenanceControl Set one maintenance control
+// SetMaintenanceControl set one maintenance control
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 func (c *Client) SetMaintenanceControl(ctx context.Context, controlName MaintenanceControlName, body SetMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetMaintenanceControlRequest(c.Server, controlName, body)
 	if err != nil {
@@ -1300,9 +1291,9 @@ func (c *Client) SetMaintenanceControl(ctx context.Context, controlName Maintena
 	return c.Client.Do(req)
 }
 
-// ListAdminRelays List relay leases
+// ListAdminRelays list relay leases
 //
-// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
+// corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAdminRelaysRequest(c.Server, params)
 	if err != nil {
@@ -1315,11 +1306,11 @@ func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysPar
 	return c.Client.Do(req)
 }
 
-// DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
+// DrainAdminRelayWithBody remove a matching relay lease from placement and begin draining
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 func (c *Client) DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainAdminRelayRequestWithBody(c.Server, relayId, contentType, body)
 	if err != nil {
@@ -1332,11 +1323,11 @@ func (c *Client) DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, c
 	return c.Client.Do(req)
 }
 
-// DrainAdminRelay Remove a matching relay lease from placement and begin draining
+// DrainAdminRelay remove a matching relay lease from placement and begin draining
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainAdminRelayRequest(c.Server, relayId, body)
 	if err != nil {
@@ -1349,9 +1340,9 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 	return c.Client.Do(req)
 }
 
-// GetAdminServerStatus Read control, ingress, and relay status
+// GetAdminServerStatus read control, ingress, and relay status
 //
-// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+// corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminServerStatusRequest(c.Server)
 	if err != nil {
@@ -1364,9 +1355,9 @@ func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// GetCertificateIssuance Read one publish-run certificate issuance
+// GetCertificateIssuance read one publish-run certificate issuance
 //
-// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
+// corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCertificateIssuanceRequest(c.Server, issuanceId)
 	if err != nil {
@@ -1379,9 +1370,9 @@ func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId Issuance
 	return c.Client.Do(req)
 }
 
-// MarkCertificateChallengeReady Confirm a TLS-ALPN-01 challenge is installed
+// MarkCertificateChallengeReady confirm a TLS-ALPN-01 challenge is installed
 //
-// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
 func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkCertificateChallengeReadyRequest(c.Server, issuanceId)
 	if err != nil {
@@ -1394,9 +1385,9 @@ func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceId I
 	return c.Client.Do(req)
 }
 
-// MarkCertificateChallengeRemoved Confirm a TLS-ALPN-01 challenge is removed
+// MarkCertificateChallengeRemoved confirm a TLS-ALPN-01 challenge is removed
 //
-// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
 func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkCertificateChallengeRemovedRequest(c.Server, issuanceId)
 	if err != nil {
@@ -1409,9 +1400,9 @@ func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceId
 	return c.Client.Do(req)
 }
 
-// GetClientIP Return the requesting client's public IP address
+// GetClientIP return the requesting client's public IP address
 //
-// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+// corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetClientIPRequest(c.Server)
 	if err != nil {
@@ -1424,9 +1415,9 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// GetControlDiscovery Describe control and its authentication methods
+// GetControlDiscovery describe control and its authentication methods
 //
-// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
+// corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetControlDiscoveryRequest(c.Server)
 	if err != nil {
@@ -1439,9 +1430,9 @@ func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-// GetHealth Confirm that the control HTTP server is serving
+// GetHealth confirm that the control HTTP server is serving
 //
-// Corresponds with GET /v1/health (the `GetHealth` operationId).
+// corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
 	if err != nil {
@@ -1454,9 +1445,9 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-// ListPublicURLs List public URLs for one team
+// ListPublicURLs list public URLs for one team
 //
-// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+// corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListPublicURLsRequest(c.Server, params)
 	if err != nil {
@@ -1469,11 +1460,11 @@ func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParam
 	return c.Client.Do(req)
 }
 
-// CreatePublicURLWithBody Create one team public URL
+// CreatePublicURLWithBody create one team public URL
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublicURLRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -1486,11 +1477,11 @@ func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePubl
 	return c.Client.Do(req)
 }
 
-// CreatePublicURL Create one team public URL
+// CreatePublicURL create one team public URL
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublicURLRequest(c.Server, params, body)
 	if err != nil {
@@ -1503,9 +1494,9 @@ func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLPar
 	return c.Client.Do(req)
 }
 
-// DeletePublicURL Delete one public URL and close its publish run
+// DeletePublicURL delete one public URL and close its publish run
 //
-// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+// corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePublicURLRequest(c.Server, publicUrlId)
 	if err != nil {
@@ -1518,9 +1509,9 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, r
 	return c.Client.Do(req)
 }
 
-// GetPublicURL Read one public URL
+// GetPublicURL read one public URL
 //
-// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+// corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublicURLRequest(c.Server, publicUrlId)
 	if err != nil {
@@ -1533,11 +1524,11 @@ func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqE
 	return c.Client.Do(req)
 }
 
-// UpdatePublicURLWithBody Update a public URL's target and IP policy
+// UpdatePublicURLWithBody update a public URL's target and IP policy
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdatePublicURLRequestWithBody(c.Server, publicUrlId, contentType, body)
 	if err != nil {
@@ -1550,11 +1541,11 @@ func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId Public
 	return c.Client.Do(req)
 }
 
-// UpdatePublicURL Update a public URL's target and IP policy
+// UpdatePublicURL update a public URL's target and IP policy
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdatePublicURLRequest(c.Server, publicUrlId, body)
 	if err != nil {
@@ -1567,9 +1558,9 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, b
 	return c.Client.Do(req)
 }
 
-// CreatePublishRun Create a publish run and allocate its publish run number
+// CreatePublishRun create a publish run and allocate its publish run number
 //
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+// corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params)
 	if err != nil {
@@ -1582,9 +1573,9 @@ func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, 
 	return c.Client.Do(req)
 }
 
-// ClosePublishRun Close and drain a publish run without deleting its public URL
+// ClosePublishRun close and drain a publish run without deleting its public URL
 //
-// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+// corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClosePublishRunRequest(c.Server, publishRunId)
 	if err != nil {
@@ -1597,11 +1588,11 @@ func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID,
 	return c.Client.Do(req)
 }
 
-// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+// MarkPublishRunCertificateInstalledWithBody record installation of the current public URL certificate
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 func (c *Client) MarkPublishRunCertificateInstalledWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublishRunCertificateInstalledRequestWithBody(c.Server, publishRunId, contentType, body)
 	if err != nil {
@@ -1614,11 +1605,11 @@ func (c *Client) MarkPublishRunCertificateInstalledWithBody(ctx context.Context,
 	return c.Client.Do(req)
 }
 
-// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+// MarkPublishRunCertificateInstalled record installation of the current public URL certificate
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublishRunCertificateInstalledRequest(c.Server, publishRunId, body)
 	if err != nil {
@@ -1631,11 +1622,11 @@ func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publish
 	return c.Client.Do(req)
 }
 
-// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+// CreateCertificateIssuanceWithBody begin issuance for the publish run's certificate plan
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCertificateIssuanceRequestWithBody(c.Server, publishRunId, params, contentType, body)
 	if err != nil {
@@ -1648,11 +1639,11 @@ func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishR
 	return c.Client.Do(req)
 }
 
-// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+// CreateCertificateIssuance begin issuance for the publish run's certificate plan
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCertificateIssuanceRequest(c.Server, publishRunId, params, body)
 	if err != nil {
@@ -1665,11 +1656,11 @@ func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId Pub
 	return c.Client.Do(req)
 }
 
-// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+// HeartbeatPublishRunWithBody renew a publish run and replace missing publisher connections
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatPublishRunRequestWithBody(c.Server, publishRunId, contentType, body)
 	if err != nil {
@@ -1682,11 +1673,11 @@ func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId P
 	return c.Client.Do(req)
 }
 
-// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+// HeartbeatPublishRun renew a publish run and replace missing publisher connections
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatPublishRunRequest(c.Server, publishRunId, body)
 	if err != nil {
@@ -1699,11 +1690,11 @@ func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRu
 	return c.Client.Do(req)
 }
 
-// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+// MarkPublishRunReadyWithBody mark a publish run ready after its certificate and two publisher connections are ready
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublishRunReadyRequestWithBody(c.Server, publishRunId, contentType, body)
 	if err != nil {
@@ -1716,11 +1707,11 @@ func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId P
 	return c.Client.Do(req)
 }
 
-// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+// MarkPublishRunReady mark a publish run ready after its certificate and two publisher connections are ready
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublishRunReadyRequest(c.Server, publishRunId, body)
 	if err != nil {
@@ -1733,9 +1724,9 @@ func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRu
 	return c.Client.Do(req)
 }
 
-// GetReadiness Confirm that the tnld role is ready to serve
+// GetReadiness confirm that the tnld role is ready to serve
 //
-// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+// corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
 	if err != nil {
@@ -1748,11 +1739,11 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 	return c.Client.Do(req)
 }
 
-// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
+// CreateDNSAuthorityWithBody create a DNS authority for one claimed domain
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 func (c *Client) CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDNSAuthorityRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -1765,11 +1756,11 @@ func (c *Client) CreateDNSAuthorityWithBody(ctx context.Context, params *CreateD
 	return c.Client.Do(req)
 }
 
-// CreateDNSAuthority Create a DNS authority for one claimed domain
+// CreateDNSAuthority create a DNS authority for one claimed domain
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 func (c *Client) CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDNSAuthorityRequest(c.Server, params, body)
 	if err != nil {
@@ -1782,9 +1773,9 @@ func (c *Client) CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthor
 	return c.Client.Do(req)
 }
 
-// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
+// ReleaseDNSAuthority begin releasing a claimed domain's DNS authority
 //
-// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+// corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleaseDNSAuthorityRequest(c.Server, dnsAuthorityReference, params)
 	if err != nil {
@@ -1797,9 +1788,9 @@ func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference 
 	return c.Client.Do(req)
 }
 
-// GetDNSAuthority Read a claimed domain's DNS authority
+// GetDNSAuthority read a claimed domain's DNS authority
 //
-// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+// corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDNSAuthorityRequest(c.Server, dnsAuthorityReference)
 	if err != nil {
@@ -1812,11 +1803,11 @@ func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSA
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
+// RevokeHostedPolicyWithBody apply a policy revision from the external authority and close affected publish runs
 //
-// Takes any type of body and a specified content type.
+// takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeHostedPolicyRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -1829,11 +1820,11 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
+// RevokeHostedPolicy apply a policy revision from the external authority and close affected publish runs
 //
-// Takes a body of the `application/json` content type.
+// takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
 	if err != nil {
@@ -3000,263 +2991,263 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// ListMaintenanceControlsWithResponse List maintenance controls
+	// ListMaintenanceControlsWithResponse list maintenance controls
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
+	// corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 	ListMaintenanceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMaintenanceControlsResponse, error)
 
-	// SetMaintenanceControlWithBodyWithResponse Set one maintenance control
+	// SetMaintenanceControlWithBodyWithResponse set one maintenance control
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+	// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 	SetMaintenanceControlWithBodyWithResponse(ctx context.Context, controlName MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMaintenanceControlResponse, error)
 
-	// SetMaintenanceControlWithResponse Set one maintenance control
+	// SetMaintenanceControlWithResponse set one maintenance control
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+	// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 	SetMaintenanceControlWithResponse(ctx context.Context, controlName MaintenanceControlName, body SetMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMaintenanceControlResponse, error)
 
-	// ListAdminRelaysWithResponse List relay leases
+	// ListAdminRelaysWithResponse list relay leases
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
+	// corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 	ListAdminRelaysWithResponse(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error)
 
-	// DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
+	// DrainAdminRelayWithBodyWithResponse remove a matching relay lease from placement and begin draining
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+	// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error)
 
-	// DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
+	// DrainAdminRelayWithResponse remove a matching relay lease from placement and begin draining
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+	// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithResponse(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error)
 
-	// GetAdminServerStatusWithResponse Read control, ingress, and relay status
+	// GetAdminServerStatusWithResponse read control, ingress, and relay status
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+	// corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
-	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
+	// GetCertificateIssuanceWithResponse read one publish-run certificate issuance
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
+	// corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 	GetCertificateIssuanceWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error)
 
-	// MarkCertificateChallengeReadyWithResponse Confirm a TLS-ALPN-01 challenge is installed
+	// MarkCertificateChallengeReadyWithResponse confirm a TLS-ALPN-01 challenge is installed
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+	// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
 	MarkCertificateChallengeReadyWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeReadyResponse, error)
 
-	// MarkCertificateChallengeRemovedWithResponse Confirm a TLS-ALPN-01 challenge is removed
+	// MarkCertificateChallengeRemovedWithResponse confirm a TLS-ALPN-01 challenge is removed
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+	// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
 	MarkCertificateChallengeRemovedWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeRemovedResponse, error)
 
-	// GetClientIPWithResponse Return the requesting client's public IP address
+	// GetClientIPWithResponse return the requesting client's public IP address
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+	// corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error)
 
-	// GetControlDiscoveryWithResponse Describe control and its authentication methods
+	// GetControlDiscoveryWithResponse describe control and its authentication methods
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
+	// corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
-	// GetHealthWithResponse Confirm that the control HTTP server is serving
+	// GetHealthWithResponse confirm that the control HTTP server is serving
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/health (the `GetHealth` operationId).
+	// corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
-	// ListPublicURLsWithResponse List public URLs for one team
+	// ListPublicURLsWithResponse list public URLs for one team
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+	// corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 	ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error)
 
-	// CreatePublicURLWithBodyWithResponse Create one team public URL
+	// CreatePublicURLWithBodyWithResponse create one team public URL
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
 
-	// CreatePublicURLWithResponse Create one team public URL
+	// CreatePublicURLWithResponse create one team public URL
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+	// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
 
-	// DeletePublicURLWithResponse Delete one public URL and close its publish run
+	// DeletePublicURLWithResponse delete one public URL and close its publish run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+	// corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 	DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error)
 
-	// GetPublicURLWithResponse Read one public URL
+	// GetPublicURLWithResponse read one public URL
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+	// corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 	GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error)
 
-	// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
+	// UpdatePublicURLWithBodyWithResponse update a public URL's target and IP policy
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
 
-	// UpdatePublicURLWithResponse Update a public URL's target and IP policy
+	// UpdatePublicURLWithResponse update a public URL's target and IP policy
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+	// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
 
-	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+	// CreatePublishRunWithResponse create a publish run and allocate its publish run number
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	// corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
 
-	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+	// ClosePublishRunWithResponse close and drain a publish run without deleting its public URL
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+	// corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 	ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error)
 
-	// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
+	// MarkPublishRunCertificateInstalledWithBodyWithResponse record installation of the current public URL certificate
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
 
-	// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+	// MarkPublishRunCertificateInstalledWithResponse record installation of the current public URL certificate
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
 
-	// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
+	// CreateCertificateIssuanceWithBodyWithResponse begin issuance for the publish run's certificate plan
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
 
-	// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+	// CreateCertificateIssuanceWithResponse begin issuance for the publish run's certificate plan
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
 
-	// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+	// HeartbeatPublishRunWithBodyWithResponse renew a publish run and replace missing publisher connections
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
 
-	// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+	// HeartbeatPublishRunWithResponse renew a publish run and replace missing publisher connections
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
 
-	// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+	// MarkPublishRunReadyWithBodyWithResponse mark a publish run ready after its certificate and two publisher connections are ready
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
 
-	// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+	// MarkPublishRunReadyWithResponse mark a publish run ready after its certificate and two publisher connections are ready
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+	// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
 
-	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
+	// GetReadinessWithResponse confirm that the tnld role is ready to serve
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+	// corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
-	// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
+	// CreateDNSAuthorityWithBodyWithResponse create a DNS authority for one claimed domain
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
 
-	// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
+	// CreateDNSAuthorityWithResponse create a DNS authority for one claimed domain
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
 
-	// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
+	// ReleaseDNSAuthorityWithResponse begin releasing a claimed domain's DNS authority
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+	// corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 	ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error)
 
-	// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
+	// GetDNSAuthorityWithResponse read a claimed domain's DNS authority
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+	// corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error)
 
-	// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
+	// RevokeHostedPolicyWithBodyWithResponse apply a policy revision from the external authority and close affected publish runs
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 
-	// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
+	// RevokeHostedPolicyWithResponse apply a policy revision from the external authority and close affected publish runs
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 }
 
@@ -4542,11 +4533,11 @@ func (r RevokeHostedPolicyResponse) ContentType() string {
 	return ""
 }
 
-// ListMaintenanceControlsWithResponse List maintenance controls
+// ListMaintenanceControlsWithResponse list maintenance controls
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
+// corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 func (c *ClientWithResponses) ListMaintenanceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMaintenanceControlsResponse, error) {
 	rsp, err := c.ListMaintenanceControls(ctx, reqEditors...)
 	if err != nil {
@@ -4555,11 +4546,11 @@ func (c *ClientWithResponses) ListMaintenanceControlsWithResponse(ctx context.Co
 	return ParseListMaintenanceControlsResponse(rsp)
 }
 
-// SetMaintenanceControlWithBodyWithResponse Set one maintenance control
+// SetMaintenanceControlWithBodyWithResponse set one maintenance control
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 func (c *ClientWithResponses) SetMaintenanceControlWithBodyWithResponse(ctx context.Context, controlName MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMaintenanceControlResponse, error) {
 	rsp, err := c.SetMaintenanceControlWithBody(ctx, controlName, contentType, body, reqEditors...)
 	if err != nil {
@@ -4568,11 +4559,11 @@ func (c *ClientWithResponses) SetMaintenanceControlWithBodyWithResponse(ctx cont
 	return ParseSetMaintenanceControlResponse(rsp)
 }
 
-// SetMaintenanceControlWithResponse Set one maintenance control
+// SetMaintenanceControlWithResponse set one maintenance control
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
+// corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 func (c *ClientWithResponses) SetMaintenanceControlWithResponse(ctx context.Context, controlName MaintenanceControlName, body SetMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMaintenanceControlResponse, error) {
 	rsp, err := c.SetMaintenanceControl(ctx, controlName, body, reqEditors...)
 	if err != nil {
@@ -4581,11 +4572,11 @@ func (c *ClientWithResponses) SetMaintenanceControlWithResponse(ctx context.Cont
 	return ParseSetMaintenanceControlResponse(rsp)
 }
 
-// ListAdminRelaysWithResponse List relay leases
+// ListAdminRelaysWithResponse list relay leases
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
+// corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error) {
 	rsp, err := c.ListAdminRelays(ctx, params, reqEditors...)
 	if err != nil {
@@ -4594,11 +4585,11 @@ func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, p
 	return ParseListAdminRelaysResponse(rsp)
 }
 
-// DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
+// DrainAdminRelayWithBodyWithResponse remove a matching relay lease from placement and begin draining
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 func (c *ClientWithResponses) DrainAdminRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error) {
 	rsp, err := c.DrainAdminRelayWithBody(ctx, relayId, contentType, body, reqEditors...)
 	if err != nil {
@@ -4607,11 +4598,11 @@ func (c *ClientWithResponses) DrainAdminRelayWithBodyWithResponse(ctx context.Co
 	return ParseDrainAdminRelayResponse(rsp)
 }
 
-// DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
+// DrainAdminRelayWithResponse remove a matching relay lease from placement and begin draining
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
+// corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 func (c *ClientWithResponses) DrainAdminRelayWithResponse(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error) {
 	rsp, err := c.DrainAdminRelay(ctx, relayId, body, reqEditors...)
 	if err != nil {
@@ -4620,11 +4611,11 @@ func (c *ClientWithResponses) DrainAdminRelayWithResponse(ctx context.Context, r
 	return ParseDrainAdminRelayResponse(rsp)
 }
 
-// GetAdminServerStatusWithResponse Read control, ingress, and relay status
+// GetAdminServerStatusWithResponse read control, ingress, and relay status
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+// corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error) {
 	rsp, err := c.GetAdminServerStatus(ctx, reqEditors...)
 	if err != nil {
@@ -4633,11 +4624,11 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 	return ParseGetAdminServerStatusResponse(rsp)
 }
 
-// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
+// GetCertificateIssuanceWithResponse read one publish-run certificate issuance
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
+// corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 func (c *ClientWithResponses) GetCertificateIssuanceWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error) {
 	rsp, err := c.GetCertificateIssuance(ctx, issuanceId, reqEditors...)
 	if err != nil {
@@ -4646,11 +4637,11 @@ func (c *ClientWithResponses) GetCertificateIssuanceWithResponse(ctx context.Con
 	return ParseGetCertificateIssuanceResponse(rsp)
 }
 
-// MarkCertificateChallengeReadyWithResponse Confirm a TLS-ALPN-01 challenge is installed
+// MarkCertificateChallengeReadyWithResponse confirm a TLS-ALPN-01 challenge is installed
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
 func (c *ClientWithResponses) MarkCertificateChallengeReadyWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeReadyResponse, error) {
 	rsp, err := c.MarkCertificateChallengeReady(ctx, issuanceId, reqEditors...)
 	if err != nil {
@@ -4659,11 +4650,11 @@ func (c *ClientWithResponses) MarkCertificateChallengeReadyWithResponse(ctx cont
 	return ParseMarkCertificateChallengeReadyResponse(rsp)
 }
 
-// MarkCertificateChallengeRemovedWithResponse Confirm a TLS-ALPN-01 challenge is removed
+// MarkCertificateChallengeRemovedWithResponse confirm a TLS-ALPN-01 challenge is removed
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+// corresponds with POST /v1/certificate-issuances/{issuance_id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
 func (c *ClientWithResponses) MarkCertificateChallengeRemovedWithResponse(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeRemovedResponse, error) {
 	rsp, err := c.MarkCertificateChallengeRemoved(ctx, issuanceId, reqEditors...)
 	if err != nil {
@@ -4672,11 +4663,11 @@ func (c *ClientWithResponses) MarkCertificateChallengeRemovedWithResponse(ctx co
 	return ParseMarkCertificateChallengeRemovedResponse(rsp)
 }
 
-// GetClientIPWithResponse Return the requesting client's public IP address
+// GetClientIPWithResponse return the requesting client's public IP address
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+// corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 func (c *ClientWithResponses) GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error) {
 	rsp, err := c.GetClientIP(ctx, reqEditors...)
 	if err != nil {
@@ -4685,11 +4676,11 @@ func (c *ClientWithResponses) GetClientIPWithResponse(ctx context.Context, reqEd
 	return ParseGetClientIPResponse(rsp)
 }
 
-// GetControlDiscoveryWithResponse Describe control and its authentication methods
+// GetControlDiscoveryWithResponse describe control and its authentication methods
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
+// corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error) {
 	rsp, err := c.GetControlDiscovery(ctx, reqEditors...)
 	if err != nil {
@@ -4698,11 +4689,11 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
-// GetHealthWithResponse Confirm that the control HTTP server is serving
+// GetHealthWithResponse confirm that the control HTTP server is serving
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/health (the `GetHealth` operationId).
+// corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error) {
 	rsp, err := c.GetHealth(ctx, reqEditors...)
 	if err != nil {
@@ -4711,11 +4702,11 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
-// ListPublicURLsWithResponse List public URLs for one team
+// ListPublicURLsWithResponse list public URLs for one team
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
+// corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 func (c *ClientWithResponses) ListPublicURLsWithResponse(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*ListPublicURLsResponse, error) {
 	rsp, err := c.ListPublicURLs(ctx, params, reqEditors...)
 	if err != nil {
@@ -4724,11 +4715,11 @@ func (c *ClientWithResponses) ListPublicURLsWithResponse(ctx context.Context, pa
 	return ParseListPublicURLsResponse(rsp)
 }
 
-// CreatePublicURLWithBodyWithResponse Create one team public URL
+// CreatePublicURLWithBodyWithResponse create one team public URL
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 func (c *ClientWithResponses) CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
 	rsp, err := c.CreatePublicURLWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -4737,11 +4728,11 @@ func (c *ClientWithResponses) CreatePublicURLWithBodyWithResponse(ctx context.Co
 	return ParseCreatePublicURLResponse(rsp)
 }
 
-// CreatePublicURLWithResponse Create one team public URL
+// CreatePublicURLWithResponse create one team public URL
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
+// corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error) {
 	rsp, err := c.CreatePublicURL(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -4750,11 +4741,11 @@ func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, p
 	return ParseCreatePublicURLResponse(rsp)
 }
 
-// DeletePublicURLWithResponse Delete one public URL and close its publish run
+// DeletePublicURLWithResponse delete one public URL and close its publish run
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
+// corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 func (c *ClientWithResponses) DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error) {
 	rsp, err := c.DeletePublicURL(ctx, publicUrlId, reqEditors...)
 	if err != nil {
@@ -4763,11 +4754,11 @@ func (c *ClientWithResponses) DeletePublicURLWithResponse(ctx context.Context, p
 	return ParseDeletePublicURLResponse(rsp)
 }
 
-// GetPublicURLWithResponse Read one public URL
+// GetPublicURLWithResponse read one public URL
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
+// corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*GetPublicURLResponse, error) {
 	rsp, err := c.GetPublicURL(ctx, publicUrlId, reqEditors...)
 	if err != nil {
@@ -4776,11 +4767,11 @@ func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publ
 	return ParseGetPublicURLResponse(rsp)
 }
 
-// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
+// UpdatePublicURLWithBodyWithResponse update a public URL's target and IP policy
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
 	rsp, err := c.UpdatePublicURLWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
 	if err != nil {
@@ -4789,11 +4780,11 @@ func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Co
 	return ParseUpdatePublicURLResponse(rsp)
 }
 
-// UpdatePublicURLWithResponse Update a public URL's target and IP policy
+// UpdatePublicURLWithResponse update a public URL's target and IP policy
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
+// corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error) {
 	rsp, err := c.UpdatePublicURL(ctx, publicUrlId, body, reqEditors...)
 	if err != nil {
@@ -4802,11 +4793,11 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 	return ParseUpdatePublicURLResponse(rsp)
 }
 
-// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+// CreatePublishRunWithResponse create a publish run and allocate its publish run number
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+// corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
 	rsp, err := c.CreatePublishRun(ctx, publicUrlId, params, reqEditors...)
 	if err != nil {
@@ -4815,11 +4806,11 @@ func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, 
 	return ParseCreatePublishRunResponse(rsp)
 }
 
-// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+// ClosePublishRunWithResponse close and drain a publish run without deleting its public URL
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
+// corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error) {
 	rsp, err := c.ClosePublishRun(ctx, publishRunId, reqEditors...)
 	if err != nil {
@@ -4828,11 +4819,11 @@ func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, p
 	return ParseClosePublishRunResponse(rsp)
 }
 
-// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
+// MarkPublishRunCertificateInstalledWithBodyWithResponse record installation of the current public URL certificate
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
 	rsp, err := c.MarkPublishRunCertificateInstalledWithBody(ctx, publishRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -4841,11 +4832,11 @@ func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithBodyWithResp
 	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
 }
 
-// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+// MarkPublishRunCertificateInstalledWithResponse record installation of the current public URL certificate
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error) {
 	rsp, err := c.MarkPublishRunCertificateInstalled(ctx, publishRunId, body, reqEditors...)
 	if err != nil {
@@ -4854,11 +4845,11 @@ func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithResponse(ctx
 	return ParseMarkPublishRunCertificateInstalledResponse(rsp)
 }
 
-// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
+// CreateCertificateIssuanceWithBodyWithResponse begin issuance for the publish run's certificate plan
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
 	rsp, err := c.CreateCertificateIssuanceWithBody(ctx, publishRunId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -4867,11 +4858,11 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx 
 	return ParseCreateCertificateIssuanceResponse(rsp)
 }
 
-// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+// CreateCertificateIssuanceWithResponse begin issuance for the publish run's certificate plan
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
 	rsp, err := c.CreateCertificateIssuance(ctx, publishRunId, params, body, reqEditors...)
 	if err != nil {
@@ -4880,11 +4871,11 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.
 	return ParseCreateCertificateIssuanceResponse(rsp)
 }
 
-// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+// HeartbeatPublishRunWithBodyWithResponse renew a publish run and replace missing publisher connections
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 func (c *ClientWithResponses) HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
 	rsp, err := c.HeartbeatPublishRunWithBody(ctx, publishRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -4893,11 +4884,11 @@ func (c *ClientWithResponses) HeartbeatPublishRunWithBodyWithResponse(ctx contex
 	return ParseHeartbeatPublishRunResponse(rsp)
 }
 
-// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+// HeartbeatPublishRunWithResponse renew a publish run and replace missing publisher connections
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
 	rsp, err := c.HeartbeatPublishRun(ctx, publishRunId, body, reqEditors...)
 	if err != nil {
@@ -4906,11 +4897,11 @@ func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Contex
 	return ParseHeartbeatPublishRunResponse(rsp)
 }
 
-// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+// MarkPublishRunReadyWithBodyWithResponse mark a publish run ready after its certificate and two publisher connections are ready
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 func (c *ClientWithResponses) MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
 	rsp, err := c.MarkPublishRunReadyWithBody(ctx, publishRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -4919,11 +4910,11 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithBodyWithResponse(ctx contex
 	return ParseMarkPublishRunReadyResponse(rsp)
 }
 
-// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+// MarkPublishRunReadyWithResponse mark a publish run ready after its certificate and two publisher connections are ready
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
+// corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error) {
 	rsp, err := c.MarkPublishRunReady(ctx, publishRunId, body, reqEditors...)
 	if err != nil {
@@ -4932,11 +4923,11 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Contex
 	return ParseMarkPublishRunReadyResponse(rsp)
 }
 
-// GetReadinessWithResponse Confirm that the tnld role is ready to serve
+// GetReadinessWithResponse confirm that the tnld role is ready to serve
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+// corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error) {
 	rsp, err := c.GetReadiness(ctx, reqEditors...)
 	if err != nil {
@@ -4945,11 +4936,11 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
-// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
+// CreateDNSAuthorityWithBodyWithResponse create a DNS authority for one claimed domain
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 func (c *ClientWithResponses) CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
 	rsp, err := c.CreateDNSAuthorityWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -4958,11 +4949,11 @@ func (c *ClientWithResponses) CreateDNSAuthorityWithBodyWithResponse(ctx context
 	return ParseCreateDNSAuthorityResponse(rsp)
 }
 
-// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
+// CreateDNSAuthorityWithResponse create a DNS authority for one claimed domain
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+// corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 func (c *ClientWithResponses) CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
 	rsp, err := c.CreateDNSAuthority(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -4971,11 +4962,11 @@ func (c *ClientWithResponses) CreateDNSAuthorityWithResponse(ctx context.Context
 	return ParseCreateDNSAuthorityResponse(rsp)
 }
 
-// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
+// ReleaseDNSAuthorityWithResponse begin releasing a claimed domain's DNS authority
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+// corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 func (c *ClientWithResponses) ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error) {
 	rsp, err := c.ReleaseDNSAuthority(ctx, dnsAuthorityReference, params, reqEditors...)
 	if err != nil {
@@ -4984,11 +4975,11 @@ func (c *ClientWithResponses) ReleaseDNSAuthorityWithResponse(ctx context.Contex
 	return ParseReleaseDNSAuthorityResponse(rsp)
 }
 
-// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
+// GetDNSAuthorityWithResponse read a claimed domain's DNS authority
 //
-// Returns a wrapper object for the known response body format(s).
+// returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+// corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error) {
 	rsp, err := c.GetDNSAuthority(ctx, dnsAuthorityReference, reqEditors...)
 	if err != nil {
@@ -4997,11 +4988,11 @@ func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, d
 	return ParseGetDNSAuthorityResponse(rsp)
 }
 
-// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
+// RevokeHostedPolicyWithBodyWithResponse apply a policy revision from the external authority and close affected publish runs
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+// takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
 	rsp, err := c.RevokeHostedPolicyWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -5010,11 +5001,11 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context
 	return ParseRevokeHostedPolicyResponse(rsp)
 }
 
-// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
+// RevokeHostedPolicyWithResponse apply a policy revision from the external authority and close affected publish runs
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+// corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
 	rsp, err := c.RevokeHostedPolicy(ctx, body, reqEditors...)
 	if err != nil {
@@ -5911,85 +5902,85 @@ func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyRes
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// ListMaintenanceControls List maintenance controls
+	// ListMaintenanceControls list maintenance controls
 	// (GET /v1/admin/maintenance-controls)
 	ListMaintenanceControls(w http.ResponseWriter, r *http.Request)
-	// SetMaintenanceControl Set one maintenance control
+	// SetMaintenanceControl set one maintenance control
 	// (PUT /v1/admin/maintenance-controls/{control_name})
 	SetMaintenanceControl(w http.ResponseWriter, r *http.Request, controlName MaintenanceControlName)
-	// ListAdminRelays List relay leases
+	// ListAdminRelays list relay leases
 	// (GET /v1/admin/relays)
 	ListAdminRelays(w http.ResponseWriter, r *http.Request, params ListAdminRelaysParams)
-	// DrainAdminRelay Remove a matching relay lease from placement and begin draining
+	// DrainAdminRelay remove a matching relay lease from placement and begin draining
 	// (POST /v1/admin/relays/{relay_id}/drain)
 	DrainAdminRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
-	// GetAdminServerStatus Read control, ingress, and relay status
+	// GetAdminServerStatus read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
-	// GetCertificateIssuance Read one publish-run certificate issuance
+	// GetCertificateIssuance read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
 	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
-	// MarkCertificateChallengeReady Confirm a TLS-ALPN-01 challenge is installed
+	// MarkCertificateChallengeReady confirm a TLS-ALPN-01 challenge is installed
 	// (POST /v1/certificate-issuances/{issuance_id}/challenge-ready)
 	MarkCertificateChallengeReady(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
-	// MarkCertificateChallengeRemoved Confirm a TLS-ALPN-01 challenge is removed
+	// MarkCertificateChallengeRemoved confirm a TLS-ALPN-01 challenge is removed
 	// (POST /v1/certificate-issuances/{issuance_id}/challenge-removed)
 	MarkCertificateChallengeRemoved(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
-	// GetClientIP Return the requesting client's public IP address
+	// GetClientIP return the requesting client's public IP address
 	// (GET /v1/client-ip)
 	GetClientIP(w http.ResponseWriter, r *http.Request)
-	// GetControlDiscovery Describe control and its authentication methods
+	// GetControlDiscovery describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
-	// GetHealth Confirm that the control HTTP server is serving
+	// GetHealth confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
-	// ListPublicURLs List public URLs for one team
+	// ListPublicURLs list public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
-	// CreatePublicURL Create one team public URL
+	// CreatePublicURL create one team public URL
 	// (POST /v1/public-urls)
 	CreatePublicURL(w http.ResponseWriter, r *http.Request, params CreatePublicURLParams)
-	// DeletePublicURL Delete one public URL and close its publish run
+	// DeletePublicURL delete one public URL and close its publish run
 	// (DELETE /v1/public-urls/{public_url_id})
 	DeletePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// GetPublicURL Read one public URL
+	// GetPublicURL read one public URL
 	// (GET /v1/public-urls/{public_url_id})
 	GetPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// UpdatePublicURL Update a public URL's target and IP policy
+	// UpdatePublicURL update a public URL's target and IP policy
 	// (PATCH /v1/public-urls/{public_url_id})
 	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreatePublishRun Create a publish run and allocate its publish run number
+	// CreatePublishRun create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
-	// ClosePublishRun Close and drain a publish run without deleting its public URL
+	// ClosePublishRun close and drain a publish run without deleting its public URL
 	// (DELETE /v1/publish-runs/{publish_run_id})
 	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
+	// MarkPublishRunCertificateInstalled record installation of the current public URL certificate
 	// (POST /v1/publish-runs/{publish_run_id}/certificate-installed)
 	MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
+	// CreateCertificateIssuance begin issuance for the publish run's certificate plan
 	// (POST /v1/publish-runs/{publish_run_id}/certificate-issuances)
 	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateCertificateIssuanceParams)
-	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
+	// HeartbeatPublishRun renew a publish run and replace missing publisher connections
 	// (POST /v1/publish-runs/{publish_run_id}/heartbeat)
 	HeartbeatPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
+	// MarkPublishRunReady mark a publish run ready after its certificate and two publisher connections are ready
 	// (POST /v1/publish-runs/{publish_run_id}/ready)
 	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// GetReadiness Confirm that the tnld role is ready to serve
+	// GetReadiness confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-	// CreateDNSAuthority Create a DNS authority for one claimed domain
+	// CreateDNSAuthority create a DNS authority for one claimed domain
 	// (POST /v1/service/dns-authorities)
 	CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams)
-	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
+	// ReleaseDNSAuthority begin releasing a claimed domain's DNS authority
 	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
 	ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams)
-	// GetDNSAuthority Read a claimed domain's DNS authority
+	// GetDNSAuthority read a claimed domain's DNS authority
 	// (GET /v1/service/dns-authorities/{dns_authority_reference})
 	GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference)
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
+	// RevokeHostedPolicy apply a policy revision from the external authority and close affected publish runs
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
 }
@@ -6049,7 +6040,7 @@ func (siw *ServerInterfaceWrapper) ListAdminRelays(w http.ResponseWriter, r *htt
 	var err error
 	_ = err
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params ListAdminRelaysParams
 
 	// ------------- Optional query parameter "cursor" -------------
@@ -6242,7 +6233,7 @@ func (siw *ServerInterfaceWrapper) ListPublicURLs(w http.ResponseWriter, r *http
 	var err error
 	_ = err
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params ListPublicURLsParams
 
 	// ------------- Required query parameter "team_id" -------------
@@ -6301,7 +6292,7 @@ func (siw *ServerInterfaceWrapper) CreatePublicURL(w http.ResponseWriter, r *htt
 	var err error
 	_ = err
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreatePublicURLParams
 
 	headers := r.Header
@@ -6433,7 +6424,7 @@ func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreatePublishRunParams
 
 	headers := r.Header
@@ -6539,7 +6530,7 @@ func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWrit
 		return
 	}
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreateCertificateIssuanceParams
 
 	headers := r.Header
@@ -6650,7 +6641,7 @@ func (siw *ServerInterfaceWrapper) CreateDNSAuthority(w http.ResponseWriter, r *
 	var err error
 	_ = err
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params CreateDNSAuthorityParams
 
 	headers := r.Header
@@ -6704,7 +6695,7 @@ func (siw *ServerInterfaceWrapper) ReleaseDNSAuthority(w http.ResponseWriter, r 
 		return
 	}
 
-	// Parameter object where we will unmarshal all parameters from the context
+	// parameter object where we will unmarshal all parameters from the context
 	var params ReleaseDNSAuthorityParams
 
 	headers := r.Header

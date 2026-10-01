@@ -192,8 +192,8 @@ func TestIntegrationControlTLSLeadershipConnectionLoss(t *testing.T) {
 		})
 	})
 	awaitIntegrationResult(t, ctx, started)
-	// Advisory lock keys are reused in other test databases on the same server.
-	// Resolve exactly one holder in OUR database before terminating its backend.
+	// advisory lock keys are reused in other test databases on the same server.
+	// resolve exactly one holder in our database before terminating its backend.
 	var pids []int32
 	if err := database.pool.QueryRow(ctx, `
 		SELECT array_agg(pid) FROM pg_locks
@@ -266,7 +266,7 @@ func TestIntegrationControlTLSLeadershipShutdownClosesConnection(t *testing.T) {
 	}
 }
 
-// Join the callback even if a startup or fault-injection assertion fails. This
+// join the callback even if a startup or fault-injection assertion fails. this
 // cleanup is registered after the worker group and before startup.
 func joinTLSCallbackOnCleanup(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
 	t.Helper()

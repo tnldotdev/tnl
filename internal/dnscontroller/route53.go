@@ -304,7 +304,7 @@ func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlsta
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
 }
 
-// Route 53 creates apex NS and SOA records with long TTLs. Preserve their
+// Route 53 creates apex NS and SOA records with long TTLs. preserve their
 // contents and lower only the caching values, including SOA negative caching.
 func (p *Route53Provider) reconcileClaimedZoneTTL(ctx context.Context, zoneID, domain string, nameservers []string) error {
 	sets, err := p.listRecordSets(ctx, zoneID, domain)
@@ -385,7 +385,7 @@ func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlst
 	zoneID := canonicalZoneID(work.ProviderZoneID)
 	recovered := zoneID == ""
 	if recovered {
-		// Creation can succeed before the worker saves the zone ID. Release
+		// creation can succeed before the worker saves the zone ID. release
 		// must still find that zone after a crash or a failed persistence step.
 		zone, err := p.findClaimedZone(ctx, work)
 		if err != nil {
@@ -415,8 +415,8 @@ func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlst
 	if err != nil {
 		return fmt.Errorf("dnscontroller: read Route 53 hosted-zone tags: %w", err)
 	}
-	// A crash immediately after CreateHostedZone leaves no tags yet. Its
-	// caller reference and domain still identify the zone exactly. Never
+	// a crash immediately after CreateHostedZone leaves no tags yet. its
+	// caller reference and domain still identify the zone exactly. never
 	// accept partial or conflicting tags as proof of ownership.
 	untagged := tags != nil && tags.ResourceTagSet != nil && len(tags.ResourceTagSet.Tags) == 0
 	if !ownedTags(tags, work) && !(recovered && untagged) {

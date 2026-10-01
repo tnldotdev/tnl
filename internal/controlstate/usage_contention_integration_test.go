@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
-// The gate is controlled latency on the last route, not a sleep: PostgreSQL's
+// the gate is controlled latency on the last public URL, not a sleep: PostgreSQL's
 // wait graph proves which earlier locks are retained and exhaust both pools.
 func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 	for _, pageSize := range []int{256, 16} {
@@ -104,7 +104,7 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// A separate gate demonstrates the other serialization boundary:
+			// a separate gate demonstrates the other serialization boundary:
 			// ready heartbeats still publish lease-extension events at commit.
 			clock, err := observer.pool.Begin(ctx)
 			if err != nil {
@@ -156,8 +156,8 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 				}
 				t.Log("16-report page committed: all six earlier-route heartbeats completed while the next page and lease renewal remained blocked")
 			} else {
-				// Six different routes ensure all waiters lead directly to usage,
-				// rather than chaining on another heartbeat's route lock.
+				// six different public URLs make every waiter block on usage, not
+				// another heartbeat's public URL lock.
 				tick := time.NewTicker(time.Millisecond)
 				defer tick.Stop()
 				for {

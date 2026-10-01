@@ -21,7 +21,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if _, _, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Make the next real control operation reject the exact run. The process
+	// make the next real control operation reject the exact run. the process
 	// must propagate that terminal error through its ordinary shutdown path.
 	if _, err := fixture.inspect.ExecContext(integrationOperationContext(t), `UPDATE control.ingress_leases SET lease_expires_at = renewed_at + interval '1 microsecond' WHERE ingress_id = $1`, fixture.ingressConfig.IngressID); err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if err := retired.wait(); !errors.Is(err, ingress.ErrIngressLeaseLost) {
 		t.Fatalf("expired ingress exit = %v", err)
 	}
-	// Acknowledge the expected exit so topology cleanup still checks every run.
+	// acknowledge the expected exit so topology cleanup still checks every run.
 	retired.mu.Lock()
 	retired.err = nil
 	retired.mu.Unlock()

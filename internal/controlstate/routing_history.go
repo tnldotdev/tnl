@@ -10,8 +10,8 @@ import (
 )
 
 // AdvanceIngressRoutingRetention advertises the oldest supported incremental
-// cursor. Snapshot and entry-revision anchors survive subsequent pruning.
-// Cutoff is chosen by control, never supplied by an ingress request.
+// cursor. snapshot and entry-revision anchors survive subsequent pruning.
+// the cutoff is chosen by control, never supplied by an ingress request.
 func (d *Database) AdvanceIngressRoutingRetention(ctx context.Context, cutoff time.Time) (revision uint64, retErr error) {
 	defer d.observeOperation("AdvanceIngressRoutingRetention", &retErr)()
 	if err := d.requireOpen(); err != nil {
@@ -25,8 +25,8 @@ func (d *Database) AdvanceIngressRoutingRetention(ctx context.Context, cutoff ti
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: select routing retention floor: %w", err)
 	}
-	// Autocommit releases the clock before any cleanup batch can begin. Another
-	// control may advance it meanwhile; the update is monotonic and idempotent.
+	// autocommit releases the clock before cleanup. another control may advance
+	// the floor meanwhile; the update remains monotonic and idempotent.
 	floor, err := queries.AdvanceIngressRoutingRetentionFloor(ctx, candidate)
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: advance routing retention floor: %w", err)
@@ -46,7 +46,7 @@ type RoutingHistoryPruneResult struct {
 }
 
 // PruneIngressRoutingHistory scans at most 1,000 committed events below the
-// published floor. Callers yield between batches, retain NextRevision within a
+// published floor. callers yield between batches, retain NextRevision within a
 // sweep, and restart at zero after More is false. A canceled/failed batch must
 // retry its previous cursor. Busy means another control owns the current batch.
 func (d *Database) PruneIngressRoutingHistory(ctx context.Context, afterRevision uint64) (result RoutingHistoryPruneResult, retErr error) {

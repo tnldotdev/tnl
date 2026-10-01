@@ -15,8 +15,8 @@ import (
 
 const defaultMaxIncomingStreams = 4096
 
-// FIN/RST queueing in yamux does not honor stream deadlines. If it cannot
-// enqueue even a control frame in this interval, abort the owned transport.
+// FIN/RST queueing in yamux ignores stream deadlines. if even a control
+// frame cannot be queued within this interval, abort the owned transport.
 const streamCloseTimeout = time.Second
 
 var errStreamCleanupBlocked = errors.New("muxsession: stream cleanup blocked transport writer")
@@ -62,8 +62,8 @@ func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Sess
 }
 
 // AcceptTLSYamux authenticates an accepted TCP connection and starts yamux.
-// The caller remains responsible for dispatching the connection by SNI before
-// calling this function when TCP 443 is shared with route ingress.
+// the caller must dispatch by SNI before calling this function when TCP 443
+// is shared with visitor ingress.
 func AcceptTLSYamux(
 	ctx context.Context,
 	network net.Conn,
@@ -190,8 +190,8 @@ func (s *yamuxSession) AcceptStream(ctx context.Context) (Stream, error) {
 
 func (s *yamuxSession) Close() error {
 	s.closeOnce.Do(func() {
-		// Close the socket before TLS close-notify or yamux cleanup can wait
-		// behind an outstanding write. Session shutdown joins its I/O loops.
+		// close the socket before TLS close-notify or yamux cleanup can block
+		// behind a write. session shutdown joins its I/O loops.
 		network := s.network
 		if secure, ok := network.(*tls.Conn); ok {
 			network = secure.NetConn()
@@ -221,8 +221,8 @@ func (s *yamuxSession) Err() error {
 	if abortErr != nil {
 		return abortErr
 	}
-	// A closed yamux session returns its shutdown reason immediately, even if
-	// the accept loop has not yet observed the close.
+	// a closed yamux session reports its reason even if the accept loop has
+	// not yet observed the close.
 	_, err := s.session.OpenStream(context.Background())
 	if err != nil {
 		return normalizeYamuxError(err)

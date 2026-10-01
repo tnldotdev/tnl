@@ -50,8 +50,8 @@ func admissionDefaults(config *Config) error {
 	return nil
 }
 
-// Admission classes share the short ClientHello inspection stage, not their
-// long-lived capacity. Map keys exist only while admitted.
+// admission classes share the short ClientHello inspection stage, not their
+// long-lived capacity. map keys exist only while admitted.
 func (s *Server) admitClass(kind connectionKind, key string) (release func(), rejected string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,7 +121,7 @@ func (s *Server) rejectCapacity(resource string) {
 	}
 }
 
-// Call only with mu held, so a later update cannot overwrite a newer count.
+// call only with mu held so a later update cannot overwrite a newer count.
 func (s *Server) reportAdmittedLocked() {
 	if s.config.Metrics == nil {
 		return
@@ -140,9 +140,9 @@ func (s *Server) finishInspection() {
 	s.mu.Unlock()
 }
 
-// The receiving HTTP/relay server owns a handed-off connection. Its class slot
+// the receiving HTTP or relay server owns a handed-off connection. its class slot
 // remains occupied until that owner closes it, even after ingress stops tracking
-// it for drain. Preserve the readerConn's address and half-close behavior.
+// it for drain. preserve the readerConn's address and half-close behavior.
 type admittedConn struct {
 	*readerConn
 	release func()

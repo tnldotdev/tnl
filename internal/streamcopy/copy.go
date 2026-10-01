@@ -24,13 +24,13 @@ type Result struct {
 }
 
 // Copy waits for both directions and half-closes each destination when supported.
-// The caller must close or set deadlines on the connections to cancel the copy.
-// An unexpected error in either direction closes both connections.
+// the caller must close or set deadlines on the connections to cancel the copy.
+// an unexpected error in either direction closes both connections.
 func Copy(left, right net.Conn) (Result, error) {
 	return CopyObserved(left, right, nil, nil)
 }
 
-// CopyObserved is Copy with a callback after each write. The callbacks may run
+// CopyObserved is Copy with a callback after each write. the callbacks may run
 // at the same time and must return quickly.
 func CopyObserved(
 	left, right net.Conn,
@@ -51,8 +51,8 @@ func CopyObserved(
 		}
 		count, err := io.CopyBuffer(writer, source, *buffer)
 		buffers.Put(buffer)
-		// A reset is normal to report, but it is not a half-close: the other
-		// direction may otherwise wait forever for a peer that has gone away.
+		// report a reset but do not treat it as a half-close. the other direction
+		// may wait forever for a peer that has gone away.
 		stopOther := err != nil && !errors.Is(err, io.EOF)
 		if closer, ok := destination.(interface{ CloseWrite() error }); err == nil && ok {
 			err = errors.Join(err, closer.CloseWrite())
@@ -99,8 +99,8 @@ func normalize(err error) error {
 	}
 	var canceled *quic.StreamError
 	if errors.As(err, &canceled) && canceled.ErrorCode == 0 {
-		// A peer's normal stream cancellation is part of closing visitor traffic,
-		// not a forwarding failure to log for every closed connection.
+		// peer stream cancellation is normal during visitor close, not a
+		// forwarding failure to log for every connection.
 		return nil
 	}
 	return err

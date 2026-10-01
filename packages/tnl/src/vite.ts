@@ -53,7 +53,7 @@ export default function tnl(...arguments_: never[]): Plugin {
         server: {
           ...result.server,
           port: development.bootstrap.port,
-          // Let Vite report a fallback listener so tnl can reject it with the target diagnostic.
+          // let Vite report a fallback listener so tnl can reject it with the target diagnostic.
           strictPort: false,
         },
       };

@@ -286,7 +286,7 @@ test(
       );
       const message = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(socketMessage));
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
-      // Startup frames can arrive together; either accepted frame confirms the connection.
+      // startup frames can arrive together; either accepted frame confirms the connection.
       let updateMessage = waitForWebSocketMessage(socket, 30_000);
       await writeFile(
         pageSource,

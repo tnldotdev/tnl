@@ -34,7 +34,7 @@ const serializedRuntime =
   typeof process === "undefined" ? undefined : process.env?.TNL_PROJECT_RUNTIME;
 
 /** Server port and optional browser-safe project metadata for this process. */
-// The parser validates the runtime shape; generated project declarations supply
+// the parser validates the runtime shape; generated project declarations supply
 // project-specific service names and literals unavailable to this shared module.
 const runtime = parseRuntimePayload(serializedRuntime);
 export const tnl: TnlRuntime = Object.freeze({

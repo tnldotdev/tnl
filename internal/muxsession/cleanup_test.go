@@ -25,7 +25,7 @@ func TestYamuxCleanupWithBlockedWriter(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Fill the library's send queue while the peer never reads. The
+				// fill the library's send queue while the peer never reads. the
 				// deadline makes the final open the explicit saturation boundary.
 				ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 				defer cancel()
@@ -78,7 +78,7 @@ func TestYamuxErrRetainsPeerCloseReason(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("peer close did not stop yamux session")
 	}
-	// The send loop can observe the peer close before the receive loop does.
+	// the send loop can observe the peer close before the receive loop does.
 	if err := session.Err(); !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("lost peer close reason: %v", err)
 	}

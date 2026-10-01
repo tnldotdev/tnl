@@ -42,7 +42,7 @@ func TestQueryActivityPrivacyBoundsAndCancellation(t *testing.T) {
 		}
 	}
 	cancel()
-	// Cancellation alone must not pretend the driver has finished a query.
+	// cancellation alone must not pretend the driver has finished a query.
 	if active, _ := activity.snapshot(time.Now()); len(active) != maximumActiveQueries {
 		t.Fatal("canceled requests disappeared before query completion")
 	}

@@ -12,7 +12,7 @@ import (
 
 // commandOwner is the only caller of Wait. exec owns both output pumps.
 // WaitDelay keeps their join from hanging if a child retains an output FD.
-// Repeated shutdown is safe: interrupt, wait, kill, then wait again.
+// repeated shutdown is safe: interrupt, wait, kill, then wait again.
 type commandOwner struct {
 	command *exec.Cmd
 	done    chan struct{}

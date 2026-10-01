@@ -11,7 +11,7 @@ import (
 
 var apiEntryInScript = regexp.MustCompile(`(?:^|[[:space:]"'])(src/(?:index|server|app)|(?:index|server))\.(?:ts|mts|js|mjs)(?:$|[[:space:]"'])`)
 
-// An API framework does not imply a particular development runtime. Only
+// an API framework does not imply a particular development runtime. only
 // recognized listener calls, not the dependency alone, are edited by init.
 func detectAPIServer(config packageDocument) string {
 	kind := ""
@@ -67,7 +67,7 @@ func planAPIServer(plan *initPlan, root, kind string, config packageDocument) er
 
 func apiServerEntry(root, script string) (string, error) {
 	if match := apiEntryInScript.FindStringSubmatch(script); len(match) != 0 {
-		// The pattern permits only a fixed path shape beneath the project root.
+		// the pattern permits only a fixed path shape beneath the project root.
 		part := strings.TrimSpace(match[0])
 		part = strings.Trim(part, `"'`)
 		path := filepath.Join(root, part)

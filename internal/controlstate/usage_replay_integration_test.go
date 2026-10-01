@@ -52,8 +52,8 @@ func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 			}
 			defer rollbackTestTransaction(t, gate)
 			if lock == "route" {
-				// Simulate an identity-changing/deleting writer. Session operations
-				// deliberately allow usage's KEY SHARE route references now.
+				// simulate an identity-changing/deleting writer. publish run operations
+				// deliberately allow usage's KEY SHARE public URL references now.
 				_, err = gate.Exec(ctx, `SELECT id FROM control.public_urls WHERE id = $1 FOR UPDATE`, older.PublicURLID)
 			} else {
 				_, err = controlstatedb.New(gate).LockPublishRunForUsage(ctx, controlstatedb.LockPublishRunForUsageParams{
@@ -104,7 +104,7 @@ func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 				applied <- database.ReportIngressUsage(ctx, lease.IngressLeaseIdentity, batch, base.Add(43*time.Second))
 			})
 			writerPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), applied)
-			// A concurrent copy must wait for the ingress guard, then replay the
+			// a concurrent copy must wait for the ingress guard, then replay the
 			// committed revision instead of applying the same delta twice.
 			replayed := make(chan error, 1)
 			workers.Go(func() {
@@ -141,7 +141,7 @@ func TestIntegrationIngressUsageFinalizedReplayChecksLiveGuards(t *testing.T) {
 	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, batch, base.Add(59*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	// Keep the ingress lease live after the bucket can finalize. The report is
+	// keep the ingress lease live after the bucket can finalize. the report is
 	// not final, so a new revision must reach the aggregate finalization guard.
 	lease, err := database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: lease.IngressLeaseIdentity}, base.Add(59*time.Second), time.Minute)
 	if err != nil {

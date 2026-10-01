@@ -59,7 +59,7 @@ type QUICListener struct {
 	closeErr   error
 }
 
-// ListenQUIC starts a QUIC listener. The returned listener never accepts 0-RTT.
+// ListenQUIC starts a QUIC listener. the returned listener never accepts 0-RTT.
 func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
 	serverConfig, err := transportTLSConfig(tlsConfig, "", true)
 	if err != nil {
@@ -147,7 +147,7 @@ func (l *QUICListener) StopAccepting() error {
 	return normalizeQUICError(l.listener.Close())
 }
 
-// Close completes ownership of the transport and socket after draining. Closing
+// Close completes ownership of the transport and socket after draining. closing
 // only quic.Listener leaves accepted connections and connection-ID retirement
 // timers alive, so the same UDP address may not be immediately reusable.
 func (l *QUICListener) Close() error {

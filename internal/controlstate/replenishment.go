@@ -64,10 +64,9 @@ func replenishPublishRunConnections(
 		if valid {
 			continue
 		}
-		// Reuse a failed ready slot's reservation before considering a new
-		// allocation. The SQL checks current service capacity and failed lease
-		// identity, and changes ready -> assigned without an expired intermediate
-		// state. The trigger therefore neither writes totals nor takes their guard.
+		// reuse this ready slot's reservation if its relay service still has capacity
+		// and the old relay lease is no longer eligible. ready -> assigned keeps the reservation,
+		// so the trigger does not take the assignment-total guard.
 		updated, err := replacePublishRunConnection(ctx, queries, row, publishRunToken, relayServicePlacement{
 			relayServiceID: row.RelayServiceID, relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
 		}, now, credentialDuration)
@@ -86,8 +85,8 @@ func replenishPublishRunConnections(
 		return result, nil
 	}
 	result.attempted = true
-	// No broad locks were taken by reservation reuse, so a remaining allocation
-	// can still acquire reservation -> service -> lease guards in normal order.
+	// reservation reuse took no broad guards. other slots can still acquire the
+	// assignment-total guard, relay-service guards, then lease rows in order.
 	availableServices, leases, err := availableRelayServicePlacements(ctx, queries, now)
 	if err != nil {
 		return result, fmt.Errorf("controlstate: replenish publish-run connections: %w", err)
@@ -163,9 +162,9 @@ func replenishPublishRunConnections(
 		}
 	}
 
-	// Stored service IDs remain unique even on expired slots. Reserve both while
-	// planning, so a returning service stays in its original slot and each write
-	// is safe without temporarily weakening that constraint.
+	// stored relay-service IDs stay unique even for expired slots. reserve both
+	// while planning so a returning service can keep its slot without breaking
+	// the uniqueness constraint during replacement.
 	placements := make([]relayServicePlacement, len(rows))
 	for index, row := range rows {
 		if !replace[index] {

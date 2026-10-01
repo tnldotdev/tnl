@@ -51,7 +51,7 @@ var (
 	}
 )
 
-// Checkpoint is one cumulative ingress-process contribution to a route bucket.
+// Checkpoint is one cumulative ingress-process contribution to a public URL bucket.
 type Checkpoint struct {
 	VisitorStreamOpenLatency     DurationHistogram
 	TimeToFirstPublisherByte     DurationHistogram

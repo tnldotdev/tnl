@@ -146,7 +146,7 @@ func TestRaceTransportWithoutAuthenticationCannotWin(t *testing.T) {
 			t.Fatalf("unauthenticated winner: %s, %v", winner, err)
 		}
 		await(t, pending)
-		// Close the deliberately stalled peer to release the losing handshake.
+		// close the deliberately stalled peer to release the losing handshake.
 		_ = transport.Close()
 	})
 }
@@ -209,8 +209,8 @@ func rejectingConnectorAfter(t *testing.T, gate <-chan struct{}, code tunnelv1.E
 }
 
 func TestRaceClosesLateSuccessfulLoser(t *testing.T) {
-	// Pause the fallback after hello_accepted, immediately before Dial returns.
-	// This models a successful result already in flight when the winner cancels.
+	// pause the fallback after hello_accepted, immediately before Dial returns.
+	// this models a successful result already in flight when the winner cancels.
 	entered, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	fallback, loser := handshakeConnector(t, func(context.Context, tunnelv1.Message) error { return nil })

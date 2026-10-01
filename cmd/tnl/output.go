@@ -342,7 +342,7 @@ func (o *publishOutput) emit(event publishEvent) error {
 }
 
 func (o *publishOutput) emitLocked(event publishEvent) error {
-	// Keep cursor assignment and encoding in one critical section.
+	// keep cursor assignment and encoding in one critical section.
 	o.cursor++
 	event.SchemaVersion = 1
 	event.Cursor = o.cursor

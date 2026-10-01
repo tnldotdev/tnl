@@ -16,7 +16,7 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	bin := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "arguments")
-	// One argv element per line proves the actual invocation, including cwd.
+	// one argv element per line proves the actual invocation, including cwd.
 	script := "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$TNL_INIT_MARKER\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)

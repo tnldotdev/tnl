@@ -232,7 +232,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 	if found {
 		var revokeErr error
 		if rejectedOldRefresh {
-			// Do not retry a refresh token already rejected by the authority.
+			// do not retry a refresh token already rejected by the authority.
 			revokeErr = s.control.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
 		} else {
 			revokeErr = revokeSession(ctx, s.control, stored, s.store)

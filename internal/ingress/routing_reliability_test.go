@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
-// Event requests stop at explicit barriers. A race-safe logical clock advances
+// event requests stop at explicit barriers. a race-safe logical clock advances
 // the actual controller and routing-table expiry checks; wall time is used only
 // to schedule renewals and bound test failure, never to infer routing progress.
 func TestControllerStalledRoutingUpdates(t *testing.T) {
@@ -89,7 +89,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			ctx, cancel := context.WithCancel(ingressContext(t))
 			result := ingressWorker(t, cancel, func() error { return controller.Run(ctx) })
 			select {
-			case <-eventStarted: // The initial snapshot has been applied.
+			case <-eventStarted: // the initial snapshot has been applied.
 			case err := <-result:
 				t.Fatalf("controller startup: %v", err)
 			case <-ctx.Done():
@@ -118,7 +118,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				}
 			}
 
-			// A quiet, successful long poll confirms freshness without new events.
+			// a quiet, successful long poll confirms freshness without new events.
 			checked := start.Add(time.Second)
 			advance(checked)
 			reply(eventReply{page: ingressv1.IngressRoutingTablePage{ThroughRevision: 1, NextRevision: 1}})
@@ -128,7 +128,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				"last_caught_up_timestamp_seconds": float64(checked.Unix()),
 			})
 
-			// Reuse the server harness for real visitor TLS and byte forwarding.
+			// reuse the server harness for real visitor TLS and byte forwarding.
 			before, after := newTLSBackend(t), newTLSBackend(t)
 			firstAttempt := newFailAfterProxyBackend(t, 0)
 			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (PublicURL, string) {
@@ -200,7 +200,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 					"initialized": 1, "caught_up": 0, "applied_revision": 2, "latest_observed_revision": 2,
 				})
 			} else {
-				// Applying part of a page sequence is progress, not catch-up.
+				// applying part of a page sequence is progress, not catch-up.
 				reply(eventReply{page: ingressv1.IngressRoutingTablePage{
 					ThroughRevision: 3, NextRevision: 2, More: true, Events: []ingressv1.IngressRoutingTableEvent{recovered},
 				}})
@@ -249,7 +249,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			}
 
 			if !resnapshot {
-				// Invalid updates must not advance the successful-check timestamp or
+				// invalid updates must not advance the successful-check timestamp or
 				// partially mutate the last applied revision.
 				advance(now().Add(time.Second))
 				reply(eventReply{page: ingressv1.IngressRoutingTablePage{ThroughRevision: 4, NextRevision: 4}})

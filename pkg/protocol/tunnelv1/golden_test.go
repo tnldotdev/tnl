@@ -68,7 +68,7 @@ func assertGoldenFrame[T any](t *testing.T, name string, want T, write func(io.W
 	if !bytes.Equal(encoded, compactJSON.Bytes()) {
 		t.Fatalf("JSON = %s; want %s", encoded, compactJSON.Bytes())
 	}
-	// The JSON and hex files are independent, committed expectations.
+	// the JSON and hex files are independent, committed expectations.
 	wantWire := goldenWire(t, name)
 	var wire bytes.Buffer
 	if err := write(&wire, want); err != nil {

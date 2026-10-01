@@ -63,9 +63,9 @@ type InsertFinalIngressRoutingTableEventParams struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
-// Acquire the clock before identity allocation in this same command. Single-event
-// publishers avoid a separate round trip while holding the global clock; callers
-// with earlier events already hold it. Keep the lock through transaction commit.
+// take the routing clock before allocating the revision in this command.
+// single-event publishers avoid an extra round trip; multi-event publishers
+// already hold the clock. keep it through commit to preserve revision order.
 func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertFinalIngressRoutingTableEvent,
 		arg.EventKind,
@@ -222,8 +222,8 @@ type ListIngressRoutingTableSnapshotParams struct {
 	ThroughRevision int64
 }
 
-// Group only entry keys and revisions across history, then fetch the selected
-// payloads. Filter after selection so tombstones/expiry cannot revive old rows.
+// select the latest revision for each entry before filtering kind or expiry;
+// filtering first could revive a superseded public URL or challenge.
 func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error) {
 	rows, err := q.db.Query(ctx, listIngressRoutingTableSnapshot, arg.Now, arg.ThroughRevision)
 	if err != nil {

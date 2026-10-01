@@ -200,7 +200,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatalf("discovery: found %v, failures %d, base fetches %d, wildcard fetches %d", discovered, failures, baseFetches, wildcardFetches)
 			}
 
-			// Claim from PostgreSQL again so nullable challenge fields and revisions round-trip.
+			// claim from PostgreSQL again so nullable challenge fields and revisions round-trip.
 			restartNow := workerNow.Add(10 * time.Second)
 			work, found, err := database.ClaimACMEOrderWork(t.Context(), "authorization-restart", restartNow, time.Minute)
 			if err != nil || !found || work.ID != last.ID || work.OrderRevision != last.OrderRevision || len(work.Authorizations) != 2 {
@@ -243,7 +243,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatalf("public challenge collection = %#v, %v", public.Challenges, err)
 			}
 
-			// An ACME authorization URL may also be reused by a later order for this account.
+			// an ACME authorization URL may also be reused by a later order for this account.
 			key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
 				t.Fatal(err)

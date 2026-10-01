@@ -71,7 +71,7 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 		{"7", 7 * time.Second}, {"999999", 24 * time.Hour}, {"9999999999999999999999", time.Second},
 	} {
 		t.Run(test.header, func(t *testing.T) {
-			// Unlike authorityclient, control classifies by problem code, not status.
+			// unlike authorityclient, control classifies by problem code, not status.
 			err := responseError(400, http.Header{"Retry-After": {test.header}}, []byte(`{"code":"rate_limited"}`))
 			var rate *RateLimitError
 			if !errors.As(err, &rate) || !errors.Is(err, ErrRateLimited) || rate.RetryAfter != test.want {

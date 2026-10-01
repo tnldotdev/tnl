@@ -18,8 +18,8 @@ WHERE singleton = true AND current_revision >= $1::bigint
 RETURNING retained_after_revision
 `
 
-// Commit this short clock update BEFORE pruning in a different transaction.
-// A crash in between retains excess data, never an advertised but missing suffix.
+// commit the retention floor before pruning in another transaction. a crash
+// between them retains extra rows, never a missing advertised suffix.
 func (q *Queries) AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error) {
 	row := q.db.QueryRow(ctx, advanceIngressRoutingRetentionFloor, revision)
 	var retained_after_revision int64
@@ -69,11 +69,10 @@ type PruneIngressRoutingHistoryBatchRow struct {
 	Deleted      int64
 }
 
-// Bound candidates visited as well as rows deleted. Advance past anchors even
-// when no row can be removed. Keep the newest hostname/category projection
-// (including tombstones/expired entries) AND each publish run number's latest revision.
-// All checks use this statement's snapshot. Concurrent publications can only
-// make an old anchor redundant; they cannot make a superseded event current.
+// bound candidates scanned, even when an anchor cannot be removed. retain the
+// latest hostname/category projection, including tombstones and expired rows,
+// and each publish run number's latest revision. concurrent publication can
+// make an anchor redundant but cannot restore a superseded event.
 func (q *Queries) PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error) {
 	row := q.db.QueryRow(ctx, pruneIngressRoutingHistoryBatch, afterRevision)
 	var i PruneIngressRoutingHistoryBatchRow
@@ -91,9 +90,9 @@ FROM control.ingress_routing_table_clock AS clock
 WHERE clock.singleton = true
 `
 
-// Find an old committed PREFIX, not the largest old timestamp. Request-start
-// timestamps can be out of revision order; preserve every still-recent event.
-// This scan happens before acquiring the publication clock.
+// find a committed prefix, not the largest old timestamp: request-start times
+// can be out of revision order. keep every recent event without taking the
+// publication clock during this scan.
 func (q *Queries) SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
 	row := q.db.QueryRow(ctx, selectIngressRoutingRetentionFloor, cutoff)
 	var revision int64
@@ -105,7 +104,7 @@ const tryLockIngressRoutingHistoryCleanup = `-- name: TryLockIngressRoutingHisto
 SELECT pg_try_advisory_xact_lock(hashtextextended('tnl:routing-history-cleanup', 0))
 `
 
-// Cleanup-only coordination; no public URL, reservation, service, lease, or clock locks.
+// cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 func (q *Queries) TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, tryLockIngressRoutingHistoryCleanup)
 	var pg_try_advisory_xact_lock bool

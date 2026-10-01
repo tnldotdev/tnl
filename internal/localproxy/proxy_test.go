@@ -249,7 +249,7 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	frontend.StartTLS()
 
 	connection, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", frontend.Listener.Addr().String(), &tls.Config{
-		ServerName: "route.example", InsecureSkipVerify: true, // Test certificate is self-signed.
+		ServerName: "route.example", InsecureSkipVerify: true, // test certificate is self-signed.
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -282,12 +282,12 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	if string(payload) != "hot" {
 		t.Fatalf("payload = %q", payload)
 	}
-	// An upgraded connection still occupies a request slot even though the
+	// an upgraded connection still occupies a request slot even though the
 	// HTTP transport no longer owns it as an ordinary pooled connection.
 	overloadClient := frontend.Client()
 	overloadClient.Timeout = 2 * time.Second
 	overloadClient.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
-	overloadClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // Self-signed test certificate for another host.
+	overloadClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // self-signed test certificate for another host.
 	overloadRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, frontend.URL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -336,12 +336,12 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	}
 	frontend := httptest.NewTLSServer(handler)
 	t.Cleanup(frontend.Close)
-	// Release the handler before either HTTP server's Close waits for it.
+	// release the handler before either HTTP server's Close waits for it.
 	t.Cleanup(unblock)
 	client := frontend.Client()
 	client.Timeout = 2 * time.Second
 	client.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
-	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // Test certificate is self-signed for a different host.
+	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // test certificate is self-signed for a different host.
 	request, err := http.NewRequest(http.MethodGet, frontend.URL, nil)
 	if err != nil {
 		t.Fatal(err)
