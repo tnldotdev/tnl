@@ -63,7 +63,7 @@ type RelayDNSChallengeContext struct {
 	OrderID               string
 	RelayServiceID        string
 	TLSServerName         string
-	State                 string
+	State                 RelayCertificateOrderState
 	ChallengeDigest       [32]byte
 	PresentationReference string
 	Presentations         []DNSChallengePresentation
@@ -269,7 +269,8 @@ func (d *Database) GetRelayDNSChallengeContext(ctx context.Context, orderID stri
 	if err != nil {
 		return RelayDNSChallengeContext{}, fmt.Errorf("controlstate: get relay DNS challenge context: %w", err)
 	}
-	if len(row.ChallengeDigest) != 32 || !validStateText(row.PresentationReference.String) {
+	state := RelayCertificateOrderState(row.State)
+	if len(row.ChallengeDigest) != 32 || !validStateText(row.PresentationReference.String) || !state.valid() {
 		return RelayDNSChallengeContext{}, errors.New("controlstate: invalid relay DNS challenge context row")
 	}
 	rows, err := queries.ListRelayDNSChallengePresentations(ctx, row.TlsServerName)
@@ -278,7 +279,7 @@ func (d *Database) GetRelayDNSChallengeContext(ctx context.Context, orderID stri
 	}
 	result := RelayDNSChallengeContext{
 		OrderID: row.ID, RelayServiceID: row.RelayServiceID, TLSServerName: row.TlsServerName,
-		State: row.State, PresentationReference: row.PresentationReference.String,
+		State: state, PresentationReference: row.PresentationReference.String,
 		Presentations: make([]DNSChallengePresentation, len(rows)),
 	}
 	copy(result.ChallengeDigest[:], row.ChallengeDigest)

@@ -71,26 +71,26 @@ func NewChallengeManager(
 
 func (m *ChallengeManager) Present(ctx context.Context, publicURLID, authorizationID string) error {
 	started := time.Now()
-	_, err := m.reconcile(ctx, publicURLID, authorizationID, "presenting")
+	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresenting)
 	observeDNS(m.config.Observer, "public_url_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *ChallengeManager) Verify(ctx context.Context, publicURLID, authorizationID string) (bool, error) {
 	started := time.Now()
-	verified, err := m.reconcile(ctx, publicURLID, authorizationID, "presented")
+	verified, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresented)
 	observeDNS(m.config.Observer, "public_url_challenge", "verify", started, verified, err)
 	return verified, err
 }
 
 func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizationID string) error {
 	started := time.Now()
-	_, err := m.reconcile(ctx, publicURLID, authorizationID, "cleaning")
+	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationCleaning)
 	observeDNS(m.config.Observer, "public_url_challenge", "cleanup", started, true, err)
 	return err
 }
 
-func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authorizationID, state string) (bool, error) {
+func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authorizationID string, state controlstate.ACMEAuthorizationState) (bool, error) {
 	initial, err := m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
 	if err != nil {
 		return false, err
@@ -105,7 +105,7 @@ func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authoriza
 		if challenge.State != state || record.RecordName != recordName {
 			return terminalf("cannot reconcile DNS challenge in state %q for %q", challenge.State, record.RecordName)
 		}
-		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, state)
+		verified, err = reconcileChallengeChange(ctx, m.store, m.provider, m.verifier, record, expected, string(state))
 		return err
 	})
 	return verified, err
@@ -221,7 +221,7 @@ func (m *ChallengeManager) challengeRecord(
 		if err != nil {
 			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", err
 		}
-		if authority.State != controlstate.DNSAuthorityReady && !(authority.State == controlstate.DNSAuthorityReleasing && challenge.State == "cleaning") || authority.ProviderZoneID == "" ||
+		if authority.State != controlstate.DNSAuthorityReady && !(authority.State == controlstate.DNSAuthorityReleasing && challenge.State == controlstate.ACMEAuthorizationCleaning) || authority.ProviderZoneID == "" ||
 			authority.Reference != challenge.DNSAuthorityReference ||
 			authority.TeamID != challenge.TeamID || authority.DomainID != challenge.DomainID ||
 			authority.CanonicalDomain != challenge.CanonicalDomain ||
