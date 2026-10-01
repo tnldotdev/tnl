@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 import { applyFault, type FaultRuntime } from "./runtime-faults.ts";
-import { netemOptions } from "./runtime-network.ts";
+import { netemOptions, parseNetworkPath } from "./runtime-network.ts";
 
 function faultRuntime(overrides: Partial<FaultRuntime>): FaultRuntime {
   return {
@@ -77,6 +77,10 @@ test("a partial blackhole restores applied rules and retains cleanup failures", 
 });
 
 test("network impairment inputs reject malformed or out-of-range values", () => {
+  assert.equal(parseNetworkPath("forwarding"), "forwarding");
+  assert.equal(parseNetworkPath("publisher"), "publisher");
+  assert.throws(() => parseNetworkPath(undefined), /invalid network path/);
+  assert.throws(() => parseNetworkPath("other"), /invalid network path/);
   assert.deepEqual(netemOptions("latency", "20ms", undefined, "7"), ["delay", "10ms", "seed", "7"]);
   assert.deepEqual(netemOptions("packet-loss", undefined, "0.1", "0"), ["loss", "random", "0.1%"]);
   assert.throws(

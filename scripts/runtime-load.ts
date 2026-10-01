@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as z from "zod";
 import { applyFault, faultSchema, type FaultEvents, type FaultRuntime } from "./runtime-faults.ts";
-import { publisherServices } from "./runtime-network.ts";
+import { parseNetworkPath, publisherServices } from "./runtime-network.ts";
 import { parseJSON } from "./validation.ts";
 
 const containerSchema = z.object({
@@ -36,7 +36,10 @@ const routes = z.coerce
   .max(10_000)
   .parse(process.env.PUBLIC_URLS ?? "4");
 const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "1") === "1";
-const replicatedRelays = process.env.SCENARIO === "control-restart";
+const scenario = z
+  .union([z.enum(["relay-restart", "control-restart"]), faultSchema])
+  .parse(process.env.SCENARIO ?? "relay-restart");
+const replicatedRelays = scenario === "control-restart";
 // each publisher component owns striped pairs of public URLs. small smoke runs
 // intentionally leave some publisher components without a public URL.
 const activePublishers = publisherServices.filter((_, shard) => shard * 2 < routes);
@@ -79,7 +82,7 @@ let faultError: unknown;
 const faultState = { intentionalRelayExit: false };
 let faultStarted = false;
 let interrupted = false;
-const externalFault = faultSchema.safeParse(process.env.SCENARIO).success;
+const externalFault = faultSchema.safeParse(scenario).success;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
   process.on(signal, () => {
     interrupted = true;
@@ -208,7 +211,7 @@ try {
     ingresses,
     activePublishers,
     network: {
-      path: process.env.NETWORK_PATH,
+      path: parseNetworkPath(process.env.NETWORK_PATH ?? "forwarding"),
       rtt: process.env.RTT,
       loss: process.env.LOSS,
       seed: process.env.SEED,

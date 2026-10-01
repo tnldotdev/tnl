@@ -8,7 +8,7 @@ const lossSchema = z.enum(["0.1", "1"]);
 const seedSchema = z.coerce.number().pipe(z.int().min(0).max(0xffffffff));
 
 export type ImpairmentScenario = "latency" | "packet-loss";
-export type NetworkPath = "forwarding" | "publisher";
+export type NetworkPath = z.infer<typeof pathSchema>;
 export const publisherServices = [
   "publishers",
   "publishers-2",
@@ -27,18 +27,21 @@ export interface ImpairmentEndpoint {
   readonly service: RuntimeService;
 }
 
+export function parseNetworkPath(value: string | undefined): NetworkPath {
+  const selected = pathSchema.safeParse(value);
+  if (!selected.success) throw new Error("invalid network path");
+  return selected.data;
+}
+
 export function impairmentEndpoints(
-  path: string | undefined,
+  path: NetworkPath,
   addresses: Readonly<Record<RuntimeService, string>>,
   ingresses: readonly ("ingress-a" | "ingress-b")[],
   activePublishers: readonly (typeof publisherServices)[number][],
 ): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
-  const selected = pathSchema.safeParse(path);
-  if (!selected.success) throw new Error("invalid network path");
-  const sources: readonly RuntimeService[] =
-    selected.data === "forwarding" ? ingresses : activePublishers;
-  const port = selected.data === "forwarding" ? "8443" : "443";
-  const protocols = selected.data === "forwarding" ? ["6"] : ["6", "17"];
+  const sources: readonly RuntimeService[] = path === "forwarding" ? ingresses : activePublishers;
+  const port = path === "forwarding" ? "8443" : "443";
+  const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
   const forwards = sources.map((service): ImpairmentEndpoint => ({ service, filters: [] }));
   const first = forwards[0];
   if (!first) throw new Error("network path requires a source");
