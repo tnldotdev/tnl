@@ -195,6 +195,7 @@ var typeScriptKeyMappings = map[string]string{
 	"allow_all_ips":   "allowAllIPs",
 	"startup_timeout": "startupTimeout",
 	"request_limit":   "requestLimit",
+	"public_url":      "publicURL",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

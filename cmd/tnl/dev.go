@@ -134,7 +134,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	if flags.useMetadataHostname {
 		if service, found := metadata.Services[flags.Service]; found {
-			flags.Host = service.Hostname
+			flags.PublicURL = service.URL
 		}
 	}
 	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
@@ -142,7 +142,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	services, err := preparePublisherServices(
-		ctx, state, serverURL, flags.Host, flags.Subdomain, flags.selectedTeam, flags.Ephemeral, authenticated,
+		ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
 	)
 	if err != nil {
 		return err

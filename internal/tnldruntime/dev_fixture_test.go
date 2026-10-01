@@ -424,7 +424,7 @@ func newIntegrationBinaryDevProject(t *testing.T, repositoryRoot, name string) i
 func writeIntegrationDevConfig(t *testing.T, project integrationBinaryDevProject, dev map[string]any) {
 	t.Helper()
 	document := map[string]any{"version": 1, "tnl": map[string]any{"server": "https://control.127.0.0.1.nip.io",
-		"services": map[string]any{"api": map[string]any{"tunnel": map[string]any{"subdomain": project.subdomain}, "dev": dev}}}}
+		"services": map[string]any{"api": map[string]any{"tunnel": map[string]any{"name": project.subdomain}, "dev": dev}}}}
 	encoded, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)

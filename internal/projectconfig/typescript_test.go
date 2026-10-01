@@ -17,10 +17,13 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	path := filepath.Join(directory, "tnl.config.ts")
 	source := `export default async ({cwd, env, worktree}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
-  tunnel: {subdomain: worktree.label, requestLimit: 750, allowProviders: ["stripe", "github"]},
+  tunnel: {domain: "routes.example.test", requestLimit: 750, allowProviders: ["stripe", "github"]},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
-  services: {api: {directory: "apps/api", dev: {startupTimeout: "45s"}}},
+  services: {
+    api: {directory: "apps/api", tunnel: {name: worktree.label}, dev: {startupTimeout: "45s"}},
+    site: {tunnel: {publicURL: "https://site.example.test", open: true}},
+  },
 });`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
@@ -31,8 +34,12 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Subdomain == nil ||
-		*value.Tunnel.Subdomain != worktree.Label ||
+	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Domain == nil ||
+		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
+		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label ||
+		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
+		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
+		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
 		!slices.Equal(value.Tunnel.AllowProviders, []string{"stripe", "github"}) ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||

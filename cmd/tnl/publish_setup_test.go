@@ -125,11 +125,15 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 			if test.kind == "managed" {
 				namespace = "member-unique.routes.example.test"
 			}
-			subdomain, wantHost, wantScope := "api", "api."+namespace, controlv1.Member
+			name, wantHost, wantScope := "api", "api."+namespace, controlv1.Member
 			if test.host != "" {
-				subdomain, wantHost, wantScope = "", test.host, controlv1.Shared
+				name, wantHost, wantScope = "", test.host, controlv1.Shared
 			}
-			hostname, domain, scope, err := resolvePublishHostname(test.host, subdomain, current)
+			publicURL := ""
+			if test.host != "" {
+				publicURL = "https://" + test.host
+			}
+			hostname, domain, scope, err := resolvePublishHostname(publicURL, name, "", current)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,11 +154,30 @@ func TestExplicitHostnameUsesReadyDomainWhenDefaultIsPending(t *testing.T) {
 			{Id: "domain_ready", CanonicalDomain: "ready.example.test", Kind: authorityv1.Claimed, State: authorityv1.DomainStateReady},
 		},
 	}
-	hostname, domain, scope, err := resolvePublishHostname("api.member.ready.example.test", "", current)
+	hostname, domain, scope, err := resolvePublishHostname("https://api.member.ready.example.test", "", "", current)
 	if err != nil || hostname != "api.member.ready.example.test" || domain.Id != "domain_ready" || scope != controlv1.Member {
 		t.Fatalf("explicit hostname = %q, %+v, %q, %v", hostname, domain, scope, err)
 	}
-	if _, _, _, err := resolvePublishHostname("", "api", current); err == nil {
-		t.Fatal("default-domain subdomain was accepted while its domain is pending")
+	if _, _, _, err := resolvePublishHostname("", "api", "", current); err == nil {
+		t.Fatal("default-domain name was accepted while its domain is pending")
+	}
+	hostname, domain, scope, err = resolvePublishHostname("", "api", "ready.example.test", current)
+	if err != nil || hostname != "api.member.ready.example.test" || domain.Id != "domain_ready" || scope != controlv1.Member {
+		t.Fatalf("project domain = %q, %+v, %q, %v", hostname, domain, scope, err)
+	}
+	for _, selected := range []string{"pending.example.test", "outside.example.test", "READY.example.test"} {
+		if _, _, _, err := resolvePublishHostname("", "api", selected, current); err == nil {
+			t.Fatalf("unavailable or invalid domain %q was accepted", selected)
+		}
+	}
+	// an exact public URL chooses its own ready domain, regardless of the configured domain.
+	hostname, domain, scope, err = resolvePublishHostname("https://ready.example.test", "", "pending.example.test", current)
+	if err != nil || hostname != "ready.example.test" || domain.Id != "domain_ready" || scope != controlv1.Shared {
+		t.Fatalf("exact public URL = %q, %+v, %q, %v", hostname, domain, scope, err)
+	}
+	for _, invalid := range []string{"http://ready.example.test", "https://ready.example.test/", "https://ready.example.test:443"} {
+		if _, _, _, err := resolvePublishHostname(invalid, "", "", current); err == nil {
+			t.Fatalf("invalid public URL %q was accepted", invalid)
+		}
 	}
 }

@@ -127,7 +127,7 @@ func resolveIPPolicyWithSources(
 func preparePublisherServices(
 	ctx context.Context,
 	state *clientstate.Database,
-	serverURL, hostname, subdomain, selectedTeam string,
+	serverURL, publicURL, name, selectedDomain, selectedTeam string,
 	ephemeral bool,
 	authenticated *clientauth.Client,
 ) (publisherServices, error) {
@@ -155,7 +155,7 @@ func preparePublisherServices(
 	if current.team.PolicyRevision < 0 {
 		return publisherServices{}, errors.New("authority returned an invalid team policy revision")
 	}
-	hostname, domain, publicURLScope, err := resolvePublishHostname(hostname, subdomain, current)
+	hostname, domain, publicURLScope, err := resolvePublishHostname(publicURL, name, selectedDomain, current)
 	if err != nil {
 		return publisherServices{}, err
 	}
@@ -175,33 +175,35 @@ func preparePublisherServices(
 }
 
 func resolvePublishHostname(
-	hostname, subdomain string,
+	publicURL, name, selectedDomain string,
 	current teamContext,
 ) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
-	if hostname != "" && subdomain != "" {
-		return "", authorityv1.Domain{}, "", errors.New("--host and --subdomain are mutually exclusive")
+	if publicURL != "" && name != "" {
+		return "", authorityv1.Domain{}, "", errors.New("--public-url and --name are mutually exclusive")
 	}
 	var domain authorityv1.Domain
 	var err error
-	if hostname != "" {
+	hostname := ""
+	if publicURL != "" {
+		hostname = strings.TrimPrefix(publicURL, "https://")
 		canonical, canonicalErr := naming.CanonicalizeHostname(hostname)
-		if canonicalErr != nil || canonical != hostname {
-			return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
+		if canonicalErr != nil || canonical != hostname || "https://"+hostname != publicURL {
+			return "", authorityv1.Domain{}, "", errors.New("public URL must be an HTTPS origin with a canonical hostname")
 		}
 		domain, err = readyDomainForHostname(current.domains, hostname)
 	} else {
-		domain, err = defaultReadyDomain(current)
+		domain, err = readyDomain(current, selectedDomain)
 	}
 	if err != nil {
 		return "", authorityv1.Domain{}, "", err
 	}
 	namespace := namespaceForMembership(current.membership, domain)
-	if subdomain != "" {
-		canonical, err := naming.CanonicalizeHostname(subdomain)
-		if err != nil || canonical != subdomain || strings.Contains(subdomain, ".") {
-			return "", authorityv1.Domain{}, "", errors.New("subdomain must be one lowercase ASCII DNS label")
+	if name != "" {
+		canonical, err := naming.CanonicalizeHostname(name)
+		if err != nil || canonical != name || strings.Contains(name, ".") {
+			return "", authorityv1.Domain{}, "", errors.New("name must be one lowercase ASCII DNS label")
 		}
-		hostname = subdomain + "." + namespace
+		hostname = name + "." + namespace
 	}
 	if hostname == "" {
 		label, err := naming.GeneratedHostnameLabel()
@@ -214,13 +216,6 @@ func resolvePublishHostname(
 	if err != nil || canonical != hostname {
 		return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
 	}
-	if hostname != namespace && !strings.HasSuffix(hostname, "."+namespace) {
-		domain, err = readyDomainForHostname(current.domains, hostname)
-		if err != nil {
-			return "", authorityv1.Domain{}, "", err
-		}
-		namespace = namespaceForMembership(current.membership, domain)
-	}
 	publicURLScope := controlv1.Shared
 	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
 		publicURLScope = controlv1.Member
@@ -228,6 +223,25 @@ func resolvePublishHostname(
 		return "", authorityv1.Domain{}, "", errors.New("shared public URLs require a team administrator or owner")
 	}
 	return hostname, domain, publicURLScope, nil
+}
+
+func readyDomain(current teamContext, selected string) (authorityv1.Domain, error) {
+	if selected == "" {
+		return defaultReadyDomain(current)
+	}
+	canonical, err := naming.CanonicalizeHostname(selected)
+	if err != nil || canonical != selected {
+		return authorityv1.Domain{}, errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")
+	}
+	for _, domain := range current.domains {
+		if domain.CanonicalDomain == selected {
+			if domain.State != authorityv1.DomainStateReady {
+				return authorityv1.Domain{}, fmt.Errorf("domain %s is not ready", selected)
+			}
+			return domain, nil
+		}
+	}
+	return authorityv1.Domain{}, fmt.Errorf("domain %s is not available to the selected team", selected)
 }
 
 func defaultReadyDomain(current teamContext) (authorityv1.Domain, error) {

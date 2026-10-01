@@ -279,7 +279,7 @@ async function main(): Promise<void> {
       return ready;
     }
     await check("generated ephemeral URL", ["--ephemeral"]);
-    const savedFlags = [`--subdomain=${label}`];
+    const savedFlags = [`--name=${label}`];
     const first = await check("saved public URL", savedFlags, (ready) => {
       const status = parseJSON(
         cli(config, cwd, "status", "--all", "--output=json", `--state-dir=${config.stateDir}`),
@@ -306,10 +306,14 @@ async function main(): Promise<void> {
     });
     if (second.url !== first.url) throw new Error("saved public URL hostname changed");
     if (config.claimedDomain)
-      await check("shared custom URL", ["--ephemeral", `--host=${shared}`], (ready) => {
-        if (ready.url !== `https://${shared}`)
-          throw new Error("custom public URL hostname changed");
-      });
+      await check(
+        "shared custom URL",
+        ["--ephemeral", `--public-url=https://${shared}`],
+        (ready) => {
+          if (ready.url !== `https://${shared}`)
+            throw new Error("custom public URL hostname changed");
+        },
+      );
   } finally {
     try {
       if (savedID)

@@ -62,7 +62,7 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "tnl.config.ts")
 	source := `export default ({worktree}: any) => ({
-  tunnel: {subdomain: worktree.label},
+  tunnel: {name: worktree.label},
   publish: {target: 3000},
 });`
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
@@ -84,22 +84,22 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 		t.Fatal(err)
 	}
 	if first.Worktree.Label == "" || first.Worktree.Label != repeated.Worktree.Label ||
-		first.Worktree.Label == second.Worktree.Label || first.Config.Tunnel == nil || first.Config.Tunnel.Subdomain == nil ||
-		*first.Config.Tunnel.Subdomain != first.Worktree.Label {
+		first.Worktree.Label == second.Worktree.Label || first.Config.Tunnel == nil || first.Config.Tunnel.Name == nil ||
+		*first.Config.Tunnel.Name != first.Worktree.Label {
 		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.Worktree.Label, repeated.Worktree.Label, second.Worktree.Label, first.Config)
 	}
 	publish := publishCommand{}
 	if err := first.applyPublish(&publish); err != nil {
 		t.Fatal(err)
 	}
-	if publish.Subdomain != first.Worktree.Label {
-		t.Fatalf("publish subdomain = %q, worktree label = %q", publish.Subdomain, first.Worktree.Label)
+	if publish.Name != first.Worktree.Label {
+		t.Fatalf("publish name = %q, worktree label = %q", publish.Name, first.Worktree.Label)
 	}
 }
 
 func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://environment.example")
-	t.Setenv("TNL_HOST", "environment.example")
+	t.Setenv("TNL_NAME", "environment-name")
 	t.Setenv("TNL_TEAM", "Environment Team")
 	var flags cli
 	parser, err := kong.New(&flags)
@@ -110,20 +110,20 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectServer := "https://project.example"
-	projectSubdomain := "project"
+	projectName := "project"
 	allowAllIPs := true
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server:  &projectServer,
-		Tunnel:  &config.Tunnel{Subdomain: &projectSubdomain, AllowAllIPs: &allowAllIPs},
+		Tunnel:  &config.Tunnel{Name: &projectName, AllowAllIPs: &allowAllIPs},
 		Publish: &config.Publish{Target: &target},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Host != "environment.example" ||
+	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Name != "environment-name" ||
 		flags.Publish.selectedTeam != "Environment Team" ||
-		flags.Publish.Subdomain != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
+		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
 		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
@@ -221,7 +221,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 		t.Fatal(err)
 	}
 	if flags.Service != "web" || flags.Target != "4173" || flags.ServerURL != rootServer ||
-		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Subdomain != projectconfig.ServiceWorktreeLabel("web", worktree) {
+		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Name != projectconfig.ServiceWorktreeLabel("web", worktree) {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 
@@ -229,7 +229,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 	if err := project.applyDev(&dev); err != nil {
 		t.Fatal(err)
 	}
-	if dev.Service != "web" || dev.StartupTimeout != 20*time.Second || dev.Subdomain != flags.Subdomain {
+	if dev.Service != "web" || dev.StartupTimeout != 20*time.Second || dev.Name != flags.Name {
 		t.Fatalf("dev flags = %#v", dev)
 	}
 }
@@ -250,7 +250,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "3000" || flags.Subdomain != worktree.Label {
+	if flags.Service != "" || flags.Target != "3000" || flags.Name != worktree.Label {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 }
@@ -312,12 +312,69 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		service.URL != "https://"+want {
 		t.Fatalf("service metadata = %#v", service)
 	}
+	claimed := "studio.example.test"
+	current.domains = append(current.domains, authorityv1.Domain{
+		Id: "domain_2", Kind: authorityv1.Claimed, CanonicalDomain: claimed, State: authorityv1.DomainStateReady,
+	})
+	service, err = configuredProjectService("api", worktree, config.TNL{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = projectconfig.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
+	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
+		t.Fatalf("claimed-domain metadata = %#v", service)
+	}
+}
+
+func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T) {
+	rootDomain, serviceDomain, name := "root.example.test", "service.example.test", "preview"
+	configuredOpen, cliOpen := true, false
+	project := projectConfiguration{Project: projectconfig.Project{
+		Worktree: namedTestWorktree(t.TempDir(), "shop"),
+		Config: config.TNL{
+			Tunnel: &config.Tunnel{Domain: &rootDomain, Open: &configuredOpen},
+			Services: config.Services{
+				"web": {Tunnel: &config.Tunnel{Domain: &serviceDomain, Name: &name}},
+				"api": {},
+			},
+		},
+	}}
+	for _, test := range []struct {
+		service, wantDomain, wantName string
+	}{
+		{"web", serviceDomain, name},
+		{"api", rootDomain, projectconfig.ServiceWorktreeLabel("api", project.Worktree)},
+	} {
+		flags := devCommand{Service: test.service, openOptions: openOptions{Open: cliOpen}}
+		if err := project.applyDev(&flags); err != nil {
+			t.Fatal(err)
+		}
+		if flags.Domain != test.wantDomain || flags.Name != test.wantName || !flags.Open {
+			t.Fatalf("service %s flags = %#v", test.service, flags)
+		}
+	}
+	var cliFlags cli
+	parser, err := kong.New(&cliFlags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"dev", "web", "--open=false", "--domain=override.example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTunnelCLIUnits(parsed, &cliFlags)
+	if err := project.applyDev(&cliFlags.Dev); err != nil {
+		t.Fatal(err)
+	}
+	if cliFlags.Dev.Open || cliFlags.Dev.Domain != "override.example.test" || cliFlags.Dev.Name != name {
+		t.Fatalf("explicit overrides = %#v", cliFlags.Dev)
+	}
 }
 
 func TestEphemeralTunnelDoesNotReceiveWorktreeSubdomain(t *testing.T) {
 	flags := tunnelFlags{Ephemeral: true}
 	applyBuiltInHostname(&flags, "api", projectconfig.Worktree{Label: "tnl-bb4eff12"})
-	if flags.Host != "" || flags.Subdomain != "" {
+	if flags.PublicURL != "" || flags.Name != "" {
 		t.Fatalf("ephemeral hostname flags = %#v", flags)
 	}
 }
@@ -359,7 +416,7 @@ func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t 
 	if err := project.applyDev(&withExplicitFalse); err != nil {
 		t.Fatal(err)
 	}
-	if withExplicitFalse.useMetadataHostname || withExplicitFalse.Ephemeral || withExplicitFalse.Subdomain != projectconfig.ServiceWorktreeLabel("api", worktree) {
+	if withExplicitFalse.useMetadataHostname || withExplicitFalse.Ephemeral || withExplicitFalse.Name != projectconfig.ServiceWorktreeLabel("api", worktree) {
 		t.Fatalf("explicit false ephemeral flags = %#v", withExplicitFalse)
 	}
 }

@@ -103,7 +103,11 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	if err != nil {
 		return projectmeta.Metadata{}, err
 	}
-	domain, err := defaultReadyDomain(current)
+	selectedDomain := ""
+	if root.Tunnel != nil && root.Tunnel.Domain != nil {
+		selectedDomain = *root.Tunnel.Domain
+	}
+	domain, err := readyDomain(current, selectedDomain)
 	if err != nil {
 		return projectmeta.Metadata{}, err
 	}
@@ -152,21 +156,24 @@ func configuredProjectService(
 	effective config.TNL,
 	current teamContext,
 ) (projectmeta.Service, error) {
-	hostname, subdomain := "", ""
+	publicURL, name, selectedDomain := "", "", ""
 	ephemeral := false
 	if effective.Tunnel != nil {
-		if effective.Tunnel.Host != nil {
-			hostname = *effective.Tunnel.Host
+		if effective.Tunnel.PublicURL != nil {
+			publicURL = *effective.Tunnel.PublicURL
 		}
-		if effective.Tunnel.Subdomain != nil {
-			subdomain = *effective.Tunnel.Subdomain
+		if effective.Tunnel.Name != nil {
+			name = *effective.Tunnel.Name
+		}
+		if effective.Tunnel.Domain != nil {
+			selectedDomain = *effective.Tunnel.Domain
 		}
 		ephemeral = effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
 	}
-	if hostname == "" && subdomain == "" && !ephemeral {
-		subdomain = projectconfig.ServiceWorktreeLabel(service, worktree)
+	if publicURL == "" && name == "" && !ephemeral {
+		name = projectconfig.ServiceWorktreeLabel(service, worktree)
 	}
-	hostname, domain, _, err := resolvePublishHostname(hostname, subdomain, current)
+	hostname, domain, _, err := resolvePublishHostname(publicURL, name, selectedDomain, current)
 	if err != nil {
 		return projectmeta.Service{}, err
 	}

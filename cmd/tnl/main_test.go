@@ -96,36 +96,36 @@ func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 }
 
 func TestPublishHostnameOptions(t *testing.T) {
-	t.Setenv("TNL_HOST", "env.example")
+	t.Setenv("TNL_NAME", "env-name")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"publish", "3000", "--host", "flag.example", "--subdomain", "api"})
+	parsed, err := parser.Parse([]string{"publish", "3000", "--public-url", "https://flag.example", "--name", "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "publish <service-or-target>" || flags.Publish.Host != "flag.example" || flags.Publish.Subdomain != "api" {
+	if parsed.Command() != "publish <service-or-target>" || flags.Publish.PublicURL != "https://flag.example" || flags.Publish.Name != "api" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
 
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
-	t.Setenv("TNL_HOST", "environment.example")
+	t.Setenv("TNL_NAME", "environment-name")
 	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--subdomain", "api", "--allow-ip", "192.0.2.1"}
+	args := []string{"publish", "3000", "--public-url", "https://api.example", "--allow-ip", "192.0.2.1"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	applyTunnelCLIUnits(parsed, &flags)
-	if flags.Publish.Host != "" || flags.Publish.Subdomain != "api" || flags.Publish.AllowAllIPs ||
+	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" || flags.Publish.AllowAllIPs ||
 		len(flags.Publish.AllowIP) != 1 {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
@@ -163,17 +163,17 @@ func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
 			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
 		}},
 	}
-	hostname, domain, scope, err := resolvePublishHostname("", "api", current)
+	hostname, domain, scope, err := resolvePublishHostname("", "api", "", current)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member {
 		t.Fatalf("resolution = %q, %#v, %q", hostname, domain, scope)
 	}
-	if _, _, _, err := resolvePublishHostname("shared.tnl.dev", "", current); err == nil {
+	if _, _, _, err := resolvePublishHostname("https://shared.tnl.dev", "", "", current); err == nil {
 		t.Fatal("member was allowed to create a shared route")
 	}
-	generated, _, generatedScope, err := resolvePublishHostname("", "", current)
+	generated, _, generatedScope, err := resolvePublishHostname("", "", "", current)
 	if err != nil {
 		t.Fatal(err)
 	}

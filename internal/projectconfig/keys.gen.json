@@ -2,6 +2,7 @@
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
   "allow_providers": "allowProviders",
+  "public_url": "publicURL",
   "request_limit": "requestLimit",
   "startup_timeout": "startupTimeout"
 }

@@ -15,7 +15,7 @@ func TestBinaryIntegrationSplitPublishAndVisit(t *testing.T) {
 	}))
 	cleanupIntegrationHTTPServer(t, target, nil)
 	publish := startIntegrationBinaryPublish(t, f.repositoryRoot, f.environment, f.tnlPath,
-		"--no-config", "publish", target.URL, "--host", f.publicURLHost, "--allow-all-ips", "--output", "ndjson")
+		"--no-config", "publish", target.URL, "--public-url", "https://"+f.publicURLHost, "--allow-all-ips", "--output", "ndjson")
 	ready := waitForIntegrationBinaryPublishEvent(t, publish, "ready", 45*time.Second)
 	if ready.URL != "https://"+f.publicURLHost || ready.PublishRunNumber != 1 {
 		t.Fatalf("split binary ready event = %#v", ready)
