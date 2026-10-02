@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -151,6 +152,119 @@ func TestBandwidthPacesAndVerifiesBothDirections(t *testing.T) {
 	if result.Elapsed < config.Duration {
 		t.Fatalf("bandwidth completed without pacing: %s", result.Elapsed)
 	}
+	if len(result.Streams) != 4 || len(result.PerSecond) == 0 || result.PerSecond[0].UploadBytes != 2560 || result.PerSecond[0].DownloadBytes != 2560 {
+		t.Fatalf("missing verified per-stream and per-second bytes: %+v", result)
+	}
+	for _, stream := range result.Streams {
+		if stream.URL != server.URL || stream.Error != "" || stream.Bytes != stream.ExpectedBytes || stream.Bytes == 0 || stream.LastByteDelay < stream.FirstByteDelay {
+			t.Fatalf("invalid verified stream: %+v", stream)
+		}
+	}
+}
+
+func TestBandwidthBucketsVerifiedBytesAcrossSeconds(t *testing.T) {
+	server := httptest.NewTLSServer(Origin(1))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	session, err := (Visitor{Roots: roots}).PrepareBandwidth(t.Context(), BandwidthDownstream, 1, 64_000, []string{server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	result, err := session.Run(t.Context(), time.Now().Add(10*time.Millisecond), 1200*time.Millisecond)
+	if err != nil || result.DownloadBytes != 76_800 || len(result.PerSecond) < 2 {
+		t.Fatalf("paced transfer: %+v, %v", result, err)
+	}
+	var total int64
+	for _, second := range result.PerSecond {
+		total += second.DownloadBytes
+	}
+	if total != result.DownloadBytes || result.PerSecond[0].DownloadBytes == 0 || result.PerSecond[1].DownloadBytes == 0 {
+		t.Fatalf("verified bytes lost across seconds: %+v", result.PerSecond)
+	}
+}
+
+func TestBandwidthPreparesOneConnectionBeforePacingSeveralSegments(t *testing.T) {
+	server := httptest.NewUnstartedServer(Origin(1))
+	listener := &delayedBandwidthListener{Listener: server.Listener, delay: 400 * time.Millisecond}
+	server.Listener = listener
+	server.StartTLS()
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	session, err := (Visitor{Roots: roots}).PrepareBandwidth(t.Context(), BandwidthDownstream, 1, 64_000, []string{server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if session.setupDuration < listener.delay {
+		t.Fatalf("connection setup was not measured: %s", session.setupDuration)
+	}
+	start := time.Now().Add(10 * time.Millisecond)
+	result, err := session.runWithSegmentDuration(t.Context(), start, 200*time.Millisecond, 50*time.Millisecond)
+	if err != nil || result.DownloadBytes != 12_800 || result.ExpectedDownloadBytes != 12_800 || result.SetupDuration < listener.delay {
+		t.Fatalf("prepared bandwidth = %+v, %v", result, err)
+	}
+	if count := listener.accepted.Load(); count != 1 {
+		t.Fatalf("accepted %d TLS connections for four transfer segments; want one", count)
+	}
+}
+
+func TestBandwidthSetupRejectsWrongLocalServiceHostname(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-TNL-Bench-Host", "wrong.example")
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	session, err := (Visitor{Roots: roots}).PrepareBandwidth(t.Context(), BandwidthDownstream, 1, 64_000, []string{server.URL})
+	if session != nil || err == nil || !strings.Contains(err.Error(), "local service observed the wrong hostname") {
+		t.Fatalf("unverified connection accepted: session=%v, err=%v", session, err)
+	}
+}
+
+func TestBandwidthSegmentGapsAreNotATransferLimit(t *testing.T) {
+	origin := Origin(1)
+	var requests atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == bandwidthPath {
+			requests.Add(1)
+			time.Sleep(300 * time.Millisecond)
+		}
+		origin.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	session, err := (Visitor{Roots: roots}).PrepareBandwidth(t.Context(), BandwidthDownstream, 1, 64_000, []string{server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	segmented, err := session.runWithSegmentDuration(t.Context(), time.Now().Add(10*time.Millisecond), 150*time.Millisecond, 30*time.Millisecond)
+	if err == nil || segmented.Failures != 0 || segmented.DownloadBytes != 9_600 || requests.Load() != 5 {
+		t.Fatalf("five complete but late transfers = %+v; requests=%d, err=%v", segmented, requests.Load(), err)
+	}
+	continuous, err := session.Run(t.Context(), time.Now().Add(10*time.Millisecond), 150*time.Millisecond)
+	if err != nil || continuous.DownloadBytes != 9_600 || continuous.Failures != 0 || requests.Load() != 6 {
+		t.Fatalf("one continuous transfer = %+v; requests=%d, err=%v", continuous, requests.Load(), err)
+	}
+}
+
+type delayedBandwidthListener struct {
+	net.Listener
+	delay    time.Duration
+	accepted atomic.Int64
+}
+
+func (l *delayedBandwidthListener) Accept() (net.Conn, error) {
+	connection, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted.Add(1)
+		time.Sleep(l.delay)
+	}
+	return connection, err
 }
 
 func TestBandwidthRejectsInvalidConfigurationAndPayload(t *testing.T) {
@@ -166,8 +280,8 @@ func TestBandwidthRejectsInvalidConfigurationAndPayload(t *testing.T) {
 
 func TestBandwidthRejectsLateExactTransfer(t *testing.T) {
 	result := BandwidthResult{TargetDuration: time.Second, Elapsed: 2*time.Second + time.Nanosecond}
-	if err := result.Err(); err == nil {
-		t.Fatal("accepted a transfer outside its completion budget")
+	if err := result.Err(); !errors.Is(err, ErrBandwidthLate) {
+		t.Fatalf("late complete transfer = %v", err)
 	}
 	result.Elapsed = 2 * time.Second
 	if err := result.Err(); err != nil {

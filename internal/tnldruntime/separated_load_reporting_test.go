@@ -154,6 +154,7 @@ func separatedReportBandwidth(t *testing.T, name string, start time.Time, durati
 			continue
 		}
 		bandwidth := result.Bandwidth
+		aggregate.SetupDuration = max(aggregate.SetupDuration, bandwidth.SetupDuration)
 		aggregate.Elapsed = max(aggregate.Elapsed, bandwidth.Elapsed)
 		aggregate.ExpectedUploadBytes += bandwidth.ExpectedUploadBytes
 		aggregate.UploadBytes += bandwidth.UploadBytes

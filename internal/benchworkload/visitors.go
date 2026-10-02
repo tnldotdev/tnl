@@ -28,6 +28,14 @@ type Visitor struct {
 }
 
 func (v Visitor) client() (*http.Client, *http.Transport) {
+	return v.httpClient(true)
+}
+
+func (v Visitor) bandwidthClient() (*http.Client, *http.Transport) {
+	return v.httpClient(false)
+}
+
+func (v Visitor) httpClient(disableKeepAlives bool) (*http.Client, *http.Transport) {
 	dialer := &net.Dialer{Resolver: v.Resolver, LocalAddr: v.SourceAddress}
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
 		if v.Network != "" {
@@ -40,7 +48,7 @@ func (v Visitor) client() (*http.Client, *http.Transport) {
 	}
 	transport := &http.Transport{DialContext: dial,
 		TLSClientConfig:   &tls.Config{RootCAs: v.Roots, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
-		DisableKeepAlives: true, DisableCompression: true, ForceAttemptHTTP2: false,
+		DisableKeepAlives: disableKeepAlives, DisableCompression: true, ForceAttemptHTTP2: false,
 	}
 	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, transport
 }

@@ -13,24 +13,37 @@ import (
 )
 
 type benchmarkResult struct {
-	SchemaVersion int                             `json:"schema_version"`
-	RunID         string                          `json:"run_id"`
-	Plan          benchmarkPlan                   `json:"plan"`
-	StartedAt     time.Time                       `json:"started_at"`
-	FinishedAt    time.Time                       `json:"finished_at"`
-	Status        string                          `json:"status"`
-	Error         string                          `json:"error,omitempty"`
-	PublicURLs    []string                        `json:"public_urls,omitempty"`
-	PublicURLInfo []benchmarkPublicURL            `json:"public_url_info,omitempty"`
-	Fallbacks     []benchmarkTransportFallback    `json:"transport_fallbacks,omitempty"`
-	Observations  []benchmarkPublisherObservation `json:"publisher_observations,omitempty"`
-	Dropped       int                             `json:"publisher_observations_dropped,omitempty"`
-	Direct        benchworkload.VisitorResult     `json:"direct_baseline"`
-	Steady        []benchworkload.VisitorResult   `json:"steady"`
-	SteadyByURL   []map[string]*urlVisitorResult  `json:"steady_by_public_url,omitempty"`
-	CleanupExact  bool                            `json:"cleanup_exact"`
-	CleanupStatus string                          `json:"cleanup_status"`
-	Generator     generatorResult                 `json:"generator"`
+	SchemaVersion         int                             `json:"schema_version"`
+	RunID                 string                          `json:"run_id"`
+	Plan                  benchmarkPlan                   `json:"plan"`
+	StartedAt             time.Time                       `json:"started_at"`
+	FinishedAt            time.Time                       `json:"finished_at"`
+	Status                string                          `json:"status"`
+	Error                 string                          `json:"error,omitempty"`
+	PublicURLs            []string                        `json:"public_urls,omitempty"`
+	PublicURLInfo         []benchmarkPublicURL            `json:"public_url_info,omitempty"`
+	Activation            time.Duration                   `json:"activation_duration,omitempty"`
+	Fallbacks             []benchmarkTransportFallback    `json:"transport_fallbacks,omitempty"`
+	Observations          []benchmarkPublisherObservation `json:"publisher_observations,omitempty"`
+	Dropped               int                             `json:"publisher_observations_dropped,omitempty"`
+	Direct                benchworkload.VisitorResult     `json:"direct_baseline"`
+	DirectWarmupBandwidth *benchworkload.BandwidthResult  `json:"direct_warmup_bandwidth,omitempty"`
+	DirectBandwidth       *benchworkload.BandwidthResult  `json:"direct_bandwidth,omitempty"`
+	DirectHeld            *heldProgress                   `json:"direct_held,omitempty"`
+	WarmupBandwidth       *benchworkload.BandwidthResult  `json:"warmup_bandwidth,omitempty"`
+	Steady                []benchworkload.VisitorResult   `json:"steady"`
+	SteadyBandwidth       []benchworkload.BandwidthResult `json:"steady_bandwidth,omitempty"`
+	SteadyHeld            []heldProgress                  `json:"steady_held,omitempty"`
+	SteadyByURL           []map[string]*urlVisitorResult  `json:"steady_by_public_url,omitempty"`
+	CleanupExact          bool                            `json:"cleanup_exact"`
+	CleanupStatus         string                          `json:"cleanup_status"`
+	Generator             generatorResult                 `json:"generator"`
+}
+
+type heldProgress struct {
+	Open        int   `json:"open"`
+	Progressing int   `json:"progressing"`
+	Bytes       int64 `json:"bytes"`
 }
 
 type benchmarkPublicURL struct {

@@ -59,7 +59,7 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 			}
 		}()
 	}
-	initial := benchmarkResult{SchemaVersion: 2, RunID: filepath.Base(dir), Plan: plan,
+	initial := benchmarkResult{SchemaVersion: 3, RunID: filepath.Base(dir), Plan: plan,
 		StartedAt: time.Now().UTC(), Status: "running", CleanupStatus: "not_needed"}
 	if err := writeJSON(resultPath, initial); err != nil {
 		return err
@@ -88,7 +88,7 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 }
 
 func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir, runID string, progress io.Writer, checkpoint func(benchmarkResult) error) (result benchmarkResult, retErr error) {
-	result = benchmarkResult{SchemaVersion: 2, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
+	result = benchmarkResult{SchemaVersion: 3, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
 		Status: "running", CleanupStatus: "not_needed"}
 	defer func() {
 		var memory runtime.MemStats
@@ -99,7 +99,7 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	if err != nil {
 		return result, err
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration((c.PublicURLs+3)/4)*5*time.Minute+c.Warmup+time.Duration(c.Repetitions+1)*c.Duration+3*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, time.Duration((c.PublicURLs+c.StartParallel-1)/c.StartParallel)*5*time.Minute+2*c.Warmup+time.Duration(c.Repetitions+1)*c.Duration+5*time.Minute)
 	defer cancel()
 	origin := httptest.NewServer(benchworkload.Origin(c.PayloadBytes))
 	defer origin.Close()
@@ -108,19 +108,40 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	roots := x509.NewCertPool()
 	roots.AddCert(direct.Certificate())
 	baseline := benchworkload.Visitor{Roots: roots, PayloadBytes: c.PayloadBytes}
+	directHeld, err := openHeldStreams(ctx, baseline, []string{direct.URL}, c.HeldStreams)
+	if err != nil {
+		return result, fmt.Errorf("local generator baseline: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, closeHeldStreams(directHeld)) }()
+	result.DirectWarmupBandwidth, err = c.warmupPhase(ctx, baseline, []string{direct.URL}, progress, "local warmup")
+	if err != nil {
+		return result, fmt.Errorf("local generator baseline: %w", err)
+	}
+	directBefore := heldBytes(directHeld)
 	retErr = reportPhase(progress, "local baseline", c.Duration, func() error {
 		var err error
-		result.Direct, err = baseline.Run(ctx, benchworkload.VisitorConfig{
-			Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
-		}, []string{direct.URL})
+		result.Direct, result.DirectBandwidth, err = c.runWindow(ctx, baseline, []string{direct.URL}, c.Duration, nil, false)
 		return err
 	})
 	if retErr != nil {
 		return result, fmt.Errorf("local generator baseline: %w", retErr)
 	}
-	if err := result.Direct.Err(); err != nil {
+	if c.Mode.fresh() {
+		if err := result.Direct.Err(); err != nil {
+			return result, fmt.Errorf("local generator baseline: %w", err)
+		}
+	}
+	if c.HeldStreams > 0 {
+		progress, err := checkHeldProgress(directHeld, directBefore)
+		result.DirectHeld = &progress
+		if err != nil {
+			return result, fmt.Errorf("local generator baseline: %w", err)
+		}
+	}
+	if err := closeHeldStreams(directHeld); err != nil {
 		return result, fmt.Errorf("local generator baseline: %w", err)
 	}
+	directHeld = nil
 	fmt.Fprintf(progress, "tnlbench: connecting to %s\n", plan.Server)
 	fallbacks := &transportFallbackRecorder{}
 	defer func() { result.Fallbacks = fallbacks.Snapshot() }()
@@ -138,7 +159,7 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 			return observations.Observe(index, event)
 		},
 		Report:   observations.Report,
-		Parallel: 4, StartParallel: 4,
+		Parallel: c.StartParallel, StartParallel: c.StartParallel,
 		ReadyTimeout: 5 * time.Minute, StopTimeout: 10 * time.Second,
 	})
 	if err != nil {
@@ -174,16 +195,21 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 		indexes[i] = i
 	}
 	var publicURLs []benchworkload.PublishedPublicURL
+	activationStarted := time.Now()
 	err = reportPhase(progress, fmt.Sprintf("activating %d public URLs", c.PublicURLs), 0, func() error {
 		var err error
 		publicURLs, err = group.Start(ctx, indexes)
 		return err
 	})
+	result.Activation = time.Since(activationStarted)
 	urls := recordReadyPublicURLs(&result, publicURLs, c.Transport, c.PublicURLs)
 	if checkpointErr := checkpoint(result); checkpointErr != nil {
 		return result, errors.Join(err, checkpointErr)
 	}
 	if err != nil {
+		return result, err
+	}
+	if err := publisherFailure(group); err != nil {
 		return result, err
 	}
 	for _, publicURL := range urls {
@@ -203,49 +229,190 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 			return result, fmt.Errorf("visitor correctness %s: %s", url, check.Error)
 		}
 	}
-	var held []*benchworkload.HeldStream
-	defer func() {
-		for _, stream := range held {
-			retErr = errors.Join(retErr, stream.Close())
-		}
-	}()
-	for i := range c.HeldStreams {
-		stream, err := visitor.Hold(ctx, urls[i%len(urls)])
-		if err != nil {
-			return result, err
-		}
-		held = append(held, stream)
+	held, err := openHeldStreams(ctx, visitor, urls, c.HeldStreams)
+	if err != nil {
+		return result, err
 	}
+	defer func() { retErr = errors.Join(retErr, closeHeldStreams(held)) }()
 	fmt.Fprintf(progress, "tnlbench: %d held visitor streams open\n", len(held))
-	if err := reportPhase(progress, "warmup", c.Warmup, func() error {
-		return wait(ctx, c.Warmup)
-	}); err != nil {
+	result.WarmupBandwidth, err = c.warmupPhase(ctx, visitor, urls, progress, "warmup")
+	if err != nil {
 		return result, err
 	}
 	for index := range c.Repetitions {
 		var phase benchworkload.VisitorResult
+		var bandwidth *benchworkload.BandwidthResult
+		before := heldBytes(held)
 		byURL, observe := newURLVisitorResults(urls)
 		err := reportPhase(progress, fmt.Sprintf("server window %d/%d", index+1, c.Repetitions), c.Duration, func() error {
 			var err error
-			phase, err = visitor.Run(ctx, benchworkload.VisitorConfig{
-				Rate: c.FreshRate, Workers: c.Concurrency, QueueSlots: c.QueueSlots, Duration: c.Duration,
-				OnResult: observe,
-			}, urls)
+			phase, bandwidth, err = c.runWindow(ctx, visitor, urls, c.Duration, observe, false)
 			return err
 		})
-		result.Steady = append(result.Steady, phase)
-		result.SteadyByURL = append(result.SteadyByURL, byURL)
-		if summaryErr := completeURLVisitorResults(urls, phase.Scheduled, byURL); summaryErr != nil {
-			return result, errors.Join(err, summaryErr)
+		if c.Mode.fresh() {
+			result.Steady = append(result.Steady, phase)
+			result.SteadyByURL = append(result.SteadyByURL, byURL)
+			if summaryErr := completeURLVisitorResults(urls, phase.Scheduled, byURL); summaryErr != nil {
+				return result, errors.Join(err, summaryErr)
+			}
 		}
+		if bandwidth != nil {
+			result.SteadyBandwidth = append(result.SteadyBandwidth, *bandwidth)
+		}
+		if c.HeldStreams > 0 {
+			progress, heldErr := checkHeldProgress(held, before)
+			result.SteadyHeld = append(result.SteadyHeld, progress)
+			err = errors.Join(err, heldErr)
+		}
+		err = errors.Join(err, publisherFailure(group))
 		if err != nil {
 			return result, err
 		}
-		if err := visitorWindowError(phase, held); err != nil {
-			return result, fmt.Errorf("server visitor window %d: %w", index+1, err)
+		if c.Mode.fresh() {
+			if err := visitorWindowError(phase, held); err != nil {
+				return result, fmt.Errorf("server visitor window %d: %w", index+1, err)
+			}
 		}
 	}
 	return result, nil
+}
+
+func (c runCommand) runWindow(ctx context.Context, visitor benchworkload.Visitor, urls []string, duration time.Duration, observe func(benchworkload.RequestResult), allowLateBandwidth bool) (benchworkload.VisitorResult, *benchworkload.BandwidthResult, error) {
+	var prepared *benchworkload.BandwidthSession
+	if c.Mode.bandwidth() {
+		var err error
+		prepared, err = visitor.PrepareBandwidth(ctx, c.BandwidthDirection, c.BandwidthStreams, c.BandwidthMbits*1_000_000/8, urls)
+		if err != nil {
+			return benchworkload.VisitorResult{}, nil, fmt.Errorf("prepare bandwidth connections: %w", err)
+		}
+		defer prepared.Close()
+	}
+	start := time.Now().Add(time.Second)
+	var fresh benchworkload.VisitorResult
+	var bandwidth *benchworkload.BandwidthResult
+	var freshErr, bandwidthErr error
+	var group sync.WaitGroup
+	if c.Mode.fresh() {
+		group.Go(func() {
+			fresh, freshErr = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: c.FreshRate, Workers: c.Concurrency,
+				QueueSlots: c.QueueSlots, Start: start, Duration: duration, OnResult: observe}, urls)
+		})
+	}
+	if c.Mode.bandwidth() {
+		group.Go(func() {
+			value, err := prepared.Run(ctx, start, duration)
+			if allowLateBandwidth && errors.Is(err, benchworkload.ErrBandwidthLate) {
+				err = nil
+			}
+			bandwidth, bandwidthErr = &value, err
+		})
+	}
+	if !c.Mode.fresh() && !c.Mode.bandwidth() {
+		freshErr = benchworkload.WaitUntil(ctx, start.Add(duration))
+	}
+	group.Wait()
+	return fresh, bandwidth, errors.Join(freshErr, bandwidthErr)
+}
+
+func (c runCommand) warmupPhase(ctx context.Context, visitor benchworkload.Visitor, urls []string, progress io.Writer, name string) (*benchworkload.BandwidthResult, error) {
+	if c.Warmup == 0 {
+		return nil, nil
+	}
+	var bandwidth *benchworkload.BandwidthResult
+	err := reportPhase(progress, name, c.Warmup, func() error {
+		fresh, measured, err := c.runWindow(ctx, visitor, urls, c.Warmup, nil, true)
+		bandwidth = measured
+		if measured != nil && errors.Is(measured.Err(), benchworkload.ErrBandwidthLate) {
+			fmt.Fprintf(progress, "tnlbench: %s delivered all bytes %s after its window; measuring anyway\n", name, measured.Elapsed-measured.TargetDuration)
+		}
+		if c.Mode.fresh() {
+			err = errors.Join(err, fresh.Err())
+		}
+		return err
+	})
+	return bandwidth, err
+}
+
+func openHeldStreams(ctx context.Context, visitor benchworkload.Visitor, urls []string, count int) ([]*benchworkload.HeldStream, error) {
+	streams := make([]*benchworkload.HeldStream, count)
+	if count == 0 {
+		return streams, nil
+	}
+	jobs := make(chan int)
+	failed := make(chan struct{})
+	var firstErr error
+	var once sync.Once
+	var group sync.WaitGroup
+	for range min(count, 64) {
+		group.Go(func() {
+			for index := range jobs {
+				stream, err := visitor.Hold(ctx, urls[index%len(urls)])
+				if err != nil {
+					once.Do(func() { firstErr = err; close(failed) })
+					return
+				}
+				streams[index] = stream
+			}
+		})
+	}
+send:
+	for index := range count {
+		select {
+		case <-failed:
+			break send
+		case <-ctx.Done():
+			break send
+		case jobs <- index:
+		}
+	}
+	close(jobs)
+	group.Wait()
+	if firstErr != nil || ctx.Err() != nil {
+		return nil, errors.Join(firstErr, ctx.Err(), closeHeldStreams(streams))
+	}
+	return streams, nil
+}
+
+func closeHeldStreams(streams []*benchworkload.HeldStream) error {
+	var err error
+	for _, stream := range streams {
+		if stream != nil {
+			err = errors.Join(err, stream.Close())
+		}
+	}
+	return err
+}
+
+func heldBytes(streams []*benchworkload.HeldStream) []int64 {
+	before := make([]int64, len(streams))
+	for i, stream := range streams {
+		before[i] = stream.BytesReceived()
+	}
+	return before
+}
+
+func checkHeldProgress(streams []*benchworkload.HeldStream, before []int64) (heldProgress, error) {
+	progress := heldProgress{Open: len(streams)}
+	for i, stream := range streams {
+		after := stream.BytesReceived()
+		progress.Bytes += after - before[i]
+		if stream.Alive() && after > before[i] {
+			progress.Progressing++
+		}
+	}
+	if progress.Progressing != progress.Open {
+		return progress, fmt.Errorf("%d/%d held streams still delivering bytes", progress.Progressing, progress.Open)
+	}
+	return progress, nil
+}
+
+func publisherFailure(group *benchworkload.Publishers) error {
+	select {
+	case err := <-group.Failures():
+		return err
+	default:
+		return nil
+	}
 }
 
 func visitorWindowError(result benchworkload.VisitorResult, held []*benchworkload.HeldStream) error {

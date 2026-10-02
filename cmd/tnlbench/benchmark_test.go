@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +21,7 @@ import (
 )
 
 func smokeOptions() workloadOptions {
-	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Transport: "mixed", VisitorNetwork: "tcp", PublicURLs: 4, FreshRate: 16,
+	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Mode: modeFreshHeld, Transport: "mixed", VisitorNetwork: "tcp", PublicURLs: 4, StartParallel: 4, FreshRate: 16,
 		HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768,
 		Repetitions: 1, Warmup: 5 * time.Second, Duration: 10 * time.Second}
 }
@@ -191,6 +194,165 @@ func TestSmokeSuiteBoundsEveryWorkloadDimension(t *testing.T) {
 	}
 }
 
+func TestTargetWorkloadModesRequireMatchingTraffic(t *testing.T) {
+	for _, test := range []struct {
+		mode        benchmarkMode
+		fresh, held int
+		direction   string
+		mbits       int64
+		streams     int
+	}{
+		{mode: modeFresh, fresh: 16},
+		{mode: modeHeld, held: 16},
+		{mode: modeBandwidth, direction: "downstream", mbits: 100, streams: 64},
+		{mode: modeCombined, fresh: 16, held: 4, direction: "bidirectional", mbits: 100, streams: 64},
+	} {
+		options := smokeOptions()
+		options.Suite, options.Mode = benchmarkTarget, test.mode
+		options.FreshRate, options.HeldStreams = test.fresh, test.held
+		options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = test.direction, test.mbits, test.streams
+		plan, err := options.plan()
+		if err != nil || plan.Workload.Mode != test.mode || plan.Workload.BandwidthMbits != test.mbits {
+			t.Fatalf("%s plan = %+v, %v", test.mode, plan, err)
+		}
+		options.FreshRate++
+		if !test.mode.fresh() {
+			if _, err := options.plan(); err == nil {
+				t.Fatalf("%s accepted unselected fresh traffic", test.mode)
+			}
+		}
+	}
+	options := smokeOptions()
+	options.StartParallel = 5
+	if _, err := options.plan(); err == nil {
+		t.Fatal("smoke accepted a different activation rate")
+	}
+	options.Suite = benchmarkTarget
+	if _, err := options.plan(); err != nil {
+		t.Fatalf("target rejected bounded activation: %v", err)
+	}
+	options.Mode, options.FreshRate, options.HeldStreams = modeBandwidth, 0, 0
+	options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = "sideways", 100, 64
+	if _, err := options.plan(); err == nil {
+		t.Fatal("accepted unknown bandwidth direction")
+	}
+	options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = "downstream", 10_000, 1
+	if _, err := options.plan(); err == nil {
+		t.Fatal("accepted per-stream rate exceeding the workload limit")
+	}
+}
+
+func TestCombinedWindowChecksFreshHeldAndBidirectionalBandwidth(t *testing.T) {
+	server := httptest.NewTLSServer(benchworkload.Origin(32))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	visitor := benchworkload.Visitor{Roots: roots, PayloadBytes: 32}
+	options := smokeOptions()
+	options.Suite, options.Mode = benchmarkTarget, modeCombined
+	options.FreshRate, options.HeldStreams = 8, 1
+	options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = "bidirectional", 1, 2
+	command := runCommand{workloadOptions: options}
+	held, err := openHeldStreams(t.Context(), visitor, []string{server.URL}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeHeldStreams(held)
+	before := heldBytes(held)
+	fresh, bandwidth, err := command.runWindow(t.Context(), visitor, []string{server.URL}, 250*time.Millisecond, nil, false)
+	if err != nil || fresh.Err() != nil || fresh.Scheduled != 2 || fresh.Successes != 2 || bandwidth == nil || bandwidth.Err() != nil || bandwidth.UploadBytes == 0 || bandwidth.DownloadBytes == 0 {
+		t.Fatalf("combined window: fresh=%+v bandwidth=%+v error=%v", fresh, bandwidth, err)
+	}
+	if progress, err := checkHeldProgress(held, before); err != nil || progress.Progressing != 1 || progress.Bytes == 0 {
+		t.Fatalf("held progress = %+v, %v", progress, err)
+	}
+}
+
+func TestHeldWindowRejectsAnOpenStreamThatStopsDelivering(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-TNL-Bench-Host", r.Host)
+		_, _ = w.Write([]byte("t"))
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	visitor := benchworkload.Visitor{Roots: roots}
+	held, err := openHeldStreams(t.Context(), visitor, []string{server.URL}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeHeldStreams(held)
+	before := heldBytes(held)
+	options := smokeOptions()
+	options.Mode = modeHeld
+	if _, _, err := (runCommand{workloadOptions: options}).runWindow(t.Context(), visitor, []string{server.URL}, 50*time.Millisecond, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if progress, err := checkHeldProgress(held, before); err == nil || progress.Progressing != 0 {
+		t.Fatalf("stalled held stream = %+v, %v", progress, err)
+	}
+}
+
+func TestBandwidthWarmupFailurePersistsTransferSample(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-TNL-Bench-Host", r.Host)
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	options := smokeOptions()
+	options.Mode, options.FreshRate, options.HeldStreams = modeBandwidth, 0, 0
+	options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = "downstream", 1, 1
+	options.Warmup = 50 * time.Millisecond
+	var progress bytes.Buffer
+	bandwidth, err := (runCommand{workloadOptions: options}).warmupPhase(t.Context(), benchworkload.Visitor{Roots: roots}, []string{server.URL}, &progress, "warmup")
+	if err == nil || bandwidth == nil || bandwidth.Failures != 1 || len(bandwidth.FailureSamples) != 1 || !strings.Contains(bandwidth.FailureSamples[0], "unverified bandwidth response") {
+		t.Fatalf("failed warmup = %+v, %v", bandwidth, err)
+	}
+	encoded, err := json.Marshal(benchmarkResult{SchemaVersion: 3, WarmupBandwidth: bandwidth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored benchmarkResult
+	if err := json.Unmarshal(encoded, &restored); err != nil || restored.WarmupBandwidth == nil || len(restored.WarmupBandwidth.FailureSamples) != 1 {
+		t.Fatalf("lost bandwidth failure sample: %+v, %v", restored.WarmupBandwidth, err)
+	}
+	var report bytes.Buffer
+	if err := printResult(&report, restored); err != nil || !strings.Contains(report.String(), "first warmup failure: unverified bandwidth response: status 404") {
+		t.Fatalf("warmup report = %q, %v", report.String(), err)
+	}
+}
+
+func TestBandwidthWarmupRecordsLateCompleteTransferAndContinues(t *testing.T) {
+	origin := benchworkload.Origin(1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bandwidth" {
+			time.Sleep(1250 * time.Millisecond)
+		}
+		origin.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	options := smokeOptions()
+	options.Mode, options.FreshRate, options.HeldStreams = modeBandwidth, 0, 0
+	options.BandwidthDirection, options.BandwidthMbits, options.BandwidthStreams = "downstream", 1, 1
+	options.Warmup = 50 * time.Millisecond
+	var progress bytes.Buffer
+	bandwidth, err := (runCommand{workloadOptions: options}).warmupPhase(t.Context(), benchworkload.Visitor{Roots: roots}, []string{server.URL}, &progress, "warmup")
+	if err != nil || bandwidth == nil || !errors.Is(bandwidth.Err(), benchworkload.ErrBandwidthLate) || bandwidth.CorrectnessErr() != nil ||
+		bandwidth.DownloadBytes != 6250 || !strings.Contains(progress.String(), "measuring anyway") {
+		t.Fatalf("late complete warmup = %+v, %v; output=%q", bandwidth, err, progress.String())
+	}
+}
+
 func TestReportReadsExistingAndGenericBenchmarkResults(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -199,13 +361,14 @@ func TestReportReadsExistingAndGenericBenchmarkResults(t *testing.T) {
 	}{
 		{name: "existing staging", version: 1, server: "https://control.tnl.wtf"},
 		{name: "selected deployment", version: 2, server: "https://control.example.test"},
+		{name: "capacity workload", version: 3, server: "https://control.example.test"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			result := benchmarkResult{
 				SchemaVersion: test.version, RunID: "run-1", Plan: benchmarkPlan{Server: test.server}, Status: "passed",
 			}
-			if test.version == 2 {
+			if test.version >= 2 {
 				result.PublicURLInfo = []benchmarkPublicURL{{PublicURL: "https://example.test", PublicURLID: "public_url_1", Transport: "quic"}}
 				result.Steady = []benchworkload.VisitorResult{{Scheduled: 4, Successes: 1}}
 				result.SteadyByURL = []map[string]*urlVisitorResult{{"https://example.test": {Scheduled: 4, Successes: 1, Missed: 3}}}
@@ -217,10 +380,29 @@ func TestReportReadsExistingAndGenericBenchmarkResults(t *testing.T) {
 			if err := (reportCommand{RunDirectory: dir}).run(&output); err != nil || !strings.Contains(output.String(), "run-1: passed") {
 				t.Fatalf("report = %q, %v", output.String(), err)
 			}
-			if test.version == 2 && !strings.Contains(output.String(), "public_url_1 quic: 1/4 successful; 3 missed") {
+			if test.version >= 2 && !strings.Contains(output.String(), "public_url_1 quic: 1/4 successful; 3 missed") {
 				t.Fatalf("missing per-URL report: %s", output.String())
 			}
 		})
+	}
+}
+
+func TestReportIncludesBandwidthAndHeldProgress(t *testing.T) {
+	result := benchmarkResult{RunID: "run-capacity", Status: "passed", Activation: time.Second, Plan: benchmarkPlan{Workload: workloadSummary{Mode: modeCombined}},
+		PublicURLInfo: []benchmarkPublicURL{{PublicURL: "https://example.test", Transport: "quic"}},
+		DirectHeld:    &heldProgress{Open: 2, Progressing: 2, Bytes: 100},
+		SteadyHeld:    []heldProgress{{Open: 2, Progressing: 2, Bytes: 200}},
+		DirectBandwidth: &benchworkload.BandwidthResult{Direction: "upstream", StreamsPerDirection: 2, TargetBytesPerSecond: 125000,
+			UploadBytes: 125000, ExpectedUploadBytes: 125000, UploadBytesPerSecond: 125000},
+		SteadyBandwidth: []benchworkload.BandwidthResult{{Direction: "upstream", StreamsPerDirection: 2,
+			TargetBytesPerSecond: 125000, UploadBytes: 125000, ExpectedUploadBytes: 125000, UploadBytesPerSecond: 125000,
+			Streams: []benchworkload.BandwidthStreamResult{{URL: "https://example.test", Direction: "upstream", Bytes: 125000, ExpectedBytes: 125000,
+				FirstByteDelay: time.Millisecond, LastByteDelay: time.Second}}}}}
+	var output bytes.Buffer
+	if err := printResult(&output, result); err != nil || !strings.Contains(output.String(), "activation: 0 public URLs in 1s") || !strings.Contains(output.String(), "server held 1: 2/2 progressing; 200 bytes") ||
+		!strings.Contains(output.String(), "server bandwidth 1: upstream, 2 streams/direction, target 1.0 Mbit/s/direction; upload 125000/125000 bytes") ||
+		!strings.Contains(output.String(), "https://example.test quic: 1 streams, 125000/125000 bytes; latest first byte 1ms; last byte 1s") {
+		t.Fatalf("capacity report = %q, %v", output.String(), err)
 	}
 }
 
@@ -308,11 +490,11 @@ func TestCanceledRunPersistsResultBeforePublishing(t *testing.T) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "interrupted" || result.CleanupStatus != "not_needed" || result.CleanupExact || len(result.PublicURLs) != 0 {
+	if result.SchemaVersion != 3 || result.Plan.SchemaVersion != 3 || result.Status != "interrupted" || result.CleanupStatus != "not_needed" || result.CleanupExact || len(result.PublicURLs) != 0 {
 		t.Fatalf("canceled result = %+v", result)
 	}
-	if !strings.Contains(progress.String(), "local baseline stopped") {
-		t.Fatalf("missing cancellation progress: %s", progress.String())
+	if strings.Contains(progress.String(), "connecting to") {
+		t.Fatalf("canceled run attempted publishing: %s", progress.String())
 	}
 }
 

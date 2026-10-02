@@ -74,6 +74,11 @@ mise exec -- task go:test:load:runtime CAPACITY_ONLY=1 DIRECT_PATH=1 HELD_STREAM
 mise exec -- task go:test:load:runtime CAPACITY_ONLY=1 DIRECT_PATH=1 BANDWIDTH_DIRECTION=bidirectional BANDWIDTH_MBITS_PER_SECOND=100 RESULTS=bench-results/runtime-bandwidth
 ```
 
+Bandwidth workers establish one visitor TLS connection each before their
+measurement window and send one paced transfer for windows up to one hour.
+Results record `setup_duration` separately from measured transfer time. Fresh
+visitor requests still use a new connection for every request.
+
 Record applied admission limits from `admission-limits.json`, and compare
 direct and tunneled results from the same run. The result directory keeps
 visitor summaries, resource measurements, raw metrics, and component-exit
