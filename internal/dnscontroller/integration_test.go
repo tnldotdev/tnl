@@ -20,7 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
-const hostedManagedAuthorityReference = "dns_authority_0123456789abcdef0123456789abcdef"
+const hostedManagedAuthorityReference = "da_0123456789ABCDEFGHIJKL"
 
 func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 	database, sql, _ := challengeDatabase(t)

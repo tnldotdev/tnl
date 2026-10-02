@@ -93,7 +93,7 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 		State: "presenting", AvailableAt: now, ExpiresAt: &expires, CreatedAt: now, UpdatedAt: now}}
 	saved, err := database.SaveACMEOrderWork(t.Context(), recovered, now.Add(time.Second))
 	if err != nil || saved.OrderRevision != recovered.OrderRevision+1 || len(saved.Authorizations) != 1 ||
-		!opaqueid.Valid(saved.Authorizations[0].ID, "acme_authorization_") || saved.Authorizations[0].Revision != 1 {
+		!opaqueid.Valid(saved.Authorizations[0].ID, opaqueid.ACMEAuthorizationPrefix) || saved.Authorizations[0].Revision != 1 {
 		t.Fatalf("saved work = %#v, %v", saved, err)
 	}
 	released, found, err := database.ClaimACMEOrderWork(t.Context(), "third", now.Add(2*time.Second), time.Minute)
@@ -237,7 +237,7 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	plan := CertificatePlan{CacheKey: "api.example.test", Scope: "api.example.test", Identifiers: []string{"api.example.test"}, ChallengeMethod: "dns-01"}
 	route, authentication := newExternalPlanSession(t, database, now, "team_external", "api.example.test", "managed:example.test", plan)
 	work := createPlanIssuanceWork(t, database, now, authentication, plan, false, nil)
-	if len(work.Authorizations) != 1 || !opaqueid.Valid(work.Authorizations[0].PresentationReference, "acme_presentation_") {
+	if len(work.Authorizations) != 1 || !opaqueid.Valid(work.Authorizations[0].PresentationReference, opaqueid.ACMEPresentationPrefix) {
 		t.Fatalf("DNS authorizations = %#v", work.Authorizations)
 	}
 	challenge, err := database.GetDNSChallengeContext(t.Context(), route.ID, work.Authorizations[0].ID)

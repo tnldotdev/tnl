@@ -65,7 +65,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
                 project: testPublicProject(true),
                 publicURL: "https://api.member.example",
                 service: "api",
-                tunnelID: `tunnel_${"b".repeat(32)}`,
+                tunnelID: `tun_${"b".repeat(22)}`,
               }),
           );
         }

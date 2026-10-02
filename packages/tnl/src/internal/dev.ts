@@ -55,7 +55,7 @@ export interface TnlTunnelAssignment extends TnlDevBootstrap {
   readonly project: ProjectRuntime;
   readonly publicURL: `https://${string}`;
   readonly service: string | null;
-  readonly tunnelID: `tunnel_${string}`;
+  readonly tunnelID: `tun_${string}`;
 }
 
 export type CanonicalLoopbackTarget = `http://${string}`;
@@ -263,7 +263,7 @@ function parseAssignment(
   if (object.protocol !== 1) {
     throw new Error("tnl dev returned an inconsistent tunnel assignment");
   }
-  if (typeof object.tunnelID !== "string" || !/^tunnel_[a-f0-9]{32}$/.test(object.tunnelID)) {
+  if (typeof object.tunnelID !== "string" || !/^tun_[A-Za-z0-9]{22}$/.test(object.tunnelID)) {
     throw new Error("tnl dev returned an invalid tunnel ID");
   }
   if (object.service !== null && !validServiceName(object.service)) {
@@ -299,7 +299,7 @@ function parseAssignment(
     project,
     publicURL,
     service: object.service,
-    tunnelID: object.tunnelID as `tunnel_${string}`,
+    tunnelID: object.tunnelID as `tun_${string}`,
   });
 }
 

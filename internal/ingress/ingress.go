@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
@@ -25,7 +26,7 @@ const defaultOpenTimeout = 10 * time.Second
 // while another connected relay can still serve the public URL.
 const alternateAttemptTimeout = 250 * time.Millisecond
 
-const visitorConnectionIDPrefix = "visitor_connection_"
+const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
 
 type PublicURL struct {
 	ID                string

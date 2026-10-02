@@ -96,7 +96,7 @@ type telemetryInvocation struct {
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
-	id, err := opaqueid.New("invocation_")
+	id, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
 		return nil, err
 	}

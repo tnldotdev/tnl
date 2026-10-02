@@ -223,7 +223,7 @@ func TestForcedRefreshFailureNeverPromptsOrChangesSession(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			old := storedSession(issuedSession(t))
 			issued := issuedSession(t)
-			issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+			issued.SessionId = "cs_abcdefghijkl0123456789"
 			f := newAuthFixture(t, func(*http.Request) (*http.Response, error) {
 				if test.invalid {
 					return jsonResponse(200, issued), nil

@@ -28,7 +28,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	if err := tunnel.SetPublicURL(t.Context(), "public_url_0123456789abcdef0123456789abcdef", "route.example"); err != nil {
+	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "route.example"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.SetReady(t.Context(), "https://route.example", 1); err != nil {

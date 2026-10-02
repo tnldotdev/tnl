@@ -7,7 +7,7 @@
   "invalidAssignmentOverride": { "unexpected": true },
   "assignment": {
     "protocol": 1,
-    "tunnelID": "tunnel_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tunnelID": "tun_bbbbbbbbbbbbbbbbbbbbbb",
     "service": "api",
     "namespace": "member.example",
     "hostname": "api.member.example",

@@ -1,9 +1,9 @@
 {
-  "item_id": "usage_report_0123456789abcdef0123456789abcdef",
-  "public_url_id": "public_url_0123456789abcdef0123456789abcdef",
+  "item_id": "ur_0123456789abcdefghijkl",
+  "public_url_id": "url_0123456789abcdefghijkl",
   "publish_run_number": "7",
-  "team_id": "team_0123456789abcdef0123456789abcdef",
-  "acting_identity_id": "identity_0123456789abcdef0123456789abcdef",
+  "team_id": "tm_0123456789abcdefghijkl",
+  "acting_identity_id": "ident_0123456789abcdefghijkl",
   "resolution": "minute",
   "bucket_start": "2026-08-31T12:34:00Z",
   "report_revision": "1",

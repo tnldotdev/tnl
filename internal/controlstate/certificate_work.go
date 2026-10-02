@@ -174,7 +174,7 @@ func (d *Database) SaveACMEOrderWork(
 		authorization := &work.Authorizations[index]
 		if authorization.ChallengeType == certificateidentity.ChallengeDNS01 && authorization.PresentationReference == "" {
 			var err error
-			authorization.PresentationReference, err = opaqueid.New("acme_presentation_")
+			authorization.PresentationReference, err = opaqueid.New(opaqueid.ACMEPresentationPrefix)
 			if err != nil {
 				return ACMEOrderWork{}, fmt.Errorf("controlstate: generate ACME presentation reference: %w", err)
 			}
@@ -209,7 +209,7 @@ func (d *Database) SaveACMEOrderWork(
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
 		if authorization.ID == "" {
-			authorization.ID, err = opaqueid.New("acme_authorization_")
+			authorization.ID, err = opaqueid.New(opaqueid.ACMEAuthorizationPrefix)
 			if err != nil {
 				return ACMEOrderWork{}, fmt.Errorf("controlstate: generate ACME authorization ID: %w", err)
 			}

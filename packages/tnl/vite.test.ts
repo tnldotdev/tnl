@@ -86,7 +86,7 @@ describe("tnl", () => {
         protocol: 1,
         publicURL: "https://override.example",
         service: "api",
-        tunnelID: `tunnel_${"b".repeat(32)}`,
+        tunnelID: `tun_${"b".repeat(22)}`,
       }),
     });
     await withProcessEnvironment(bootstrap.environment, async () => {

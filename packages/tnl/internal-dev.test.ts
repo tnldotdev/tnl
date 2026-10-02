@@ -236,7 +236,7 @@ describe("protocol v1", () => {
       namespace: "member.example",
       publicURL: "https://override.example",
       service: "api",
-      tunnelID: `tunnel_${"b".repeat(32)}`,
+      tunnelID: `tun_${"b".repeat(22)}`,
     });
     expect(JSON.parse(runtimePayload(assignment.project, true))).toEqual({
       namespace: "member.example",
@@ -528,7 +528,7 @@ function validAssignmentResponse() {
     protocol: 1,
     publicURL: "https://api.member.example",
     service: "api",
-    tunnelID: `tunnel_${"b".repeat(32)}`,
+    tunnelID: `tun_${"b".repeat(22)}`,
   };
 }
 

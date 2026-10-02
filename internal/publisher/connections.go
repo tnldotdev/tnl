@@ -184,7 +184,7 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			requestID, err := opaqueid.New("drain_")
+			requestID, err := opaqueid.New(opaqueid.DrainPrefix)
 			if err == nil {
 				err = session.RequestPublisherDrain(ctx, requestID)
 			}

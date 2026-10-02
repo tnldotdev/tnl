@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-const claimIDPrefix = "claim_"
+const claimIDPrefix = opaqueid.ClaimPrefix
 
 type PublisherConnectionController interface {
 	ClaimPublisherConnection(context.Context, tunnelv1.PublisherConnectionRef, string, string) (relayv1.ClaimedPublisherConnection, error)

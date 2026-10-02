@@ -70,7 +70,7 @@ func (d *Database) CreateDNSAuthority(
 	if err := d.requireOpen(); err != nil {
 		return DNSAuthority{}, err
 	}
-	reference, err := opaqueid.New("dns_authority_")
+	reference, err := opaqueid.New(opaqueid.DNSAuthorityPrefix)
 	if err != nil {
 		return DNSAuthority{}, err
 	}
@@ -95,7 +95,7 @@ func (d *Database) CreateDNSAuthority(
 }
 
 func (d *Database) GetDNSAuthority(ctx context.Context, reference string) (DNSAuthority, error) {
-	if !opaqueid.Valid(reference, "dns_authority_") {
+	if !opaqueid.Valid(reference, opaqueid.DNSAuthorityPrefix) {
 		return DNSAuthority{}, ErrDNSAuthorityInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -116,7 +116,7 @@ func (d *Database) ReleaseDNSAuthority(
 	reference, idempotencyKey string,
 	now time.Time,
 ) (result DNSAuthority, retErr error) {
-	if !opaqueid.Valid(reference, "dns_authority_") || !validIdempotencyKey(idempotencyKey) || now.IsZero() {
+	if !opaqueid.Valid(reference, opaqueid.DNSAuthorityPrefix) || !validIdempotencyKey(idempotencyKey) || now.IsZero() {
 		return DNSAuthority{}, ErrDNSAuthorityInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -302,7 +302,7 @@ func dnsAuthorityWork(row controlstatedb.ControlDnsAuthority, requireLease bool)
 }
 
 func validateDNSAuthorityWork(work DNSAuthorityWork) error {
-	if !opaqueid.Valid(work.Reference, "dns_authority_") || !validStateText(work.TeamID) ||
+	if !opaqueid.Valid(work.Reference, opaqueid.DNSAuthorityPrefix) || !validStateText(work.TeamID) ||
 		!validStateText(work.DomainID) || !validStateText(work.CanonicalDomain) || work.Provider != "route53" ||
 		!validStateText(work.WorkerID) || work.WorkRevision == 0 || work.WorkRevision > math.MaxInt64 ||
 		work.Attempts == 0 || work.Attempts > math.MaxInt64 || work.WorkEpoch == 0 || work.WorkEpoch > math.MaxInt64 ||

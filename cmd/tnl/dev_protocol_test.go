@@ -33,7 +33,7 @@ func TestDevSocketDigestGoldenVectors(t *testing.T) {
 
 func TestDevProtocolUsesExplicitNullForAdHocService(t *testing.T) {
 	data, err := json.Marshal(devConfigurationResponse{
-		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
+		Protocol: 1, TunnelID: "tun_0123456789abcdefghijkl",
 		Namespace: "member.example", Hostname: "route.member.example", PublicURL: "https://route.member.example",
 		Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{}, Dev: true},
 	})
@@ -45,7 +45,7 @@ func TestDevProtocolUsesExplicitNullForAdHocService(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]any{
-		"protocol": float64(1), "tunnelID": "tunnel_0123456789abcdef0123456789abcdef", "service": nil,
+		"protocol": float64(1), "tunnelID": "tun_0123456789abcdefghijkl", "service": nil,
 		"namespace": "member.example", "hostname": "route.member.example", "publicURL": "https://route.member.example",
 		"project": map[string]any{"namespace": "member.example", "services": map[string]any{}, "dev": true},
 	}
@@ -87,7 +87,7 @@ func TestDevProtocolWireFixture(t *testing.T) {
 		{"configuration", devConfigurationRequest{Protocol: 1, Framework: "vite"}, fixture.Configuration},
 		{"target", devTargetRequest{Protocol: 1, Framework: "vite", Target: "http://127.0.0.2:5174"}, fixture.Target},
 		{"assignment", devConfigurationResponse{
-			Protocol: 1, TunnelID: "tunnel_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Service: nullableService("api"),
+			Protocol: 1, TunnelID: "tun_bbbbbbbbbbbbbbbbbbbbbb", Service: nullableService("api"),
 			Namespace: "member.example", Hostname: "api.member.example", PublicURL: "https://api.member.example",
 			Project: projectmeta.PublicMetadata{
 				Namespace: "member.example", Dev: true,

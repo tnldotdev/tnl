@@ -100,7 +100,7 @@ describe("withTnl", () => {
         protocol: 1,
         publicURL: "https://override.example",
         service: "api",
-        tunnelID: `tunnel_${"b".repeat(32)}`,
+        tunnelID: `tun_${"b".repeat(22)}`,
       }),
     });
     const originalContext: NextConfigContext = { defaultConfig: { reactStrictMode: false } };

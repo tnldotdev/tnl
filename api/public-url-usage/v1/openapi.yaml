@@ -120,7 +120,7 @@ components:
       properties:
         item_id:
           type: string
-          pattern: ^usage_report_[0-9a-f]{32}$
+          pattern: ^ur_[A-Za-z0-9]{22}$
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
         publish_run_number:
@@ -221,7 +221,7 @@ components:
       properties:
         item_id:
           type: string
-          pattern: ^usage_report_[0-9a-f]{32}$
+          pattern: ^ur_[A-Za-z0-9]{22}$
         accepted:
           type: boolean
         code:

@@ -158,7 +158,7 @@ func (d *Database) CreateTeamInvitation(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: read idempotent invitation: %w", err)
 	}
-	reservationID, err := opaqueid.New("slug_reservation_")
+	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
 	if err != nil {
 		return InvitationSecret{}, err
 	}
@@ -172,7 +172,7 @@ func (d *Database) CreateTeamInvitation(
 	if err != nil {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: reserve member slug: %w", err)
 	}
-	invitationID, err := opaqueid.New("invitation_")
+	invitationID, err := opaqueid.New(opaqueid.InvitationPrefix)
 	if err != nil {
 		return InvitationSecret{}, err
 	}
@@ -357,7 +357,7 @@ func (d *Database) AcceptInvitation(
 	if err != nil {
 		return Membership{}, err
 	}
-	membershipID, err := opaqueid.New("membership_")
+	membershipID, err := opaqueid.New(opaqueid.MembershipPrefix)
 	if err != nil {
 		return Membership{}, err
 	}

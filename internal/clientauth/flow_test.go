@@ -87,7 +87,7 @@ func issuedSession(t *testing.T) authorityv1.ControlSessionResponse {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	return authorityv1.ControlSessionResponse{
-		SessionId:   "control_session_0123456789abcdef0123456789abcdef",
+		SessionId:   "cs_0123456789abcdefghijkl",
 		AccessToken: access.String(), RefreshToken: refresh.String(),
 		AccessExpiresAt: now.Add(time.Hour), RefreshExpiresAt: now.Add(24 * time.Hour),
 	}
@@ -208,7 +208,7 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 			old := storedSession(issuedSession(t))
 			old.AccessExpiresAt = time.Now().UTC().Add(-time.Hour)
 			issued := issuedSession(t)
-			issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+			issued.SessionId = "cs_abcdefghijkl0123456789"
 			f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
 				switch request.URL.Path {
 				case "/v1/auth/refresh":
@@ -259,7 +259,7 @@ func TestAuthenticateRejectedRefreshDoesNotRetryItDuringOldSessionRevocation(t *
 	old := storedSession(issuedSession(t))
 	old.AccessExpiresAt = time.Now().UTC().Add(-time.Hour)
 	issued := issuedSession(t)
-	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	issued.SessionId = "cs_abcdefghijkl0123456789"
 	refreshes, issuedLogouts := 0, 0
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
@@ -403,7 +403,7 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	old := storedSession(issuedSession(t))
 	issued := issuedSession(t)
-	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	issued.SessionId = "cs_abcdefghijkl0123456789"
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path == "/v1/auth/token" {
 			return jsonResponse(200, issued), nil
@@ -436,7 +436,7 @@ func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
 	type contextKey struct{}
 	old := storedSession(issuedSession(t))
 	issued := issuedSession(t)
-	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	issued.SessionId = "cs_abcdefghijkl0123456789"
 	cleanupCalled := false
 	cleanupContextValid := true
 	ctx := context.WithValue(t.Context(), contextKey{}, "cleanup-value")
@@ -478,7 +478,7 @@ func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
 func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
 	old := storedSession(issuedSession(t))
 	issued := issuedSession(t)
-	issued.SessionId = "control_session_abcdef0123456789abcdef0123456789"
+	issued.SessionId = "cs_abcdefghijkl0123456789"
 	primaryFailure := errors.New("previous revocation failed")
 	cleanupFailure := errors.New("issued revocation failed")
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {

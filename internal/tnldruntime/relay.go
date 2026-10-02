@@ -195,7 +195,7 @@ func (d *daemon) startRelayRuntime(
 		runtimeConfig.metrics.AddRelayLeases("draining", 0)
 		runtimeConfig.metrics.AddReadyPublisherConnections(0)
 	}
-	runID, err := opaqueid.New("relay_run_")
+	runID, err := opaqueid.New(opaqueid.RelayRunPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}

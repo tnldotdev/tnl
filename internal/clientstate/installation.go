@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-const installationIDPrefix = "installation_"
+const installationIDPrefix = opaqueid.InstallationPrefix
 
 const worktreeHashSaltLength = 32
 

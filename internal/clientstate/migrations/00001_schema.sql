@@ -13,9 +13,8 @@ CREATE TABLE client_setting (
     installation_id TEXT NOT NULL CHECK (
         installation_id = ''
         OR (
-            length(installation_id) = 45
-            AND substr(installation_id, 1, 13) = 'installation_'
-            AND substr(installation_id, 14) NOT GLOB '*[^0-9a-f]*'
+            length(installation_id) = 27
+            AND substr(installation_id, 1, 5) = 'inst_'
         )
     ),
     worktree_hash_salt BLOB NOT NULL CHECK (
@@ -59,7 +58,7 @@ CREATE TABLE certificate_materials (
 ) STRICT;
 
 CREATE TABLE local_tunnels (
-    id TEXT PRIMARY KEY CHECK (length(id) = 39 AND id GLOB 'tunnel_[0-9a-f]*'),
+    id TEXT PRIMARY KEY CHECK (length(id) = 26 AND substr(id, 1, 4) = 'tun_'),
     command TEXT NOT NULL CHECK (command IN ('publish', 'dev')),
     process_id INTEGER NOT NULL CHECK (process_id > 0),
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,

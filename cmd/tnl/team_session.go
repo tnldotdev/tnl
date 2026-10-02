@@ -161,4 +161,4 @@ func membershipForTeam(memberships []authorityv1.Membership, teamID string) (aut
 	return authorityv1.Membership{}, false
 }
 
-func randomIdempotencyKey() (string, error) { return opaqueid.New("random_") }
+func randomIdempotencyKey() (string, error) { return opaqueid.New(opaqueid.IdempotencyPrefix) }

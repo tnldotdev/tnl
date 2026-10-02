@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 )
 
@@ -184,7 +185,11 @@ func TestIntegrationPublicURLUsageTerminalRejection(t *testing.T) {
 	if err := database.pool.QueryRow(t.Context(), `UPDATE control.public_url_usage_buckets SET bucket_revision = bucket_revision + 1 WHERE public_url_id = $1 RETURNING id, bucket_revision`, work.PublicURLID).Scan(&bucketID, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_deliveries (bucket_id, bucket_revision, delivery_key, state, available_at, created_at) VALUES ($1, $2, 'usage_report_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'pending', $3, $3)`, bucketID, revision, claimedAt.Add(24*time.Hour)); err != nil {
+	deliveryKey, err := opaqueid.New(opaqueid.UsageReportPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_deliveries (bucket_id, bucket_revision, delivery_key, state, available_at, created_at) VALUES ($1, $2, $3, 'pending', $4, $4)`, bucketID, revision, deliveryKey, claimedAt.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	newer, err := database.ClaimPublicURLUsageDeliveries(t.Context(), "newer", 1, claimedAt.Add(24*time.Hour), time.Minute)

@@ -22,7 +22,7 @@ func TestValidateIssuedControlSession(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	valid := authorityv1.ControlSessionResponse{
-		SessionId:   "control_session_0123456789abcdef0123456789abcdef",
+		SessionId:   "cs_0123456789abcdefghijkl",
 		AccessToken: access.String(), RefreshToken: refresh.String(),
 		AccessExpiresAt: now.Add(time.Hour), RefreshExpiresAt: now.Add(24 * time.Hour),
 	}
@@ -47,16 +47,16 @@ func TestValidateIssuedControlSession(t *testing.T) {
 		{name: "truncated refresh", mutate: func(s *authorityv1.ControlSessionResponse) { s.RefreshToken = s.RefreshToken[:len(s.RefreshToken)-1] }},
 		{name: "empty identity", mutate: func(s *authorityv1.ControlSessionResponse) { s.SessionId = "" }},
 		{name: "wrong identity prefix", mutate: func(s *authorityv1.ControlSessionResponse) {
-			s.SessionId = "publish_run_0123456789abcdef0123456789abcdef"
+			s.SessionId = "pr_0123456789abcdefghijkl"
 		}},
 		{name: "truncated identity", mutate: func(s *authorityv1.ControlSessionResponse) { s.SessionId = s.SessionId[:len(s.SessionId)-1] }},
-		{name: "nonhex identity", mutate: func(s *authorityv1.ControlSessionResponse) {
-			s.SessionId = "control_session_" + strings.Repeat("g", 32)
+		{name: "nonalphanumeric identity", mutate: func(s *authorityv1.ControlSessionResponse) {
+			s.SessionId = "cs_" + strings.Repeat("g", 21) + "-"
 		}},
-		{name: "uppercase identity", mutate: func(s *authorityv1.ControlSessionResponse) {
-			s.SessionId = "control_session_" + strings.Repeat("A", 32)
+		{name: "legacy identity", mutate: func(s *authorityv1.ControlSessionResponse) {
+			s.SessionId = "control_session_" + strings.Repeat("a", 32)
 		}},
-		{name: "identity changed during refresh", expectedID: "control_session_abcdef0123456789abcdef0123456789"},
+		{name: "identity changed during refresh", expectedID: "cs_abcdefghijkl0123456789"},
 		{name: "zero access expiry", mutate: func(s *authorityv1.ControlSessionResponse) { s.AccessExpiresAt = time.Time{} }},
 		{name: "expired access", mutate: func(s *authorityv1.ControlSessionResponse) { s.AccessExpiresAt = now.Add(-time.Hour) }},
 		{name: "zero refresh expiry", mutate: func(s *authorityv1.ControlSessionResponse) { s.RefreshExpiresAt = time.Time{} }},
