@@ -58,7 +58,7 @@ func serveBandwidth(w http.ResponseWriter, r *http.Request) {
 	rate, rateErr := strconv.ParseInt(r.Header.Get(bandwidthRateHeader), 10, 64)
 	durationValue, durationErr := strconv.ParseInt(r.Header.Get(bandwidthDurationHeader), 10, 64)
 	duration := time.Duration(durationValue)
-	if rateErr != nil || rate < 1 || rate > maxBandwidthStreamRate || durationErr != nil || duration <= 0 || duration > bandwidthSegmentDuration {
+	if rateErr != nil || rate < 1 || rate > maxBandwidthStreamRate || durationErr != nil || duration <= 0 || duration > bandwidthRequestDurationLimit {
 		http.Error(w, "invalid bandwidth rate or duration", http.StatusBadRequest)
 		return
 	}
