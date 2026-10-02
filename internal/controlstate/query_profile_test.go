@@ -28,7 +28,7 @@ func TestProfilePlacementQueries(t *testing.T) {
 		if count != 1000 && count != 2500 && count != f.routes {
 			continue
 		}
-		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.publish_runs; ANALYZE control.publish_run_connections"); err != nil {
+		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.publish_runs; ANALYZE control.publish_run_connection_slots"); err != nil {
 			t.Fatal(err)
 		}
 		rows, err := queries.CountOpenPublishRunAssignmentsByRelayService(t.Context())
@@ -101,7 +101,7 @@ func TestProfileRoutingHistory(t *testing.T) {
 			t.Fatalf("delta rows=%d want=%d: %v", len(rows), pageSize, err)
 		}
 		for index, row := range rows {
-			if row.RoutingTableRevision != total-pageSize+int64(index)+1 {
+			if row.ID != total-pageSize+int64(index)+1 {
 				t.Fatal("unordered delta page")
 			}
 		}

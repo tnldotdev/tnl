@@ -88,21 +88,16 @@ func seedACMERoutingBarrierOrder(t *testing.T, database *Database, now time.Time
 	requestDigest := sha256.Sum256([]byte("acme-routing-barrier-request"))
 	csrDigest := sha256.Sum256([]byte("acme-routing-barrier-csr"))
 	challengeDigest := sha256.Sum256([]byte("acme-routing-barrier-challenge"))
+	insertTestPublishRun(t, database, testPublishRun{
+		ID: "session_acme_barrier", PublicURLID: "public_url_acmebarrier", TeamID: "team_acmebarrier",
+		ActingIdentityID: "identity_acmebarrier", CertificateCacheKey: "certificate_acme_barrier",
+		CertificateScope: "route", CertificateIdentifiers: []string{"route-acmebarrier.example.test"},
+		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
 	for _, statement := range []struct {
 		query string
 		args  []any
 	}{
-		{`INSERT INTO control.publish_runs (
-			id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key,
-			request_digest, publish_run_token_id, publish_run_token_digest, policy_revision,
-			certificate_cache_key, certificate_scope, certificate_identifiers,
-			certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
-		) VALUES (
-			'session_acme_barrier', 'public_url_acmebarrier', 'team_acmebarrier', 'identity_acmebarrier',
-			1, 'session', $2, 'token_acme_barrier', $3, 1,
-			'certificate_acme_barrier', 'route', ARRAY['route-acmebarrier.example.test'],
-			'tls-alpn-01', 'starting', $1, $1, $4
-		)`, []any{now, requestDigest[:], challengeDigest[:], now.Add(time.Hour)}},
 		{`INSERT INTO control.acme_orders (
 			id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key,
 			request_digest, certificate_cache_key, certificate_scope, certificate_identifiers,
@@ -172,19 +167,19 @@ func TestIntegrationACMEWorkRequiresCurrentChallengeProjection(t *testing.T) {
 				}
 			case "tombstone":
 				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
-					SET event_kind = 'challenge_tombstone', public_url_expires_at = NULL WHERE routing_table_revision = 2`)
+					SET event_kind = 'challenge_tombstone', public_url_expires_at = NULL WHERE id = 2`)
 				if err != nil {
 					t.Fatal(err)
 				}
 			case "expired":
 				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
-					SET public_url_expires_at = $1 WHERE routing_table_revision = 2`, now)
+					SET public_url_expires_at = $1 WHERE id = 2`, now)
 				if err != nil {
 					t.Fatal(err)
 				}
 			case "expired_backend":
 				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
-					SET projection = $1 WHERE routing_table_revision = 2`, acmeRoutingBarrierProjection(now))
+					SET projection = $1 WHERE id = 2`, acmeRoutingBarrierProjection(now))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -232,7 +227,7 @@ func TestIntegrationACMEChallengeRoutingReadyBeforeValidation(t *testing.T) {
 	_ = renewACMEBarrierIngress(t, database, second, 2, now, time.Hour)
 	ready(true)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
-		SET projection = $1 WHERE routing_table_revision = 2`, acmeRoutingBarrierProjection(now)); err != nil {
+		SET projection = $1 WHERE id = 2`, acmeRoutingBarrierProjection(now)); err != nil {
 		t.Fatal(err)
 	}
 	ready(false)

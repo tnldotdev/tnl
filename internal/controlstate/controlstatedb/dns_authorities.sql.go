@@ -21,7 +21,7 @@ SET state = 'releasing',
     updated_at = $2
 WHERE authority_reference = $3
   AND state IN ('pending', 'ready', 'failed')
-RETURNING authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 `
 
 type BeginDNSAuthorityReleaseParams struct {
@@ -34,6 +34,7 @@ func (q *Queries) BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuth
 	row := q.db.QueryRow(ctx, beginDNSAuthorityRelease, arg.ReleaseIdempotencyKey, arg.UpdatedAt, arg.AuthorityReference)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -77,7 +78,7 @@ SET work_owner = $1,
     updated_at = GREATEST(authorities.updated_at, $3)
 FROM candidate
 WHERE authorities.authority_reference = candidate.authority_reference
-RETURNING authorities.authority_reference, authorities.team_id, authorities.domain_id, authorities.canonical_domain, authorities.create_idempotency_key, authorities.create_request_digest, authorities.release_idempotency_key, authorities.provider, authorities.provider_zone_id, authorities.state, authorities.nameservers, authorities.work_revision, authorities.work_owner, authorities.work_epoch, authorities.work_expires_at, authorities.attempts, authorities.available_at, authorities.last_error, authorities.created_at, authorities.updated_at
+RETURNING authorities.id, authorities.authority_reference, authorities.team_id, authorities.domain_id, authorities.canonical_domain, authorities.create_idempotency_key, authorities.create_request_digest, authorities.release_idempotency_key, authorities.provider, authorities.provider_zone_id, authorities.state, authorities.nameservers, authorities.work_revision, authorities.work_owner, authorities.work_epoch, authorities.work_expires_at, authorities.attempts, authorities.available_at, authorities.last_error, authorities.created_at, authorities.updated_at
 `
 
 type ClaimDNSAuthorityWorkParams struct {
@@ -90,6 +91,7 @@ func (q *Queries) ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthori
 	row := q.db.QueryRow(ctx, claimDNSAuthorityWork, arg.WorkOwner, arg.WorkExpiresAt, arg.ClaimedAt)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -143,7 +145,7 @@ INSERT INTO control.dns_authorities (
 ON CONFLICT (create_idempotency_key) DO UPDATE
 SET updated_at = dns_authorities.updated_at
 WHERE dns_authorities.create_request_digest = EXCLUDED.create_request_digest
-RETURNING authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 `
 
 type CreateOrGetDNSAuthorityParams struct {
@@ -168,6 +170,7 @@ func (q *Queries) CreateOrGetDNSAuthority(ctx context.Context, arg CreateOrGetDN
 	)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -255,7 +258,7 @@ func (q *Queries) DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthority
 }
 
 const getDNSAuthority = `-- name: GetDNSAuthority :one
-SELECT authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 FROM control.dns_authorities
 WHERE authority_reference = $1
 `
@@ -264,6 +267,7 @@ func (q *Queries) GetDNSAuthority(ctx context.Context, authorityReference string
 	row := q.db.QueryRow(ctx, getDNSAuthority, authorityReference)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -289,7 +293,7 @@ func (q *Queries) GetDNSAuthority(ctx context.Context, authorityReference string
 }
 
 const getDNSAuthorityByReleaseIdempotency = `-- name: GetDNSAuthorityByReleaseIdempotency :one
-SELECT authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 FROM control.dns_authorities
 WHERE release_idempotency_key = $1
 `
@@ -298,6 +302,7 @@ func (q *Queries) GetDNSAuthorityByReleaseIdempotency(ctx context.Context, relea
 	row := q.db.QueryRow(ctx, getDNSAuthorityByReleaseIdempotency, releaseIdempotencyKey)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -323,7 +328,7 @@ func (q *Queries) GetDNSAuthorityByReleaseIdempotency(ctx context.Context, relea
 }
 
 const lockDNSAuthority = `-- name: LockDNSAuthority :one
-SELECT authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 FROM control.dns_authorities
 WHERE authority_reference = $1
 FOR UPDATE
@@ -333,6 +338,7 @@ func (q *Queries) LockDNSAuthority(ctx context.Context, authorityReference strin
 	row := q.db.QueryRow(ctx, lockDNSAuthority, authorityReference)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,
@@ -407,7 +413,7 @@ WHERE authority_reference = $7
   AND work_epoch = $9
   AND work_expires_at > $6
   AND work_revision = $10
-RETURNING authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 `
 
 type SaveDNSAuthorityWorkParams struct {
@@ -438,6 +444,7 @@ func (q *Queries) SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthority
 	)
 	var i ControlDnsAuthority
 	err := row.Scan(
+		&i.ID,
 		&i.AuthorityReference,
 		&i.TeamID,
 		&i.DomainID,

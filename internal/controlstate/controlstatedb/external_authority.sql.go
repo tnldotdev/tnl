@@ -13,7 +13,7 @@ import (
 )
 
 const advanceAuthorityRevision = `-- name: AdvanceAuthorityRevision :one
-INSERT INTO control.authority_revision_state (
+INSERT INTO control.authority_revision_states (
     issuer,
     team_id,
     observed_policy_revision,
@@ -30,13 +30,13 @@ INSERT INTO control.authority_revision_state (
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
     observed_policy_revision = GREATEST(
-        control.authority_revision_state.observed_policy_revision,
+        control.authority_revision_states.observed_policy_revision,
         EXCLUDED.observed_policy_revision
     ),
     applied_policy_revision = EXCLUDED.applied_policy_revision,
-    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at),
-    applied_at = GREATEST(control.authority_revision_state.applied_at, EXCLUDED.applied_at)
-WHERE control.authority_revision_state.applied_policy_revision < EXCLUDED.applied_policy_revision
+    observed_at = GREATEST(control.authority_revision_states.observed_at, EXCLUDED.observed_at),
+    applied_at = GREATEST(control.authority_revision_states.applied_at, EXCLUDED.applied_at)
+WHERE control.authority_revision_states.applied_policy_revision < EXCLUDED.applied_policy_revision
 RETURNING applied_policy_revision
 `
 
@@ -107,18 +107,18 @@ func (q *Queries) EnsureExternalAuthorityPrincipal(ctx context.Context, arg Ensu
 }
 
 const ensureExternalRetryMasterKey = `-- name: EnsureExternalRetryMasterKey :one
-INSERT INTO control.runtime_secrets (
-    singleton,
+INSERT INTO control.runtime_secret (
+    id,
     external_retry_master_key_ciphertext,
     external_retry_master_key_storage_key_id,
     created_at
 ) VALUES (
-    true,
+    1,
     $1,
     $2,
     $3
 )
-ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
 RETURNING external_retry_master_key_ciphertext, external_retry_master_key_storage_key_id
 `
 
@@ -520,7 +520,7 @@ func (q *Queries) LockHostedTeamPublicURLs(ctx context.Context, teamID string) (
 }
 
 const observeAuthorityRevision = `-- name: ObserveAuthorityRevision :one
-INSERT INTO control.authority_revision_state (
+INSERT INTO control.authority_revision_states (
     issuer,
     team_id,
     observed_policy_revision,
@@ -533,10 +533,10 @@ INSERT INTO control.authority_revision_state (
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
     observed_policy_revision = EXCLUDED.observed_policy_revision,
-    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at)
+    observed_at = GREATEST(control.authority_revision_states.observed_at, EXCLUDED.observed_at)
 WHERE GREATEST(
-    control.authority_revision_state.observed_policy_revision,
-    control.authority_revision_state.applied_policy_revision
+    control.authority_revision_states.observed_policy_revision,
+    control.authority_revision_states.applied_policy_revision
 ) <= EXCLUDED.observed_policy_revision
 RETURNING observed_policy_revision
 `
@@ -561,10 +561,10 @@ func (q *Queries) ObserveAuthorityRevision(ctx context.Context, arg ObserveAutho
 }
 
 const rotateExternalRetryMasterKey = `-- name: RotateExternalRetryMasterKey :exec
-UPDATE control.runtime_secrets
+UPDATE control.runtime_secret
 SET external_retry_master_key_ciphertext = $1,
     external_retry_master_key_storage_key_id = $2
-WHERE singleton = true
+WHERE id = 1
   AND external_retry_master_key_storage_key_id = $3
   AND external_retry_master_key_ciphertext = $4
 `

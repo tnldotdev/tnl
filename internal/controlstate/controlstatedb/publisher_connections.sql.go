@@ -12,7 +12,7 @@ import (
 )
 
 const claimPublisherConnection = `-- name: ClaimPublisherConnection :one
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET connected_relay_id = $1,
     connected_relay_run_id = $2,
     connected_relay_lease_revision = $3,
@@ -38,7 +38,7 @@ WHERE publisher_connection_id = $6
           AND claim_id = $4
       )
   )
-RETURNING publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+RETURNING id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type ClaimPublisherConnectionParams struct {
@@ -58,7 +58,7 @@ type ClaimPublisherConnectionParams struct {
 
 // require the exact publish run, assignment revision, and relay service. only
 // the same process and claim ID may repeat a connected or ready claim.
-func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnection, error) {
+func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnectionSlot, error) {
 	row := q.db.QueryRow(ctx, claimPublisherConnection,
 		arg.RelayID,
 		arg.RelayRunID,
@@ -73,8 +73,9 @@ func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublish
 		arg.ConnectionAssignmentRevision,
 		arg.RelayServiceID,
 	)
-	var i ControlPublishRunConnection
+	var i ControlPublishRunConnectionSlot
 	err := row.Scan(
+		&i.ID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
@@ -102,7 +103,7 @@ func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublish
 }
 
 const disconnectPublisherConnection = `-- name: DisconnectPublisherConnection :one
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET state = 'closed',
     disconnected_at = $1,
     closed_at = $1
@@ -118,7 +119,7 @@ WHERE publisher_connection_id = $2
   AND connected_relay_lease_revision = $11
   AND claim_id = $12
   AND state IN ('connected', 'ready', 'draining')
-RETURNING publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+RETURNING id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type DisconnectPublisherConnectionParams struct {
@@ -137,7 +138,7 @@ type DisconnectPublisherConnectionParams struct {
 }
 
 // close only the exact claim so a late disconnect cannot close its replacement.
-func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnection, error) {
+func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error) {
 	row := q.db.QueryRow(ctx, disconnectPublisherConnection,
 		arg.DisconnectedAt,
 		arg.PublisherConnectionID,
@@ -152,8 +153,9 @@ func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg Disconn
 		arg.RelayLeaseRevision,
 		arg.ClaimID,
 	)
-	var i ControlPublishRunConnection
+	var i ControlPublishRunConnectionSlot
 	err := row.Scan(
+		&i.ID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
@@ -181,16 +183,17 @@ func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg Disconn
 }
 
 const getPublisherConnectionForClaim = `-- name: GetPublisherConnectionForClaim :one
-SELECT publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
-FROM control.publish_run_connections
+SELECT id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+FROM control.publish_run_connection_slots
 WHERE publisher_connection_id = $1
 FOR UPDATE
 `
 
-func (q *Queries) GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnection, error) {
+func (q *Queries) GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnectionSlot, error) {
 	row := q.db.QueryRow(ctx, getPublisherConnectionForClaim, publisherConnectionID)
-	var i ControlPublishRunConnection
+	var i ControlPublishRunConnectionSlot
 	err := row.Scan(
+		&i.ID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
@@ -218,7 +221,7 @@ func (q *Queries) GetPublisherConnectionForClaim(ctx context.Context, publisherC
 }
 
 const markPublisherConnectionReady = `-- name: MarkPublisherConnectionReady :one
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET state = 'ready',
     ready_at = COALESCE(ready_at, $1),
     disconnected_at = NULL,
@@ -235,7 +238,7 @@ WHERE publisher_connection_id = $2
   AND connected_relay_lease_revision = $11
   AND claim_id = $12
   AND state IN ('connected', 'ready')
-RETURNING publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+RETURNING id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type MarkPublisherConnectionReadyParams struct {
@@ -254,7 +257,7 @@ type MarkPublisherConnectionReadyParams struct {
 }
 
 // ready is idempotent for the exact claim; a replaced assignment cannot revive.
-func (q *Queries) MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnection, error) {
+func (q *Queries) MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnectionSlot, error) {
 	row := q.db.QueryRow(ctx, markPublisherConnectionReady,
 		arg.ReadyAt,
 		arg.PublisherConnectionID,
@@ -269,8 +272,9 @@ func (q *Queries) MarkPublisherConnectionReady(ctx context.Context, arg MarkPubl
 		arg.RelayLeaseRevision,
 		arg.ClaimID,
 	)
-	var i ControlPublishRunConnection
+	var i ControlPublishRunConnectionSlot
 	err := row.Scan(
+		&i.ID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,

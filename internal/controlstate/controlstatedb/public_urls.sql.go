@@ -19,7 +19,7 @@ SET state = $1,
     close_reason = $3
 WHERE id = $4
   AND closed_at IS NULL
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type ClosePublishRunParams struct {
@@ -53,7 +53,7 @@ func (q *Queries) ClosePublishRun(ctx context.Context, arg ClosePublishRunParams
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -70,7 +70,7 @@ func (q *Queries) ClosePublishRun(ctx context.Context, arg ClosePublishRunParams
 }
 
 const closePublishRunConnections = `-- name: ClosePublishRunConnections :exec
-UPDATE control.publish_run_connections
+UPDATE control.publish_run_connection_slots
 SET state = 'closed',
     closed_at = COALESCE(closed_at, $1)
 WHERE publish_run_id = $2
@@ -418,7 +418,7 @@ INSERT INTO control.admin_audit_events (
     'system',
     $1,
     'public_url.delete',
-    'route',
+    'public_url',
     $2,
     $3
 )
@@ -579,7 +579,7 @@ INSERT INTO control.admin_audit_events (
     $1,
     $2,
     'public_url.create',
-    'route',
+    'public_url',
     $3,
     $4
 )
@@ -616,7 +616,7 @@ INSERT INTO control.admin_audit_events (
     $1,
     $2,
     'public_url.delete',
-    'route',
+    'public_url',
     $3,
     $4
 )
@@ -653,7 +653,7 @@ INSERT INTO control.admin_audit_events (
     $1,
     $2,
     'public_url.update',
-    'route',
+    'public_url',
     $3,
     $4
 )

@@ -103,7 +103,7 @@ func (d *Database) ObservePublicURLRecovery(
 
 func recoveryObservation(episode controlstatedb.ControlPublicUrlRecoveryEpisode) PublicURLRecoveryObservation {
 	return PublicURLRecoveryObservation{
-		RecoveryEpisodeID: uint64(episode.RecoveryEpisodeID), PublicURLID: episode.PublicURLID,
+		RecoveryEpisodeID: uint64(episode.ID), PublicURLID: episode.PublicURLID,
 		PublishRunNumber: uint64(episode.PublishRunNumber), OpenedAt: episode.OpenedAt.Time,
 		ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.ObservedSeconds.Float64,
 	}

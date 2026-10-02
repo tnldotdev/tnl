@@ -278,7 +278,7 @@ func TestIntegrationConcurrentStartsOnOnePublicURL(t *testing.T) {
 				t.Fatalf("successful starts=%d publish run number=%d; want %d/1", succeeded, first.PublishRunNumber, want)
 			}
 			var sessions, connections int
-			if err := database.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.publish_runs), (SELECT count(*) FROM control.publish_run_connections)`).Scan(&sessions, &connections); err != nil || sessions != 1 || connections != 2 {
+			if err := database.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.publish_runs), (SELECT count(*) FROM control.publish_run_connection_slots)`).Scan(&sessions, &connections); err != nil || sessions != 1 || connections != 2 {
 				t.Fatalf("stored sessions/connections=%d/%d; want 1/2: %v", sessions, connections, err)
 			}
 		})

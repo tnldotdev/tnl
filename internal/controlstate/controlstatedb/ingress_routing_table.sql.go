@@ -15,7 +15,7 @@ const insertFinalIngressRoutingTableEvent = `-- name: InsertFinalIngressRoutingT
 WITH clock_guard AS MATERIALIZED (
     SELECT current_revision
     FROM control.ingress_routing_table_clock
-    WHERE singleton = true
+    WHERE id = 1
     FOR UPDATE
 ), inserted AS (
     INSERT INTO control.ingress_routing_table_events (
@@ -37,13 +37,13 @@ WITH clock_guard AS MATERIALIZED (
         $7,
         $8
     FROM clock_guard
-    RETURNING routing_table_revision
+    RETURNING id AS routing_table_revision
 ), advanced AS (
     UPDATE control.ingress_routing_table_clock
     SET current_revision = inserted.routing_table_revision,
         updated_at = $9
     FROM inserted
-    WHERE singleton = true
+    WHERE id = 1
       AND current_revision < inserted.routing_table_revision
     RETURNING control.ingress_routing_table_clock.current_revision
 )
@@ -103,7 +103,7 @@ INSERT INTO control.ingress_routing_table_events (
     $7,
     $8
 )
-RETURNING routing_table_revision
+RETURNING id
 `
 
 type InsertIngressRoutingTableEventParams struct {
@@ -128,9 +128,9 @@ func (q *Queries) InsertIngressRoutingTableEvent(ctx context.Context, arg Insert
 		arg.PublicUrlExpiresAt,
 		arg.CreatedAt,
 	)
-	var routing_table_revision int64
-	err := row.Scan(&routing_table_revision)
-	return routing_table_revision, err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const latestIngressRoutingEntryRevision = `-- name: LatestIngressRoutingEntryRevision :one
@@ -139,7 +139,7 @@ SELECT COALESCE((
     FROM control.ingress_routing_table_events
     WHERE public_url_id = $1
       AND publish_run_number = $2
-    ORDER BY routing_table_revision DESC
+    ORDER BY id DESC
     LIMIT 1
 ), 0)::bigint
 `
@@ -157,11 +157,11 @@ func (q *Queries) LatestIngressRoutingEntryRevision(ctx context.Context, arg Lat
 }
 
 const listIngressRoutingTableEvents = `-- name: ListIngressRoutingTableEvents :many
-SELECT routing_table_revision, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at
+SELECT id, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at
 FROM control.ingress_routing_table_events
-WHERE routing_table_revision > $1
-  AND routing_table_revision <= $2
-ORDER BY routing_table_revision
+WHERE id > $1
+  AND id <= $2
+ORDER BY id
 LIMIT $3
 `
 
@@ -181,7 +181,7 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 	for rows.Next() {
 		var i ControlIngressRoutingTableEvent
 		if err := rows.Scan(
-			&i.RoutingTableRevision,
+			&i.ID,
 			&i.EventKind,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
@@ -203,15 +203,15 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 
 const listIngressRoutingTableSnapshot = `-- name: ListIngressRoutingTableSnapshot :many
 WITH latest AS (
-    SELECT max(history.routing_table_revision) AS routing_table_revision
+    SELECT max(history.id) AS routing_table_revision
     FROM control.ingress_routing_table_events AS history
-    WHERE history.routing_table_revision <= $2
+    WHERE history.id <= $2
     GROUP BY history.canonical_hostname,
-        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'route' ELSE 'challenge' END
+        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'public_url' ELSE 'challenge' END
 )
-SELECT events.routing_table_revision, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at
+SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at
 FROM latest
-JOIN control.ingress_routing_table_events AS events ON events.routing_table_revision = latest.routing_table_revision
+JOIN control.ingress_routing_table_events AS events ON events.id = latest.routing_table_revision
 WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
   AND events.public_url_expires_at > $1
 ORDER BY events.canonical_hostname
@@ -234,7 +234,7 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 	for rows.Next() {
 		var i ControlIngressRoutingTableEvent
 		if err := rows.Scan(
-			&i.RoutingTableRevision,
+			&i.ID,
 			&i.EventKind,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
@@ -257,7 +257,7 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 const lockIngressRoutingTableClock = `-- name: LockIngressRoutingTableClock :one
 SELECT current_revision
 FROM control.ingress_routing_table_clock
-WHERE singleton = true
+WHERE id = 1
 FOR UPDATE
 `
 
@@ -269,16 +269,16 @@ func (q *Queries) LockIngressRoutingTableClock(ctx context.Context) (int64, erro
 }
 
 const readIngressRoutingTableClock = `-- name: ReadIngressRoutingTableClock :one
-SELECT singleton, current_revision, retained_after_revision, updated_at
+SELECT id, current_revision, retained_after_revision, updated_at
 FROM control.ingress_routing_table_clock
-WHERE singleton = true
+WHERE id = 1
 `
 
 func (q *Queries) ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error) {
 	row := q.db.QueryRow(ctx, readIngressRoutingTableClock)
 	var i ControlIngressRoutingTableClock
 	err := row.Scan(
-		&i.Singleton,
+		&i.ID,
 		&i.CurrentRevision,
 		&i.RetainedAfterRevision,
 		&i.UpdatedAt,

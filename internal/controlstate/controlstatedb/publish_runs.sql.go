@@ -42,7 +42,7 @@ func (q *Queries) GetActivePublishRunMembership(ctx context.Context, arg GetActi
 }
 
 const getOpenPublishRun = `-- name: GetOpenPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND closed_at IS NULL
@@ -67,7 +67,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -84,7 +84,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 }
 
 const getPublishRunByIdempotency = `-- name: GetPublishRunByIdempotency :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND idempotency_key = $2
@@ -114,7 +114,7 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -158,7 +158,7 @@ INSERT INTO control.publish_runs (
     certificate_cache_key,
     certificate_scope,
     certificate_identifiers,
-    certificate_challenge,
+    certificate_challenge_method,
     state,
     created_at,
     last_heartbeat_at,
@@ -184,28 +184,28 @@ INSERT INTO control.publish_runs (
     $16,
     $17
 FROM version
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type InsertPublishRunParams struct {
-	ID                       string
-	PublicURLID              string
-	TeamID                   string
-	MembershipID             pgtype.Text
-	ActingIdentityID         string
-	IdempotencyKey           string
-	RequestDigest            []byte
-	PublishRunTokenID        string
-	PublishRunTokenDigest    []byte
-	PolicyRevision           int64
-	CertificateCacheKey      string
-	CertificateScope         string
-	CertificateIdentifiers   []string
-	CertificateChallenge     string
-	CreatedAt                pgtype.Timestamptz
-	LastHeartbeatAt          pgtype.Timestamptz
-	PublisherExpiresAt       pgtype.Timestamptz
-	ExpectedMutationRevision int64
+	ID                         string
+	PublicURLID                string
+	TeamID                     string
+	MembershipID               pgtype.Text
+	ActingIdentityID           string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	PublishRunTokenID          string
+	PublishRunTokenDigest      []byte
+	PolicyRevision             int64
+	CertificateCacheKey        string
+	CertificateScope           string
+	CertificateIdentifiers     []string
+	CertificateChallengeMethod string
+	CreatedAt                  pgtype.Timestamptz
+	LastHeartbeatAt            pgtype.Timestamptz
+	PublisherExpiresAt         pgtype.Timestamptz
+	ExpectedMutationRevision   int64
 }
 
 func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error) {
@@ -223,7 +223,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		arg.CertificateCacheKey,
 		arg.CertificateScope,
 		arg.CertificateIdentifiers,
-		arg.CertificateChallenge,
+		arg.CertificateChallengeMethod,
 		arg.CreatedAt,
 		arg.LastHeartbeatAt,
 		arg.PublisherExpiresAt,
@@ -246,7 +246,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -302,7 +302,7 @@ func (q *Queries) InsertPublishRunAuditEvent(ctx context.Context, arg InsertPubl
 }
 
 const insertPublishRunConnections = `-- name: InsertPublishRunConnections :many
-INSERT INTO control.publish_run_connections (
+INSERT INTO control.publish_run_connection_slots (
     publish_run_id,
     public_url_id,
     publish_run_number,
@@ -331,7 +331,7 @@ INSERT INTO control.publish_run_connections (
     'assigned',
     $10
 FROM generate_series(0, 1) AS slots(connection_slot)
-RETURNING publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+RETURNING id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type InsertPublishRunConnectionsParams struct {
@@ -347,7 +347,7 @@ type InsertPublishRunConnectionsParams struct {
 	AssignedAt                             pgtype.Timestamptz
 }
 
-func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnection, error) {
+func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnectionSlot, error) {
 	rows, err := q.db.Query(ctx, insertPublishRunConnections,
 		arg.PublishRunID,
 		arg.PublicURLID,
@@ -364,10 +364,11 @@ func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPub
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlPublishRunConnection
+	var items []ControlPublishRunConnectionSlot
 	for rows.Next() {
-		var i ControlPublishRunConnection
+		var i ControlPublishRunConnectionSlot
 		if err := rows.Scan(
+			&i.ID,
 			&i.PublishRunID,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
@@ -402,22 +403,23 @@ func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPub
 }
 
 const listPublishRunConnections = `-- name: ListPublishRunConnections :many
-SELECT publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
-FROM control.publish_run_connections
+SELECT id, publish_run_id, public_url_id, publish_run_number, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
+FROM control.publish_run_connection_slots
 WHERE publish_run_id = $1
 ORDER BY connection_slot
 `
 
-func (q *Queries) ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnection, error) {
+func (q *Queries) ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error) {
 	rows, err := q.db.Query(ctx, listPublishRunConnections, publishRunID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlPublishRunConnection
+	var items []ControlPublishRunConnectionSlot
 	for rows.Next() {
-		var i ControlPublishRunConnection
+		var i ControlPublishRunConnectionSlot
 		if err := rows.Scan(
+			&i.ID,
 			&i.PublishRunID,
 			&i.PublicURLID,
 			&i.PublishRunNumber,
@@ -590,7 +592,7 @@ func (q *Queries) LockPublishRunCreationControl(ctx context.Context) (bool, erro
 }
 
 const replacePublishRunConnection = `-- name: ReplacePublishRunConnection :one
-UPDATE control.publish_run_connections AS connections
+UPDATE control.publish_run_connection_slots AS connections
 SET publisher_connection_id = $1,
     connection_assignment_revision = $2,
     relay_service_id = $3,
@@ -642,7 +644,7 @@ WHERE publish_run_id = $9
           )
       )
   )
-RETURNING connections.publish_run_id, connections.public_url_id, connections.publish_run_number, connections.connection_slot, connections.publisher_connection_id, connections.connection_assignment_revision, connections.relay_service_id, connections.relay_address, connections.tls_server_name, connections.publisher_connection_credential_digest, connections.publisher_connection_credential_expires_at, connections.connected_relay_id, connections.connected_relay_run_id, connections.connected_relay_lease_revision, connections.claim_id, connections.state, connections.assigned_at, connections.connected_at, connections.ready_at, connections.disconnected_at, connections.closed_at, connections.session_open
+RETURNING connections.id, connections.publish_run_id, connections.public_url_id, connections.publish_run_number, connections.connection_slot, connections.publisher_connection_id, connections.connection_assignment_revision, connections.relay_service_id, connections.relay_address, connections.tls_server_name, connections.publisher_connection_credential_digest, connections.publisher_connection_credential_expires_at, connections.connected_relay_id, connections.connected_relay_run_id, connections.connected_relay_lease_revision, connections.claim_id, connections.state, connections.assigned_at, connections.connected_at, connections.ready_at, connections.disconnected_at, connections.closed_at, connections.session_open
 `
 
 type ReplacePublishRunConnectionParams struct {
@@ -668,7 +670,7 @@ type ReplacePublishRunConnectionParams struct {
 // just as one immediately after commit can; claim checks the exact current lease
 // and process capacity under its exclusive lease guard. no capacity is added here.
 // closed or expired slots have no reservation and require guarded placement first.
-func (q *Queries) ReplacePublishRunConnection(ctx context.Context, arg ReplacePublishRunConnectionParams) (ControlPublishRunConnection, error) {
+func (q *Queries) ReplacePublishRunConnection(ctx context.Context, arg ReplacePublishRunConnectionParams) (ControlPublishRunConnectionSlot, error) {
 	row := q.db.QueryRow(ctx, replacePublishRunConnection,
 		arg.NewPublisherConnectionID,
 		arg.NewConnectionAssignmentRevision,
@@ -683,8 +685,9 @@ func (q *Queries) ReplacePublishRunConnection(ctx context.Context, arg ReplacePu
 		arg.PreviousPublisherConnectionID,
 		arg.PreviousConnectionAssignmentRevision,
 	)
-	var i ControlPublishRunConnection
+	var i ControlPublishRunConnectionSlot
 	err := row.Scan(
+		&i.ID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,

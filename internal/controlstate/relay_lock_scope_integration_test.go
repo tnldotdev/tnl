@@ -337,6 +337,10 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 // four independent public URLs retry on one relay process while a fifth
 // needs placement. every service has exactly enough capacity for all five.
 func relayServiceProgressSessions(t *testing.T) ([5]publishRunFixture, RelayRegistration) {
+	return relayServiceProgressSessionsWithSharedTeam(t, false)
+}
+
+func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) ([5]publishRunFixture, RelayRegistration) {
 	t.Helper()
 	database, now := newRelayLifecycleDatabase(t)
 	leases := make(map[string]RelayLease)
@@ -357,12 +361,26 @@ func relayServiceProgressSessions(t *testing.T) ([5]publishRunFixture, RelayRegi
 	for index := range fixtures {
 		suffix := fmt.Sprintf("relayprogress%d", index)
 		seedControlPublicURL(t, database, now, suffix)
+		if sharedTeam && index == 1 {
+			// build a second, valid public URL in the first team before its run exists.
+			if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls
+				SET team_id = $2, domain_id = $3, created_by_identity_id = $4, idempotency_key = $5
+				WHERE id = $1`, "public_url_"+suffix, "team_relayprogress0", "domain_relayprogress0",
+				"identity_relayprogress0", "seed-"+suffix); err != nil {
+				t.Fatal(err)
+			}
+		}
 		request := PublishRunRequest{
 			PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
 			MembershipID: "membership_" + suffix, RequireLocalAuthority: true,
 			RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",
 			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
+		}
+		if sharedTeam && index == 1 {
+			request.TeamID = "team_relayprogress0"
+			request.ActingIdentityID = "identity_relayprogress0"
+			request.MembershipID = "membership_relayprogress0"
 		}
 		setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
 		if err != nil {

@@ -239,7 +239,7 @@ func TestLoadShutdown(t *testing.T) {
 	var openSessions, activeConnections int64
 	if err := f.database.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open OR state <> 'closed'),
-		(SELECT count(*) FROM control.publish_run_connections WHERE state <> 'closed')`).Scan(&openSessions, &activeConnections); err != nil || openSessions != 0 || activeConnections != 0 {
+		(SELECT count(*) FROM control.publish_run_connection_slots WHERE state <> 'closed')`).Scan(&openSessions, &activeConnections); err != nil || openSessions != 0 || activeConnections != 0 {
 		t.Fatalf("remaining sessions=%d connections=%d: %v", openSessions, activeConnections, err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)

@@ -294,12 +294,12 @@ WITH candidate AS (
           OR EXISTS (
               SELECT 1
               FROM (
-                  SELECT events.routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
+                   SELECT events.id AS routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
                   FROM control.ingress_routing_table_events AS events
                   WHERE events.public_url_id = orders.public_url_id
                     AND events.publish_run_number = orders.publish_run_number
                     AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-                  ORDER BY events.routing_table_revision DESC
+                   ORDER BY events.id DESC
                   LIMIT 1
               ) AS challenge
               WHERE challenge.event_kind = 'challenge_upsert'
@@ -367,7 +367,7 @@ SELECT coalesce(
         SELECT 1 FROM control.ingress_leases AS ingresses
         WHERE ingresses.lease_expires_at > sqlc.arg(checked_at)
           AND NOT ingresses.draining
-          AND ingresses.routing_table_revision < events.routing_table_revision
+           AND ingresses.routing_table_revision < events.id
     ), false
 )::boolean AS ready
 FROM control.acme_orders AS orders
@@ -375,7 +375,7 @@ JOIN control.ingress_routing_table_events AS events
   ON events.public_url_id = orders.public_url_id AND events.publish_run_number = orders.publish_run_number
 WHERE orders.id = sqlc.arg(issuance_id)
   AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-ORDER BY events.routing_table_revision DESC
+ORDER BY events.id DESC
 LIMIT 1;
 
 -- name: SaveACMEOrderWork :one

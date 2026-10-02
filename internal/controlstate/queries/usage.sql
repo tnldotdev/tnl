@@ -1,14 +1,14 @@
 -- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
-    singleton,
+    id,
     visitor_network_hash_master_key,
     created_at
 ) VALUES (
-    true,
+    1,
     sqlc.arg(visitor_network_hash_master_key),
     sqlc.arg(created_at)
 )
-ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
 RETURNING *;
 
 -- name: EnsureIngressUsageRun :one
@@ -263,7 +263,7 @@ RETURNING *;
 -- name: FinalizePublicURLUsageBuckets :many
 WITH finalizable AS (
     SELECT
-        buckets.bucket_id,
+        buckets.id,
         NOT EXISTS (
             SELECT 1
             FROM control.ingress_usage_runs AS incomplete
@@ -280,7 +280,7 @@ WITH finalizable AS (
             AND runs.started_at < buckets.bucket_end
             AND runs.observed_through < buckets.bucket_end
       )
-    ORDER BY buckets.bucket_start, buckets.bucket_id
+    ORDER BY buckets.bucket_start, buckets.id
     LIMIT 256
     FOR UPDATE OF buckets
 )
@@ -294,32 +294,32 @@ SET finalized = true,
     finalized_at = sqlc.arg(finalized_at),
     updated_at = sqlc.arg(finalized_at)
 FROM finalizable
-WHERE buckets.bucket_id = finalizable.bucket_id
+WHERE buckets.id = finalizable.id
 RETURNING buckets.*;
 
 -- name: InsertPublicURLUsageDelivery :one
 INSERT INTO control.public_url_usage_deliveries (
     bucket_id,
-    source_revision,
+    bucket_revision,
     delivery_key,
     state,
     available_at,
     created_at
 ) VALUES (
     sqlc.arg(bucket_id),
-    sqlc.arg(source_revision),
+    sqlc.arg(bucket_revision),
     sqlc.arg(delivery_key),
     'pending',
     sqlc.arg(available_at),
     sqlc.arg(created_at)
 )
-ON CONFLICT (bucket_id, source_revision) DO UPDATE SET
+ON CONFLICT (bucket_id, bucket_revision) DO UPDATE SET
     delivery_key = control.public_url_usage_deliveries.delivery_key
 RETURNING *;
 
 -- name: ClaimPublicURLUsageDeliveries :many
 WITH candidates AS (
-    SELECT delivery_id
+    SELECT id
     FROM control.public_url_usage_deliveries
     WHERE (
         state IN ('pending', 'failed')
@@ -328,7 +328,7 @@ WITH candidates AS (
         state = 'delivering'
         AND work_expires_at <= sqlc.arg(claimed_at)
     )
-    ORDER BY available_at, delivery_id
+    ORDER BY available_at, id
     LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 )
@@ -341,13 +341,13 @@ SET state = 'delivering',
     last_attempted_at = sqlc.arg(claimed_at),
     last_error = NULL
 FROM candidates
-WHERE deliveries.delivery_id = candidates.delivery_id
+WHERE deliveries.id = candidates.id
 RETURNING deliveries.*;
 
 -- name: GetPublicURLUsageBucketByID :one
 SELECT *
 FROM control.public_url_usage_buckets
-WHERE bucket_id = sqlc.arg(bucket_id)
+WHERE id = sqlc.arg(bucket_id)
   AND finalized;
 
 -- name: CompletePublicURLUsageDelivery :one
@@ -357,7 +357,7 @@ SET state = 'delivered',
     work_expires_at = NULL,
     delivered_at = sqlc.arg(completed_at),
     last_error = NULL
-WHERE delivery_id = sqlc.arg(delivery_id)
+WHERE id = sqlc.arg(delivery_id)
   AND state = 'delivering'
   AND work_owner = sqlc.arg(work_owner)
   AND work_epoch = sqlc.arg(work_epoch)
@@ -371,7 +371,7 @@ SET state = 'failed',
     work_expires_at = NULL,
     available_at = sqlc.arg(available_at),
     last_error = sqlc.arg(last_error)
-WHERE delivery_id = sqlc.arg(delivery_id)
+WHERE id = sqlc.arg(delivery_id)
   AND state = 'delivering'
   AND work_owner = sqlc.arg(work_owner)
   AND work_epoch = sqlc.arg(work_epoch)
@@ -384,7 +384,7 @@ SET state = 'rejected',
     work_owner = NULL,
     work_expires_at = NULL,
     last_error = sqlc.arg(last_error)
-WHERE delivery_id = sqlc.arg(delivery_id)
+WHERE id = sqlc.arg(delivery_id)
   AND state = 'delivering'
   AND work_owner = sqlc.arg(work_owner)
   AND work_epoch = sqlc.arg(work_epoch)

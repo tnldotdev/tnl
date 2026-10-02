@@ -20,7 +20,7 @@ func assertAssignmentTotals(t *testing.T, db controlstatedb.DBTX, want int64) {
 	err := db.QueryRow(t.Context(), `
 		WITH actual AS (
 			SELECT connections.relay_service_id, count(*) AS assignment_count
-			FROM control.publish_run_connections AS connections
+			FROM control.publish_run_connection_slots AS connections
 			JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
 			WHERE sessions.closed_at IS NULL
 			  AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
@@ -69,34 +69,34 @@ func TestIntegrationAssignmentTotalsMutations(t *testing.T) {
 		name, query string
 		want        int64
 	}{
-		{"draining", `UPDATE control.publish_run_connections SET state = 'draining' WHERE connection_slot = 0`, 2},
-		{"service transfer", `UPDATE control.publish_run_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`, 2},
-		{"expire", `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 1`, 1},
-		{"reassign expired", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
-		{"close slot", `UPDATE control.publish_run_connections SET state = 'closed' WHERE connection_slot = 1`, 1},
-		{"reassign closed", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 2},
+		{"draining", `UPDATE control.publish_run_connection_slots SET state = 'draining' WHERE connection_slot = 0`, 2},
+		{"service transfer", `UPDATE control.publish_run_connection_slots SET relay_service_id = 'spare' WHERE connection_slot = 0`, 2},
+		{"expire", `UPDATE control.publish_run_connection_slots SET state = 'expired' WHERE connection_slot = 1`, 1},
+		{"reassign expired", `UPDATE control.publish_run_connection_slots SET state = 'assigned' WHERE connection_slot = 1`, 2},
+		{"close slot", `UPDATE control.publish_run_connection_slots SET state = 'closed' WHERE connection_slot = 1`, 1},
+		{"reassign closed", `UPDATE control.publish_run_connection_slots SET state = 'assigned' WHERE connection_slot = 1`, 2},
 		{"close parent first", `UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
-		{"close slot after parent", `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 1`, 0},
+		{"close slot after parent", `UPDATE control.publish_run_connection_slots SET state = 'expired' WHERE connection_slot = 1`, 0},
 		{"reopen parent", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
-		{"save slots", `CREATE TEMP TABLE saved_assignments ON COMMIT DROP AS TABLE control.publish_run_connections`, 1},
-		{"delete slots", `DELETE FROM control.publish_run_connections`, 0},
-		{"insert active and expired slots", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments`, 1},
-		{"insert conflict retry", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments ON CONFLICT DO NOTHING`, 1},
-		{"close children first", `UPDATE control.publish_run_connections SET state = 'closed'`, 0},
+		{"save slots", `CREATE TEMP TABLE saved_assignments ON COMMIT DROP AS TABLE control.publish_run_connection_slots`, 1},
+		{"delete slots", `DELETE FROM control.publish_run_connection_slots`, 0},
+		{"insert active and expired slots", `INSERT INTO control.publish_run_connection_slots SELECT * FROM saved_assignments`, 1},
+		{"insert conflict retry", `INSERT INTO control.publish_run_connection_slots SELECT * FROM saved_assignments ON CONFLICT DO NOTHING`, 1},
+		{"close children first", `UPDATE control.publish_run_connection_slots SET state = 'closed'`, 0},
 		{"close parent after children", `UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'`, 0},
-		{"delete closed children", `DELETE FROM control.publish_run_connections`, 0},
+		{"delete closed children", `DELETE FROM control.publish_run_connection_slots`, 0},
 		{"prepare historical slots", `UPDATE saved_assignments SET session_open = false`, 0},
-		{"insert into closed parent", `INSERT INTO control.publish_run_connections SELECT * FROM saved_assignments`, 0},
+		{"insert into closed parent", `INSERT INTO control.publish_run_connection_slots SELECT * FROM saved_assignments`, 0},
 		{"reopen with inserted slots", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 1},
 		{"close children and parent in one statement", `WITH closed AS (
-			UPDATE control.publish_run_connections SET state = 'closed' RETURNING publish_run_id
+			UPDATE control.publish_run_connection_slots SET state = 'closed' RETURNING publish_run_id
 		) UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test'
 		WHERE id IN (SELECT publish_run_id FROM closed)`, 0},
 		{"reopen after compound closure", `UPDATE control.publish_runs SET state = 'starting', closed_at = NULL, close_reason = NULL`, 0},
-		{"restore assignment", `UPDATE control.publish_run_connections SET state = 'assigned' WHERE connection_slot = 1`, 1},
+		{"restore assignment", `UPDATE control.publish_run_connection_slots SET state = 'assigned' WHERE connection_slot = 1`, 1},
 		{"close parent and children in one statement", `WITH closed AS (
 			UPDATE control.publish_runs SET state = 'closed', closed_at = publisher_expires_at, close_reason = 'test' RETURNING id
-		) UPDATE control.publish_run_connections SET state = 'closed'
+		) UPDATE control.publish_run_connection_slots SET state = 'closed'
 		WHERE publish_run_id IN (SELECT id FROM closed)`, 0},
 	}
 	for _, step := range steps {
@@ -189,11 +189,11 @@ func TestIntegrationAssignmentTotalsRejectParentFlagDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, tx)
-	if _, err := tx.Exec(t.Context(), `UPDATE control.publish_run_connections SET session_open = false WHERE connection_slot = 0`); err != nil {
+	if _, err := tx.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET session_open = false WHERE connection_slot = 0`); err != nil {
 		t.Fatal(err)
 	}
 	var constraint *pgconn.PgError
-	if err := tx.Commit(t.Context()); !errors.As(err, &constraint) || constraint.ConstraintName != "publish_run_connections_assignment_parent" {
+	if err := tx.Commit(t.Context()); !errors.As(err, &constraint) || constraint.ConstraintName != "publish_run_connection_slots_assignment_parent" {
 		t.Fatalf("parent flag drift commit error = %v", err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 2)
@@ -236,11 +236,11 @@ func TestIntegrationAssignmentTotalsParentTransitionRace(t *testing.T) {
 				// the parent holds its row while its eligibility cascade waits for
 				// this slot. A slot delta must not acquire the parent in reverse.
 				waitForPostgresBlock(t, ctx, database, int32(child.Conn().PgConn().PID()), done)
-				query := `UPDATE control.publish_run_connections SET state = 'expired' WHERE connection_slot = 0`
+				query := `UPDATE control.publish_run_connection_slots SET state = 'expired' WHERE connection_slot = 0`
 				if mutation == "delete" {
-					query = `DELETE FROM control.publish_run_connections WHERE connection_slot = 0`
+					query = `DELETE FROM control.publish_run_connection_slots WHERE connection_slot = 0`
 				} else if mutation == "transfer" {
-					query = `UPDATE control.publish_run_connections SET relay_service_id = 'spare' WHERE connection_slot = 0`
+					query = `UPDATE control.publish_run_connection_slots SET relay_service_id = 'spare' WHERE connection_slot = 0`
 				}
 				if _, err := child.Exec(ctx, query); err != nil {
 					t.Fatal(err)
@@ -331,7 +331,7 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 	for _, cleanup := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cleanup=%t", cleanup), func(t *testing.T) {
-			fixtures, _ := relayServiceProgressSessions(t)
+			fixtures, _ := relayServiceProgressSessionsWithSharedTeam(t, !cleanup)
 			database, now := fixtures[0].database, fixtures[0].now
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -343,7 +343,7 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 			// bulk closure visits y/z before a/b; the competing single closure
 			// visits a/z. per-statement ordered counter locks alone would cycle.
 			for index, services := range [][2]string{{"y", "z"}, {"a", "b"}, {"a", "z"}} {
-				if _, err := database.pool.Exec(ctx, `UPDATE control.publish_run_connections SET relay_service_id = CASE connection_slot WHEN 0 THEN $2 ELSE $3 END WHERE publish_run_id = $1`, fixtures[index].setup.PublishRunID, services[0], services[1]); err != nil {
+				if _, err := database.pool.Exec(ctx, `UPDATE control.publish_run_connection_slots SET relay_service_id = CASE connection_slot WHEN 0 THEN $2 ELSE $3 END WHERE publish_run_id = $1`, fixtures[index].setup.PublishRunID, services[0], services[1]); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -355,10 +355,6 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 					if _, err := database.pool.Exec(ctx, `UPDATE control.publish_runs SET publisher_expires_at = $2 WHERE id = $1`, f.setup.PublishRunID, now.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
-				}
-			} else {
-				if _, err := database.pool.Exec(ctx, `UPDATE control.public_urls SET team_id = $2 WHERE id = $1`, fixtures[1].setup.PublicURLID, fixtures[0].setup.TeamID); err != nil {
-					t.Fatal(err)
 				}
 			}
 			assertAssignmentTotals(t, database.pool, 10)

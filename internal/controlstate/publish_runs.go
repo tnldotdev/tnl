@@ -263,7 +263,7 @@ func (d *Database) createPublishRun(
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
 		PolicyRevision: positive(request.PolicyRevision), CertificateCacheKey: request.CertificateCacheKey,
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,
-		CertificateChallenge: string(request.CertificateChallenge), CreatedAt: timestamptz(now),
+		CertificateChallengeMethod: string(request.CertificateChallenge), CreatedAt: timestamptz(now),
 		LastHeartbeatAt: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(publisherLeaseDuration)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -450,7 +450,7 @@ func loadPublishRunSetupWithToken(
 func publishRunSetup(
 	session controlstatedb.ControlPublishRun,
 	token credentials.PublishRunToken,
-	connections []controlstatedb.ControlPublishRunConnection,
+	connections []controlstatedb.ControlPublishRunConnectionSlot,
 ) (PublishRunSetup, error) {
 	if session.PublishRunNumber <= 0 || !session.CreatedAt.Valid || !session.PublisherExpiresAt.Valid ||
 		len(connections) != publishRunConnectionCount {
@@ -493,7 +493,7 @@ func publishRunSetup(
 }
 
 func connectionAssignment(
-	row controlstatedb.ControlPublishRunConnection,
+	row controlstatedb.ControlPublishRunConnectionSlot,
 	credential credentials.PublisherConnectionCredential,
 ) (ConnectionAssignment, error) {
 	if row.PublishRunNumber <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||

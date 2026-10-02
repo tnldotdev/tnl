@@ -21,15 +21,13 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 	t.Cleanup(pool.Close)
 	now := time.Now().UTC().Truncate(time.Second)
 	seedControlPublicURL(t, &Database{pool: pool}, now, "legacy")
+	insertTestPublishRun(t, &Database{pool: pool}, testPublishRun{
+		ID: "legacy-session", PublicURLID: "public_url_legacy", TeamID: "team_legacy", ActingIdentityID: "identity_legacy",
+		CertificateCacheKey: "legacy-cache", CertificateScope: "route",
+		CertificateIdentifiers: []string{"route-legacy.example.test"}, ChallengeMethod: "tls-alpn-01",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
 	for _, query := range []string{
-		`INSERT INTO control.publish_runs (id, public_url_id, team_id, acting_identity_id, publish_run_number,
-			idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision,
-			certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge,
-			state, created_at, last_heartbeat_at, publisher_expires_at)
-		VALUES ('legacy-session', 'public_url_legacy', 'team_legacy', 'identity_legacy', 1, 'legacy',
-			decode(repeat('01',32),'hex'), 'legacy-token', decode(repeat('02',32),'hex'), 1,
-			'legacy-cache', 'route', ARRAY['route-legacy.example.test'], 'tls-alpn-01', 'starting',
-			$1::timestamptz, $1::timestamptz, $1::timestamptz + interval '1 hour')`,
 		`INSERT INTO control.acme_accounts (id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, created_at, updated_at)
 		VALUES ('legacy-account', 'https://acme.example.test/directory', 'operator@example.test', decode(repeat('03',32),'hex'), 'legacy-key', $1, $1)`,
 		`INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest,

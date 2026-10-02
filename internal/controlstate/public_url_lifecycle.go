@@ -235,7 +235,7 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
 		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
 		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
-		ChallengeMethod: session.CertificateChallenge,
+		ChallengeMethod: session.CertificateChallengeMethod,
 		NotAfter:        timestamptz(notAfter), InstalledAt: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -746,7 +746,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 			PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
 		})
 		if err == nil {
-			value := uint64(episode.RecoveryEpisodeID)
+			value := uint64(episode.ID)
 			projection.RecoveryEpisodeID = &value
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("controlstate: read route recovery episode: %w", err)

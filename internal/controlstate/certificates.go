@@ -205,7 +205,7 @@ func (d *Database) CreateCertificateIssuance(
 		PublishRunNumber: session.PublishRunNumber, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey,
 		CertificateScope: session.CertificateScope, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
-		ChallengeMethod: session.CertificateChallenge, CsrDer: slices.Clone(request.CSRDER),
+		ChallengeMethod: session.CertificateChallengeMethod, CsrDer: slices.Clone(request.CSRDER),
 		CsrDigest: csrDigest[:], CreatedAt: timestamptz(now),
 	})
 	if err != nil {

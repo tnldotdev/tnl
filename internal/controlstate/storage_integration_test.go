@@ -62,7 +62,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"control_tls_cache", "cache_ciphertext", "cache_storage_key_id", cacheData},
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
-		{"runtime_secrets", "external_retry_master_key_ciphertext", "external_retry_master_key_storage_key_id", masterKey[:]},
+		{"runtime_secret", "external_retry_master_key_ciphertext", "external_retry_master_key_storage_key_id", masterKey[:]},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()

@@ -3,102 +3,12 @@ package controlstate
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 )
-
-func TestIntegrationControlSchemaUpgradeFromV1(t *testing.T) {
-	for _, initialVersion := range []int{1, 2, 3, 4} {
-		t.Run(fmt.Sprintf("v%d", initialVersion), func(t *testing.T) {
-			testControlSchemaUpgrade(t, initialVersion)
-		})
-	}
-}
-
-func testControlSchemaUpgrade(t *testing.T, initialVersion int) {
-	t.Helper()
-	url := newDisposableControlStateDatabaseURL(t, fmt.Sprintf("schema_upgrade_v%d", initialVersion))
-	config, err := parseDirectConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := stdlib.OpenDB(*config)
-	t.Cleanup(func() { _ = db.Close() })
-	if err := createMigrationLock(t.Context(), db); err != nil {
-		t.Fatal(err)
-	}
-	baseline, err := migrationFiles.ReadFile("migrations/00001_baseline.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := fstest.MapFS{"00001_baseline.sql": &fstest.MapFile{Data: baseline}}
-	if initialVersion >= 2 {
-		recovery, err := migrationFiles.ReadFile("migrations/00002_recovery.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		previous["00002_recovery.sql"] = &fstest.MapFile{Data: recovery}
-	}
-	if initialVersion >= 3 {
-		changes, err := migrationFiles.ReadFile("migrations/00003_dns_challenge_changes.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		previous["00003_dns_challenge_changes.sql"] = &fstest.MapFile{Data: changes}
-	}
-	if initialVersion >= 4 {
-		cleanup, err := migrationFiles.ReadFile("migrations/00004_acme_cleanup_work.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		previous["00004_acme_cleanup_work.sql"] = &fstest.MapFile{Data: cleanup}
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, previous,
-		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if initialVersion >= 3 {
-		// later migrations leave existing runtime queries usable across the upgrade.
-		active, err := Open(t.Context(), url, testStorageKey, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer active.Close()
-		if err := active.Readiness(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		defer func() {
-			if err := active.Readiness(t.Context()); err != nil {
-				t.Errorf("pre-migration runtime after upgrade: %v", err)
-			}
-		}()
-	} else if premature, err := Open(t.Context(), url, testStorageKey, ""); err == nil {
-		premature.Close()
-		t.Fatalf("Open accepted incompatible v%d schema", initialVersion)
-	}
-	if err := Migrate(t.Context(), url); err != nil {
-		t.Fatalf("upgrade existing control schema: %v", err)
-	}
-	upgraded, err := Open(t.Context(), url, testStorageKey, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer upgraded.Close()
-	if err := upgraded.Readiness(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")
@@ -133,10 +43,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
 	for _, table := range []string{
-		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions",
-		"public_urls", "publish_runs", "publish_run_connections", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events",
+		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "authority_revision_states", "runtime_secret", "dns_authorities", "dns_challenge_changes",
+		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_assignment_totals",
 		"control_tls_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls",
+		"public_url_usage_configuration", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -144,6 +54,12 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		}
 		if !exists {
 			t.Errorf("control.%s missing after migration", table)
+		}
+		var key string
+		if err := database.pool.QueryRow(ctx, `SELECT a.attname FROM pg_constraint AS c
+			JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != "id" {
+			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
 		}
 	}
 	var version int64
@@ -167,14 +83,64 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	newer.Close()
 }
 
+func TestIntegrationScopedForeignKeys(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "scoped_foreign_keys")
+	seedControlPublicURL(t, database, now, "owner_a")
+	seedControlPublicURL(t, database, now, "owner_b")
+	insertTestPublishRun(t, database, testPublishRun{
+		ID: "session_owner_a", PublicURLID: "public_url_owner_a", TeamID: "team_owner_a",
+		ActingIdentityID: "identity_owner_a", CertificateCacheKey: "owner_a", CertificateScope: "owner_a",
+		CertificateIdentifiers: []string{"route-owner_a.example.test"}, ChallengeMethod: "tls-alpn-01",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.member_slug_reservations
+		(id, team_id, member_slug, state, created_at) VALUES
+		('reservation_owner_b_extra', 'team_owner_b', 'extra', 'invited', $1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	account, err := database.EnsureACMEAccount(t.Context(), "https://acme.example.test/scoped-fk", "operator@example.test", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, query string
+		args        []any
+	}{
+		{name: "membership_slug", query: `UPDATE control.team_memberships SET slug_reservation_id = 'reservation_owner_b_extra' WHERE team_id = 'team_owner_a'`},
+		{name: "invitation_slug", query: `INSERT INTO control.team_invitations (id, team_id, slug_reservation_id, initial_role,
+			invited_by_identity_id, idempotency_key, request_digest, token_digest, state, created_at, expires_at)
+			VALUES ('invitation_wrong_team', 'team_owner_a', 'reservation_owner_b_extra', 'member', 'identity_owner_a',
+			'wrong-team', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'), 'pending', now(), now() + interval '1 hour')`},
+		{name: "publish_run_team", query: `UPDATE control.publish_runs SET team_id = 'team_owner_b' WHERE id = 'session_owner_a'`},
+		{name: "missing_recovery_run", query: `INSERT INTO control.public_url_recovery_episodes (public_url_id, publish_run_number, state, opened_at) VALUES ('public_url_owner_a', 2, 'open', now())`},
+		{name: "acme_order_run", query: `INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number,
+			idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers,
+			challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)
+			VALUES ('order_wrong_run', $1, 'session_owner_a', 'public_url_owner_b', 1,
+			'wrong-run', decode(repeat('03', 32), 'hex'), 'owner_a', 'owner_a', ARRAY['owner-a.example.test'],
+			'tls-alpn-01', decode('01', 'hex'), decode(repeat('04', 32), 'hex'), 'pending', now(), now(), now())`, args: []any{account.ID}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := database.pool.Exec(t.Context(), test.query, test.args...)
+			var constraint *pgconn.PgError
+			if !errors.As(err, &constraint) || constraint.Code != "23503" {
+				t.Fatalf("foreign key error = %v; want 23503", err)
+			}
+		})
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET default_domain_id = 'domain_owner_b' WHERE id = 'team_owner_a'`); err == nil {
+		t.Fatal("another team's claimed domain became the default")
+	}
+}
+
 func TestIntegrationPublisherConnectionSchemaConstraints(t *testing.T) {
 	f := newPublishRunFixture(t)
 	// exercise the constraints on real rows, rather than matching SQL source
 	// spelling. each failing statement is atomic and leaves the fixture intact.
 	for _, test := range []struct{ name, query, code string }{
-		{"slot_lower_bound", `UPDATE control.publish_run_connections SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
-		{"slot_upper_bound", `UPDATE control.publish_run_connections SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
-		{"distinct_services", `UPDATE control.publish_run_connections SET relay_service_id = (SELECT relay_service_id FROM control.publish_run_connections WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
+		{"slot_lower_bound", `UPDATE control.publish_run_connection_slots SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
+		{"slot_upper_bound", `UPDATE control.publish_run_connection_slots SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
+		{"distinct_services", `UPDATE control.publish_run_connection_slots SET relay_service_id = (SELECT relay_service_id FROM control.publish_run_connection_slots WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := f.database.pool.Exec(t.Context(), test.query)

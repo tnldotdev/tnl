@@ -142,6 +142,7 @@ func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
 	for _, required := range []string{
 		"worktree_hash_salt BLOB NOT NULL", "length(worktree_hash_salt) IN (0, 32)",
 		"project_root TEXT NOT NULL", "service TEXT NOT NULL", "local_tunnels_project_open_idx",
+		"CREATE TABLE client_setting", "telemetry_enabled INTEGER NOT NULL",
 	} {
 		if !strings.Contains(string(data), required) {
 			t.Fatalf("initial migration does not contain %q", required)

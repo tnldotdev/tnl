@@ -62,13 +62,13 @@ func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
 	assertAssignmentTotals(t, f.database.pool, 0)
 	var expired, connectionsClosed bool
 	if err := f.database.pool.QueryRow(t.Context(), `SELECT state = 'expired' AND closed_at = publisher_expires_at,
-		(SELECT count(*) = 2 FROM control.publish_run_connections WHERE publish_run_id = $1 AND state = 'closed')
+		(SELECT count(*) = 2 FROM control.publish_run_connection_slots WHERE publish_run_id = $1 AND state = 'closed')
 		FROM control.publish_runs WHERE id = $1`, f.setup.PublishRunID).Scan(&expired, &connectionsClosed); err != nil || !expired || !connectionsClosed {
 		t.Fatalf("expired run/connections = %t/%t: %v", expired, connectionsClosed, err)
 	}
 	var eventKind string
 	if err := f.database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events
-		WHERE public_url_id = $1 ORDER BY routing_table_revision DESC LIMIT 1`, f.setup.PublicURLID).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
+		WHERE public_url_id = $1 ORDER BY id DESC LIMIT 1`, f.setup.PublicURLID).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
 		t.Fatalf("latest routing event = %q, %v", eventKind, err)
 	}
 	if count, err := f.database.ExpireSavedPublishRuns(t.Context(), f.now.Add(time.Minute)); err != nil || count != 0 {

@@ -1,13 +1,9 @@
 package clientstate
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
-	"testing/fstest"
-
-	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
 func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T) {
@@ -26,20 +22,14 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := fs.ReadFile(migrationFiles, "migrations/00001_schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := tnlsqlite.Open(t.Context(), DatabasePath(root), fstest.MapFS{
-		"00001_schema.sql": &fstest.MapFile{Data: baseline},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
+	// an old client.db must not be opened or imported when client-v1.db is absent.
+	if err := os.WriteFile(filepath.Join(root, "client.db"), []byte("old database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	read(true)
+	if _, err := os.Stat(DatabasePath(root)); !os.IsNotExist(err) {
+		t.Fatalf("telemetry read created versioned state: %v", err)
+	}
 	state, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)

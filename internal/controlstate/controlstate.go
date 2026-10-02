@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	schemaVersion        int64 = 5
-	minimumSchemaVersion int64 = 3
+	schemaVersion        int64 = 1
+	minimumSchemaVersion int64 = 1
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )
@@ -74,11 +74,11 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		}
 	}()
 
-	var singleton bool
+	var singleton int16
 	if err := lockTx.QueryRowContext(ctx, `
-		SELECT singleton
+		SELECT id
 		FROM control.schema_migration_lock
-		WHERE singleton = true
+		WHERE id = 1
 		FOR UPDATE
 	`).Scan(&singleton); err != nil {
 		return fmt.Errorf("controlstate: migrate: acquire lock: %w", err)
@@ -288,9 +288,9 @@ func createMigrationLock(ctx context.Context, db *sql.DB) error {
 	statements := []string{
 		`CREATE SCHEMA IF NOT EXISTS control`,
 		`CREATE TABLE IF NOT EXISTS control.schema_migration_lock (
-			singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton)
+			id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1)
 		)`,
-		`INSERT INTO control.schema_migration_lock (singleton) VALUES (true) ON CONFLICT (singleton) DO NOTHING`,
+		`INSERT INTO control.schema_migration_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {

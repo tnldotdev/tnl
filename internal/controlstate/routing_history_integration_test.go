@@ -178,7 +178,7 @@ func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT routing_table_revision FROM control.ingress_routing_table_events WHERE routing_table_revision = $1 FOR UPDATE`, revisions[0]); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT id FROM control.ingress_routing_table_events WHERE id = $1 FOR UPDATE`, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
 	operation, stop := context.WithCancel(ctx)
@@ -225,7 +225,7 @@ func TestIntegrationRoutingRetentionBoundsScannedAnchors(t *testing.T) {
 		SELECT 'public_url_tombstone', $1, n, $2, 1, '{}'::bytea, $3 FROM generate_series(1, 2001) AS n`, f.setup.PublicURLID, f.request.CertificateIdentifiers[0], f.now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = (SELECT max(routing_table_revision) FROM control.ingress_routing_table_events)`); err != nil {
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = (SELECT max(id) FROM control.ingress_routing_table_events)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now); err != nil {

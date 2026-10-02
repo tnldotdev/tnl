@@ -49,7 +49,7 @@ func (d *Database) FinalizePublicURLUsageBuckets(
 			return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: create delivery key: %w", err)
 		}
 		_, err = queries.InsertPublicURLUsageDelivery(ctx, controlstatedb.InsertPublicURLUsageDeliveryParams{
-			BucketID: bucket.BucketID, SourceRevision: bucket.BucketRevision,
+			BucketID: bucket.ID, BucketRevision: bucket.BucketRevision,
 			DeliveryKey: deliveryKey,
 			AvailableAt: timestamptz(now), CreatedAt: timestamptz(now),
 		})
@@ -219,8 +219,8 @@ func publicURLUsageDeliveryWork(
 	if err != nil {
 		return PublicURLUsageDeliveryWork{}, err
 	}
-	if delivery.DeliveryID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, "usage_report_") ||
-		delivery.SourceRevision <= 0 || delivery.SourceRevision != bucket.BucketRevision || bucket.PublishRunNumber <= 0 ||
+	if delivery.ID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, "usage_report_") ||
+		delivery.BucketRevision <= 0 || delivery.BucketRevision != bucket.BucketRevision || bucket.PublishRunNumber <= 0 ||
 		!validStateText(bucket.TeamID) || !validStateText(bucket.ActingIdentityID) ||
 		!bucket.BucketStart.Valid || !bucket.BucketEnd.Valid || !bucket.ObservedThrough.Valid ||
 		!delivery.WorkOwner.Valid || delivery.WorkEpoch <= 0 || !delivery.WorkExpiresAt.Valid || delivery.Attempts <= 0 {
@@ -236,8 +236,8 @@ func publicURLUsageDeliveryWork(
 		}
 	}
 	return PublicURLUsageDeliveryWork{
-		DeliveryID: uint64(delivery.DeliveryID), DeliveryKey: delivery.DeliveryKey,
-		SourceRevision: uint64(delivery.SourceRevision), PublicURLID: bucket.PublicURLID,
+		DeliveryID: uint64(delivery.ID), DeliveryKey: delivery.DeliveryKey,
+		SourceRevision: uint64(delivery.BucketRevision), PublicURLID: bucket.PublicURLID,
 		PublishRunNumber: uint64(bucket.PublishRunNumber), TeamID: bucket.TeamID, ActingIdentityID: bucket.ActingIdentityID,
 		BucketStart: bucket.BucketStart.Time,
 		BucketEnd:   bucket.BucketEnd.Time, ObservedThrough: bucket.ObservedThrough.Time,

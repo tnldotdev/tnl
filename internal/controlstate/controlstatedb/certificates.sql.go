@@ -88,7 +88,7 @@ SELECT coalesce(
         SELECT 1 FROM control.ingress_leases AS ingresses
         WHERE ingresses.lease_expires_at > $1
           AND NOT ingresses.draining
-          AND ingresses.routing_table_revision < events.routing_table_revision
+           AND ingresses.routing_table_revision < events.id
     ), false
 )::boolean AS ready
 FROM control.acme_orders AS orders
@@ -96,7 +96,7 @@ JOIN control.ingress_routing_table_events AS events
   ON events.public_url_id = orders.public_url_id AND events.publish_run_number = orders.publish_run_number
 WHERE orders.id = $2
   AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-ORDER BY events.routing_table_revision DESC
+ORDER BY events.id DESC
 LIMIT 1
 `
 
@@ -161,12 +161,12 @@ WITH candidate AS (
           OR EXISTS (
               SELECT 1
               FROM (
-                  SELECT events.routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
+                   SELECT events.id AS routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
                   FROM control.ingress_routing_table_events AS events
                   WHERE events.public_url_id = orders.public_url_id
                     AND events.publish_run_number = orders.publish_run_number
                     AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-                  ORDER BY events.routing_table_revision DESC
+                   ORDER BY events.id DESC
                   LIMIT 1
               ) AS challenge
               WHERE challenge.event_kind = 'challenge_upsert'
@@ -515,7 +515,7 @@ func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLS
 }
 
 const getPublishRunByTokenID = `-- name: GetPublishRunByTokenID :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE publish_run_token_id = $1
 `
@@ -539,7 +539,7 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
-		&i.CertificateChallenge,
+		&i.CertificateChallengeMethod,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,

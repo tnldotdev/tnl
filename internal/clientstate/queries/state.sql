@@ -5,7 +5,7 @@ ON CONFLICT (origin) DO UPDATE SET last_used_at = excluded.last_used_at;
 
 -- name: GetSelectedServer :one
 SELECT selected_server_origin
-FROM client_settings
+FROM client_setting
 WHERE id = 1;
 
 -- name: GetSelectedTeam :one
@@ -20,37 +20,37 @@ SET selected_team_id = sqlc.arg(team_id),
 WHERE origin = sqlc.arg(origin);
 
 -- name: SetSelectedServer :exec
-UPDATE client_settings
+UPDATE client_setting
 SET selected_server_origin = sqlc.arg(origin)
 WHERE id = 1;
 
 -- name: GetInstallationID :one
 SELECT installation_id
-FROM client_settings
+FROM client_setting
 WHERE id = 1;
 
 -- name: SetInstallationID :exec
-UPDATE client_settings
+UPDATE client_setting
 SET installation_id = sqlc.arg(installation_id)
 WHERE id = 1 AND installation_id = '';
 
 -- name: GetTelemetryEnabled :one
 SELECT telemetry_enabled
-FROM client_settings
+FROM client_setting
 WHERE id = 1;
 
 -- name: SetTelemetryEnabled :exec
-UPDATE client_settings
+UPDATE client_setting
 SET telemetry_enabled = sqlc.arg(enabled)
 WHERE id = 1;
 
 -- name: GetWorktreeHashSalt :one
 SELECT worktree_hash_salt
-FROM client_settings
+FROM client_setting
 WHERE id = 1;
 
 -- name: SetWorktreeHashSalt :exec
-UPDATE client_settings
+UPDATE client_setting
 SET worktree_hash_salt = sqlc.arg(worktree_hash_salt)
 WHERE id = 1 AND length(worktree_hash_salt) = 0;
 
@@ -64,27 +64,27 @@ INSERT INTO control_sessions (
     server_origin,
     authority_endpoint,
     session_id,
-    access_token,
+    stored_access_token,
     access_expires_at,
-    refresh_token,
+    stored_refresh_token,
     refresh_expires_at,
     updated_at
 ) VALUES (
     sqlc.arg(server_origin),
     sqlc.arg(authority_endpoint),
     sqlc.arg(session_id),
-    sqlc.arg(access_token),
+    sqlc.arg(stored_access_token),
     sqlc.arg(access_expires_at),
-    sqlc.arg(refresh_token),
+    sqlc.arg(stored_refresh_token),
     sqlc.arg(refresh_expires_at),
     sqlc.arg(updated_at)
 )
 ON CONFLICT (server_origin) DO UPDATE SET
     authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
-    access_token = excluded.access_token,
+    stored_access_token = excluded.stored_access_token,
     access_expires_at = excluded.access_expires_at,
-    refresh_token = excluded.refresh_token,
+    stored_refresh_token = excluded.stored_refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
     updated_at = excluded.updated_at;
 
@@ -94,7 +94,7 @@ WHERE server_origin = sqlc.arg(server_origin);
 
 -- name: GetCertificateMaterial :one
 SELECT *
-FROM certificate_material
+FROM certificate_materials
 WHERE server_origin = sqlc.arg(server_origin)
   AND team_id = sqlc.arg(team_id)
   AND cache_key = sqlc.arg(cache_key)
@@ -102,13 +102,13 @@ WHERE server_origin = sqlc.arg(server_origin)
   AND phase = sqlc.arg(phase);
 
 -- name: UpsertCertificateMaterial :exec
-INSERT INTO certificate_material (
+INSERT INTO certificate_materials (
     server_origin,
     team_id,
     cache_key,
     plan,
     phase,
-    key_der,
+    stored_key,
     csr_der,
     certificate_pem,
     renew_at,
@@ -120,7 +120,7 @@ INSERT INTO certificate_material (
     sqlc.arg(cache_key),
     sqlc.arg(plan),
     sqlc.arg(phase),
-    sqlc.arg(key_der),
+    sqlc.arg(stored_key),
     sqlc.arg(csr_der),
     sqlc.narg(certificate_pem),
     sqlc.narg(renew_at),
@@ -128,7 +128,7 @@ INSERT INTO certificate_material (
     sqlc.arg(updated_at)
 )
 ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
-    key_der = excluded.key_der,
+    stored_key = excluded.stored_key,
     csr_der = excluded.csr_der,
     certificate_pem = excluded.certificate_pem,
     renew_at = excluded.renew_at,
@@ -136,7 +136,7 @@ ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
     updated_at = excluded.updated_at;
 
 -- name: DeleteCertificateMaterial :exec
-DELETE FROM certificate_material
+DELETE FROM certificate_materials
 WHERE server_origin = sqlc.arg(server_origin)
   AND team_id = sqlc.arg(team_id)
   AND cache_key = sqlc.arg(cache_key)

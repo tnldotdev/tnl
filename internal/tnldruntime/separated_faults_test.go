@@ -70,7 +70,7 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	defer cancel()
 	if err := pollCondition(ctx, 25*time.Millisecond, 2*time.Second, func(ctx context.Context) (bool, error) {
 		var count int
-		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connections c
+		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots c
 			JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
 			AND l.relay_lease_revision = c.connected_relay_lease_revision
 			WHERE c.state = 'ready' AND NOT l.draining AND l.lease_expires_at > now()`).Scan(&count)
@@ -95,7 +95,7 @@ func separatedConnectionAssignments(t *testing.T, database *sql.DB) string {
 			publisher_connection_id, connection_assignment_revision, relay_service_id,
 			connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, state)
 			ORDER BY public_url_id, connection_slot), '[]'::jsonb)::text
-		FROM control.publish_run_connections WHERE state IN ('assigned', 'connected', 'ready')
+		FROM control.publish_run_connection_slots WHERE state IN ('assigned', 'connected', 'ready')
 	`).Scan(&assignments); err != nil {
 		t.Fatal(err)
 	}
