@@ -93,8 +93,17 @@ func TestWriteWarningUsesDiagnosticFrame(t *testing.T) {
 	text := output.String()
 	if !strings.HasPrefix(text, "+--[ tnl publish ]-- provisioning stalled ") ||
 		!strings.Contains(text, "help  "+HelpURL(ProvisioningStalled)) ||
-		!strings.Contains(text, "+-- "+string(ProvisioningStalled)+" ") {
+		!strings.Contains(text, "+-- "+string(ProvisioningStalled)+" ") ||
+		!strings.HasSuffix(text, "\n\n") {
 		t.Fatalf("warning = %q", text)
+	}
+	output.Reset()
+	if err := WritePolicyDenial(&output, "tnl publish", 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); !strings.Contains(got, "+-- "+string(IPPolicyDenied)+" ") ||
+		!strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("policy denial = %q", got)
 	}
 }
 

@@ -322,8 +322,14 @@ func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	var output bytes.Buffer
 	writeCommandError(&output, clioutput.WrapCommand("tnl team use", errors.New("team not found")))
 	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
-		!strings.Contains(got, "team not found") {
+		!strings.Contains(got, "team not found") || !strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("error output = %q", got)
+	}
+	output.Reset()
+	writeCommandError(&output, clioutput.WrapCommand("tnl publish", diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))))
+	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- local service unavailable ") ||
+		!strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("classified error output = %q", got)
 	}
 }
 

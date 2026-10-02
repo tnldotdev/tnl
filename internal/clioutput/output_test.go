@@ -219,6 +219,28 @@ func TestWritePropagatesWriterError(t *testing.T) {
 	}
 }
 
+func TestWriteSeparatesHumanFrames(t *testing.T) {
+	first := Frame{Command: "tnl team use", State: "selected"}
+	second := Frame{Command: "tnl domain status", State: "ready"}
+	var output bytes.Buffer
+	for _, frame := range []Frame{first, second} {
+		if err := Write(&output, frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstText, err := Render(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondText, err := Render(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), firstText+"\n"+secondText+"\n"; got != want {
+		t.Fatalf("written frames = %q, want %q", got, want)
+	}
+}
+
 func TestWriteRejectsShortWrite(t *testing.T) {
 	if err := Write(shortWriter{}, Frame{Command: "tnl", State: "ready"}); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("Write error = %v", err)

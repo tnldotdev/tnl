@@ -140,7 +140,7 @@ func TextForCommandError(command string, err error) (string, bool) {
 
 // WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
 func WriteWarning(output io.Writer, command string, code Code) error {
-	text := renderText(command, code, definitionFor(code).Summary)
+	text := renderText(command, code, definitionFor(code).Summary) + "\n"
 	written, err := io.WriteString(output, text)
 	if err == nil && written != len(text) {
 		err = io.ErrShortWrite
@@ -153,7 +153,7 @@ func WritePolicyDenial(output io.Writer, command string, newlyBlocked, total uin
 	text := renderText(command, IPPolicyDenied,
 		"IP policy blocked visitor connections before they reached the local service.",
 		"newly blocked: "+strconv.FormatUint(newlyBlocked, 10)+"; total blocked: "+strconv.FormatUint(total, 10),
-	)
+	) + "\n"
 	written, err := io.WriteString(output, text)
 	if err == nil && written != len(text) {
 		return io.ErrShortWrite
