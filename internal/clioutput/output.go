@@ -123,12 +123,13 @@ func Section(title string, blocks ...Block) Block {
 	return sectionBlock{title: title, blocks: blocks}
 }
 
-// Write renders frame to output.
+// Write renders frame to output with a blank line after its closing rail.
 func Write(output io.Writer, frame Frame) error {
 	text, err := Render(frame)
 	if err != nil {
 		return err
 	}
+	text += "\n"
 	written, err := io.WriteString(output, text)
 	if err == nil && written != len(text) {
 		err = io.ErrShortWrite

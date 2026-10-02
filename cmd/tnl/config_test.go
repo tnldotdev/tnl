@@ -43,8 +43,8 @@ export default {};`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stdout.String(); got != want {
-		t.Fatalf("config path output = %q, want %q", got, want)
+	if got := stdout.String(); got != want+"\n" {
+		t.Fatalf("config path output = %q, want %q", got, want+"\n")
 	}
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Fatalf("config path evaluated tnl.config.ts: %v", err)

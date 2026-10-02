@@ -465,6 +465,7 @@ func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
 	got := stderr.String()
 	if strings.Count(got, "+--[ tnl dev ]-- ") != 2 ||
 		!strings.Contains(got, "]-- ready ") || !strings.Contains(got, "]-- browser not opened ") ||
+		!strings.Contains(got, "+\n\n+--[ tnl dev ]-- browser not opened ") ||
 		!strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}

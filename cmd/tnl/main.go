@@ -186,7 +186,7 @@ func writeCommandError(output io.Writer, err error) {
 		command = contextual
 	}
 	if text, ok := diagnostic.TextForCommandError(command, err); ok {
-		_, _ = io.WriteString(output, text)
+		_, _ = io.WriteString(output, text+"\n")
 		return
 	}
 	_ = clioutput.Write(output, clioutput.Frame{
