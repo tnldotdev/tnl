@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
@@ -51,8 +54,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			result = errors.Join(result, localDemo.Close(closeCtx))
 		}()
 		flags.Target = localDemo.Target()
-		flags.Name = "demo-" + localDemo.Stamp()
-		output.setDemoStamp(localDemo.Stamp())
+		output.setDemo()
 	}
 	target, err := localproxy.NormalizeTarget(flags.Target)
 	if err != nil {
@@ -63,6 +65,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	defer state.Close()
+	if !flags.Demo {
+		if err := requireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+			return err
+		}
+	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
 		Project: flags.projectRoot, Service: flags.Service,
@@ -82,7 +89,29 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return err
 	}
-	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl publish", os.Stdin, stderr)
+	var guest *clientstate.GuestSession
+	if flags.Demo {
+		guest, err = guestForDemo(ctx, state, serverURL, flags)
+		if err != nil {
+			return err
+		}
+		if guest != nil {
+			output.setGuestDemo()
+			localDemo.SetGuest()
+		}
+		if guest == nil {
+			label := make([]byte, 4)
+			if _, err := rand.Read(label); err != nil {
+				return err
+			}
+			flags.Name = "demo-" + hex.EncodeToString(label)
+		}
+	}
+	accessToken := flags.AccessToken
+	if guest != nil {
+		accessToken = guest.AccessToken
+	}
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, accessToken, "tnl publish", os.Stdin, stderr)
 	if err != nil {
 		return err
 	}
@@ -97,9 +126,24 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	services, err := preparePublisherServices(
-		ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
-	)
+	if guest != nil && policy.current != guest.SourceIP {
+		return errors.New("your IP changed since the guest demo started; run tnl login to keep publishing")
+	}
+	if guest != nil {
+		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)
+		if err != nil {
+			return err
+		}
+		flags.Name = "demo-" + strconv.FormatInt(allocated.Number, 10)
+	}
+	var services publisherServices
+	if guest != nil {
+		services, err = guestPublisherServices(ctx, state, serverURL, flags.Name, *guest, authenticated.Control)
+	} else {
+		services, err = preparePublisherServices(
+			ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
+		)
+	}
 	if err != nil {
 		return err
 	}

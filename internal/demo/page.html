@@ -226,8 +226,6 @@ tnl server
             <div class="computer-label">[ your computer ]</div>
             <pre>tnl -> local demo</pre>
             <dl class="values">
-              <dt>stamp</dt>
-              <dd id="stamp">...</dd>
               <dt>count</dt>
               <dd id="request-count">0</dd>
             </dl>
@@ -246,6 +244,9 @@ tnl server
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
         <p id="result" class="result muted" role="status" aria-live="polite"></p>
+        <p id="sign-in" class="muted" hidden>
+          to publish your own app, run <code>tnl login</code> in your terminal.
+        </p>
       </main>
       <footer aria-label="tnl.dev demo">
         ──[ tnl.dev :: demo ]───────────────────────────────────────────
@@ -258,8 +259,8 @@ tnl server
         const url = document.getElementById("public-url");
         url.textContent = state.public_url;
         url.href = state.public_url;
-        document.getElementById("stamp").textContent = state.stamp;
         document.getElementById("request-count").textContent = state.request_count;
+        document.getElementById("sign-in").hidden = !state.guest;
       }
       async function request(path, options) {
         const response = await fetch(path, options);
@@ -286,7 +287,7 @@ tnl server
           document.getElementById("round-trip").textContent = elapsed + " ms";
           document.getElementById("generated-at").textContent =
             new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
-          result.textContent = "find the same stamp and count in the terminal running tnl.";
+          result.textContent = "find the same count in the terminal running tnl.";
         } catch {
           document.getElementById("pong").textContent = "ping failed";
           result.textContent = "ping failed. try again.";

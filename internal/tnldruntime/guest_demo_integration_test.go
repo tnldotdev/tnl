@@ -227,6 +227,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	localDemo.SetGuest()
 	address, err := netip.ParseAddr(issued.SourceIp)
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +256,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	var state demo.State
 	decodeErr := json.NewDecoder(response.Body).Decode(&state)
 	response.Body.Close()
-	if decodeErr != nil || response.StatusCode != http.StatusOK || state.PublicURL != ready.PublicURL {
+	if decodeErr != nil || response.StatusCode != http.StatusOK || state.PublicURL != ready.PublicURL || !state.Guest {
 		t.Fatalf("guest demo through visitor TLS = %d, %+v, %v", response.StatusCode, state, decodeErr)
 	}
 	ping, err := visitor.client.Post(ready.PublicURL+"/ping", "", nil)
