@@ -49,7 +49,7 @@ func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 }
 
 func readTelemetryPreference(ctx context.Context, path string) (bool, error) {
-	db, err := tnlsqlite.OpenReadOnly(ctx, path, 1)
+	db, err := tnlsqlite.OpenReadOnly(ctx, path, 2)
 	if err != nil {
 		return false, fmt.Errorf("clientstate: open telemetry preference: %w", err)
 	}
