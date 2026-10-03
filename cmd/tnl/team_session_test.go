@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -64,5 +65,16 @@ func TestTeamSelectionDoesNotRequireDomains(t *testing.T) {
 	selected, _, err = store.SelectedTeam(t.Context())
 	if err != nil || selected != "personal" {
 		t.Fatalf("one-command override changed saved team: %q, %v", selected, err)
+	}
+	if _, err := session.resolveMembership(t.Context(), "missing"); err == nil {
+		t.Fatal("missing team was accepted")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.TeamNotFound {
+		t.Fatalf("missing team reason = %q, %v", reason, err)
+	}
+	session.identity.Memberships = append(session.identity.Memberships, authorityv1.Membership{TeamId: "another", TeamDisplayName: "studio"})
+	if _, err := session.resolveMembership(t.Context(), "studio"); err == nil {
+		t.Fatal("ambiguous team was accepted")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.TeamSelectionAmbiguous {
+		t.Fatalf("ambiguous team reason = %q, %v", reason, err)
 	}
 }
