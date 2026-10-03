@@ -337,7 +337,24 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 			if got := stderr.String(); !strings.HasPrefix(got, "+--[ "+wantCommand+" ]-- command failed ") {
 				t.Fatalf("error output = %q", got)
 			}
+			if strings.Contains(stderr.String(), "clientstate: ") ||
+				(test.command == "dev" && !strings.Contains(stderr.String(), "server must be an HTTPS origin")) {
+				t.Fatalf("CLI exposed an internal error prefix: %q", stderr.String())
+			}
 		})
+	}
+}
+
+func TestCLIErrorPresentationRemovesClientStatePrefixWithoutChangingCause(t *testing.T) {
+	cause := errors.New("clientstate: saved state is unavailable")
+	classified := diagnostic.WrapMessage(diagnostic.TargetInvalid, cause.Error(), cause)
+	for _, err := range []error{cause, classified} {
+		var output bytes.Buffer
+		writeCommandError(&output, clioutput.WrapCommand("tnl publish", err))
+		if strings.Contains(output.String(), "clientstate: ") ||
+			!strings.Contains(output.String(), "saved state is unavailable") || !errors.Is(err, cause) {
+			t.Fatalf("CLI error = %q, cause = %v", output.String(), err)
+		}
 	}
 }
 

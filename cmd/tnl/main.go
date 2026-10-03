@@ -208,7 +208,7 @@ func writeCommandError(output io.Writer, err error) {
 	_ = clioutput.Write(output, clioutput.Frame{
 		Command: command,
 		State:   "command failed",
-		Blocks:  []clioutput.Block{clioutput.Text(err.Error())},
+		Blocks:  []clioutput.Block{clioutput.Text(clioutput.DisplayErrorMessage(err.Error()))},
 	})
 }
 
