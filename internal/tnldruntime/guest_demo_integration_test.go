@@ -90,6 +90,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		return response
 	}
 	allocate := httptest.NewRequest(http.MethodPost, "/v1/guest-demo/number", nil)
+	allocate.RemoteAddr = "192.0.2.7:49153"
 	allocate.Header.Set("Authorization", "Bearer "+guest.AccessToken)
 	allocated := httptest.NewRecorder()
 	h.ServeHTTP(allocated, allocate)
