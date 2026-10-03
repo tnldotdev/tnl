@@ -24,6 +24,10 @@ func externalRetryMasterKeyContext() string {
 	return "control.runtime_secret.external_retry_master_key_ciphertext\x00id"
 }
 
+func visitorNetworkHashMasterKeyContext() string {
+	return "control.public_url_usage_configuration.visitor_network_hash_master_key_ciphertext\x00id"
+}
+
 func acmeAccountKeyContext(accountID string) string {
 	return "control.acme_accounts.account_key_ciphertext\x00" + accountID
 }

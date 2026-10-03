@@ -1,15 +1,34 @@
 -- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
     id,
-    visitor_network_hash_master_key,
+    visitor_network_hash_master_key_ciphertext,
+    visitor_network_hash_master_key_storage_key_id,
     created_at
 ) VALUES (
     1,
-    sqlc.arg(visitor_network_hash_master_key),
+    sqlc.arg(visitor_network_hash_master_key_ciphertext),
+    sqlc.arg(visitor_network_hash_master_key_storage_key_id),
     sqlc.arg(created_at)
 )
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
 RETURNING *;
+
+-- name: EncryptLegacyVisitorNetworkHashMasterKey :execrows
+UPDATE control.public_url_usage_configuration
+SET visitor_network_hash_master_key = NULL,
+    visitor_network_hash_master_key_ciphertext = sqlc.arg(visitor_network_hash_master_key_ciphertext),
+    visitor_network_hash_master_key_storage_key_id = sqlc.arg(visitor_network_hash_master_key_storage_key_id)
+WHERE id = 1
+  AND visitor_network_hash_master_key = sqlc.arg(previous_master_key)
+  AND visitor_network_hash_master_key_ciphertext IS NULL;
+
+-- name: RotateVisitorNetworkHashMasterKey :execrows
+UPDATE control.public_url_usage_configuration
+SET visitor_network_hash_master_key_ciphertext = sqlc.arg(visitor_network_hash_master_key_ciphertext),
+    visitor_network_hash_master_key_storage_key_id = sqlc.arg(visitor_network_hash_master_key_storage_key_id)
+WHERE id = 1
+  AND visitor_network_hash_master_key_storage_key_id = sqlc.arg(previous_key_id)
+  AND visitor_network_hash_master_key_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: EnsureIngressUsageRun :one
 INSERT INTO control.ingress_usage_runs (

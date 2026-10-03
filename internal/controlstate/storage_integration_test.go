@@ -53,6 +53,14 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	visitorKey := [32]byte{4, 5, 6}
+	if _, err := database.pool.Exec(ctx, `INSERT INTO control.public_url_usage_configuration
+		(visitor_network_hash_master_key, created_at) VALUES ($1, $2)`, visitorKey[:], now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureVisitorNetworkHashMasterKey(ctx, now); err != nil {
+		t.Fatal(err)
+	}
 	stores := []struct {
 		table, ciphertextColumn, keyColumn string
 		plaintext                          []byte
@@ -63,6 +71,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
 		{"runtime_secret", "external_retry_master_key_ciphertext", "external_retry_master_key_storage_key_id", masterKey[:]},
+		{"public_url_usage_configuration", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey[:]},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()
@@ -98,7 +107,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("bounded batch left %d old-key rows, want %d: %v", count, remaining-1, err)
 		}
 	}
-	// Complete must drain the other four kinds. the earlier size-limited calls
+	// Complete must drain the other five kinds. the earlier size-limited calls
 	// must not have already done all the work.
 	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
 		t.Fatal(err)
@@ -156,5 +165,14 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	recoveredMaster, err := reopened.EnsureExternalAuthorityPrincipal(ctx, "identity_rotation", now)
 	if err != nil || recoveredMaster != masterKey {
 		t.Fatalf("recover external retry master key: %v", err)
+	}
+	if err := reopened.EnsureVisitorNetworkHashMasterKey(ctx, now); err != nil {
+		t.Fatalf("recover visitor network hash key: %v", err)
+	}
+	visitorLease, err := reopened.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "ingress_rotated_key", IngressRunID: "run_rotated_key", ProtocolVersion: 1, ConnectionCapacity: 10,
+	}, now, time.Minute)
+	if err != nil || visitorLease.VisitorNetworkHashKeys != visitorNetworkHashKeys(visitorKey, now) {
+		t.Fatalf("recover visitor network hash keys after rotation: %v", err)
 	}
 }

@@ -335,6 +335,30 @@ func (q *Queries) CompletePublicURLUsageDelivery(ctx context.Context, arg Comple
 	return i, err
 }
 
+const encryptLegacyVisitorNetworkHashMasterKey = `-- name: EncryptLegacyVisitorNetworkHashMasterKey :execrows
+UPDATE control.public_url_usage_configuration
+SET visitor_network_hash_master_key = NULL,
+    visitor_network_hash_master_key_ciphertext = $1,
+    visitor_network_hash_master_key_storage_key_id = $2
+WHERE id = 1
+  AND visitor_network_hash_master_key = $3
+  AND visitor_network_hash_master_key_ciphertext IS NULL
+`
+
+type EncryptLegacyVisitorNetworkHashMasterKeyParams struct {
+	VisitorNetworkHashMasterKeyCiphertext   []byte
+	VisitorNetworkHashMasterKeyStorageKeyID pgtype.Text
+	PreviousMasterKey                       []byte
+}
+
+func (q *Queries) EncryptLegacyVisitorNetworkHashMasterKey(ctx context.Context, arg EncryptLegacyVisitorNetworkHashMasterKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, encryptLegacyVisitorNetworkHashMasterKey, arg.VisitorNetworkHashMasterKeyCiphertext, arg.VisitorNetworkHashMasterKeyStorageKeyID, arg.PreviousMasterKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const ensureIngressUsageRun = `-- name: EnsureIngressUsageRun :one
 INSERT INTO control.ingress_usage_runs (
     ingress_id,
@@ -397,26 +421,35 @@ func (q *Queries) EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUs
 const ensurePublicURLUsageConfiguration = `-- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
     id,
-    visitor_network_hash_master_key,
+    visitor_network_hash_master_key_ciphertext,
+    visitor_network_hash_master_key_storage_key_id,
     created_at
 ) VALUES (
     1,
     $1,
-    $2
+    $2,
+    $3
 )
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-RETURNING id, visitor_network_hash_master_key, created_at
+RETURNING id, visitor_network_hash_master_key, created_at, visitor_network_hash_master_key_ciphertext, visitor_network_hash_master_key_storage_key_id
 `
 
 type EnsurePublicURLUsageConfigurationParams struct {
-	VisitorNetworkHashMasterKey []byte
-	CreatedAt                   pgtype.Timestamptz
+	VisitorNetworkHashMasterKeyCiphertext   []byte
+	VisitorNetworkHashMasterKeyStorageKeyID pgtype.Text
+	CreatedAt                               pgtype.Timestamptz
 }
 
 func (q *Queries) EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error) {
-	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKey, arg.CreatedAt)
+	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKeyCiphertext, arg.VisitorNetworkHashMasterKeyStorageKeyID, arg.CreatedAt)
 	var i ControlPublicUrlUsageConfiguration
-	err := row.Scan(&i.ID, &i.VisitorNetworkHashMasterKey, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.VisitorNetworkHashMasterKey,
+		&i.CreatedAt,
+		&i.VisitorNetworkHashMasterKeyCiphertext,
+		&i.VisitorNetworkHashMasterKeyStorageKeyID,
+	)
 	return i, err
 }
 
@@ -1085,4 +1118,33 @@ func (q *Queries) RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPubl
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const rotateVisitorNetworkHashMasterKey = `-- name: RotateVisitorNetworkHashMasterKey :execrows
+UPDATE control.public_url_usage_configuration
+SET visitor_network_hash_master_key_ciphertext = $1,
+    visitor_network_hash_master_key_storage_key_id = $2
+WHERE id = 1
+  AND visitor_network_hash_master_key_storage_key_id = $3
+  AND visitor_network_hash_master_key_ciphertext = $4
+`
+
+type RotateVisitorNetworkHashMasterKeyParams struct {
+	VisitorNetworkHashMasterKeyCiphertext   []byte
+	VisitorNetworkHashMasterKeyStorageKeyID pgtype.Text
+	PreviousKeyID                           pgtype.Text
+	PreviousCiphertext                      []byte
+}
+
+func (q *Queries) RotateVisitorNetworkHashMasterKey(ctx context.Context, arg RotateVisitorNetworkHashMasterKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateVisitorNetworkHashMasterKey,
+		arg.VisitorNetworkHashMasterKeyCiphertext,
+		arg.VisitorNetworkHashMasterKeyStorageKeyID,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
