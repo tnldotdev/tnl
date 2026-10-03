@@ -16,6 +16,12 @@ import (
 //go:embed page.html
 var page []byte
 
+//go:embed fonts/fira-code-latin-wght-normal.woff2
+var latinFont []byte
+
+//go:embed fonts/fira-code-symbols2-wght-normal.woff2
+var symbolsFont []byte
+
 type State struct {
 	PublicURL    string `json:"public_url"`
 	RequestCount uint64 `json:"request_count"`
@@ -80,11 +86,17 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'")
 	switch {
 	case r.URL.Path == "/" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(page)
+	case r.URL.Path == "/fonts/fira-code-latin-wght-normal.woff2" && r.Method == http.MethodGet:
+		w.Header().Set("Content-Type", "font/woff2")
+		_, _ = w.Write(latinFont)
+	case r.URL.Path == "/fonts/fira-code-symbols2-wght-normal.woff2" && r.Method == http.MethodGet:
+		w.Header().Set("Content-Type", "font/woff2")
+		_, _ = w.Write(symbolsFont)
 	case r.URL.Path == "/state" && r.Method == http.MethodGet:
 		d.mu.Lock()
 		state := d.state
