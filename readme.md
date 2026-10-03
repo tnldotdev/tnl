@@ -25,26 +25,26 @@ development tracks in parallel.
 
 ## try tnl
 
-First, install the NPM package:
+Try the built-in demo without installing a project dependency or signing in:
+
+```bash
+npx --yes @tnldotdev/tnl publish --demo
+```
+
+On tnl.dev, the public URL opens in your browser when ready. Click **ping** and
+match the URL and count with the terminal running `tnl`. The browser shows the
+round-trip time and when your computer sent the pong. Guests can run one demo
+at a time. Only your current IP can visit, and the trial allows 15 minutes
+ready or about 5 MiB of traffic across runs. Ctrl+C stops the demo and removes
+its public URL. Run `tnl login` to publish your own app.
+
+## start developing
+
+From your project directory, install the NPM package:
 
 ```bash
 npm install -D @tnldotdev/tnl@next
 ```
-
-Run the built-in demo without configuring or starting an app:
-
-```bash
-npx tnl publish --demo
-```
-
-Sign in when prompted. Once the public URL is ready, it opens in your browser.
-Click **ping** and compare the URL's random stamp and ping count with the terminal
-running `tnl`. The page also shows browser round-trip time and when the local
-server generated the pong. The page is served from a process on your computer.
-By default, only your current IP can visit; use `--allow-all-ips` if you want
-someone else to try it. Ctrl+C stops the demo and removes its public URL.
-
-## start developing
 
 Initialize with the helper:
 
@@ -72,10 +72,11 @@ export default defineConfig({
 Then run:
 
 ```bash
+npx tnl login
 npx tnl dev
 ```
 
-Sign in to GitHub when prompted. Your app will start on the next available port,
+Sign in to GitHub when `tnl login` prompts you. Your app will start on the next available port,
 and `tnl` publishes to its unique URL, with only your current IP whitelisted:
 
 ```text

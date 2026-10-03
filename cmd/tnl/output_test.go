@@ -124,7 +124,7 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 func TestDemoOutputMatchesPageAndPrintsReadyBeforeOpening(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl publish", &stdout, &stderr, func(url string) error {
-		if url != "https://real.generated.tnl.dev" || !strings.Contains(stderr.String(), "stamp") {
+		if url != "https://real.generated.tnl.dev" || !strings.Contains(stderr.String(), "demo") {
 			t.Fatalf("browser opened before demo was ready: %q, %q", url, stderr.String())
 		}
 		return nil
@@ -132,18 +132,18 @@ func TestDemoOutputMatchesPageAndPrintsReadyBeforeOpening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output.setDemoStamp("a1b2c3d4")
+	output.setDemo()
 	if err := output.starting("tunnel_1", "http://127.0.0.1:12345"); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.ready("https://real.generated.tnl.dev", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.demoPing(demo.State{Stamp: "a1b2c3d4", RequestCount: 1}); err != nil {
+	if err := output.demoPing(demo.State{RequestCount: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "https://real.generated.tnl.dev") ||
-		strings.Count(stderr.String(), "a1b2c3d4") != 2 ||
+		strings.Contains(stderr.String(), "stamp") ||
 		!strings.Contains(stderr.String(), "|  count") || strings.Contains(stderr.String(), "request count") ||
 		!strings.Contains(stderr.String(), "ping received") ||
 		strings.ContainsRune(stderr.String(), '\x1b') {
@@ -160,15 +160,36 @@ func TestDemoPingKeepsNDJSONOnStdout(t *testing.T) {
 	if err := output.starting("tunnel_1", "http://127.0.0.1:12345"); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.demoPing(demo.State{Stamp: "a1b2c3d4", RequestCount: 1}); err != nil {
+	if err := output.demoPing(demo.State{RequestCount: 1}); err != nil {
 		t.Fatal(err)
 	}
 	var event publishEvent
 	if err := json.NewDecoder(&stdout).Decode(&event); err != nil || event.Type != publishEventStarting {
 		t.Fatalf("NDJSON event = %+v, error = %v", event, err)
 	}
-	if !strings.Contains(stderr.String(), "ping received") || strings.Contains(stdout.String(), "a1b2c3d4") {
+	if !strings.Contains(stderr.String(), "ping received") || strings.Contains(stdout.String(), "stamp") {
 		t.Fatalf("output = %q / %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.setDemo()
+	output.setGuestDemo()
+	if err := output.starting("tun_0123456789abcdefghijkl", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo-1.guest-01234567.tnl.dev", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "15 min / about 5 MiB across runs") ||
+		!strings.Contains(stderr.String(), "tnl login to publish your app") ||
+		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
+		t.Fatalf("guest ready output = %q", stderr.String())
 	}
 }
 

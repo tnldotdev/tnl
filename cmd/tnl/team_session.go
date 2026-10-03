@@ -57,6 +57,10 @@ func openTeamSession(ctx context.Context, flags remoteFlags, command string, dia
 		database.Close()
 		return nil, err
 	}
+	if err := requireSignInOutsideDemo(ctx, database, serverURL, flags.AccessToken); err != nil {
+		database.Close()
+		return nil, err
+	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: database, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),

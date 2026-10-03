@@ -69,6 +69,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		t.Fatalf("ping before ready = %d", response.StatusCode)
 	}
 	demo.SetPublicURL("https://actual.generated.tnl.dev")
+	demo.SetGuest()
 	for count := uint64(1); count <= 2; count++ {
 		response, err := client.Post(demo.Target()+"/ping", "", nil)
 		if err != nil {
@@ -79,7 +80,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		_, _ = io.Copy(io.Discard, response.Body)
 		response.Body.Close()
 		if err != nil || response.StatusCode != http.StatusOK || pong.PublicURL != "https://actual.generated.tnl.dev" ||
-			pong.Stamp != demo.Stamp() || len(pong.Stamp) != 8 || pong.RequestCount != count {
+			pong.RequestCount != count {
 			t.Fatalf("pong %d = %+v, status %d, error %v", count, pong, response.StatusCode, err)
 		}
 		if generated, err := time.Parse(time.RFC3339Nano, pong.GeneratedAt); err != nil ||
@@ -88,7 +89,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		}
 	}
 	mu.Lock()
-	if len(received) != 2 || received[0].RequestCount != 1 || received[1].RequestCount != 2 || received[1].Stamp != demo.Stamp() {
+	if len(received) != 2 || received[0].RequestCount != 1 || received[1].RequestCount != 2 {
 		t.Fatalf("terminal callbacks = %+v", received)
 	}
 	mu.Unlock()
@@ -99,7 +100,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, stateResponse.Body)
 	stateResponse.Body.Close()
-	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 || state.GeneratedAt == "" {
+	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 || state.GeneratedAt == "" || !state.Guest {
 		t.Fatalf("state = %+v", state)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

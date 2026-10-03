@@ -93,6 +93,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	defer state.Close()
+	if err := requireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+		return err
+	}
 	if flags.project.Root == "" {
 		worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 		if resolveErr != nil {
