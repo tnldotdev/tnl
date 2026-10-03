@@ -199,6 +199,10 @@ namespaces.
 | [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control           | Relay with cluster authentication, or standalone direct calls                         |
 | [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                        | Control public URL usage worker with a configured bearer token                        |
 
+The public control handler sets `Cache-Control: no-store` before routing control
+and built-in authority responses, including errors, health, and discovery. A
+separately deployed external authority owns its own response policy.
+
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.
 
