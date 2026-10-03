@@ -249,10 +249,10 @@ func (d *Database) ingressRoutingTableEvent(
 			projection.IPPolicyKeyID = d.storageKey.CurrentID()
 		}
 		key, err := d.storageKey.IPPolicyKey(projection.IPPolicyKeyID, "url:"+publicURLID)
-		if err != nil && len(policyCiphertext) == 0 && publicURLExpiresAt.Valid &&
-			!publicURLExpiresAt.Time.After(time.Now()) {
-			// an expired guest event must remain replayable after its verifier expires,
-			// but its old digest must not authorize another visitor.
+		if err != nil && len(policyCiphertext) == 0 {
+			// Open refuses an unexpired guest without its verifier. after that
+			// credential expires, retain replayability with a mismatched verifier
+			// that denies every visitor until the routing event is scrubbed.
 			key, err = d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "url:"+publicURLID)
 		}
 		if err != nil {

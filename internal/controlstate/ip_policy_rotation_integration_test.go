@@ -96,6 +96,25 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
 		t.Fatal(err)
 	}
+	const oldPublicURLID = "url_guest_replay"
+	oldKeyID := database.storageKey.CurrentID()
+	oldVerifier, err := database.storageKey.IPPolicyKey(oldKeyID, "url:"+oldPublicURLID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldHash, err := ippolicy.Hash(oldVerifier, netip.MustParsePrefix("192.0.2.7/32"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProjection, err := json.Marshal(IngressRoutingTableProjection{
+		PublicURLID: oldPublicURLID, PublishRunID: "pr_guest_replay", PublishRunNumber: 1,
+		CanonicalHostname: "demo-1.guest-replay.example.test", PolicyRevision: 1,
+		IPPolicy: IPPolicyHashedAllowlist, AllowedIPHashes: []ippolicy.Entry{oldHash},
+		IPPolicyKeyID: oldKeyID, PublicUrlExpiresAt: now.Add(GuestLifetime + time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	database.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 32))
 	if reopened, err := Open(t.Context(), databaseURL, newKey, ""); err == nil {
@@ -122,6 +141,17 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 	withoutPrevious, err := Open(t.Context(), databaseURL, newKey, "")
 	if err != nil {
 		t.Fatalf("expired guest still required its old key: %v", err)
+	}
+	event, err := withoutPrevious.ingressRoutingTableEvent(1, "public_url_upsert", oldPublicURLID, 1,
+		"demo-1.guest-replay.example.test", 1, oldProjection, nil, pgtype.Text{},
+		pgtype.Timestamptz{Time: now.Add(GuestLifetime + time.Hour), Valid: true},
+		pgtype.Timestamptz{Time: now, Valid: true})
+	if err != nil {
+		t.Fatalf("old guest event blocked routing replay: %v", err)
+	}
+	policy, err := ippolicy.New(event.Projection.IPPolicyKey, event.Projection.AllowedIPHashes)
+	if err != nil || policy.Allows(netip.MustParseAddr("192.0.2.7")) {
+		t.Fatalf("old guest event allowed traffic after key retirement: %v", err)
 	}
 	withoutPrevious.Close()
 }
