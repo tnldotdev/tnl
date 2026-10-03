@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
@@ -139,7 +139,8 @@ func (w *Worker) Run(ctx context.Context) error {
 		Process:          w.processOne,
 		OnError: func(err error) {
 			if ctx.Err() == nil {
-				w.config.Logger.Error("DNS controller iteration failed", "error", err)
+				definition, _ := failure.DefinitionFor(failure.ServerDNSFailed)
+				w.config.Logger.Error("DNS controller iteration failed", "reason", failure.ServerDNSFailed, "action", definition.Action)
 			}
 		},
 	})
@@ -189,11 +190,9 @@ func terminalf(format string, arguments ...any) error {
 	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...)}
 }
 
-func truncateError(err error) string {
-	value := err.Error()
-	limit := min(len(value), 1024)
-	for !utf8.ValidString(value[:limit]) {
-		limit--
+func storedFailureReason(err error) string {
+	if reason, _, ok := failure.Describe(err); ok {
+		return string(reason)
 	}
-	return value[:limit]
+	return string(failure.ServerDNSFailed)
 }

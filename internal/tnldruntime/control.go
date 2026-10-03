@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -225,6 +226,7 @@ func controlHTTPServer(handler http.Handler, tlsConfig *tls.Config) *http.Server
 		Handler: handler, TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 3 * time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+		ErrorLog: log.New(io.Discard, "", 0),
 	}
 }
 

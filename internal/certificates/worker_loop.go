@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -62,7 +62,8 @@ func runWorkerLoop(
 		Process:          worker.processOne,
 		OnError: func(err error) {
 			if !errors.Is(err, context.Canceled) {
-				logger.Error(failureMessage, "error", err)
+				definition, _ := failure.DefinitionFor(failure.ServerCertificateFailed)
+				logger.Error(failureMessage, "reason", failure.ServerCertificateFailed, "action", definition.Action)
 			}
 		},
 	})
@@ -95,13 +96,11 @@ func acmeOrderProgress(status string, now, retryAfter time.Time, interval time.D
 	}
 }
 
-func truncateError(err error) string {
-	value := err.Error()
-	limit := min(len(value), 1024)
-	for !utf8.ValidString(value[:limit]) {
-		limit--
+func storedFailureReason(err error) string {
+	if reason, _, ok := failure.Describe(err); ok {
+		return string(reason)
 	}
-	return value[:limit]
+	return string(failure.ServerCertificateFailed)
 }
 
 type terminalError struct{ message string }

@@ -410,7 +410,7 @@ func (w *PublicURLWorker) applyOrderStatus(work *controlstate.ACMEOrderWork, sta
 }
 
 func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operationErr error, now time.Time) {
-	work.LastError = truncateError(operationErr)
+	work.LastError = storedFailureReason(operationErr)
 	work.AvailableAt = now.Add(5 * time.Second)
 	unconfigured := errors.Is(operationErr, dnscontroller.ErrChallengesNotConfigured)
 	if unconfigured {

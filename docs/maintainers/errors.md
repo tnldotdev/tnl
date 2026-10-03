@@ -20,3 +20,9 @@ operational errors and logs, not diagrams. Public and private HTTP APIs own
 their problem responses in the OpenAPI sources. The handwritten tunnel
 protocol owns its error codes. These boundaries may share a reason without
 sharing presentation or exposing an underlying cause.
+
+Worker failure fields and local tunnel history store the reason ID, not the
+untrusted provider, visitor, or database error text. Resolve a stored reason
+through its definition when displaying it. Operator logs likewise use the
+reason and operation; keep unexpected raw causes wrapped for internal error
+identity without writing them to routine logs.

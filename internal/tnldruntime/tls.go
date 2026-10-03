@@ -3,12 +3,12 @@ package tnldruntime
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/controltls"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
@@ -58,7 +58,9 @@ func controlTLSConfig(
 		AdditionalHostnames: settings.additionalHostnames,
 		Email:               settings.email, AcceptTerms: settings.acceptTerms, AccountKey: account.AccountKeyDER,
 		HTTPClient: acmeHTTPClient, RunLeader: database.RunControlTLSLeader,
-		Report: func(err error) { log.Printf("public control certificate: %v", err) },
+		Report: func(err error) {
+			logOperationalError("manage public control certificate", failure.ServerCertificateFailed, err)
+		},
 	})
 	if err != nil {
 		return nil, nil, err

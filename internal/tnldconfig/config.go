@@ -13,6 +13,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/storagekey"
@@ -126,9 +127,16 @@ type Config struct {
 	DrainTimeout                     time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
-func (c Config) Validate() error {
+func (c Config) Validate() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			if _, typed := failure.Of(retErr); !typed {
+				retErr = failure.Wrap("validate server configuration", failure.ServerConfigInvalid, retErr)
+			}
+		}
+	}()
 	if !c.Role.RunsControl() && !c.Role.RunsIngress() && !c.Role.RunsRelay() {
-		return errors.New("role must be standalone, control, ingress, or relay")
+		return failure.Wrap("validate server role", failure.InvalidRole, errors.New("role must be standalone, control, ingress, or relay"))
 	}
 	if c.Role.RunsControl() {
 		if err := c.validateControl(); err != nil {
@@ -150,7 +158,7 @@ func (c Config) Validate() error {
 			}
 		}
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
-			return errors.New("cluster secret configuration is invalid")
+			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
 		if c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
@@ -211,7 +219,7 @@ func (c Config) Validate() error {
 
 func (c Config) validateControl() error {
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
-		return err
+		return failure.Wrap("validate pooled database URL", failure.ServerDatabaseURLInvalid, err)
 	}
 	if c.ControlListen == "" || c.PrivateControlListen == "" {
 		return errors.New("control and private control listen addresses are required")
@@ -227,17 +235,19 @@ func (c Config) validateControl() error {
 	}
 	if c.Role == RoleStandalone {
 		if c.ClusterSecret != "" || c.ClusterSecretPrevious != "" {
-			return errors.New("standalone does not accept a configured cluster secret")
+			return failure.Wrap("validate standalone cluster secret", failure.ServerClusterSecretInvalid,
+				errors.New("standalone does not accept a configured cluster secret"))
 		}
 	} else if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
-		return errors.New("cluster secret configuration is invalid")
+		return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 	}
 	if c.AuthorityEndpoint == "" {
 		if c.LoginToken == "" {
-			return errors.New("login token is required for the built-in authority")
+			return failure.Wrap("validate built-in authority login token", failure.ServerLoginTokenInvalid,
+				errors.New("login token is required for the built-in authority"))
 		}
 		if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
-			return errors.New("login token is invalid")
+			return failure.Wrap("validate built-in authority login token", failure.ServerLoginTokenInvalid, err)
 		}
 	} else if c.LoginToken != "" {
 		return errors.New("login token cannot be configured with an external authority")
@@ -249,7 +259,7 @@ func (c Config) validateControl() error {
 		return err
 	}
 	if _, err := storagekey.New(c.StorageKey, c.StorageKeyPrevious); err != nil {
-		return errors.New("storage key configuration is invalid")
+		return failure.Wrap("validate storage key", failure.ServerStorageKeyInvalid, err)
 	}
 	if err := c.validateACME(); err != nil {
 		return err
@@ -273,7 +283,12 @@ func (c Config) validateControl() error {
 	return nil
 }
 
-func (c Config) validateACME() error {
+func (c Config) validateACME() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = failure.Wrap("validate ACME settings", failure.ServerACMEInvalid, retErr)
+		}
+	}()
 	if c.ACMEDirectoryURL == "" || c.ACMEEmail == "" || !c.ACMEAcceptTerms {
 		return errors.New("ACME directory, email, and accepted terms are required for control and standalone")
 	}
@@ -295,7 +310,12 @@ func (c Config) validateACME() error {
 	return nil
 }
 
-func (c Config) validatePublicURLUsage() error {
+func (c Config) validatePublicURLUsage() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = failure.Wrap("validate usage receiver settings", failure.ServerUsageConfigInvalid, retErr)
+		}
+	}()
 	if (c.PublicURLUsageURL == "") != (c.PublicURLUsageToken == "") {
 		return errors.New("public URL usage URL and token must be configured together")
 	}
@@ -310,7 +330,12 @@ func (c Config) validatePublicURLUsage() error {
 	return nil
 }
 
-func (c Config) validateDNSAutomation() error {
+func (c Config) validateDNSAutomation() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = failure.Wrap("validate DNS automation", failure.ServerDNSConfigInvalid, retErr)
+		}
+	}()
 	configured := c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 		len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0
 	if !configured {
@@ -367,7 +392,12 @@ func (c Config) EffectiveOIDCScopes() []string {
 	return append([]string(nil), c.OIDCScopes...)
 }
 
-func (c Config) validateOIDC() error {
+func (c Config) validateOIDC() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = failure.Wrap("validate OIDC settings", failure.ServerOIDCInvalid, retErr)
+		}
+	}()
 	configured := c.OIDCIssuer != "" || c.OIDCClientID != "" || c.OIDCLoginFlow != "" || len(c.OIDCScopes) != 0
 	if !configured {
 		return nil
@@ -409,7 +439,8 @@ func (c Config) validateOIDC() error {
 func (c Config) validateExternalAuthority() error {
 	if c.AuthorityEndpoint == "" {
 		if c.HostedSecret != "" || c.HostedSecretPrevious != "" {
-			return errors.New("hosted secret requires an external authority endpoint")
+			return failure.Wrap("validate hosted secret", failure.ServerHostedSecretInvalid,
+				errors.New("hosted secret requires an external authority endpoint"))
 		}
 		return nil
 	}
@@ -420,7 +451,7 @@ func (c Config) validateExternalAuthority() error {
 		return errors.New("external authority requires OIDC configuration")
 	}
 	if _, err := serviceapi.NewBearerSecrets(c.HostedSecret, c.HostedSecretPrevious); err != nil {
-		return errors.New("hosted secret configuration is invalid")
+		return failure.Wrap("validate hosted secret", failure.ServerHostedSecretInvalid, err)
 	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
@@ -27,15 +28,28 @@ func TestRunVersion(t *testing.T) {
 func TestWriteTerminalErrorRendersJoinedErrorsOnOneSafeLine(t *testing.T) {
 	var output bytes.Buffer
 	writeTerminalError(&output, errors.Join(errors.New("first"), errors.New("second\x1b")))
-	if got, want := output.String(), `tnld: first; second\x1b`+"\n"; got != want {
-		t.Fatalf("terminal error = %q, want %q", got, want)
+	if got := output.String(); !strings.HasPrefix(got, "tnld: run tnld: the operation failed unexpectedly;") ||
+		strings.Contains(got, "first") || strings.Contains(got, "second") || strings.ContainsRune(got, '\x1b') ||
+		strings.Count(got, "\n") != 1 {
+		t.Fatalf("terminal error = %q", got)
+	}
+}
+
+func TestWriteTerminalErrorUsesTypedOperatorCopy(t *testing.T) {
+	var output bytes.Buffer
+	writeTerminalError(&output, failure.Wrap("validate storage key", failure.ServerStorageKeyInvalid,
+		errors.New("storagekey: key=secret-do-not-print")))
+	want := "tnld: validate storage key: TNLD_STORAGE_KEY is missing or invalid; " +
+		"set an unpadded base64url 32-byte key for control, then retry\n"
+	if output.String() != want {
+		t.Fatalf("terminal error = %q, want %q", output.String(), want)
 	}
 }
 
 func TestRunMigrateRequiresDirectURL(t *testing.T) {
 	t.Setenv("TNLD_DATABASE_DIRECT_URL", "")
 	err := run(t.Context(), []string{"migrate"}, new(bytes.Buffer))
-	if err == nil || err.Error() != "TNLD_DATABASE_DIRECT_URL is required" {
+	if reason, _, ok := failure.Describe(err); !ok || reason != failure.DirectDatabaseURLMissing {
 		t.Fatalf("migrate error = %v", err)
 	}
 }

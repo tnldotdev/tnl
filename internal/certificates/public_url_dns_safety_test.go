@@ -141,8 +141,9 @@ func TestPublicURLWorkerUnconfiguredDNSContinuesWithTLSALPNOrder(t *testing.T) {
 			if ctx.Err() != context.Canceled || store.saves != 2 || store.saved.ID != tlsWork.ID || store.saved.State != "authorizing" || api.newOrderCalls != 1 {
 				t.Fatalf("TLS-ALPN work did not advance before cancellation: context %v, saves %d, work %#v, ACME calls %d", ctx.Err(), store.saves, store.saved, api.newOrderCalls)
 			}
-			if count := strings.Count(logs.String(), dnscontroller.ErrChallengesNotConfigured.Error()); count != 1 {
-				t.Fatalf("configuration error logged %d times: %s", count, &logs)
+			if count := strings.Count(logs.String(), "reason=server.certificate_failed"); count != 1 ||
+				strings.Contains(logs.String(), dnscontroller.ErrChallengesNotConfigured.Error()) {
+				t.Fatalf("safe certificate error logged %d times: %s", count, &logs)
 			}
 		})
 	}

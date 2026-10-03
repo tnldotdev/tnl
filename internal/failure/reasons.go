@@ -43,6 +43,29 @@ const (
 	RelayLeaseStale             Reason = "relay.lease_stale"
 	InvalidRole                 Reason = "server.invalid_role"
 	DatabaseUnavailable         Reason = "server.database_unavailable"
+	ServerConfigInvalid         Reason = "server.config_invalid"
+	ServerDatabaseURLInvalid    Reason = "server.database_url_invalid"
+	ServerStorageKeyInvalid     Reason = "server.storage_key_invalid"
+	ServerACMEInvalid           Reason = "server.acme_invalid"
+	ServerOIDCInvalid           Reason = "server.oidc_invalid"
+	ServerDNSConfigInvalid      Reason = "server.dns_config_invalid"
+	ServerUsageConfigInvalid    Reason = "server.usage_config_invalid"
+	ServerClusterSecretInvalid  Reason = "server.cluster_secret_invalid"
+	ServerLoginTokenInvalid     Reason = "server.login_token_invalid"
+	ServerHostedSecretInvalid   Reason = "server.hosted_secret_invalid"
+	ServerConfigFileInvalid     Reason = "server.config_file_invalid"
+	ServerCommandInvalid        Reason = "server.command_invalid"
+	DirectDatabaseURLMissing    Reason = "server.direct_database_url_missing"
+	ServerMigrationFailed       Reason = "server.migration_failed"
+	ServerStartupFailed         Reason = "server.startup_failed"
+	ServerOutputUnavailable     Reason = "server.output_unavailable"
+	ServerWorkerFailed          Reason = "server.worker_failed"
+	ServerIngressFailed         Reason = "server.ingress_failed"
+	ServerRelayFailed           Reason = "server.relay_failed"
+	ServerConnectionFailed      Reason = "server.connection_failed"
+	ServerCertificateFailed     Reason = "server.certificate_failed"
+	ServerDNSFailed             Reason = "server.dns_failed"
+	ServerUsageDeliveryFailed   Reason = "server.usage_delivery_failed"
 	Unexpected                  Reason = "internal.unexpected"
 )
 
@@ -206,6 +229,98 @@ var definitions = map[Reason]Definition{
 	DatabaseUnavailable: {
 		Class: Unavailable, Message: "control cannot reach PostgreSQL",
 		Action: "check the database address and connection, then retry", Retry: RetryLater,
+	},
+	ServerConfigInvalid: {
+		Class: Invalid, Message: "server configuration is invalid",
+		Action: "run tnld config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	ServerDatabaseURLInvalid: {
+		Class: Invalid, Message: "TNLD_DATABASE_URL must be a pooled PostgreSQL URL",
+		Action: "set the pooled runtime URL and reserve TNLD_DATABASE_DIRECT_URL for tnld migrate", Retry: RetryAfterChange,
+	},
+	ServerStorageKeyInvalid: {
+		Class: Invalid, Message: "TNLD_STORAGE_KEY is missing or invalid",
+		Action: "set an unpadded base64url 32-byte key for control, then retry", Retry: RetryAfterChange,
+	},
+	ServerACMEInvalid: {
+		Class: Invalid, Message: "ACME certificate settings are incomplete or invalid",
+		Action: "check TNLD_ACME_DIRECTORY_URL, TNLD_ACME_EMAIL, and TNLD_ACME_ACCEPT_TERMS", Retry: RetryAfterChange,
+	},
+	ServerOIDCInvalid: {
+		Class: Invalid, Message: "OIDC authentication settings are incomplete or invalid",
+		Action: "check TNLD_OIDC_ISSUER, TNLD_OIDC_CLIENT_ID, login flow, and scopes", Retry: RetryAfterChange,
+	},
+	ServerDNSConfigInvalid: {
+		Class: Invalid, Message: "DNS automation settings are incomplete or invalid",
+		Action: "check Route 53 zone IDs, region, and ingress IP addresses", Retry: RetryAfterChange,
+	},
+	ServerUsageConfigInvalid: {
+		Class: Invalid, Message: "public URL usage receiver settings are invalid",
+		Action: "configure both a valid usage URL and token or omit both", Retry: RetryAfterChange,
+	},
+	ServerClusterSecretInvalid: {
+		Class: Invalid, Message: "cluster secret configuration is invalid for this role",
+		Action: "check TNLD_CLUSTER_SECRET and the selected role", Retry: RetryAfterChange,
+	},
+	ServerLoginTokenInvalid: {
+		Class: Invalid, Message: "built-in authority login token is missing or invalid",
+		Action: "configure TNLD_LOGIN_TOKEN or select an external authority", Retry: RetryAfterChange,
+	},
+	ServerHostedSecretInvalid: {
+		Class: Invalid, Message: "hosted secret configuration is invalid",
+		Action: "configure TNLD_HOSTED_SECRET with an external authority", Retry: RetryAfterChange,
+	},
+	ServerConfigFileInvalid: {
+		Class: Invalid, Message: "tnld could not read the configuration file",
+		Action: "use a readable YAML or JSON file with a tnld section", Retry: RetryAfterChange,
+	},
+	ServerCommandInvalid: {
+		Class: Invalid, Message: "tnld could not use this command or its flags",
+		Action: "run tnld --help and correct the command", Retry: RetryAfterChange,
+	},
+	DirectDatabaseURLMissing: {
+		Class: Invalid, Message: "TNLD_DATABASE_DIRECT_URL is required for migration",
+		Action: "set a direct PostgreSQL URL with migration permissions, then rerun tnld migrate", Retry: RetryAfterChange,
+	},
+	ServerMigrationFailed: {
+		Class: Unavailable, Message: "tnld could not migrate the database",
+		Action: "check PostgreSQL connectivity, migration permissions, and the database schema version", Retry: RetryAfterChange,
+	},
+	ServerStartupFailed: {
+		Class: Unavailable, Message: "tnld could not start the configured role",
+		Action: "check role listeners, control reachability, and required credentials", Retry: RetryAfterChange,
+	},
+	ServerOutputUnavailable: {
+		Class: Unavailable, Message: "tnld could not write the command output",
+		Action: "check the output destination and retry", Retry: RetryAfterChange,
+	},
+	ServerWorkerFailed: {
+		Class: Unavailable, Message: "background work failed and will be retried",
+		Action: "check process health and the affected service", Retry: RetryLater,
+	},
+	ServerIngressFailed: {
+		Class: Unavailable, Message: "ingress could not serve a visitor connection",
+		Action: "check ingress health, routing, and connected relays", Retry: RetryLater,
+	},
+	ServerRelayFailed: {
+		Class: Unavailable, Message: "relay forwarding failed",
+		Action: "check relay health and publisher connections", Retry: RetryLater,
+	},
+	ServerConnectionFailed: {
+		Class: Unavailable, Message: "a publisher or relay connection failed",
+		Action: "check the network path and current connection assignment", Retry: RetryLater,
+	},
+	ServerCertificateFailed: {
+		Class: Unavailable, Message: "certificate work failed",
+		Action: "check ACME access and DNS validation, then retry", Retry: RetryLater,
+	},
+	ServerDNSFailed: {
+		Class: Unavailable, Message: "DNS work failed",
+		Action: "check Route 53 access and DNS authority, then retry", Retry: RetryLater,
+	},
+	ServerUsageDeliveryFailed: {
+		Class: Unavailable, Message: "usage delivery failed",
+		Action: "check the configured usage receiver and retry", Retry: RetryLater,
 	},
 	Unexpected: {
 		Class: Internal, Message: "the operation failed unexpectedly",

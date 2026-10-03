@@ -130,7 +130,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		// finishes, retire unusable material without repeating it.
 		if _, _, validationErr := validateRelayCertificate(work.CertificatePEM, work.CSRDER, work.TLSServerName, completedAt); validationErr != nil {
 			work.State = "failed"
-			work.LastError = truncateError(fmt.Errorf("certificates: relay certificate unusable after cleanup: %w", validationErr))
+			work.LastError = storedFailureReason(fmt.Errorf("certificates: relay certificate unusable after cleanup: %w", validationErr))
 			work.AvailableAt = completedAt.Add(w.config.FailedRetryInterval)
 		}
 	}
@@ -433,7 +433,7 @@ func (w *RelayWorker) applyOrder(work *controlstate.RelayCertificateOrderWork, o
 }
 
 func (w *RelayWorker) applyFailure(work *controlstate.RelayCertificateOrderWork, operationErr error, now time.Time) {
-	work.LastError = truncateError(operationErr)
+	work.LastError = storedFailureReason(operationErr)
 	work.AvailableAt = now.Add(5 * time.Second)
 	if work.State == "failed_cleaning" {
 		return

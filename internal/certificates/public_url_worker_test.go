@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
@@ -683,13 +682,13 @@ func TestPublicURLWorkerRejectsFutureDatedCertificate(t *testing.T) {
 	}
 }
 
-func TestTruncateErrorPreservesUTF8(t *testing.T) {
+func TestStoredFailureReasonOmitsProviderText(t *testing.T) {
 	t.Parallel()
 
 	message := strings.Repeat("e\u0301", 1000)
-	truncated := truncateError(terminalf("%s", message))
-	if len(truncated) > 1024 || !utf8.ValidString(truncated) {
-		t.Fatalf("truncated error has %d bytes and valid UTF-8 = %v", len(truncated), utf8.ValidString(truncated))
+	stored := storedFailureReason(terminalf("%s", message))
+	if stored != "server.certificate_failed" || strings.Contains(stored, message) {
+		t.Fatalf("stored error reason = %q", stored)
 	}
 }
 
