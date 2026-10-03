@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -123,9 +125,37 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	metadataResolver.Seed(serverURL, authenticated)
-	metadata, err := metadataResolver.Generate(ctx)
+	partialReason, err := devMetadataPartialReason(flags, serverURL, metadataResolver.savedServer)
 	if err != nil {
 		return err
+	}
+	var metadata projectmeta.Metadata
+	var metadataErr error
+	if partialReason == "" {
+		metadata, metadataErr = metadataResolver.Generate(ctx)
+	}
+	var services publisherServices
+	if partialReason != "" || metadataErr != nil {
+		// a one-off server or team override can still publish the selected service
+		// when another configured service cannot produce static metadata.
+		flags.useMetadataHostname = false
+		services, err = preparePublisherServices(
+			ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
+		)
+		if err != nil {
+			return err
+		}
+		metadata, err = selectedDevMetadata(flags, services)
+		if err != nil {
+			return err
+		}
+		if metadataErr != nil {
+			partialReason = "other project settings could not be resolved: " + metadataErr.Error()
+		}
+		if err := writeHumanFrame(stderr, "tnl dev", "partial project metadata", "selected service can still start",
+			clioutput.Text(partialReason)); err != nil {
+			return err
+		}
 	}
 	if flags.project.Found() {
 		if err := projectmeta.Write(ctx, flags.project.Root, metadata); err != nil {
@@ -141,11 +171,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if err != nil {
 		return err
 	}
-	services, err := preparePublisherServices(
-		ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
-	)
-	if err != nil {
-		return err
+	if partialReason == "" {
+		services, err = preparePublisherServices(
+			ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: forcedTarget,
@@ -268,4 +300,56 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	}
+}
+
+func metadataServerDiffers(configured *string, selected, fallback string) bool {
+	if configured == nil {
+		return fallback != selected
+	}
+	return *configured != selected
+}
+
+func devMetadataPartialReason(flags devCommand, selectedServer, fallbackServer string) (string, error) {
+	if !flags.project.Found() {
+		return "", nil
+	}
+	if flags.Team != "" || flags.ServerURL != "" && !flags.serverFromConfig {
+		return "this run overrides the project server or team", nil
+	}
+	// avoid prompting for an unrelated server before starting this service.
+	for name := range flags.project.Config.Services {
+		effective, err := flags.project.EffectiveService(name)
+		if err != nil {
+			return "another configured service could not be resolved: " + err.Error(), nil
+		}
+		if metadataServerDiffers(effective.Server, selectedServer, fallbackServer) {
+			return "another configured service uses a different server", nil
+		}
+	}
+	root, err := flags.project.EffectiveService("")
+	if err != nil {
+		return "the project default could not be resolved: " + err.Error(), nil
+	}
+	if metadataServerDiffers(root.Server, selectedServer, fallbackServer) {
+		return "the project default uses a different server", nil
+	}
+	return "", nil
+}
+
+func selectedDevMetadata(flags devCommand, services publisherServices) (projectmeta.Metadata, error) {
+	metadata := projectmeta.Metadata{
+		Version: projectmeta.Version, Namespace: services.namespace,
+		Services: map[string]projectmeta.Service{}, ServiceDirectories: map[string]string{},
+	}
+	if flags.Service != "" {
+		directory, err := filepath.Rel(flags.project.Root, flags.commandDir)
+		if err != nil {
+			return projectmeta.Metadata{}, err
+		}
+		metadata.Services[flags.Service] = projectmeta.Service{
+			Namespace: services.namespace, Hostname: services.hostname, URL: "https://" + services.hostname,
+		}
+		metadata.ServiceDirectories[flags.Service] = filepath.ToSlash(directory)
+	}
+	return metadata, metadata.Validate()
 }

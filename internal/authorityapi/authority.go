@@ -178,13 +178,20 @@ func (h *handler) CreateTeam(
 	}
 	team, err := h.store.CreateTeam(request.Context(), controlstate.CreateTeamRequest{
 		IdentityID: principal.IdentityID, IdempotencyKey: params.IdempotencyKey,
-		RequestDigest: digest, DisplayName: body.DisplayName, MemberSlug: body.MemberSlug,
+		RequestDigest: digest, DisplayName: string(body.DisplayName), MemberSlug: optionalMemberSlug(body.MemberSlug),
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "create team", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, teamResponse(team))
+}
+
+func optionalMemberSlug(value *authorityv1.CanonicalLabel) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
 }
 
 func (h *handler) GetTeam(response http.ResponseWriter, request *http.Request, teamID authorityv1.TeamID) {

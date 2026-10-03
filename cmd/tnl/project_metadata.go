@@ -126,6 +126,10 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, err
 		}
+		effective.Team, err = r.project.configuredTeamForService(name, effective)
+		if err != nil {
+			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
+		}
 		_, serviceContext, err := r.resolveContext(ctx, effective)
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
@@ -220,7 +224,7 @@ func (r *projectMetadataResolver) resolveContext(
 		store: store, authenticated: client, api: client.Authority,
 		identity: identity, projectTeam: team,
 	}
-	current, err := session.current(ctx)
+	current, err := session.currentWithDomains(ctx)
 	if err != nil {
 		return nil, teamContext{}, err
 	}

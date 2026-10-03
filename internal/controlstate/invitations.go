@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -99,7 +100,7 @@ func (d *Database) CreateTeamInvitation(
 ) (result InvitationSecret, retErr error) {
 	normalizedEmail, err := normalizeEmailRestriction(request.EmailRestriction)
 	if err != nil || !validStateText(request.IdentityID) || !validStateText(request.TeamID) ||
-		!validIdempotencyKey(request.IdempotencyKey) || !validAuthorityLabel(request.MemberSlug) ||
+		!validIdempotencyKey(request.IdempotencyKey) || !naming.ValidAuthorityLabel(request.MemberSlug) ||
 		!request.InitialRole.valid() || now.IsZero() || !request.ExpiresAt.After(now) || len(request.RetrySecret) < 32 {
 		return InvitationSecret{}, ErrAuthorityInvalid
 	}

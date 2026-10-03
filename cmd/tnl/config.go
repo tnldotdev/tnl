@@ -95,10 +95,17 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err != nil {
 		return err
 	}
+	configuredTeam, err := c.configuredTeamForService(service, effective)
+	if err != nil {
+		return err
+	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
-	} else if effective.Team != nil {
-		flags.selectedTeam = *effective.Team
+	} else {
+		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, configuredTeam)
+		if err != nil {
+			return err
+		}
 	}
 	if flags.Target == "" && effective.Publish != nil && effective.Publish.Target != nil {
 		flags.Target = string(*effective.Publish.Target)
@@ -137,10 +144,17 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 	if err != nil {
 		return err
 	}
+	configuredTeam, err := c.configuredTeamForService(service, effective)
+	if err != nil {
+		return err
+	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
-	} else if effective.Team != nil {
-		flags.selectedTeam = *effective.Team
+	} else {
+		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, configuredTeam)
+		if err != nil {
+			return err
+		}
 	}
 	if service == "" {
 		flags.commandDir = c.Root
@@ -196,10 +210,8 @@ func (c projectConfiguration) defaultService() (string, error) {
 	if len(names) == 1 {
 		return names[0], nil
 	}
-	return "", diagnostic.Wrap(
-		diagnostic.ServiceAmbiguous,
-		fmt.Errorf("service is required; configured services: %s", strings.Join(names, ", ")),
-	)
+	message := fmt.Sprintf("service is required; configured services: %s", strings.Join(names, ", "))
+	return "", diagnostic.WrapMessage(diagnostic.ServiceAmbiguous, message, errors.New(message))
 }
 
 func applyBuiltInHostname(flags *tunnelFlags, service string, worktree projectconfig.Worktree) {
@@ -300,7 +312,8 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ")
+	return command == "login" || command == "logout" || strings.HasPrefix(command, "admin ") ||
+		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -315,27 +328,74 @@ func resolveProjectServer(selected string, project *string, token string) (serve
 	return *project, true, nil
 }
 
-func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {
-	team := ""
-	if project.Config.Team != nil {
-		team = *project.Config.Team
+func projectTeamForServer(server string, configuredServer, configuredTeam *string) (string, error) {
+	if configuredTeam == nil {
+		return "", nil
 	}
+	if server != "" && configuredServer != nil {
+		selected, err := clientstate.CanonicalServer(server)
+		if err != nil {
+			return "", err
+		}
+		project, err := clientstate.CanonicalServer(*configuredServer)
+		if err != nil {
+			return "", err
+		}
+		if selected != project {
+			return "", nil
+		}
+	}
+	return *configuredTeam, nil
+}
+
+func (c projectConfiguration) configuredTeamForService(service string, effective config.TNL) (*string, error) {
+	if service == "" || effective.Team == nil || c.Config.Server == nil {
+		return effective.Team, nil
+	}
+	settings := c.Config.Services[service]
+	if settings.Team != nil || settings.Server == nil {
+		return effective.Team, nil
+	}
+	projectServer, err := clientstate.CanonicalServer(*c.Config.Server)
+	if err != nil {
+		return nil, err
+	}
+	serviceServer, err := clientstate.CanonicalServer(*settings.Server)
+	if err != nil {
+		return nil, err
+	}
+	if projectServer != serviceServer {
+		return nil, nil
+	}
+	return effective.Team, nil
+}
+
+func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {
 	var contextErr error
 	apply := func(remote *remoteFlags, useTeam bool) {
+		if contextErr != nil {
+			return
+		}
 		remote.ServerURL, _, contextErr = resolveProjectServer(remote.ServerURL, project.Config.Server, remote.AccessToken)
-		if useTeam {
-			remote.ProjectTeam = team
+		if contextErr == nil && useTeam {
+			remote.ProjectTeam, contextErr = projectTeamForServer(remote.ServerURL, project.Config.Server, project.Config.Team)
 		}
 	}
 	switch command {
+	case "login":
+		if flags.Login.Server == "" {
+			flags.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Login.ServerURL, project.Config.Server, "")
+		}
+	case "logout":
+		flags.Logout.ServerURL, _, contextErr = resolveProjectServer(flags.Logout.ServerURL, project.Config.Server, "")
 	case "team current":
 		apply(&flags.Team.Current.remoteFlags, true)
 	case "team list":
-		apply(&flags.Team.List.remoteFlags, false)
+		apply(&flags.Team.List.remoteFlags, true)
 	case "team use <team>":
-		apply(&flags.Team.Use.remoteFlags, false)
-	case "team create <display-name>":
-		apply(&flags.Team.Create.remoteFlags, false)
+		apply(&flags.Team.Use.remoteFlags, true)
+	case "team create <name>":
+		apply(&flags.Team.Create.remoteFlags, true)
 	case "team members":
 		apply(&flags.Team.Members.remoteFlags, true)
 	case "team invite create":
@@ -345,7 +405,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	case "team invite revoke <invitation-id>":
 		apply(&flags.Team.Invite.Revoke.remoteFlags, true)
 	case "team join <secret>":
-		apply(&flags.Team.Join.remoteFlags, false)
+		apply(&flags.Team.Join.remoteFlags, true)
 	case "team member set-role <membership-id>":
 		apply(&flags.Team.Member.SetRole.remoteFlags, true)
 	case "team member remove <membership-id>":
@@ -364,6 +424,18 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.List.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
+	case "admin server status":
+		apply(&flags.Admin.Server.Status.remoteFlags, false)
+	case "admin relays list":
+		apply(&flags.Admin.Relays.List.remoteFlags, false)
+	case "admin relays drain <relay-id>":
+		apply(&flags.Admin.Relays.Drain.remoteFlags, false)
+	case "admin maintenance list":
+		apply(&flags.Admin.Maintenance.List.remoteFlags, false)
+	case "admin maintenance allow <name>":
+		apply(&flags.Admin.Maintenance.Allow.remoteFlags, false)
+	case "admin maintenance block <name>":
+		apply(&flags.Admin.Maintenance.Block.remoteFlags, false)
 	}
 	return contextErr
 }

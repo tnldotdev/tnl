@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://environment.example")
 	t.Setenv("TNL_NAME", "environment-name")
-	t.Setenv("TNL_TEAM", "Environment Team")
+	t.Setenv("TNL_TEAM", "environment-team")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
@@ -125,7 +126,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Name != "environment-name" ||
-		flags.Publish.selectedTeam != "Environment Team" ||
+		flags.Publish.selectedTeam != "environment-team" ||
 		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
 		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
 		t.Fatalf("publish flags = %#v", flags.Publish)
@@ -203,7 +204,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 	root := t.TempDir()
 	worktree := namedTestWorktree(root, "feature")
 	rootServer := "https://root.example"
-	serviceTeam := "Frontend Team"
+	serviceTeam := "frontend-team"
 	target := config.Target("4173")
 	rootTimeout := config.Duration(20 * time.Second)
 	project := projectConfiguration{
@@ -266,6 +267,12 @@ func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
 		t.Fatalf("ambiguous service error = %v", err)
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.ServiceAmbiguous {
 		t.Fatalf("ambiguous service diagnostic = %q, %t", code, ok)
+	} else {
+		var output bytes.Buffer
+		writeCommandError(&output, err)
+		if !strings.Contains(output.String(), "configured services: api, web") {
+			t.Fatalf("ambiguous service output omitted names: %s", output.String())
+		}
 	}
 }
 
@@ -405,7 +412,7 @@ func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t 
 	if !withoutOverride.useMetadataHostname {
 		t.Fatal("configured ephemeral service did not use its generated metadata hostname")
 	}
-	withOverride := devCommand{Service: "api", tunnelFlags: tunnelFlags{Team: "Other Team"}}
+	withOverride := devCommand{Service: "api", tunnelFlags: tunnelFlags{Team: "other-team"}}
 	if err := project.applyDev(&withOverride); err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +436,7 @@ func namedTestWorktree(root, name string) projectconfig.Worktree {
 }
 
 func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
-	server, team := "https://project.example", "Project Team"
+	server, team := "https://project.example", "project-team"
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server, Team: &team}}}
 	flags := cli{}
 	if err := applyProjectCommandContext("url list", project, &flags); err != nil {
@@ -442,7 +449,7 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	if err := applyProjectCommandContext("domain list", project, &flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Domain.List.ServerURL != "https://explicit.example" || flags.Domain.List.ProjectTeam != team {
+	if flags.Domain.List.ServerURL != "https://explicit.example" || flags.Domain.List.ProjectTeam != "" {
 		t.Fatalf("domain flags = %#v", flags.Domain.List)
 	}
 	if err := applyProjectCommandContext("domain status <domain>", project, &flags); err != nil {
@@ -458,6 +465,81 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	flags.URL.Delete.ServerURL = "https://explicit.example"
 	if err := applyProjectCommandContext("url delete <public-url-id>", project, &flags); err != nil {
 		t.Fatal(err)
+	}
+	if flags.URL.Delete.ProjectTeam != "" {
+		t.Fatalf("cross-server url delete kept project team: %#v", flags.URL.Delete)
+	}
+	if err := applyProjectCommandContext("login", project, &flags); err != nil || flags.Login.ServerURL != server {
+		t.Fatalf("login server = %q, %v", flags.Login.ServerURL, err)
+	}
+	if err := applyProjectCommandContext("admin maintenance block <name>", project, &flags); err != nil || flags.Admin.Maintenance.Block.ServerURL != server {
+		t.Fatalf("admin server = %q, %v", flags.Admin.Maintenance.Block.ServerURL, err)
+	}
+}
+
+func TestCrossServerTeamPrecedence(t *testing.T) {
+	projectServer, projectTeam := "https://control.staging.example", "staging-team"
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Server: &projectServer, Team: &projectTeam,
+	}}}
+	flags := cli{}
+	flags.Domain.List.ServerURL = "https://control.production.example"
+	flags.Domain.List.Team = "production-team"
+	if err := applyProjectCommandContext("domain list", project, &flags); err != nil {
+		t.Fatal(err)
+	}
+	selected := flags.Domain.List.selection()
+	if selected.ProjectTeam != "" || selected.SelectedTeam != "production-team" {
+		t.Fatalf("cross-server selection = %#v", selected)
+	}
+	for _, command := range []string{"publish", "dev"} {
+		remote := remoteFlags{ServerURL: "https://control.production.example"}
+		switch command {
+		case "publish":
+			publish := publishCommand{Target: "3000", remoteFlags: remote}
+			if err := project.applyPublish(&publish); err != nil || publish.selectedTeam != "" {
+				t.Fatalf("publish selection = %q, %v", publish.selectedTeam, err)
+			}
+		case "dev":
+			dev := devCommand{remoteFlags: remote}
+			if err := project.applyDev(&dev); err != nil || dev.selectedTeam != "" {
+				t.Fatalf("dev selection = %q, %v", dev.selectedTeam, err)
+			}
+		}
+	}
+}
+
+func TestServiceServerOverrideDoesNotInheritRootTeam(t *testing.T) {
+	rootServer, otherServer := "https://root.example", "https://other.example"
+	rootTeam, serviceTeam := "root-team", "service-team"
+	target := config.Target("3000")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Server: &rootServer, Team: &rootTeam,
+		Services: config.Services{
+			"api":  {Server: &otherServer, Publish: &config.Publish{Target: &target}},
+			"web":  {Server: &otherServer, Team: &serviceTeam},
+			"same": {Server: &rootServer},
+		},
+	}}}
+	for _, test := range []struct{ service, team string }{
+		{"api", ""}, {"web", serviceTeam}, {"same", rootTeam},
+	} {
+		flags := devCommand{Service: test.service}
+		if err := project.applyDev(&flags); err != nil || flags.selectedTeam != test.team {
+			t.Fatalf("dev %s team = %q, %v", test.service, flags.selectedTeam, err)
+		}
+	}
+	publish := publishCommand{Target: "api"}
+	if err := project.applyPublish(&publish); err != nil || publish.selectedTeam != "" || publish.ServerURL != otherServer {
+		t.Fatalf("publish api = %#v, %v", publish, err)
+	}
+	effective, err := project.EffectiveService("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := project.configuredTeamForService("api", effective)
+	if err != nil || selected != nil {
+		t.Fatalf("api metadata team = %v, %v", selected, err)
 	}
 }
 

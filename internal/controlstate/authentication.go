@@ -255,13 +255,13 @@ func bootstrapBuiltinIdentity(
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin identity: %w", err)
 	}
 	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
-		ID: teamID, DisplayName: "Local administrator", ManagedLabel: label,
+		ID: teamID, DisplayName: label, ManagedLabel: label,
 		CreatedByIdentityID: identityID, CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin personal team: %w", err)
 	}
 	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
-		ID: reservationID, TeamID: teamID, MemberSlug: label,
+		ID: reservationID, TeamID: teamID, MemberSlug: naming.MemberSlugFromDisplayName("Local administrator"),
 		IdentityID: text(identityID), CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: reserve builtin member slug: %w", err)
@@ -317,13 +317,17 @@ func createOIDCIdentity(
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC identity: %w", err)
 	}
 	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
-		ID: teamID, DisplayName: identity.DisplayName, ManagedLabel: label,
+		ID: teamID, DisplayName: label, ManagedLabel: label,
 		CreatedByIdentityID: identityID, CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC personal team: %w", err)
 	}
+	memberSlug := naming.MemberSlugFromDisplayName(identity.DisplayName)
+	if !naming.ValidAuthorityLabel(memberSlug) {
+		memberSlug = label
+	}
 	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
-		ID: reservationID, TeamID: teamID, MemberSlug: label,
+		ID: reservationID, TeamID: teamID, MemberSlug: memberSlug,
 		IdentityID: text(identityID), CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: reserve OIDC member slug: %w", err)
@@ -577,7 +581,8 @@ func loadIdentityContext(ctx context.Context, queries *controlstatedb.Queries, i
 	for index, row := range rows {
 		memberships[index] = Membership{
 			ID: row.ID, TeamID: row.TeamID, IdentityID: row.IdentityID,
-			TeamDisplayName: row.TeamDisplayName, TeamKind: TeamKind(row.TeamKind), Role: TeamRole(row.Role),
+			TeamDisplayName: row.TeamDisplayName,
+			TeamKind:        TeamKind(row.TeamKind), Role: TeamRole(row.Role),
 			MemberSlug: row.MemberSlug, ManagedLabel: row.ManagedLabel, PolicyRevision: row.PolicyRevision,
 			CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		}

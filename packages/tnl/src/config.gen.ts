@@ -6,7 +6,7 @@ export interface TnlConfig {
    */
   server?: string;
   /**
-   * Team ID or unambiguous display name used by this project.
+   * Unique lowercase team name or team ID used by this project.
    */
   team?: string;
   /**

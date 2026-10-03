@@ -204,6 +204,19 @@ func TestDomainClaimWaitTimeoutAndReadErrors(t *testing.T) {
 	}
 }
 
+func TestDomainClaimFollowupRetainsServerAndTeam(t *testing.T) {
+	var output bytes.Buffer
+	claimed := authorityv1.Domain{CanonicalDomain: "studio.example.test", Id: "dom_1", State: authorityv1.DomainStatePending}
+	if err := writeDomainClaimWithContext(&output, claimed, false, true, "https://control.example.test", "tm_studio"); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"--server=https://control.example.test", "--team=tm_studio", "studio.example.test"} {
+		if !strings.Contains(output.String(), value) {
+			t.Fatalf("follow-up missing %q: %s", value, output.String())
+		}
+	}
+}
+
 func TestDomainStatusFindsOneDomainAndShowsAction(t *testing.T) {
 	claimed := authorityv1.Domain{CanonicalDomain: "claimed.example", Id: "domain_1", Kind: "claimed", State: authorityv1.DomainStatePending, RequiredRecords: []authorityv1.DNSRecord{{Name: "claimed.example", Type: "NS", Value: "ns-1.example"}}}
 	domains := []authorityv1.Domain{{CanonicalDomain: "other.example", Id: "domain_2"}, claimed}

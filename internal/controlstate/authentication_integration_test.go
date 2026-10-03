@@ -141,7 +141,9 @@ func TestIntegrationOIDCAuthentication(t *testing.T) {
 	}
 	if issued.Identity.Identity.Administrator || issued.Identity.Identity.DisplayName != identity.DisplayName ||
 		issued.Identity.Identity.NormalizedEmail != identity.NormalizedEmail || len(issued.Identity.Memberships) != 1 ||
-		issued.Identity.Memberships[0].Role != "owner" || issued.Identity.PersonalTeamID == "" {
+		issued.Identity.Memberships[0].Role != "owner" || issued.Identity.PersonalTeamID == "" ||
+		issued.Identity.Memberships[0].MemberSlug != "example-user" ||
+		issued.Identity.Memberships[0].TeamDisplayName == identity.DisplayName {
 		t.Fatalf("OIDC identity = %#v", issued.Identity)
 	}
 	principal, err := database.AuthenticateAccessToken(t.Context(), issued.AccessToken, 999, now)
@@ -164,7 +166,18 @@ func TestIntegrationOIDCAuthentication(t *testing.T) {
 		t.Context(), "managed.example.test", identity, time.Hour, 24*time.Hour, now.Add(2*time.Minute),
 	)
 	if err != nil || updated.Identity.Identity.ID != issued.Identity.Identity.ID ||
-		updated.Identity.Identity.DisplayName != identity.DisplayName {
+		updated.Identity.Identity.DisplayName != identity.DisplayName || updated.Identity.Memberships[0].MemberSlug != "example-user" {
 		t.Fatalf("updated OIDC identity = %#v, %v", updated.Identity, err)
+	}
+	identity.Subject = "unicode-name"
+	identity.DisplayName = "李 小龙"
+	identity.NormalizedEmail = "unicode@example.com"
+	identity.AssertionDigest = sha256.Sum256([]byte("unicode assertion"))
+	created, err := database.CreateOIDCControlSession(
+		t.Context(), "managed.example.test", identity, time.Hour, 24*time.Hour, now.Add(3*time.Minute),
+	)
+	if err != nil || len(created.Identity.Memberships) != 1 ||
+		created.Identity.Memberships[0].MemberSlug != created.Identity.Memberships[0].ManagedLabel {
+		t.Fatalf("unicode identity fallback = %#v, %v", created.Identity, err)
 	}
 }

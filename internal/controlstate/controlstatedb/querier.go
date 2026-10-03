@@ -189,7 +189,7 @@ type Querier interface {
 	LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error)
 	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
-	LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error)
+	LockIdentityForTeamCreation(ctx context.Context, identityID string) (LockIdentityForTeamCreationRow, error)
 	LockIdentityPublicURLForDelete(ctx context.Context, arg LockIdentityPublicURLForDeleteParams) (LockIdentityPublicURLForDeleteRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
 	LockIngressRoutingTableClock(ctx context.Context) (int64, error)

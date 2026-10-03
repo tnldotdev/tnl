@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,7 +54,90 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 }
 
+func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {
+	for _, args := range [][]string{
+		{"team", "current"}, {"team", "members"},
+		{"team", "invite", "list"}, {"team", "invite", "create", "--member-slug", "member"},
+		{"team", "invite", "revoke", "ivt_1"},
+		{"team", "member", "set-role", "mem_1", "--role", "admin"},
+		{"team", "member", "remove", "mem_1"},
+		{"domain", "list"}, {"domain", "claim", "example.test"},
+		{"domain", "default", "example.test"}, {"domain", "status", "example.test"},
+		{"domain", "release", "example.test"},
+		{"url", "list"}, {"url", "delete", "url_1"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var flags cli
+			parser, err := kong.New(&flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse(append(args, "--team=studio")); err != nil {
+				t.Fatal(err)
+			}
+			// parsing --team must also accept the value as a command-scoped flag;
+			// the resolved context is tested separately for server precedence.
+		})
+	}
+}
+
+func TestTeamEnvironmentSelectsDomainCommand(t *testing.T) {
+	t.Setenv("TNL_TEAM", "studio")
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"domain", "list"}); err != nil {
+		t.Fatal(err)
+	}
+	if selected := flags.Domain.List.selection().SelectedTeam; selected != "studio" {
+		t.Fatalf("domain list team = %q", selected)
+	}
+}
+
+func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
+	for _, command := range []string{"dev", "publish"} {
+		t.Run(command, func(t *testing.T) {
+			var flags cli
+			var output bytes.Buffer
+			parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse([]string{command, "--help"}); err != nil {
+				t.Fatal(err)
+			}
+			text := strings.Join(strings.Fields(output.String()), " ")
+			for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("%s help missing %q:\n%s", command, want, output.String())
+				}
+			}
+		})
+	}
+}
+
+func TestUnknownFlagUsesParsedCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(t.Context(), []string{"domain", "list", "--missing"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("unknown flag was accepted")
+	}
+	if title, ok := clioutput.CommandOf(err); !ok || title != "tnl domain list" {
+		t.Fatalf("parse error command = %q, %t", title, ok)
+	}
+}
+
 func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
+	var create cli
+	createParser, err := kong.New(&create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createParser.Parse([]string{"team", "create", "studio"}); err != nil || create.Team.Create.Name != "studio" {
+		t.Fatalf("team create studio: %q, %v", create.Team.Create.Name, err)
+	}
 	for _, test := range []struct {
 		name string
 		args []string
@@ -90,8 +174,8 @@ func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"team", "create", "example", "--slug", "alice"}); err == nil {
-		t.Fatal("obsolete --slug flag was accepted")
+	if _, err := parser.Parse([]string{"team", "create", "studio", "--slug", "another"}); err == nil {
+		t.Fatal("obsolete team --slug flag was accepted")
 	}
 }
 

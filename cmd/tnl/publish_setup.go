@@ -148,7 +148,7 @@ func preparePublisherServices(
 		store: publisherState, authenticated: authenticated, api: api, identity: identity,
 		projectTeam: selectedTeam,
 	}
-	current, err := teamSession.current(ctx)
+	current, err := teamSession.currentWithDomains(ctx)
 	if err != nil {
 		return publisherServices{}, err
 	}

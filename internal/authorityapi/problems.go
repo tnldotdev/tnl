@@ -22,6 +22,10 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
 	case errors.Is(err, controlstate.ErrAuthorityAccess):
 		writeProblem(response, http.StatusForbidden, authorityv1.Forbidden, "operation is not authorized")
+	case errors.Is(err, controlstate.ErrTeamNameUnavailable):
+		writeProblem(response, http.StatusConflict, authorityv1.NameUnavailable, "team name unavailable")
+	case errors.Is(err, controlstate.ErrMemberSlugRequired):
+		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "member slug cannot be derived; provide member_slug")
 	case errors.Is(err, controlstate.ErrAuthorityConflict), errors.Is(err, controlstate.ErrAuthorityIdempotency):
 		writeProblem(response, http.StatusConflict, authorityv1.Conflict, "authority state conflict")
 	default:

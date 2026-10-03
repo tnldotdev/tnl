@@ -31,7 +31,7 @@ func TestNewHandlerRejectsInvalidLoginToken(t *testing.T) {
 func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 	createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	store := &authorityMutationStoreStub{team: controlstate.Team{
-		ID: "team_1", Kind: "organization", DisplayName: "Example team", ManagedLabel: "quiet-lake",
+		ID: "team_1", Kind: "organization", DisplayName: "studio", ManagedLabel: "quiet-lake",
 		DefaultDomainID: "domain_1", PolicyRevision: 1, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}}
 	handler := testHandler(t, Config{}, store)
@@ -45,7 +45,7 @@ func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 		t.Fatalf("content type = %q", response.Header().Get("Content-Type"))
 	}
 	if store.createTeam.IdentityID != "identity_1" || store.createTeam.IdempotencyKey != "create-team-1" ||
-		store.createTeam.DisplayName != "Example team" || store.createTeam.MemberSlug != "member" ||
+		store.createTeam.DisplayName != "studio" || store.createTeam.MemberSlug != "member" ||
 		store.createTeam.RequestDigest == ([32]byte{}) {
 		t.Fatalf("create team request = %#v", store.createTeam)
 	}
@@ -53,7 +53,7 @@ func TestCreateTeamHandlerAuthenticatesAndPreservesIdempotency(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Id != "team_1" || body.Kind != authorityv1.Organization || body.DefaultDomainId != "domain_1" {
+	if body.Id != "team_1" || body.Kind != authorityv1.Organization || body.DefaultDomainId != "domain_1" || body.DisplayName != "studio" {
 		t.Fatalf("create team response = %#v", body)
 	}
 }
@@ -69,6 +69,28 @@ func TestCreateTeamHandlerMapsAuthorityConflict(t *testing.T) {
 	var problem authorityv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Code != authorityv1.Conflict {
 		t.Fatalf("problem = %#v, %v", problem, err)
+	}
+}
+
+func TestCreateTeamHandlerReportsUnavailableName(t *testing.T) {
+	store := &authorityMutationStoreStub{createTeamError: controlstate.ErrTeamNameUnavailable}
+	response := httptest.NewRecorder()
+	testHandler(t, Config{}, store).ServeHTTP(response, newCreateTeamRequest())
+	var problem authorityv1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusConflict ||
+		problem.Code != authorityv1.NameUnavailable || problem.Title != "team name unavailable" {
+		t.Fatalf("name conflict response = %d, %#v, %v", response.Code, problem, err)
+	}
+}
+
+func TestCreateTeamHandlerExplainsMissingMemberSlug(t *testing.T) {
+	store := &authorityMutationStoreStub{createTeamError: controlstate.ErrMemberSlugRequired}
+	response := httptest.NewRecorder()
+	testHandler(t, Config{}, store).ServeHTTP(response, newCreateTeamRequest())
+	var problem authorityv1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusBadRequest ||
+		problem.Code != authorityv1.InvalidRequest || !strings.Contains(problem.Title, "member_slug") {
+		t.Fatalf("missing member slug response = %d, %#v, %v", response.Code, problem, err)
 	}
 }
 
@@ -219,7 +241,7 @@ func TestBuiltinAuthorityDoesNotExposeHostedServiceAuthorization(t *testing.T) {
 
 func newCreateTeamRequest() *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/v1/teams", bytes.NewBufferString(`{
-		"display_name":"Example team",
+		"display_name":"studio",
 		"member_slug":"member"
 	}`))
 	request.Header.Set("Authorization", "Bearer access-token")

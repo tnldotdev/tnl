@@ -21,13 +21,13 @@ import (
 )
 
 type cli struct {
-	ConfigPath  string           `name:"config" help:"Use an explicit project configuration file." type:"path"`
-	NoConfig    bool             `name:"no-config" help:"Do not search for project configuration."`
+	ConfigPath  string           `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
+	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Dev         devCommand       `cmd:"" help:"Run and publish one development service. Pass its command after --." group:"start"`
-	Publish     publishCommand   `cmd:"" help:"Publish one local HTTP service." group:"start"`
-	Status      statusCommand    `cmd:"" help:"Show local tunnels for this project." group:"start"`
+	Dev         devCommand       `cmd:"" help:"Start and publish a development service; override its child command after --." group:"start"`
+	Publish     publishCommand   `cmd:"" help:"Publish an already-running local HTTP service or port." group:"start"`
+	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
@@ -45,15 +45,15 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
-	Team          string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Domain        string   `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
-	Name          string   `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
-	PublicURL     string   `name:"public-url" help:"Exact HTTPS public URL to publish."`
-	AllowIP       []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
-	AllowProvider []string `name:"allow-provider" help:"Allow webhook IPs from stripe or github. Repeat for each provider."`
-	AllowAllIPs   bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
-	Ephemeral     bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	RequestLimit  *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	teamSelectionFlags `embed:""`
+	Domain             string   `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name               string   `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
+	PublicURL          string   `name:"public-url" help:"Exact HTTPS public URL to publish."`
+	AllowIP            []string `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
+	AllowProvider      []string `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
+	AllowAllIPs        bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Ephemeral          bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	RequestLimit       *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
 
 	allowAllIPsFromCLI bool
 	ephemeralFromCLI   bool
@@ -61,10 +61,26 @@ type tunnelFlags struct {
 }
 
 type remoteFlags struct {
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
-	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	ProjectTeam string `kong:"-"`
+	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
+	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
+	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	ProjectTeam  string `kong:"-"`
+	SelectedTeam string `kong:"-"`
+}
+
+type teamSelectionFlags struct {
+	Team string `name:"team" env:"TNL_TEAM" help:"Team name or ID; overrides the project team for this command."`
+}
+
+type scopedTeamFlags struct {
+	remoteFlags        `embed:""`
+	teamSelectionFlags `embed:""`
+}
+
+func (flags scopedTeamFlags) selection() remoteFlags {
+	selected := flags.remoteFlags
+	selected.SelectedTeam = flags.Team
+	return selected
 }
 
 type configCommand struct {
@@ -82,15 +98,15 @@ type configGenerateCommand struct {
 }
 
 type loginCommand struct {
-	Server     string `arg:"" name:"server" optional:"" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
-	ServerURL  string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
+	Server     string `arg:"" name:"server" optional:"" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
+	ServerURL  string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
 	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	Token      bool   `name:"token" help:"Use a login token even when OIDC is available."`
 	LoginToken string `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
 }
 
 type logoutCommand struct {
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
@@ -237,7 +253,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parser, err := kong.New(
 		&flags,
 		kong.Name("tnl"),
-		kong.Description("Publish local services at stable public URLs."),
+		kong.Description("Publish local services at stable public URLs. Run tnl dev to start an app, or tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "start", Title: "Start here:"},
 			{Key: "manage", Title: "Manage:"},
@@ -250,6 +266,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	parsed, err := parser.Parse(parseArgs)
 	if err != nil {
+		var parseError *kong.ParseError
+		if errors.As(err, &parseError) && parseError.Context != nil && parseError.Context.Command() != "" {
+			command = clioutput.CommandTitle("tnl", canonicalParsedCommand(parseError.Context.Command()))
+		}
 		return err
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
@@ -357,7 +377,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTeamList(ctx, flags.Team.List, stdout, stderr)
 	case "team use <team>":
 		return runTeamUse(ctx, flags.Team.Use, stdout, stderr)
-	case "team create <display-name>":
+	case "team create <name>":
 		return runTeamCreate(ctx, flags.Team.Create, stdout, stderr)
 	case "team members":
 		return runTeamMembers(ctx, flags.Team.Members, stdout, stderr)

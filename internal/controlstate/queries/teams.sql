@@ -65,7 +65,7 @@ WHERE d.released_at IS NULL
 ORDER BY CASE d.kind WHEN 'managed' THEN 0 ELSE 1 END, d.canonical_domain, d.id;
 
 -- name: LockIdentityForTeamCreation :one
-SELECT id
+SELECT id, display_name
 FROM control.identities
 WHERE id = sqlc.arg(identity_id)
   AND disabled_at IS NULL

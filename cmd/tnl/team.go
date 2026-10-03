@@ -9,13 +9,14 @@ import (
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
 type teamCommand struct {
 	Current teamCurrentCommand `cmd:"" help:"Show the selected team."`
 	List    teamListCommand    `cmd:"" help:"List current memberships."`
-	Use     teamUseCommand     `cmd:"" help:"Select a team for future commands."`
+	Use     teamUseCommand     `cmd:"" help:"Save a team for commands without a project team."`
 	Create  teamCreateCommand  `cmd:"" help:"Create an organization team."`
 	Members teamMembersCommand `cmd:"" help:"List team memberships."`
 	Invite  teamInviteCommand  `cmd:"" help:"Manage team invitations."`
@@ -24,7 +25,7 @@ type teamCommand struct {
 }
 
 type teamCurrentCommand struct {
-	remoteFlags `embed:""`
+	scopedTeamFlags `embed:""`
 }
 type teamListCommand struct {
 	remoteFlags `embed:""`
@@ -32,18 +33,17 @@ type teamListCommand struct {
 
 type teamUseCommand struct {
 	remoteFlags `embed:""`
-	Team        string `arg:"" name:"team" required:"" help:"Team ID or unambiguous display name."`
+	Team        string `arg:"" name:"team" required:"" help:"Team name or ID."`
 }
 
 type teamCreateCommand struct {
 	remoteFlags `embed:""`
-	DisplayName string `arg:"" name:"display-name" required:"" help:"Organization team display name."`
-	MemberSlug  string `name:"member-slug" required:"" help:"Immutable member slug for the creator."`
+	Name        string `arg:"" name:"name" required:"" help:"Unique, permanent lowercase DNS label for the team."`
+	MemberSlug  string `name:"member-slug" help:"Creator's immutable claimed-domain label; defaults to one derived from your identity name."`
 }
 
 type teamMembersCommand struct {
-	remoteFlags `embed:""`
-	Team        string `name:"team" help:"Team ID or unambiguous display name; defaults to the selected team."`
+	scopedTeamFlags `embed:""`
 }
 
 type teamInviteCommand struct {
@@ -53,20 +53,20 @@ type teamInviteCommand struct {
 }
 
 type teamInviteCreateCommand struct {
-	remoteFlags `embed:""`
-	MemberSlug  string               `name:"member-slug" required:"" help:"Reserved immutable member slug."`
-	Role        authorityv1.TeamRole `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
-	Email       string               `name:"email" help:"Optional verified-email restriction."`
-	ExpiresIn   time.Duration        `name:"expires-in" default:"168h" help:"Invitation lifetime."`
+	scopedTeamFlags `embed:""`
+	MemberSlug      string               `name:"member-slug" required:"" help:"Reserved member namespace label on claimed domains."`
+	Role            authorityv1.TeamRole `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
+	Email           string               `name:"email" help:"Optional verified-email restriction."`
+	ExpiresIn       time.Duration        `name:"expires-in" default:"168h" help:"Invitation lifetime."`
 }
 
 type teamInviteListCommand struct {
-	remoteFlags `embed:""`
+	scopedTeamFlags `embed:""`
 }
 
 type teamInviteRevokeCommand struct {
-	remoteFlags  `embed:""`
-	InvitationID string `arg:"" name:"invitation-id" required:"" help:"Invitation ID to revoke."`
+	scopedTeamFlags `embed:""`
+	InvitationID    string `arg:"" name:"invitation-id" required:"" help:"Invitation ID to revoke."`
 }
 
 type teamJoinCommand struct {
@@ -80,18 +80,18 @@ type teamMemberCommand struct {
 }
 
 type teamMemberSetRoleCommand struct {
-	remoteFlags  `embed:""`
-	MembershipID string               `arg:"" name:"membership-id" required:"" help:"Membership ID to update."`
-	Role         authorityv1.TeamRole `name:"role" enum:"member,admin,owner" required:"" help:"New team role."`
+	scopedTeamFlags `embed:""`
+	MembershipID    string               `arg:"" name:"membership-id" required:"" help:"Membership ID to update."`
+	Role            authorityv1.TeamRole `name:"role" enum:"member,admin,owner" required:"" help:"New team role."`
 }
 
 type teamMemberRemoveCommand struct {
-	remoteFlags  `embed:""`
-	MembershipID string `arg:"" name:"membership-id" required:"" help:"Membership ID to remove."`
+	scopedTeamFlags `embed:""`
+	MembershipID    string `arg:"" name:"membership-id" required:"" help:"Membership ID to remove."`
 }
 
 func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team current", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team current", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -102,6 +102,7 @@ func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, dia
 	}
 	return writeHumanFrame(output, "tnl team current", "selected", "",
 		clioutput.Fields(
+			clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
 			clioutput.Field{Label: "team", Value: current.team.DisplayName},
 			clioutput.Field{Label: "kind", Value: string(current.team.Kind)},
 			clioutput.Field{Label: "role", Value: string(current.membership.Role)},
@@ -121,11 +122,29 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 	if err != nil {
 		return err
 	}
-	blocks := make([]clioutput.Block, 0, len(session.identity.Memberships))
+	projectID := ""
+	if session.projectTeam != "" {
+		if project, err := session.resolveMembership(ctx, session.projectTeam); err == nil {
+			projectID = project.TeamId
+		}
+	}
+	blocks := make([]clioutput.Block, 0, len(session.identity.Memberships)+1)
+	blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint}))
+	if session.projectTeam != "" && projectID == "" {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{
+			Label: "project team", Value: session.projectTeam + " (not in memberships)",
+		}))
+	}
 	for _, membership := range session.identity.Memberships {
 		title := membership.TeamDisplayName
 		if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
 			title = "* " + title
+		}
+		if membership.TeamId == projectID {
+			title = "> " + title
+			if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
+				title = "* > " + membership.TeamDisplayName
+			}
 		}
 		blocks = append(blocks, clioutput.Section(title, clioutput.Fields(
 			clioutput.Field{Label: "kind", Value: string(membership.TeamKind)},
@@ -134,7 +153,11 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 			clioutput.Field{Label: "team ID", Value: membership.TeamId},
 		)))
 	}
-	return writeHumanFrame(output, "tnl team list", countState(len(blocks), "team", "teams"), "* selected", blocks...)
+	footer := "* saved"
+	if session.projectTeam != "" {
+		footer = "* saved / > project"
+	}
+	return writeHumanFrame(output, "tnl team list", countState(len(session.identity.Memberships), "team", "teams"), footer, blocks...)
 }
 
 func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics io.Writer) error {
@@ -150,7 +173,7 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 	if err := session.store.SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl team use", "selected", "future commands use this team",
+	return writeHumanFrame(output, "tnl team use", "selected", savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
 		clioutput.Fields(
 			clioutput.Field{Label: "team", Value: membership.TeamDisplayName},
 			clioutput.Field{Label: "role", Value: string(membership.Role)},
@@ -161,42 +184,56 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 }
 
 func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagnostics io.Writer) error {
+	if !naming.ValidAuthorityLabel(command.Name) {
+		return errors.New("team name must be one lowercase ASCII DNS label (for example, studio)")
+	}
 	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team create", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
+	if command.MemberSlug != "" && !naming.ValidAuthorityLabel(command.MemberSlug) {
+		return errors.New("member slug must be one lowercase ASCII DNS label")
+	}
 	key, err := randomIdempotencyKey()
 	if err != nil {
 		return err
 	}
-	team, err := session.api.CreateTeam(ctx, authorityv1.CreateTeamRequest{DisplayName: command.DisplayName, MemberSlug: command.MemberSlug}, key)
+	request := authorityv1.CreateTeamRequest{DisplayName: authorityv1.CanonicalLabel(command.Name)}
+	if command.MemberSlug != "" {
+		slug := authorityv1.CanonicalLabel(command.MemberSlug)
+		request.MemberSlug = &slug
+	}
+	team, err := session.api.CreateTeam(ctx, request, key)
 	if err != nil {
 		return err
 	}
 	if err := session.store.SaveSelectedTeam(ctx, team.Id); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl team create", "created", "selected for future commands",
+	fields := []clioutput.Field{{Label: "team", Value: team.DisplayName}, {Label: "team ID", Value: team.Id}}
+	if command.MemberSlug != "" {
+		fields = append(fields, clioutput.Field{Label: "member slug", Value: command.MemberSlug})
+	} else {
+		fields = append(fields,
+			clioutput.Field{Label: "member slug", Value: "derived from identity name"},
+			clioutput.Field{Label: "next", Value: "tnl team current --team=" + team.DisplayName + " --server=" + session.authenticated.ServerEndpoint},
+		)
+	}
+	return writeHumanFrame(output, "tnl team create", "created", savedTeamFooter(command.ProjectTeam, team.Id, team.DisplayName),
 		clioutput.Fields(
-			clioutput.Field{Label: "team", Value: team.DisplayName},
-			clioutput.Field{Label: "member slug", Value: command.MemberSlug},
-			clioutput.Field{Label: "team ID", Value: team.Id},
+			fields...,
 		),
 	)
 }
 
 func runTeamMembers(ctx context.Context, command teamMembersCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team members", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team members", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	team := command.Team
-	if team == "" {
-		team = session.projectTeam
-	}
-	membership, err := session.resolveMembership(ctx, team)
+	membership, err := session.currentMembership(ctx)
 	if err != nil {
 		return err
 	}
@@ -220,7 +257,7 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 	if command.ExpiresIn <= 0 {
 		return errors.New("invitation lifetime must be positive")
 	}
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team invite create", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team invite create", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -249,7 +286,7 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 }
 
 func runTeamInviteList(ctx context.Context, command teamInviteListCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team invite list", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team invite list", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -275,7 +312,7 @@ func runTeamInviteList(ctx context.Context, command teamInviteListCommand, outpu
 }
 
 func runTeamInviteRevoke(ctx context.Context, command teamInviteRevokeCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team invite revoke", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team invite revoke", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -303,7 +340,7 @@ func runTeamJoin(ctx context.Context, command teamJoinCommand, output, diagnosti
 	if err := session.store.SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl team join", "joined", "selected for future commands",
+	return writeHumanFrame(output, "tnl team join", "joined", savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
 		clioutput.Fields(
 			clioutput.Field{Label: "team", Value: membership.TeamDisplayName},
 			clioutput.Field{Label: "role", Value: string(membership.Role)},
@@ -314,7 +351,7 @@ func runTeamJoin(ctx context.Context, command teamJoinCommand, output, diagnosti
 }
 
 func runTeamMemberSetRole(ctx context.Context, command teamMemberSetRoleCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team member set-role", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team member set-role", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -332,7 +369,7 @@ func runTeamMemberSetRole(ctx context.Context, command teamMemberSetRoleCommand,
 }
 
 func runTeamMemberRemove(ctx context.Context, command teamMemberRemoveCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team member remove", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl team member remove", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -348,3 +385,10 @@ func runTeamMemberRemove(ctx context.Context, command teamMemberRemoveCommand, o
 }
 
 func openapiEmail(value string) openapi_types.Email { return openapi_types.Email(value) }
+
+func savedTeamFooter(projectTeam, selectedID, selectedName string) string {
+	if projectTeam != "" && projectTeam != selectedID && projectTeam != selectedName {
+		return "saved; project team still takes precedence here"
+	}
+	return "saved for commands without a project team"
+}
