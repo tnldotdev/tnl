@@ -308,8 +308,8 @@ type CreateInvitationRequest struct {
 
 // CreateTeamRequest defines model for CreateTeamRequest.
 type CreateTeamRequest struct {
-	DisplayName string         `json:"display_name"`
-	MemberSlug  CanonicalLabel `json:"member_slug"`
+	DisplayName CanonicalLabel  `json:"display_name"`
+	MemberSlug  *CanonicalLabel `json:"member_slug,omitempty"`
 }
 
 // DNSRecord defines model for DNSRecord.
@@ -415,7 +415,7 @@ type Membership struct {
 	MemberSlug      CanonicalLabel `json:"member_slug"`
 	PolicyRevision  int64          `json:"policy_revision"`
 	Role            TeamRole       `json:"role"`
-	TeamDisplayName string         `json:"team_display_name"`
+	TeamDisplayName CanonicalLabel `json:"team_display_name"`
 	TeamId          TeamID         `json:"team_id"`
 	TeamKind        TeamKind       `json:"team_kind"`
 	UpdatedAt       time.Time      `json:"updated_at"`
@@ -506,7 +506,7 @@ type SetMembershipRoleRequest struct {
 type Team struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	DefaultDomainId DomainID       `json:"default_domain_id"`
-	DisplayName     string         `json:"display_name"`
+	DisplayName     CanonicalLabel `json:"display_name"`
 	Id              TeamID         `json:"id"`
 	Kind            TeamKind       `json:"kind"`
 	ManagedLabel    CanonicalLabel `json:"managed_label"`

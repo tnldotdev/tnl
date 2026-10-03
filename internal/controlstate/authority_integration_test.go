@@ -15,17 +15,34 @@ import (
 func TestIntegrationTeamCreation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creation")
 	session := newBuiltinSession(t, database, now)
+	personal, err := database.GetTeam(t.Context(), session.Identity.Identity.ID, session.Identity.PersonalTeamID)
+	if err != nil || personal.DisplayName == "" || personal.DisplayName != personal.ManagedLabel {
+		t.Fatalf("personal team generated name = %#v, %v", personal, err)
+	}
 	request := authorityTeamRequest(session.Identity.Identity.ID)
+	request.DisplayName, request.MemberSlug = "studio", ""
 	team, err := database.CreateTeam(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if team.Kind != "organization" || team.PolicyRevision != 1 || team.DefaultDomainID == "" {
+	if team.Kind != "organization" || team.PolicyRevision != 1 || team.DefaultDomainID == "" || team.DisplayName != "studio" {
 		t.Fatalf("created team = %#v", team)
 	}
 	repeated, err := database.CreateTeam(t.Context(), request, now.Add(time.Second))
 	if err != nil || !reflect.DeepEqual(repeated, team) {
 		t.Fatalf("idempotent team = %#v, %v", repeated, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.identities SET display_name = '李 小龙' WHERE id = $1`, session.Identity.Identity.ID); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err = database.CreateTeam(t.Context(), request, now.Add(2*time.Second))
+	if err != nil || !reflect.DeepEqual(repeated, team) {
+		t.Fatalf("idempotent team after identity rename = %#v, %v", repeated, err)
+	}
+	requiresSlug := authorityTeamRequest(session.Identity.Identity.ID)
+	requiresSlug.DisplayName, requiresSlug.MemberSlug, requiresSlug.IdempotencyKey = "new-team", "", "no-usable-identity-name"
+	if _, err := database.CreateTeam(t.Context(), requiresSlug, now); !errors.Is(err, ErrMemberSlugRequired) {
+		t.Fatalf("missing member slug for non-ASCII identity name: %v", err)
 	}
 	request.RequestDigest = sha256.Sum256([]byte("changed"))
 	if _, err := database.CreateTeam(t.Context(), request, now); !errors.Is(err, ErrAuthorityIdempotency) {
@@ -37,8 +54,14 @@ func TestIntegrationTeamCreation(t *testing.T) {
 		t.Fatalf("NUL display name was not rejected at validation: %v", err)
 	}
 	memberships, err := database.ListTeamMemberships(t.Context(), session.Identity.Identity.ID, team.ID)
-	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "owner" {
+	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "local-administrator" || memberships[0].TeamDisplayName != team.DisplayName {
 		t.Fatalf("initial memberships = %#v, %v", memberships, err)
+	}
+	duplicate := authorityTeamRequest(session.Identity.Identity.ID)
+	duplicate.IdempotencyKey = "duplicate-name"
+	duplicate.DisplayName = team.DisplayName
+	if _, err := database.CreateTeam(t.Context(), duplicate, now); !errors.Is(err, ErrTeamNameUnavailable) {
+		t.Fatalf("duplicate team name: %v", err)
 	}
 	invitation := authorityInvitationRequest(session.Identity.Identity.ID, session.Identity.PersonalTeamID, "member", now)
 	if _, err := database.CreateTeamInvitation(t.Context(), invitation, now); !errors.Is(err, ErrAuthorityAccess) {
@@ -289,7 +312,7 @@ func newBuiltinSession(t *testing.T, database *Database, now time.Time) ControlS
 }
 
 func authorityTeamRequest(owner string) CreateTeamRequest {
-	return CreateTeamRequest{IdentityID: owner, IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team")), DisplayName: "Authority team", MemberSlug: "owner"}
+	return CreateTeamRequest{IdentityID: owner, IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team")), DisplayName: "authority-team", MemberSlug: "owner"}
 }
 
 func newAuthorityTeam(t *testing.T) (*Database, time.Time, string, Team) {

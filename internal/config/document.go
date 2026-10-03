@@ -33,7 +33,7 @@ type Document struct {
 // TNL contains project-local client configuration.
 type TNL struct {
 	Server   *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
-	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Team ID or unambiguous display name used by this project."`
+	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
 	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`

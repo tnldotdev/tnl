@@ -1216,18 +1216,23 @@ func (q *Queries) LockDomainPublicURLs(ctx context.Context, arg LockDomainPublic
 }
 
 const lockIdentityForTeamCreation = `-- name: LockIdentityForTeamCreation :one
-SELECT id
+SELECT id, display_name
 FROM control.identities
 WHERE id = $1
   AND disabled_at IS NULL
 FOR NO KEY UPDATE
 `
 
-func (q *Queries) LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error) {
+type LockIdentityForTeamCreationRow struct {
+	ID          string
+	DisplayName string
+}
+
+func (q *Queries) LockIdentityForTeamCreation(ctx context.Context, identityID string) (LockIdentityForTeamCreationRow, error) {
 	row := q.db.QueryRow(ctx, lockIdentityForTeamCreation, identityID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var i LockIdentityForTeamCreationRow
+	err := row.Scan(&i.ID, &i.DisplayName)
+	return i, err
 }
 
 const lockInvitationByTokenDigest = `-- name: LockInvitationByTokenDigest :one

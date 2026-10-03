@@ -775,7 +775,7 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	}
 	owner := local.Identity.Identity.ID
 	team, err := database.CreateTeam(t.Context(), CreateTeamRequest{
-		IdentityID: owner, IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team")), DisplayName: "Transaction tests", MemberSlug: "owner",
+		IdentityID: owner, IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team")), DisplayName: "transaction-tests", MemberSlug: "owner",
 	}, now)
 	if err != nil {
 		t.Fatal(err)

@@ -31,7 +31,7 @@ type adminServerStatusCommand struct {
 
 type adminRelayCommands struct {
 	List  adminRelaysListCommand `cmd:"" help:"List relay leases."`
-	Drain adminRelayDrainCommand `cmd:"" help:"Drain one matching relay lease."`
+	Drain adminRelayDrainCommand `cmd:"" help:"Drain one relay lease; use tnl admin relays list for its run ID and revision."`
 }
 
 type adminRelaysListCommand struct {
@@ -62,7 +62,7 @@ type adminMaintenanceSetCommand struct {
 }
 
 func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin server status", stderr, func(client *controlclient.Client) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin server status", stderr, func(client *controlclient.Client, server string) error {
 		value, err := client.AdminServerStatus(ctx)
 		if err != nil {
 			return err
@@ -73,6 +73,7 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 				{Label: "relays", Value: countState(value.RelayLeases, "lease", "leases")},
 			}}),
 			clioutput.Fields(
+				clioutput.Field{Label: "server", Value: server},
 				clioutput.Field{Label: "role", Value: string(value.Role)},
 				clioutput.Field{Label: "public URLs", Value: fmt.Sprintf("%d enabled / %d suspended", value.EnabledPublicUrls, value.SuspendedPublicUrls)},
 				clioutput.Field{Label: "publish runs", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyPublishRuns, value.StartingPublishRuns)},
@@ -84,12 +85,12 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 }
 
 func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays list", stderr, func(client *controlclient.Client) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays list", stderr, func(client *controlclient.Client, server string) error {
 		page, err := client.AdminListRelays(ctx)
 		if err != nil {
 			return err
 		}
-		blocks := make([]clioutput.Block, 0, len(page.Relays))
+		blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "server", Value: server})}
 		for _, value := range page.Relays {
 			state := "active"
 			if value.Draining {
@@ -110,7 +111,7 @@ func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, std
 			}
 			blocks = append(blocks, clioutput.Section(string(value.RelayId)+" / "+state, clioutput.Fields(fields...)))
 		}
-		return writeHumanFrame(stdout, "tnl admin relays list", countState(len(blocks), "relay process", "relay processes"), "", blocks...)
+		return writeHumanFrame(stdout, "tnl admin relays list", countState(len(page.Relays), "relay process", "relay processes"), "", blocks...)
 	})
 }
 
@@ -118,7 +119,7 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 	if command.RelayLeaseRevision < 1 || command.Deadline <= 0 {
 		return errors.New("relay lease revision and deadline must be positive")
 	}
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays drain", stderr, func(client *controlclient.Client) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays drain", stderr, func(client *controlclient.Client, server string) error {
 		lease, err := client.AdminDrainRelay(ctx, command.RelayID, controlv1.AdminDrainRelayRequest{
 			RelayRunId: command.RelayRunID, RelayLeaseRevision: command.RelayLeaseRevision,
 			Deadline: time.Now().Add(command.Deadline).UTC(),
@@ -131,6 +132,7 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 			footer = "deadline " + adminTime(*lease.DrainDeadline)
 		}
 		return writeHumanTransition(stdout, "tnl admin relays drain", "draining", string(lease.RelayId), "", "rejecting new work", footer,
+			clioutput.Field{Label: "server", Value: server},
 			clioutput.Field{Label: "process run", Value: string(lease.RelayRunId)},
 			clioutput.Field{Label: "lease revision", Value: strconv.FormatInt(lease.RelayLeaseRevision, 10)},
 		)
@@ -138,12 +140,12 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 }
 
 func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin maintenance list", stderr, func(client *controlclient.Client) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin maintenance list", stderr, func(client *controlclient.Client, server string) error {
 		values, err := client.AdminListMaintenanceControls(ctx)
 		if err != nil {
 			return err
 		}
-		blocks := make([]clioutput.Block, 0, len(values))
+		blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "server", Value: server})}
 		for _, value := range values {
 			blocks = append(blocks, clioutput.Section(string(value.Name), clioutput.Fields(
 				clioutput.Field{Label: "state", Value: allowedState(value.Allowed)},
@@ -152,7 +154,7 @@ func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCo
 				clioutput.Field{Label: "updated by", Value: string(value.UpdatedBy)},
 			)))
 		}
-		return writeHumanFrame(stdout, "tnl admin maintenance list", countState(len(blocks), "control", "controls"), "", blocks...)
+		return writeHumanFrame(stdout, "tnl admin maintenance list", countState(len(values), "control", "controls"), "", blocks...)
 	})
 }
 
@@ -162,17 +164,18 @@ func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetComm
 		action = "allow"
 	}
 	commandName := "tnl admin maintenance " + action
-	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *controlclient.Client) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *controlclient.Client, server string) error {
 		value, err := client.AdminSetMaintenanceControl(ctx, command.Name, allowed)
 		if err != nil {
 			return err
 		}
 		return writeHumanTransition(stdout, commandName, "updated", string(value.Name), "", allowedState(value.Allowed), "",
+			clioutput.Field{Label: "server", Value: server},
 			clioutput.Field{Label: "control revision", Value: strconv.FormatInt(value.Revision, 10)})
 	})
 }
 
-func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command string, diagnostics io.Writer, run func(*controlclient.Client) error) error {
+func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command string, diagnostics io.Writer, run func(*controlclient.Client, string) error) error {
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
@@ -187,7 +190,7 @@ func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command strin
 	if err != nil {
 		return err
 	}
-	return run(authenticated.Control)
+	return run(authenticated.Control, serverURL)
 }
 
 func adminTime(value time.Time) string { return value.UTC().Format(time.RFC3339) }

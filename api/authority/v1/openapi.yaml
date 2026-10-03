@@ -571,7 +571,7 @@ components:
         kind:
           $ref: "#/components/schemas/TeamKind"
         display_name:
-          type: string
+          $ref: "#/components/schemas/CanonicalLabel"
         managed_label:
           $ref: "#/components/schemas/CanonicalLabel"
         default_domain_id:
@@ -600,12 +600,10 @@ components:
     CreateTeamRequest:
       type: object
       additionalProperties: false
-      required: [display_name, member_slug]
+      required: [display_name]
       properties:
         display_name:
-          type: string
-          minLength: 1
-          maxLength: 128
+          $ref: "#/components/schemas/CanonicalLabel"
         member_slug:
           $ref: "#/components/schemas/CanonicalLabel"
     Membership:
@@ -633,7 +631,7 @@ components:
         identity_id:
           $ref: "#/components/schemas/IdentityID"
         team_display_name:
-          type: string
+          $ref: "#/components/schemas/CanonicalLabel"
         team_kind:
           $ref: "#/components/schemas/TeamKind"
         role:

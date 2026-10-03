@@ -55,7 +55,7 @@
         },
         "team": {
           "type": "string",
-          "description": "Team ID or unambiguous display name used by this project."
+          "description": "Unique lowercase team name or team ID used by this project."
         },
         "tunnel": {
           "allOf": [

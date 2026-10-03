@@ -13,36 +13,36 @@ import (
 )
 
 type domainCommand struct {
-	Claim   domainClaimCommand   `cmd:"" help:"Claim a domain for the selected team."`
+	Claim   domainClaimCommand   `cmd:"" help:"Claim a team domain; use tnl domain status to check its DNS records."`
 	Default domainDefaultCommand `cmd:"" help:"Set the selected team's default domain."`
 	List    domainListCommand    `cmd:"" help:"List domains available to the selected team."`
-	Status  domainStatusCommand  `cmd:"" help:"Show DNS setup for one team domain."`
+	Status  domainStatusCommand  `cmd:"" help:"Show DNS setup for one team domain by name or ID."`
 	Release domainReleaseCommand `cmd:"" help:"Release a claimed domain."`
 }
 
 type domainClaimCommand struct {
-	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Canonical domain name to claim."`
-	Default     bool   `name:"default" help:"Make the domain the team default after it becomes ready."`
+	scopedTeamFlags `embed:""`
+	Domain          string `arg:"" name:"domain" required:"" help:"Canonical domain name to claim."`
+	Default         bool   `name:"default" help:"Make the domain the team default after it becomes ready."`
 }
 
 type domainDefaultCommand struct {
-	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
+	scopedTeamFlags `embed:""`
+	Domain          string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 type domainListCommand struct {
-	remoteFlags `embed:""`
+	scopedTeamFlags `embed:""`
 }
 
 type domainStatusCommand struct {
-	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
+	scopedTeamFlags `embed:""`
+	Domain          string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 type domainReleaseCommand struct {
-	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
+	scopedTeamFlags `embed:""`
+	Domain          string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 func runDomainClaim(ctx context.Context, command domainClaimCommand, output, diagnostics io.Writer) error {
@@ -50,12 +50,12 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil || domain != command.Domain {
 		return errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")
 	}
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain claim", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl domain claim", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.currentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil {
 		return err
 	}
-	return writeDomainClaim(output, claimed, command.Default, timedOut)
+	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, session.authenticated.ServerEndpoint, current.team.Id)
 }
 
 type domainClaimAPI interface {
@@ -139,6 +139,10 @@ func claimAndWaitForDomainRecords(ctx context.Context, api domainClaimAPI, teamI
 }
 
 func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool) error {
+	return writeDomainClaimWithContext(output, claimed, makeDefault, timedOut, "", "")
+}
+
+func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool, server, team string) error {
 	blocks := []clioutput.Block{clioutput.Fields(
 		clioutput.Field{Label: "domain", Value: claimed.CanonicalDomain},
 		clioutput.Field{Label: "state", Value: string(claimed.State)},
@@ -147,9 +151,16 @@ func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault,
 	blocks = append(blocks, domainDNSRecordBlocks(claimed.RequiredRecords)...)
 	state, footer := domainClaimPresentation(claimed, makeDefault)
 	if timedOut {
+		next := "tnl domain status " + claimed.CanonicalDomain
+		if server != "" {
+			next += " --server=" + server
+		}
+		if team != "" {
+			next += " --team=" + team
+		}
 		state, footer = "saved", "claim saved; check with tnl domain status"
 		blocks = append(blocks, clioutput.Text("DNS records not yet available"), clioutput.Fields(
-			clioutput.Field{Label: "next", Value: "tnl domain status " + claimed.CanonicalDomain},
+			clioutput.Field{Label: "next", Value: next},
 		))
 		if makeDefault {
 			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
@@ -159,16 +170,19 @@ func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault,
 }
 
 func runDomainList(ctx context.Context, command domainListCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain list", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl domain list", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.currentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
-	blocks := make([]clioutput.Block, 0, len(current.domains))
+	blocks := []clioutput.Block{clioutput.Fields(
+		clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
+		clioutput.Field{Label: "team", Value: current.team.DisplayName},
+	)}
 	for _, domain := range current.domains {
 		title := domain.CanonicalDomain
 		if domain.Id == current.team.DefaultDomainId {
@@ -182,16 +196,16 @@ func runDomainList(ctx context.Context, command domainListCommand, output, diagn
 		details = append(details, domainDNSRecordBlocks(domain.RequiredRecords)...)
 		blocks = append(blocks, clioutput.Section(title, details...))
 	}
-	return writeHumanFrame(output, "tnl domain list", countState(len(blocks), "domain", "domains"), "* default", blocks...)
+	return writeHumanFrame(output, "tnl domain list", countState(len(current.domains), "domain", "domains"), "* default", blocks...)
 }
 
 func runDomainStatus(ctx context.Context, command domainStatusCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain status", diagnostics)
+	session, err := openTeamSession(ctx, command.selection(), "tnl domain status", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.currentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
@@ -270,7 +284,7 @@ func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (strin
 }
 
 func runDomainDefault(ctx context.Context, command domainDefaultCommand, output, diagnostics io.Writer) error {
-	return mutateDomain(ctx, command.remoteFlags, "tnl domain default", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
+	return mutateDomain(ctx, command.selection(), "tnl domain default", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
 		team, err := session.api.SetTeamDefaultDomain(ctx, current.team.Id, domain.Id)
 		if err != nil {
 			return err
@@ -281,7 +295,7 @@ func runDomainDefault(ctx context.Context, command domainDefaultCommand, output,
 }
 
 func runDomainRelease(ctx context.Context, command domainReleaseCommand, output, diagnostics io.Writer) error {
-	return mutateDomain(ctx, command.remoteFlags, "tnl domain release", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
+	return mutateDomain(ctx, command.selection(), "tnl domain release", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
 		if err := session.api.ReleaseTeamDomain(ctx, current.team.Id, domain.Id); err != nil {
 			return err
 		}
@@ -296,7 +310,7 @@ func mutateDomain(ctx context.Context, flags remoteFlags, command, value string,
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.currentWithDomains(ctx)
 	if err != nil {
 		return err
 	}

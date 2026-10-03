@@ -5,10 +5,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -22,6 +22,8 @@ var (
 	ErrAuthorityInvalid     = errors.New("controlstate: authority request is invalid")
 	ErrMembershipNotFound   = errors.New("controlstate: membership not found")
 	ErrTeamNotFound         = errors.New("controlstate: team not found")
+	ErrTeamNameUnavailable  = errors.New("controlstate: team name unavailable")
+	ErrMemberSlugRequired   = errors.New("controlstate: member slug required")
 )
 
 type Team struct {
@@ -65,7 +67,8 @@ type CreateTeamRequest struct {
 
 func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, now time.Time) (result Team, retErr error) {
 	if !validStateText(request.IdentityID) || !validIdempotencyKey(request.IdempotencyKey) ||
-		!validDisplayName(request.DisplayName) || !validAuthorityLabel(request.MemberSlug) || now.IsZero() {
+		!naming.ValidAuthorityLabel(request.DisplayName) ||
+		(request.MemberSlug != "" && !naming.ValidAuthorityLabel(request.MemberSlug)) || now.IsZero() {
 		return Team{}, ErrAuthorityInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -77,7 +80,8 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	}
 	defer rollback(ctx, tx, "create team", &retErr)()
 	queries := controlstatedb.New(tx)
-	if _, err := queries.LockIdentityForTeamCreation(ctx, request.IdentityID); errors.Is(err, pgx.ErrNoRows) {
+	identity, err := queries.LockIdentityForTeamCreation(ctx, request.IdentityID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Team{}, ErrAuthorityAccess
 	} else if err != nil {
 		return Team{}, fmt.Errorf("controlstate: create team: lock identity: %w", err)
@@ -100,9 +104,23 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Team{}, fmt.Errorf("controlstate: create team: read idempotent team: %w", err)
 	}
+	memberSlug := request.MemberSlug
+	if memberSlug == "" {
+		memberSlug = naming.MemberSlugFromDisplayName(identity.DisplayName)
+		if !naming.ValidAuthorityLabel(memberSlug) {
+			return Team{}, ErrMemberSlugRequired
+		}
+	}
 	managedDomain, err := queries.FindManagedDomain(ctx)
 	if err != nil {
 		return Team{}, fmt.Errorf("controlstate: create team: read managed deployment domain: %w", err)
+	}
+	// reserve the team name in the generated-label pool so a future personal
+	// team cannot receive the same name.
+	if _, err := queries.ReserveManagedLabel(ctx, controlstatedb.ReserveManagedLabelParams{
+		Label: request.DisplayName, CreatedAt: timestamp(now),
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, fmt.Errorf("controlstate: create team: reserve name label: %w", err)
 	}
 	managedLabel, err := availableManagedLabel(ctx, queries, now)
 	if err != nil {
@@ -128,10 +146,14 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 		CreatedAt: createdAt,
 	})
 	if err != nil {
+		var duplicate *pgconn.PgError
+		if errors.As(err, &duplicate) && duplicate.ConstraintName == "teams_name_unique" {
+			return Team{}, fmt.Errorf("team name %q is already taken: %w", request.DisplayName, ErrTeamNameUnavailable)
+		}
 		return Team{}, fmt.Errorf("controlstate: create team: insert team: %w", err)
 	}
 	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
-		ID: reservationID, TeamID: teamID, MemberSlug: request.MemberSlug,
+		ID: reservationID, TeamID: teamID, MemberSlug: memberSlug,
 		IdentityID: text(request.IdentityID), CreatedAt: createdAt,
 	}); err != nil {
 		return Team{}, fmt.Errorf("controlstate: create team: reserve creator slug: %w", err)
@@ -492,15 +514,6 @@ func nameserverRecords(domain string, nameservers []string) []DNSRecord {
 		records[index] = DNSRecord{Name: domain, Type: "NS", Value: nameserver}
 	}
 	return records
-}
-
-func validDisplayName(value string) bool {
-	return len(value) <= 128 && validStateText(value)
-}
-
-func validAuthorityLabel(value string) bool {
-	canonical, err := naming.CanonicalizeHostname(value)
-	return err == nil && canonical == value && !strings.Contains(value, ".") && len(value) <= naming.MaxLabelBytes
 }
 
 func validIdempotencyKey(value string) bool {
