@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 )
@@ -279,9 +280,9 @@ func (m *testMetrics) IncChallengeRejection(reason string) {
 		m.challengeMissing.Add(1)
 	}
 }
-func (m *testMetrics) ObserveVisitor(outcome string) {
+func (m *testMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
 	if m.visitorOutcomes != nil {
-		m.visitorOutcomes <- outcome
+		m.visitorOutcomes <- string(outcome)
 	}
 	if outcome == "policy_denied" {
 		m.ipAllowlistDenials.Add(1)
@@ -297,5 +298,5 @@ func (m *testMetrics) AddForwardedBytes(direction string, n int64) {
 	}
 	m.forwardedBytes[direction] += n
 }
-func (*testMetrics) SetIngressStreams(int)              {}
-func (*testMetrics) ObserveRelayAttempt(string, string) {}
+func (*testMetrics) SetIngressStreams(int)                                         {}
+func (*testMetrics) ObserveRelayAttempt(string, observability.RelayAttemptOutcome) {}

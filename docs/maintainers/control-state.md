@@ -104,6 +104,31 @@ Session operations use `NO KEY UPDATE` route guards. Route identity is
 immutable, and usage's `KEY SHARE` references can coexist with heartbeats. Public URL
 mutations still conflict.
 
+## publish member namespace dns
+
+For a member public URL one label beneath a managed or claimed namespace,
+control's DNS worker ensures an A/AAAA wildcard at `*.member.example` rather
+than exact address and `_tnl-owner` records for each public URL. One
+`_tnl-wildcard.member.example` TXT record identifies the namespace wildcard;
+it does not create a DNS node beneath a service hostname. The existing per-URL
+DNS work still advances from `pending` to `published` after authoritative
+nameservers confirm the wildcard. A publish run waits for that state before
+becoming ready. Ingress still requires an exact saved public URL hostname.
+
+The wildcard belongs to the member namespace. Deleting or suspending one
+public URL advances its DNS work to `removed` without deleting that shared
+record. On claimed-domain release, control removes its owned namespace
+wildcards before deleting the Route 53 zone. Member namespace apexes and
+shared public URLs retain exact-name DNS. Old exact A/AAAA and `_tnl-owner`
+records can coexist with the wildcard until they are removed together; an
+owner TXT without the exact address record prevents wildcard resolution for
+that hostname.
+
+For every DNS-managed public URL, publish run readiness waits for the DNS
+worker's authoritative verification. `tnl dev` and `tnl publish --open` also
+wait up to two minutes for the local resolver before opening a browser. URLs
+whose DNS tnl does not manage do not wait for this verification.
+
 ## retain routing history safely
 
 Control publishes a monotonic retained-after revision before deleting routing

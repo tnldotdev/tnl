@@ -318,7 +318,23 @@ func (f *integrationRoute53) serveDNS(w dns.ResponseWriter, request *dns.Msg) {
 			case name == zone.Name && question.Qtype == dns.TypeSOA:
 				add("ns1.integration.test. hostmaster.integration.test. 1 60 60 60 1")
 			default:
-				for _, value := range zone.records[name+"/"+dns.TypeToString[question.Qtype]].Values {
+				selected := zone.records[name+"/"+dns.TypeToString[question.Qtype]]
+				if len(selected.Values) == 0 {
+					_, parent, hasParent := strings.Cut(name, ".")
+					if hasParent {
+						exists := false
+						for _, record := range zone.records {
+							if record.Name == name || strings.HasSuffix(record.Name, "."+name) {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							selected = zone.records["*."+parent+"/"+dns.TypeToString[question.Qtype]]
+						}
+					}
+				}
+				for _, value := range selected.Values {
 					add(value.Value)
 				}
 			}

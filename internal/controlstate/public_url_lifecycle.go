@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/readiness"
 )
 
 var (
@@ -29,20 +31,25 @@ const transactionRollbackTimeout = 5 * time.Second
 type PublishRunNotReadyError struct {
 	CertificateInstalled          bool
 	ReadyPublisherConnectionCount int
+	DNSState                      PublicURLDNSState
 	CreatedAt                     time.Time
 }
 
 func (e *PublishRunNotReadyError) Error() string { return ErrPublishRunNotReady.Error() }
 func (e *PublishRunNotReadyError) Unwrap() error { return ErrPublishRunNotReady }
 
-func (e *PublishRunNotReadyError) Reason() string {
+func (e *PublishRunNotReadyError) Reason() readiness.Outcome {
 	switch {
+	case e.DNSState == PublicURLDNSFailed:
+		return readiness.DNSFailed
+	case e.DNSState != "":
+		return readiness.DNSPending
 	case !e.CertificateInstalled && e.ReadyPublisherConnectionCount != publishRunConnectionCount:
-		return "certificate_and_connections_missing"
+		return readiness.CertificateAndConnectionsMissing
 	case !e.CertificateInstalled:
-		return "certificate_missing"
+		return readiness.CertificateMissing
 	default:
-		return "connections_missing"
+		return readiness.ConnectionsMissing
 	}
 }
 
@@ -141,6 +148,12 @@ func (d *Database) MarkPublishRunReady(
 			return PublishRunLifecycle{}, &PublishRunNotReadyError{
 				CertificateInstalled:          session.CertificateInstalledAt.Valid,
 				ReadyPublisherConnectionCount: len(connections), CreatedAt: session.CreatedAt.Time,
+			}
+		}
+		if dnsState := PublicURLDNSState(route.DnsState); dnsState != PublicURLDNSUnmanaged && dnsState != PublicURLDNSPublished {
+			return PublishRunLifecycle{}, &PublishRunNotReadyError{
+				CertificateInstalled: true, ReadyPublisherConnectionCount: len(connections),
+				DNSState: dnsState, CreatedAt: session.CreatedAt.Time,
 			}
 		}
 		session, err = queries.MarkPublishRunReady(ctx, controlstatedb.MarkPublishRunReadyParams{
@@ -379,9 +392,9 @@ func (d *Database) HeartbeatPublishRun(
 		metrics.AddAssignmentReplacements(reason, count)
 	}
 	if replenishment.attempted {
-		outcome := "placed"
+		outcome := observability.PlacementPlaced
 		if replenishment.unavailable {
-			outcome = "unavailable"
+			outcome = observability.PlacementUnavailable
 		}
 		metrics.ObservePlacement("replenish", outcome)
 	}

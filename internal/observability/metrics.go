@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/tnldotdev/tnl/internal/readiness"
 )
 
 // Metrics owns a process-local Prometheus registry.
@@ -348,40 +349,41 @@ func (m *Metrics) AddForwardedBytes(direction string, count int64) {
 	m.forwardedBytes.WithLabelValues(direction).Add(float64(count))
 }
 
-func (m *Metrics) ObserveRelayAttempt(slot, outcome string) {
+func (m *Metrics) ObserveRelayAttempt(slot string, outcome RelayAttemptOutcome) {
 	if slot != "0" && slot != "1" {
 		slot = "unknown"
 	}
 	switch outcome {
-	case "open_failed", "setup_failed", "committed_failed", "committed", "other":
+	case RelayAttemptOpenFailed, RelayAttemptSetupFailed, RelayAttemptCommittedFailed, RelayAttemptCommitted, RelayAttemptOther:
 	default:
-		outcome = "other"
+		outcome = RelayAttemptOther
 	}
-	m.relayAttempts.WithLabelValues(slot, outcome).Inc()
+	m.relayAttempts.WithLabelValues(slot, string(outcome)).Inc()
 }
 
-func (m *Metrics) ObserveAPIRequest(surface, operation, outcome string, duration time.Duration) {
-	m.apiDuration.WithLabelValues(surface, operation, outcome).Observe(duration.Seconds())
+func (m *Metrics) ObserveAPIRequest(surface, operation string, outcome APIRequestOutcome, duration time.Duration) {
+	m.apiDuration.WithLabelValues(surface, operation, string(outcome)).Observe(duration.Seconds())
 }
 
 // outcomes and stages are closed sets, independent of public URL and order identity.
-func (m *Metrics) ObservePublishRunReadiness(outcome string, duration, age time.Duration) {
+func (m *Metrics) ObservePublishRunReadiness(outcome readiness.Outcome, duration, age time.Duration) {
 	switch outcome {
-	case "ready", "certificate_missing", "connections_missing", "certificate_and_connections_missing", "error":
+	case readiness.Ready, readiness.CertificateMissing, readiness.ConnectionsMissing,
+		readiness.CertificateAndConnectionsMissing, readiness.DNSPending, readiness.DNSFailed, readiness.Error:
 	default:
-		outcome = "error"
+		outcome = readiness.Error
 	}
-	m.readinessDuration.WithLabelValues(outcome).Observe(duration.Seconds())
-	if outcome != "error" && age >= 0 {
-		m.readinessAge.WithLabelValues(outcome).Observe(age.Seconds())
+	m.readinessDuration.WithLabelValues(string(outcome)).Observe(duration.Seconds())
+	if outcome != readiness.Error && age >= 0 {
+		m.readinessAge.WithLabelValues(string(outcome)).Observe(age.Seconds())
 	}
 }
 
-func (m *Metrics) ObserveCertificateWork(stage, outcome string, duration time.Duration) {
+func (m *Metrics) ObserveCertificateWork(stage string, outcome CertificateWorkOutcome, duration time.Duration) {
 	m.ObserveCertificateIteration("public_url", stage, outcome, duration)
 }
 
-func (m *Metrics) ObserveCertificateIteration(kind, stage, outcome string, duration time.Duration) {
+func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
 	if kind != "public_url" && kind != "relay" {
 		return
 	}
@@ -391,11 +393,11 @@ func (m *Metrics) ObserveCertificateIteration(kind, stage, outcome string, durat
 		stage = "other"
 	}
 	switch outcome {
-	case "progress", "retry", "terminal", "save_failed":
+	case CertificateProgress, CertificateRetry, CertificateTerminal, CertificateSaveFailed:
 	default:
-		outcome = "retry"
+		outcome = CertificateRetry
 	}
-	m.certificateDuration.WithLabelValues(kind, stage, outcome).Observe(duration.Seconds())
+	m.certificateDuration.WithLabelValues(kind, stage, string(outcome)).Observe(duration.Seconds())
 }
 
 func (m *Metrics) ObserveCertificateMilestone(milestone string, age time.Duration) {

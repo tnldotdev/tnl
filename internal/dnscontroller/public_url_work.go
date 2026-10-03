@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (bool, error) {
@@ -64,6 +65,12 @@ func (w *Worker) advancePublicURL(ctx context.Context, work *controlstate.DNSPub
 		ipv4, ipv6 = record.IngressIPv4Addresses, record.IngressIPv6Addresses
 		complete = controlstate.PublicURLDNSPublished
 	case controlstate.PublicURLDNSRemoving:
+		if record.WildcardHostname != "" {
+			// the wildcard belongs to the namespace, not this public URL.
+			work.State = controlstate.PublicURLDNSRemoved
+			work.AvailableAt = time.Time{}
+			return nil
+		}
 		zone, err = w.provider.RemovePublicURL(ctx, record)
 		complete = controlstate.PublicURLDNSRemoved
 	default:
@@ -78,7 +85,11 @@ func (w *Worker) advancePublicURL(ctx context.Context, work *controlstate.DNSPub
 		nameservers = zone.Nameservers
 	}
 	started = time.Now()
-	verified, err := w.verifier.VerifyPublicURL(ctx, work.CanonicalHostname, ipv4, ipv6, nameservers)
+	dnsHostname := record.CanonicalHostname
+	if record.WildcardHostname != "" {
+		dnsHostname = record.WildcardHostname
+	}
+	verified, err := w.verifier.VerifyPublicURL(ctx, dnsHostname, ipv4, ipv6, nameservers)
 	observeDNS(w.config.Observer, "public_url", "verify", started, verified, err)
 	if err != nil {
 		return err
@@ -106,6 +117,9 @@ func (w *Worker) publicURLRecord(
 		if record.ZoneID == "" {
 			return PublicURLRecord{}, nil, false, terminalf("managed Route 53 zone is not configured")
 		}
+		if work.PublicURLScope == controlstate.PublicURLScopeMember {
+			record.WildcardHostname = naming.MemberWildcardHostname(work.CanonicalHostname, w.config.ManagedDomain)
+		}
 		return record, nil, true, nil
 	}
 	if work.DNSAuthorityReference == "" {
@@ -127,6 +141,9 @@ func (w *Worker) publicURLRecord(
 	}
 	record.ZoneID, record.ZoneDomain, record.ClaimedZone = authority.ProviderZoneID, authority.CanonicalDomain, true
 	record.AuthorityReference, record.TeamID = authority.Reference, authority.TeamID
+	if work.PublicURLScope == controlstate.PublicURLScopeMember {
+		record.WildcardHostname = naming.MemberWildcardHostname(work.CanonicalHostname, authority.CanonicalDomain)
+	}
 	return record, authority.Nameservers, true, nil
 }
 

@@ -250,6 +250,93 @@ func TestIntegrationPublishRunReadiness(t *testing.T) {
 	}
 }
 
+func TestIntegrationManagedMemberReadinessWaitsForWildcardDNS(t *testing.T) {
+	database, now, request, leases := newPublishRunPrerequisites(t)
+	const hostname = "api.member-session.tnl.wtf"
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.domains (id, kind, canonical_domain, state, authority_revision, created_at, verified_at, updated_at)
+		VALUES ('domain_managed', 'managed', 'tnl.wtf', 'ready', 1, $1, $1, $1)
+	`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.public_urls SET domain_id = 'domain_managed', membership_id = 'membership_session',
+			public_url_scope = 'member', canonical_hostname = $2, dns_state = 'pending', dns_available_at = $3
+		WHERE id = $1
+	`, request.PublicURLID, hostname, now); err != nil {
+		t.Fatal(err)
+	}
+	request.CertificateCacheKey, request.CertificateScope = "member-session.tnl.wtf", "member-session.tnl.wtf"
+	request.CertificateIdentifiers = []string{"*.member-session.tnl.wtf", "member-session.tnl.wtf"}
+	request.CertificateChallenge = "dns-01"
+	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := publishRunFixture{database, now, request, setup, leases}
+	authentication := f.authentication()
+	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
+	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
+		t.Fatal(err)
+	}
+	for slot := range setup.PublisherConnections {
+		claimTestConnection(t, f, slot, now)
+	}
+	if _, err := database.MarkPublishRunReady(t.Context(), authentication, now); !errors.Is(err, ErrPublishRunNotReady) {
+		t.Fatalf("ready before wildcard DNS: %v", err)
+	} else {
+		var blocked *PublishRunNotReadyError
+		if !errors.As(err, &blocked) || blocked.Reason() != "dns_pending" {
+			t.Fatalf("DNS readiness reason = %#v, %v", blocked, err)
+		}
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, request.PublicURLID); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
+	if err != nil || !ready.Routable {
+		t.Fatalf("ready after wildcard DNS = %#v, %v", ready, err)
+	}
+}
+
+func TestIntegrationExactPublicURLReadinessWaitsForDNS(t *testing.T) {
+	f := newPublishRunFixture(t)
+	database, now, authentication := f.database, f.now, f.authentication()
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'pending', dns_available_at = $2 WHERE id = $1`, f.setup.PublicURLID, now); err != nil {
+		t.Fatal(err)
+	}
+	work := createPlanIssuanceWork(t, database, now, authentication, f.certificatePlan(), true, nil)
+	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
+		t.Fatal(err)
+	}
+	for slot := range f.setup.PublisherConnections {
+		claimTestConnection(t, f, slot, now)
+	}
+	for _, test := range []struct {
+		state  string
+		reason string
+	}{
+		{"pending", "dns_pending"},
+		{"failed", "dns_failed"},
+	} {
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = $2, dns_available_at = CASE WHEN $2 = 'pending' THEN $3::timestamptz END WHERE id = $1`, f.setup.PublicURLID, test.state, now); err != nil {
+			t.Fatal(err)
+		}
+		_, err := database.MarkPublishRunReady(t.Context(), authentication, now)
+		var blocked *PublishRunNotReadyError
+		if !errors.As(err, &blocked) || string(blocked.Reason()) != test.reason {
+			t.Fatalf("exact URL DNS %s = %#v, %v", test.state, blocked, err)
+		}
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, f.setup.PublicURLID); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
+	if err != nil || !ready.Routable {
+		t.Fatalf("exact URL ready after DNS = %#v, %v", ready, err)
+	}
+}
+
 func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now := f.database, f.now

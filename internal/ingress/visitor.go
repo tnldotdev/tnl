@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -35,7 +36,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	var ok bool
 	var challengeReason string
 	challenge := hello.ACMETLSALPN
-	visitorOutcome := "lookup_missing"
+	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
 	if !challenge && s.config.Metrics != nil {
 		defer func() { s.config.Metrics.ObserveVisitor(visitorOutcome) }()
@@ -289,7 +290,7 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 	return err
 }
 
-func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome string) {
+func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome observability.RelayAttemptOutcome) {
 	if s.config.Metrics == nil {
 		return
 	}

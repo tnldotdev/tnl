@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -101,9 +102,9 @@ func (d *Database) CreatePublishRun(
 		if !errors.Is(retErr, ErrInsufficientRelayServices) {
 			return
 		}
-		outcome := "insufficient_services"
+		outcome := observability.PlacementInsufficientServices
 		if errors.Is(retErr, errRelayPlacementCapacity) {
-			outcome = "capacity"
+			outcome = observability.PlacementCapacity
 		}
 		d.activity.metrics.Load().ObservePlacement("create", outcome)
 	}()
