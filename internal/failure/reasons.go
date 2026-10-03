@@ -64,7 +64,9 @@ const (
 	ServerRelayFailed           Reason = "server.relay_failed"
 	ServerConnectionFailed      Reason = "server.connection_failed"
 	ServerCertificateFailed     Reason = "server.certificate_failed"
+	ServerCertificateRejected   Reason = "server.certificate_rejected"
 	ServerDNSFailed             Reason = "server.dns_failed"
+	ServerDNSConflict           Reason = "server.dns_conflict"
 	ServerUsageDeliveryFailed   Reason = "server.usage_delivery_failed"
 	ServerAPIInternal           Reason = "server.api_internal"
 	Unexpected                  Reason = "internal.unexpected"
@@ -321,9 +323,17 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "certificate work failed",
 		Action: "check ACME access and DNS validation, then retry", Retry: RetryLater,
 	},
+	ServerCertificateRejected: {
+		Class: Conflict, Message: "certificate issuance or validation failed permanently",
+		Action: "check the ACME order, certificate plan, and DNS challenge before retrying", Retry: RetryAfterChange,
+	},
 	ServerDNSFailed: {
 		Class: Unavailable, Message: "DNS work failed",
 		Action: "check Route 53 access and DNS authority, then retry", Retry: RetryLater,
+	},
+	ServerDNSConflict: {
+		Class: Conflict, Message: "DNS records or zone ownership conflict with this public URL",
+		Action: "inspect zone delegation, ownership records, and existing address records", Retry: RetryAfterChange,
 	},
 	ServerUsageDeliveryFailed: {
 		Class: Unavailable, Message: "usage delivery failed",

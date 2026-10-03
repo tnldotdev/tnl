@@ -31,3 +31,20 @@ func TestEveryReasonHasActionAndKnownClass(t *testing.T) {
 		}
 	}
 }
+
+type domainFailure struct{ error }
+
+func (domainFailure) FailureReason() Reason { return ServerDNSConflict }
+func (e domainFailure) Unwrap() error       { return e.error }
+
+func TestDomainFailureKeepsItsTypeAndSafeReason(t *testing.T) {
+	cause := domainFailure{errors.New("provider returned token=secret")}
+	err := fmt.Errorf("reconcile DNS: %w", cause)
+	if !errors.Is(err, cause.error) {
+		t.Fatal("domain failure lost its cause")
+	}
+	reason, definition, ok := Describe(err)
+	if !ok || reason != ServerDNSConflict || strings.Contains(definition.Message+definition.Action, "secret") {
+		t.Fatalf("domain failure = %q, %#v, %t", reason, definition, ok)
+	}
+}

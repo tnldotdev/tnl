@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 type ChallengeRecord struct {
@@ -31,7 +32,7 @@ type ChallengeStore interface {
 	WithDNSChallengeLock(context.Context, string, func() error) error
 }
 
-var ErrChallengesNotConfigured = terminalf("DNS challenge automation is not configured")
+var ErrChallengesNotConfigured = terminalReasonf(failure.ServerDNSConfigInvalid, "DNS challenge automation is not configured")
 
 type ChallengeProvider interface {
 	ReconcileChallenge(context.Context, ChallengeRecord) (Zone, error)

@@ -27,6 +27,9 @@ func Format(operation failure.Operation, reason failure.Reason, requestID string
 
 func Report(operation failure.Operation, reason failure.Reason, requestID string, cause error) {
 	if cause != nil {
+		if specific, ok := failure.ReasonOf(cause); ok {
+			reason = specific
+		}
 		log.Print(Format(operation, reason, requestID))
 	}
 }

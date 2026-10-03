@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
@@ -62,8 +63,9 @@ func runWorkerLoop(
 		Process:          worker.processOne,
 		OnError: func(err error) {
 			if !errors.Is(err, context.Canceled) {
-				definition, _ := failure.DefinitionFor(failure.ServerCertificateFailed)
-				logger.Error(failureMessage, "reason", failure.ServerCertificateFailed, "action", definition.Action)
+				reason := certificateFailureReason(err)
+				definition, _ := failure.DefinitionFor(reason)
+				logger.Error(failureMessage, "reason", reason, "action", definition.Action)
 			}
 		},
 	})
@@ -97,16 +99,24 @@ func acmeOrderProgress(status string, now, retryAfter time.Time, interval time.D
 }
 
 func storedFailureReason(err error) string {
-	if reason, _, ok := failure.Describe(err); ok {
-		return string(reason)
+	return string(certificateFailureReason(err))
+}
+
+func certificateFailureReason(err error) failure.Reason {
+	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+		return failure.ServerDNSConfigInvalid
 	}
-	return string(failure.ServerCertificateFailed)
+	if reason, ok := failure.ReasonOf(err); ok {
+		return reason
+	}
+	return failure.ServerCertificateFailed
 }
 
 type terminalError struct{ message string }
 
-func (e *terminalError) Error() string  { return e.message }
-func (e *terminalError) Terminal() bool { return true }
+func (e *terminalError) Error() string                 { return e.message }
+func (e *terminalError) Terminal() bool                { return true }
+func (e *terminalError) FailureReason() failure.Reason { return failure.ServerCertificateRejected }
 
 func terminalf(format string, arguments ...any) error {
 	return &terminalError{message: fmt.Sprintf("certificates: "+format, arguments...)}

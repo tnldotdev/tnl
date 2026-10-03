@@ -139,8 +139,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		Process:          w.processOne,
 		OnError: func(err error) {
 			if ctx.Err() == nil {
-				definition, _ := failure.DefinitionFor(failure.ServerDNSFailed)
-				w.config.Logger.Error("DNS controller iteration failed", "reason", failure.ServerDNSFailed, "action", definition.Action)
+				reason := dnsFailureReason(err)
+				definition, _ := failure.DefinitionFor(reason)
+				w.config.Logger.Error("DNS controller iteration failed", "reason", reason, "action", definition.Action)
 			}
 		},
 	})
@@ -180,19 +181,31 @@ func (w *Worker) retryAvailableAt(attempts uint64, now time.Time) time.Time {
 	return now.Add(delay)
 }
 
-type terminalError struct{ message string }
+type terminalError struct {
+	message string
+	reason  failure.Reason
+}
 
 func (e *terminalError) Error() string { return e.message }
 
-func (e *terminalError) Terminal() bool { return true }
+func (e *terminalError) Terminal() bool                { return true }
+func (e *terminalError) FailureReason() failure.Reason { return e.reason }
 
 func terminalf(format string, arguments ...any) error {
-	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...)}
+	return terminalReasonf(failure.ServerDNSConflict, format, arguments...)
+}
+
+func terminalReasonf(reason failure.Reason, format string, arguments ...any) error {
+	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...), reason: reason}
 }
 
 func storedFailureReason(err error) string {
-	if reason, _, ok := failure.Describe(err); ok {
-		return string(reason)
+	return string(dnsFailureReason(err))
+}
+
+func dnsFailureReason(err error) failure.Reason {
+	if reason, ok := failure.ReasonOf(err); ok {
+		return reason
 	}
-	return string(failure.ServerDNSFailed)
+	return failure.ServerDNSFailed
 }
