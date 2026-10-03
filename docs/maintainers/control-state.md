@@ -124,6 +124,10 @@ records can coexist with the wildcard until they are removed together; an
 owner TXT without the exact address record prevents wildcard resolution for
 that hostname.
 
+Route 53 lists a wildcard label as `\052`, not `*`. Normalize that name when
+comparing listed records or pagination cursors, while retaining the returned
+record set for an exact delete during claimed-domain release.
+
 For every DNS-managed public URL, publish run readiness waits for the DNS
 worker's authoritative verification. `tnl dev` and `tnl publish --open` also
 wait up to two minutes for the local resolver before opening a browser. URLs

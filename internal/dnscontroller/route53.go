@@ -696,18 +696,22 @@ func (p *Route53Provider) listRecordSets(ctx context.Context, zoneID, name strin
 			return nil, fmt.Errorf("dnscontroller: list Route 53 record sets: %w", err)
 		}
 		for _, item := range output.ResourceRecordSets {
-			if strings.ToLower(aws.ToString(item.Name)) != name {
+			if route53RecordName(aws.ToString(item.Name)) != name {
 				return result, nil
 			}
 			result = append(result, item)
 		}
-		if !output.IsTruncated || strings.ToLower(aws.ToString(output.NextRecordName)) != name {
+		if !output.IsTruncated || route53RecordName(aws.ToString(output.NextRecordName)) != name {
 			return result, nil
 		}
 		input.StartRecordName = output.NextRecordName
 		input.StartRecordType = output.NextRecordType
 		input.StartRecordIdentifier = output.NextRecordIdentifier
 	}
+}
+
+func route53RecordName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(name), `\052`, "*")
 }
 
 func simpleRecordSet(name string, recordType types.RRType, values []string) *types.ResourceRecordSet {

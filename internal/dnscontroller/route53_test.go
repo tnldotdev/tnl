@@ -163,7 +163,9 @@ func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T)
 		t.Fatalf("wildcard changes = %#v", client.changes)
 	}
 	client.recordSets[dnsName(memberWildcardOwnerName(record.WildcardHostname))] = []types.ResourceRecordSet{*client.changes[0].ResourceRecordSet}
-	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{*client.changes[1].ResourceRecordSet}
+	listedWildcard := *client.changes[1].ResourceRecordSet
+	listedWildcard.Name = aws.String(`\052.member.tunnels.example.test.`)
+	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{listedWildcard}
 	client.changes = nil
 	record.PublicURLID, record.CanonicalHostname = "public_url_two", "other.member.tunnels.example.test"
 	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) != 0 {
@@ -180,6 +182,42 @@ func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T)
 	}
 }
 
+func TestRoute53ProviderListsEscapedWildcardAcrossPages(t *testing.T) {
+	client, provider := route53TestProvider(t, "tunnels.example.test")
+	const hostname = "*.member.tunnels.example.test"
+	const listedName = `\052.member.tunnels.example.test.`
+	a := simpleRecordSet(hostname, types.RRTypeA, []string{"192.0.2.10"})
+	a.Name = aws.String(listedName)
+	aaaa := simpleRecordSet(hostname, types.RRTypeAaaa, []string{"2001:db8::10"})
+	aaaa.Name = aws.String(listedName)
+	calls := 0
+	client.listRecords = func(_ context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		calls++
+		switch calls {
+		case 1:
+			if aws.ToString(input.StartRecordName) != dnsName(hostname) {
+				t.Errorf("initial wildcard cursor = %#v", input)
+			}
+			return &route53.ListResourceRecordSetsOutput{
+				ResourceRecordSets: []types.ResourceRecordSet{*a}, IsTruncated: true,
+				NextRecordName: aws.String(listedName), NextRecordType: types.RRTypeAaaa,
+			}, nil
+		case 2:
+			if aws.ToString(input.StartRecordName) != listedName || input.StartRecordType != types.RRTypeAaaa {
+				t.Errorf("continued wildcard cursor = %#v", input)
+			}
+			return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{*aaaa}}, nil
+		default:
+			t.Fatalf("unexpected wildcard listing page %d", calls)
+			return nil, nil
+		}
+	}
+	sets, err := provider.listRecordSets(t.Context(), "Z123", hostname)
+	if err != nil || calls != 2 || len(sets) != 2 || sets[0].Type != types.RRTypeA || sets[1].Type != types.RRTypeAaaa {
+		t.Fatalf("wildcard sets = %#v, pages %d, error %v", sets, calls, err)
+	}
+}
+
 func TestRoute53ProviderReleasesOnlyOwnedClaimedMemberWildcards(t *testing.T) {
 	work := testDNSWork(time.Now().UTC())
 	work.ProviderZoneID = "Z123"
@@ -189,6 +227,7 @@ func TestRoute53ProviderReleasesOnlyOwnedClaimedMemberWildcards(t *testing.T) {
 	const wildcard = "*.member.claimed.example.test"
 	owner := simpleRecordSet(memberWildcardOwnerName(wildcard), types.RRTypeTxt, []string{memberWildcardOwnerValue(work.DomainID)})
 	address := simpleRecordSet(wildcard, types.RRTypeA, []string{"192.0.2.10"})
+	address.Name = aws.String(`\052.member.claimed.example.test.`)
 	foreignOwner := simpleRecordSet("_tnl-wildcard.foreign.claimed.example.test", types.RRTypeTxt, []string{`"someone-else"`})
 	client.listRecords = func(_ context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
 		switch aws.ToString(input.StartRecordName) {
@@ -211,7 +250,7 @@ func TestRoute53ProviderReleasesOnlyOwnedClaimedMemberWildcards(t *testing.T) {
 	}
 	if client.deletedZoneID != "Z123" || len(client.changes) != 2 ||
 		client.changes[0].Action != types.ChangeActionDelete || client.changes[1].Action != types.ChangeActionDelete ||
-		aws.ToString(client.changes[0].ResourceRecordSet.Name) != dnsName(wildcard) ||
+		aws.ToString(client.changes[0].ResourceRecordSet.Name) != aws.ToString(address.Name) ||
 		aws.ToString(client.changes[1].ResourceRecordSet.Name) != aws.ToString(owner.Name) {
 		t.Fatalf("claimed wildcard release = %#v, deleted zone %q", client.changes, client.deletedZoneID)
 	}
