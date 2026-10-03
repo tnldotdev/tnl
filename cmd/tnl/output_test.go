@@ -144,7 +144,7 @@ func TestDemoOutputMatchesPageAndPrintsReadyBeforeOpening(t *testing.T) {
 	}
 	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "https://real.generated.tnl.dev") ||
 		strings.Count(stderr.String(), "a1b2c3d4") != 2 ||
-		!strings.Contains(stderr.String(), "request count") ||
+		!strings.Contains(stderr.String(), "|  count") || strings.Contains(stderr.String(), "request count") ||
 		!strings.Contains(stderr.String(), "ping received") ||
 		strings.ContainsRune(stderr.String(), '\x1b') {
 		t.Fatalf("demo output = %q, stdout = %q", stderr.String(), stdout.String())

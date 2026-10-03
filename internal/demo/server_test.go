@@ -53,7 +53,8 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	data, err := io.ReadAll(page.Body)
 	page.Body.Close()
 	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), "Fira+Code") ||
-		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "request count") ||
+		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "round trip") ||
+		!strings.Contains(string(data), "generated at") ||
 		page.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
 	}
@@ -81,6 +82,10 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 			pong.Stamp != demo.Stamp() || len(pong.Stamp) != 8 || pong.RequestCount != count {
 			t.Fatalf("pong %d = %+v, status %d, error %v", count, pong, response.StatusCode, err)
 		}
+		if generated, err := time.Parse(time.RFC3339Nano, pong.GeneratedAt); err != nil ||
+			generated.Before(time.Now().Add(-time.Minute)) || generated.After(time.Now().Add(time.Minute)) {
+			t.Fatalf("pong generated at = %q, error = %v", pong.GeneratedAt, err)
+		}
 	}
 	mu.Lock()
 	if len(received) != 2 || received[0].RequestCount != 1 || received[1].RequestCount != 2 || received[1].Stamp != demo.Stamp() {
@@ -94,7 +99,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, stateResponse.Body)
 	stateResponse.Body.Close()
-	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 {
+	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 || state.GeneratedAt == "" {
 		t.Fatalf("state = %+v", state)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

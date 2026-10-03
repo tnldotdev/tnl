@@ -51,6 +51,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			result = errors.Join(result, localDemo.Close(closeCtx))
 		}()
 		flags.Target = localDemo.Target()
+		flags.Name = "demo-" + localDemo.Stamp()
 		output.setDemoStamp(localDemo.Stamp())
 	}
 	target, err := localproxy.NormalizeTarget(flags.Target)

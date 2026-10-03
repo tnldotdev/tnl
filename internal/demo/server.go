@@ -22,6 +22,7 @@ type State struct {
 	PublicURL    string `json:"public_url"`
 	Stamp        string `json:"stamp"`
 	RequestCount uint64 `json:"request_count"`
+	GeneratedAt  string `json:"generated_at,omitempty"`
 }
 
 type Server struct {
@@ -112,6 +113,8 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		d.state.GeneratedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		state.GeneratedAt = d.state.GeneratedAt
 		d.mu.Unlock()
 		writeState(w, state)
 	default:

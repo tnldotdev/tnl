@@ -38,8 +38,9 @@ npx tnl publish --demo
 ```
 
 Sign in when prompted. Once the public URL is ready, it opens in your browser.
-Click **ping** and compare the stamp and request count with the terminal
-running `tnl`. The page is served from a local process on your computer.
+Click **ping** and compare the URL's random stamp and ping count with the terminal
+running `tnl`. The page also shows browser round-trip time and when the local
+server generated the pong. The page is served from a process on your computer.
 By default, only your current IP can visit; use `--allow-all-ips` if you want
 someone else to try it. Ctrl+C stops the demo and removes its public URL.
 

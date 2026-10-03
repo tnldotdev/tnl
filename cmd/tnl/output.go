@@ -319,7 +319,7 @@ func (o *publishOutput) demoPing(state demo.State) error {
 	return writeHumanFrame(o.stderr, o.command, "ping received", "pong sent",
 		clioutput.Fields(
 			clioutput.Field{Label: "stamp", Value: state.Stamp},
-			clioutput.Field{Label: "request count", Value: fmt.Sprint(state.RequestCount)},
+			clioutput.Field{Label: "count", Value: fmt.Sprint(state.RequestCount)},
 		),
 	)
 }

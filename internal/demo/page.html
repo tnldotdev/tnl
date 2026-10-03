@@ -30,11 +30,14 @@
       .values dt { color: var(--muted); }
       .values dd { margin: 0; }
       .return { margin-top: 14px; color: var(--muted); }
+      .browser-response { position: relative; width: fit-content; max-width: 100%; margin-top: 24px; padding: 22px 16px 14px; border: 1px solid var(--rule); }
+      .response-label { position: absolute; top: -.85em; left: 10px; padding: 0 6px; background: var(--paper); }
+      .browser-response pre { font-weight: 500; }
       button { min-height: 44px; padding: 8px 18px; border: 1px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
       button:disabled { color: var(--muted); cursor: wait; }
       .result { min-height: 3em; margin-top: 16px; }
       footer { margin-top: auto; color: var(--muted); white-space: nowrap; overflow: hidden; font-size: 12px; }
-      @media (max-width: 480px) { .site { padding: 24px 16px; } main { padding-top: 48px; } .diagram { padding: 30px 16px 20px; } }
+      @media (max-width: 480px) { .site { padding: 24px 16px; } main { padding-top: 48px; } .diagram { padding: 30px 16px 20px; } .browser-response .values { grid-template-columns: 1fr; gap: 0; } .browser-response .values dd { margin-bottom: 8px; } }
     </style>
   </head>
   <body>
@@ -59,10 +62,18 @@ tnl server
             <pre>tnl -> local demo</pre>
             <dl class="values">
               <dt>stamp</dt><dd id="stamp">...</dd>
-              <dt>request count</dt><dd id="request-count">0</dd>
+              <dt>count</dt><dd id="request-count">0</dd>
             </dl>
           </div>
           <p class="return">pong returns along the same path.</p>
+          <div class="browser-response">
+            <div class="response-label">[ browser ]</div>
+            <pre id="pong">waiting for ping</pre>
+            <dl class="values">
+              <dt>round trip</dt><dd id="round-trip">-- ms</dd>
+              <dt>generated at</dt><dd id="generated-at">--</dd>
+            </dl>
+          </div>
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
         <p id="result" class="result muted" role="status" aria-live="polite"></p>
@@ -90,12 +101,18 @@ tnl server
       }).catch(() => { result.textContent = "could not reach the local demo. try refreshing."; });
       button.addEventListener("click", async () => {
         button.disabled = true;
-        result.textContent = "sending ping...";
+        document.getElementById("pong").textContent = "sending ping...";
         try {
+          const started = performance.now();
           const state = await request("/ping", { method: "POST" });
+          const elapsed = Math.round(performance.now() - started);
           show(state);
-          result.textContent = "pong. find stamp " + state.stamp + " and request count " + state.request_count + " in the terminal running tnl.";
+          document.getElementById("pong").textContent = "pong";
+          document.getElementById("round-trip").textContent = elapsed + " ms";
+          document.getElementById("generated-at").textContent = new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
+          result.textContent = "find the same stamp and count in the terminal running tnl.";
         } catch {
+          document.getElementById("pong").textContent = "ping failed";
           result.textContent = "ping failed. try again.";
         } finally {
           button.disabled = false;
