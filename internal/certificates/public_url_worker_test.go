@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
@@ -704,7 +705,8 @@ type dnsChallengesStub struct {
 
 type certificateMilestoneRecorder struct{ milestones []string }
 
-func (*certificateMilestoneRecorder) ObserveCertificateWork(string, string, time.Duration) {}
+func (*certificateMilestoneRecorder) ObserveCertificateWork(string, observability.CertificateWorkOutcome, time.Duration) {
+}
 
 func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(milestone string, _ time.Duration) {
 	r.milestones = append(r.milestones, milestone)

@@ -162,6 +162,71 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	}
 }
 
+func TestWorkerManagedMemberWildcardPersistsAcrossPublicURLRemoval(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	work := controlstate.DNSPublicURLWork{
+		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
+		CanonicalHostname: "api.member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
+		State: controlstate.PublicURLDNSPending, DNSRevision: 1, Attempts: 1, AvailableAt: now,
+		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
+	}
+	store := &dnsStoreStub{publicURLWork: work}
+	provider := &providerStub{zone: Zone{ID: "ZMANAGED", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
+	verifier := &verifierStub{publicURLVerified: true}
+	worker := testDNSWorker(t, store, provider, verifier, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("publish wildcard = %t, %v", found, err)
+	}
+	if provider.publishCalls != 1 || provider.record.CanonicalHostname != work.CanonicalHostname ||
+		provider.record.WildcardHostname != "*.member.tunnels.example.test" ||
+		verifier.publicURLHostname != provider.record.WildcardHostname ||
+		store.publicURLSaved.State != controlstate.PublicURLDNSPublished {
+		t.Fatalf("wildcard publication = %#v, %#v, %#v", provider, verifier, store.publicURLSaved)
+	}
+	work.State = controlstate.PublicURLDNSRemoving
+	store.publicURLWork = work
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("remove public URL = %t, %v", found, err)
+	}
+	if provider.removeCalls != 0 || provider.publishCalls != 1 || verifier.publicURLCalls != 1 ||
+		store.publicURLSaved.State != controlstate.PublicURLDNSRemoved {
+		t.Fatalf("namespace wildcard changed during public URL removal = %#v, %#v", provider, store.publicURLSaved)
+	}
+}
+
+func TestWorkerClaimedMemberWildcardUsesClaimedZone(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	work := claimedRouteWork(now)
+	work.CanonicalHostname = "api.member.claimed.example.test"
+	work.PublicURLScope = controlstate.PublicURLScopeMember
+	authority := testDNSWork(now).DNSAuthority
+	authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"
+	authority.Nameservers = []string{"ns-1.example.test", "ns-2.example.test"}
+	store := &dnsStoreStub{publicURLWork: work, authority: authority}
+	provider := &providerStub{zone: Zone{ID: "ZCLAIMED"}}
+	verifier := &verifierStub{publicURLVerified: true}
+	worker := testDNSWorker(t, store, provider, verifier, now)
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("claimed member publish = %t, %v", found, err)
+	}
+	if !provider.record.ClaimedZone || provider.record.WildcardHostname != "*.member.claimed.example.test" ||
+		verifier.publicURLHostname != provider.record.WildcardHostname ||
+		store.publicURLSaved.State != controlstate.PublicURLDNSPublished {
+		t.Fatalf("claimed wildcard publication = %#v, %#v", provider.record, store.publicURLSaved)
+	}
+	work.State = controlstate.PublicURLDNSRemoving
+	store.publicURLWork = work
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("claimed member removal = %t, %v", found, err)
+	}
+	if provider.removeCalls != 0 || store.publicURLSaved.State != controlstate.PublicURLDNSRemoved {
+		t.Fatalf("claimed wildcard was removed with URL: %#v, %#v", provider, store.publicURLSaved)
+	}
+}
+
 func TestWorkerUnavailableDNSPreservesPendingAndReleasingState(t *testing.T) {
 	for _, phase := range []string{"fresh", "persisted", "releasing"} {
 		t.Run(phase, func(t *testing.T) {

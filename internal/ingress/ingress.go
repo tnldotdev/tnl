@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -56,12 +57,12 @@ type Metrics interface {
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
 	IncChallengeRejection(string)
-	ObserveVisitor(string)
+	ObserveVisitor(observability.VisitorOutcome)
 	ObserveVisitorOpen(bool, time.Duration)
 	SetIngressConnections(string, int)
 	AddForwardedBytes(string, int64)
 	SetIngressStreams(int)
-	ObserveRelayAttempt(string, string)
+	ObserveRelayAttempt(string, observability.RelayAttemptOutcome)
 }
 
 type Config struct {

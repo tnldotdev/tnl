@@ -15,6 +15,34 @@ func TestErrorCodeOfWrappedValidationError(t *testing.T) {
 	}
 }
 
+func TestMemberWildcardHostname(t *testing.T) {
+	for _, test := range []struct{ hostname, domain, want string }{
+		{"api.member.tnl.wtf", "tnl.wtf", "*.member.tnl.wtf"},
+		{"member.tnl.wtf", "tnl.wtf", ""},
+		{"api.tnl.wtf", "tnl.wtf", ""},
+		{"api.member.claimed.example", "tnl.wtf", ""},
+		{"nested.api.member.tnl.wtf", "tnl.wtf", ""},
+	} {
+		if got := MemberWildcardHostname(test.hostname, test.domain); got != test.want {
+			t.Errorf("MemberWildcardHostname(%q, %q) = %q, want %q", test.hostname, test.domain, got, test.want)
+		}
+	}
+}
+
+func TestMemberNamespaceWildcard(t *testing.T) {
+	for _, test := range []struct{ namespace, domain, want string }{
+		{"member.tnl.wtf", "tnl.wtf", "*.member.tnl.wtf"},
+		{"member.claimed.example.test", "claimed.example.test", "*.member.claimed.example.test"},
+		{"tnl.wtf", "tnl.wtf", ""},
+		{"nested.member.tnl.wtf", "tnl.wtf", ""},
+		{"Member.tnl.wtf", "tnl.wtf", ""},
+	} {
+		if got := MemberNamespaceWildcard(test.namespace, test.domain); got != test.want {
+			t.Errorf("MemberNamespaceWildcard(%q, %q) = %q, want %q", test.namespace, test.domain, got, test.want)
+		}
+	}
+}
+
 type conformanceFixture struct {
 	Version int               `json:"version"`
 	Cases   []conformanceCase `json:"cases"`

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 	"github.com/tnldotdev/tnl/pkg/api/publicurlusagev1"
@@ -60,9 +61,9 @@ type Config struct {
 }
 
 type UsageObserver interface {
-	ObserveUsageWork(phase, outcome string)
+	ObserveUsageWork(phase string, outcome observability.UsageWorkOutcome)
 	AddUsageItems(result string, count int)
-	ObserveUsageReceiver(outcome string, elapsed time.Duration)
+	ObserveUsageReceiver(outcome observability.UsageReceiverOutcome, elapsed time.Duration)
 }
 
 type Worker struct {
@@ -227,7 +228,7 @@ func (w *Worker) send(
 		return nil, errBatchTooLarge
 	}
 	started := time.Now()
-	outcome := "invalid_response"
+	outcome := observability.UsageReceiverInvalidResponse
 	defer func() {
 		if w.config.Observer != nil {
 			w.config.Observer.ObserveUsageReceiver(outcome, time.Since(started))
@@ -235,12 +236,12 @@ func (w *Worker) send(
 	}()
 	response, err := w.api.IngestPublicURLUsageBucketReportsWithBody(ctx, "application/json", bytes.NewReader(body))
 	if err != nil {
-		outcome = "transport_error"
+		outcome = observability.UsageReceiverTransportError
 		return nil, fmt.Errorf("publicurlusageworker: send batch: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		outcome = "http_error"
+		outcome = observability.UsageReceiverHTTPError
 		if response.StatusCode == http.StatusRequestEntityTooLarge {
 			return nil, fmt.Errorf("%w: receiver returned HTTP %d", errBatchTooLarge, response.StatusCode)
 		}
@@ -279,7 +280,7 @@ func (w *Worker) send(
 		}
 		results[result.ItemId] = result
 	}
-	outcome = "success"
+	outcome = observability.UsageReceiverSuccess
 	return results, nil
 }
 
@@ -315,9 +316,9 @@ func (w *Worker) observeWork(phase string, err error) {
 	if w.config.Observer == nil {
 		return
 	}
-	outcome := "success"
+	outcome := observability.UsageWorkSuccess
 	if err != nil {
-		outcome = "error"
+		outcome = observability.UsageWorkError
 	}
 	w.config.Observer.ObserveUsageWork(phase, outcome)
 }
@@ -326,11 +327,11 @@ func (w *Worker) observeClaim(found bool, err error) {
 	if w.config.Observer == nil {
 		return
 	}
-	outcome := "success"
+	outcome := observability.UsageWorkSuccess
 	if err != nil {
-		outcome = "error"
+		outcome = observability.UsageWorkError
 	} else if !found {
-		outcome = "empty"
+		outcome = observability.UsageWorkEmpty
 	}
 	w.config.Observer.ObserveUsageWork("claim", outcome)
 }

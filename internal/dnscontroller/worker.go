@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -36,6 +37,7 @@ type PublicURLRecord struct {
 	DomainID             string
 	PublicURLID          string
 	CanonicalHostname    string
+	WildcardHostname     string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string
 }
@@ -76,7 +78,7 @@ type Config struct {
 }
 
 type DNSObserver interface {
-	ObserveDNSWork(kind, phase, outcome string, elapsed time.Duration)
+	ObserveDNSWork(kind, phase string, outcome observability.DNSWorkOutcome, elapsed time.Duration)
 	ObserveDNSTransition(kind, state string)
 }
 
@@ -84,11 +86,11 @@ func observeDNS(observer DNSObserver, kind, phase string, started time.Time, rea
 	if observer == nil {
 		return
 	}
-	outcome := "success"
+	outcome := observability.DNSWorkSuccess
 	if err != nil {
-		outcome = "error"
+		outcome = observability.DNSWorkError
 	} else if !ready {
-		outcome = "pending"
+		outcome = observability.DNSWorkPending
 	}
 	observer.ObserveDNSWork(kind, phase, outcome, time.Since(started))
 }

@@ -27,7 +27,7 @@ type publishCommand struct {
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
-	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, browserOpener(flags.Open))
+	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
 		return err
 	}
@@ -64,6 +64,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
 	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
 	if err != nil {
 		return err

@@ -232,7 +232,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		defer frameworkMu.RUnlock()
 		return framework
 	}
-	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(flags.Open))
+	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation))
 	if err != nil {
 		return err
 	}

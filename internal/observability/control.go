@@ -20,16 +20,16 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 			if operation == "" || operation == "/" {
 				operation = "unmatched"
 			}
-			outcome := "success"
+			outcome := APIRequestSuccess
 			switch {
 			case errors.Is(r.Context().Err(), context.DeadlineExceeded):
-				outcome = "deadline_exceeded"
+				outcome = APIRequestDeadlineExceeded
 			case r.Context().Err() != nil:
-				outcome = "canceled"
+				outcome = APIRequestCanceled
 			case response.status >= 500:
-				outcome = "server_error"
+				outcome = APIRequestServerError
 			case response.status >= 400:
-				outcome = "client_error"
+				outcome = APIRequestClientError
 			}
 			m.ObserveAPIRequest(surface, operation, outcome, time.Since(started))
 		}()

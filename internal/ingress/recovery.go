@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -17,7 +18,7 @@ type recoveryControl interface {
 
 type RecoveryObserver interface {
 	AddRecoveryPending(int)
-	ObserveRecoveryAttempt(string)
+	ObserveRecoveryAttempt(observability.RecoveryAttemptOutcome)
 }
 
 // RecoveryReporter retries first-public-byte observations until control
@@ -103,9 +104,9 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 					return
 				}
 				if r.observer != nil {
-					outcome := "retry"
+					outcome := observability.RecoveryAttemptRetry
 					if r.ctx.Err() != nil {
-						outcome = "canceled"
+						outcome = observability.RecoveryAttemptCanceled
 					}
 					r.observer.ObserveRecoveryAttempt(outcome)
 				}

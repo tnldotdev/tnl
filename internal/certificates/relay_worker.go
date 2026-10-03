@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -46,8 +47,8 @@ type RelayConfig struct {
 }
 
 type RelayWorkObserver interface {
-	ObserveCertificateClaim(kind, outcome string)
-	ObserveCertificateIteration(kind, stage, outcome string, elapsed time.Duration)
+	ObserveCertificateClaim(kind string, outcome observability.CertificateClaimOutcome)
+	ObserveCertificateIteration(kind, stage string, outcome observability.CertificateWorkOutcome, elapsed time.Duration)
 	ObserveCertificateTransition(kind, state string)
 }
 
@@ -98,11 +99,11 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 	}
 	work, found, err := w.store.ClaimRelayCertificateOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if w.config.Observer != nil && ctx.Err() == nil {
-		outcome := "claimed"
+		outcome := observability.CertificateClaimed
 		if err != nil {
-			outcome = "error"
+			outcome = observability.CertificateError
 		} else if !found {
-			outcome = "empty"
+			outcome = observability.CertificateEmpty
 		}
 		w.config.Observer.ObserveCertificateClaim("relay", outcome)
 	}
@@ -141,11 +142,11 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		return true, saveErr
 	}
 	if w.config.Observer != nil {
-		outcome := "progress"
+		outcome := observability.CertificateProgress
 		if saved.State == "failed" {
-			outcome = "terminal"
+			outcome = observability.CertificateTerminal
 		} else if err != nil {
-			outcome = "retry"
+			outcome = observability.CertificateRetry
 		}
 		w.config.Observer.ObserveCertificateIteration("relay", string(stage), outcome, time.Since(started))
 		if stage != saved.State {

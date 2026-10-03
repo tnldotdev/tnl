@@ -99,7 +99,14 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	release()
 	assertIntegrationPublishedPublicURL(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
 	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
-	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, false)
+	assertIntegrationDNSChanges(t, dnsFixture, "*."+namespace, false)
+	dnsFixture.mu.Lock()
+	_, exact := dnsFixture.zone.records[dns.Fqdn(fixture.identity.hostname)+"/A"]
+	_, owner := dnsFixture.zone.records[dns.Fqdn("_tnl-owner."+fixture.identity.hostname)+"/TXT"]
+	dnsFixture.mu.Unlock()
+	if exact || owner {
+		t.Fatalf("managed member public URL created exact DNS records: A=%t, owner=%t", exact, owner)
+	}
 	assertIntegrationDNSChanges(t, dnsFixture, namespace, true)
 
 	for _, relay := range []splitRelayFixture{fixture.relayA, fixture.relayB} {

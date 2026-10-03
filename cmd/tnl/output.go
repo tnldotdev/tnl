@@ -203,7 +203,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			var openErr error
 			if o.openURL != nil && !o.opened {
 				o.opened = true
-				openErr = o.openURL(url)
+				openErr = o.openPublicURL(url)
 				if openErr == nil {
 					footer = "opened in browser; ctrl+c to stop"
 				}
@@ -253,7 +253,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	}
 	if o.mode != publishOutputHuman && o.openURL != nil && !o.opened {
 		o.opened = true
-		if err := o.openURL(url); err != nil {
+		if err := o.openPublicURL(url); err != nil {
 			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 				clioutput.Fields(
 					clioutput.Field{Label: "URL", Value: url},
@@ -263,6 +263,14 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 		}
 	}
 	return nil
+}
+
+// openPublicURL releases the output lock while DNS and the browser opener run.
+func (o *publishOutput) openPublicURL(url string) error {
+	o.mu.Unlock()
+	err := o.openURL(url)
+	o.mu.Lock()
+	return err
 }
 
 func (o *publishOutput) setIPPolicy(policy resolvedIPPolicy) {

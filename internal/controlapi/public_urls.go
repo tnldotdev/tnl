@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/readiness"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -387,14 +388,14 @@ func (h *handler) MarkPublishRunReady(response http.ResponseWriter, request *htt
 	started := time.Now()
 	lifecycle, err := h.store.MarkPublishRunReady(request.Context(), authentication, started)
 	if h.config.Metrics != nil {
-		outcome := "ready"
+		outcome := readiness.Ready
 		age := time.Since(lifecycle.CreatedAt)
 		var notReady *controlstate.PublishRunNotReadyError
 		if errors.As(err, &notReady) {
 			outcome = notReady.Reason()
 			age = time.Since(notReady.CreatedAt)
 		} else if err != nil {
-			outcome = "error"
+			outcome = readiness.Error
 		}
 		h.config.Metrics.ObservePublishRunReadiness(outcome, time.Since(started), age)
 	}

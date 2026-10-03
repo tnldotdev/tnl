@@ -4,17 +4,17 @@ import "time"
 
 // visitor outcomes describe the last ingress boundary reached, not a completed
 // TLS handshake or a successful HTTP request at the local service.
-func (m *Metrics) ObserveVisitor(outcome string) {
+func (m *Metrics) ObserveVisitor(outcome VisitorOutcome) {
 	if m == nil {
 		return
 	}
 	switch outcome {
-	case "lookup_missing", "lookup_unavailable", "invalid_projection", "policy_denied", "capacity_denied",
-		"open_failed", "committed_failed", "forwarded", "draining":
+	case VisitorLookupMissing, VisitorLookupUnavailable, VisitorInvalidProjection, VisitorPolicyDenied, VisitorCapacityDenied,
+		VisitorOpenFailed, VisitorCommittedFailed, VisitorForwarded, VisitorDraining:
 	default:
-		outcome = "other"
+		outcome = VisitorOther
 	}
-	m.visitorConnections.WithLabelValues(outcome).Inc()
+	m.visitorConnections.WithLabelValues(string(outcome)).Inc()
 }
 
 func (m *Metrics) ObserveVisitorOpen(success bool, elapsed time.Duration) {
@@ -79,26 +79,26 @@ func (m *Metrics) AddRecoveryPending(delta int) {
 	}
 }
 
-func (m *Metrics) ObserveRecoveryAttempt(outcome string) {
+func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 	if m == nil {
 		return
 	}
 	switch outcome {
-	case "success", "stale", "retry", "canceled":
+	case RecoveryAttemptSuccess, RecoveryAttemptStale, RecoveryAttemptRetry, RecoveryAttemptCanceled:
 	default:
 		return
 	}
-	m.recoveryAttempts.WithLabelValues(outcome).Inc()
+	m.recoveryAttempts.WithLabelValues(string(outcome)).Inc()
 }
 
-func (m *Metrics) ObserveCertificateClaim(kind, outcome string) {
+func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
 	if m == nil || kind != "relay" && kind != "public_url" {
 		return
 	}
-	if outcome != "claimed" && outcome != "empty" && outcome != "error" {
+	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
 		return
 	}
-	m.certificateClaims.WithLabelValues(kind, outcome).Inc()
+	m.certificateClaims.WithLabelValues(kind, string(outcome)).Inc()
 }
 
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
@@ -113,7 +113,7 @@ func (m *Metrics) ObserveCertificateTransition(kind, state string) {
 	m.certificateTransitions.WithLabelValues(kind, state).Inc()
 }
 
-func (m *Metrics) ObserveDNSWork(kind, phase, outcome string, elapsed time.Duration) {
+func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
@@ -128,11 +128,11 @@ func (m *Metrics) ObserveDNSWork(kind, phase, outcome string, elapsed time.Durat
 		return
 	}
 	switch outcome {
-	case "success", "pending", "error":
+	case DNSWorkSuccess, DNSWorkPending, DNSWorkError:
 	default:
 		return
 	}
-	m.dnsWork.WithLabelValues(kind, phase, outcome).Observe(elapsed.Seconds())
+	m.dnsWork.WithLabelValues(kind, phase, string(outcome)).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {
@@ -147,7 +147,7 @@ func (m *Metrics) ObserveDNSTransition(kind, state string) {
 	m.dnsTransitions.WithLabelValues(kind, state).Inc()
 }
 
-func (m *Metrics) ObserveUsageWork(phase, outcome string) {
+func (m *Metrics) ObserveUsageWork(phase string, outcome UsageWorkOutcome) {
 	if m == nil {
 		return
 	}
@@ -157,12 +157,12 @@ func (m *Metrics) ObserveUsageWork(phase, outcome string) {
 		return
 	}
 	switch outcome {
-	case "success", "empty", "error":
+	case UsageWorkSuccess, UsageWorkEmpty, UsageWorkError:
 	default:
 		return
 	}
-	m.usageWork.WithLabelValues(phase, outcome).Inc()
-	if phase == "finalize" && outcome == "success" {
+	m.usageWork.WithLabelValues(phase, string(outcome)).Inc()
+	if phase == "finalize" && outcome == UsageWorkSuccess {
 		m.usageLastSuccess.WithLabelValues("finalize").SetToCurrentTime()
 	}
 }
@@ -182,16 +182,16 @@ func (m *Metrics) AddUsageItems(result string, count int) {
 	}
 }
 
-func (m *Metrics) ObserveUsageReceiver(outcome string, elapsed time.Duration) {
+func (m *Metrics) ObserveUsageReceiver(outcome UsageReceiverOutcome, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
 	switch outcome {
-	case "success", "http_error", "transport_error", "invalid_response":
+	case UsageReceiverSuccess, UsageReceiverHTTPError, UsageReceiverTransportError, UsageReceiverInvalidResponse:
 	default:
 		return
 	}
-	m.usageReceiverDuration.WithLabelValues(outcome).Observe(elapsed.Seconds())
+	m.usageReceiverDuration.WithLabelValues(string(outcome)).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) SetUsageRetained(count int) {
@@ -224,7 +224,7 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 	}
 }
 
-func (m *Metrics) ObservePlacement(action, outcome string) {
+func (m *Metrics) ObservePlacement(action string, outcome PlacementOutcome) {
 	if m == nil {
 		return
 	}
@@ -232,11 +232,11 @@ func (m *Metrics) ObservePlacement(action, outcome string) {
 		return
 	}
 	switch outcome {
-	case "placed", "insufficient_services", "capacity", "unavailable", "stale", "error":
+	case PlacementPlaced, PlacementInsufficientServices, PlacementCapacity, PlacementUnavailable, PlacementStale, PlacementError:
 	default:
 		return
 	}
-	m.placementDecisions.WithLabelValues(action, outcome).Inc()
+	m.placementDecisions.WithLabelValues(action, string(outcome)).Inc()
 }
 
 func (m *Metrics) AddAssignmentReplacements(reason string, count int) {

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type PublicURLConfig struct {
@@ -32,7 +33,7 @@ type PublicURLConfig struct {
 
 // PublicURLWorkObserver records only fixed worker stages and outcomes.
 type PublicURLWorkObserver interface {
-	ObserveCertificateWork(stage, outcome string, elapsed time.Duration)
+	ObserveCertificateWork(stage string, outcome observability.CertificateWorkOutcome, elapsed time.Duration)
 	ObserveCertificateMilestone(milestone string, age time.Duration)
 }
 
@@ -94,12 +95,14 @@ func (w *PublicURLWorker) Run(ctx context.Context) error {
 func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
-	if observer, ok := w.config.Observer.(interface{ ObserveCertificateClaim(string, string) }); ok && ctx.Err() == nil {
-		outcome := "claimed"
+	if observer, ok := w.config.Observer.(interface {
+		ObserveCertificateClaim(string, observability.CertificateClaimOutcome)
+	}); ok && ctx.Err() == nil {
+		outcome := observability.CertificateClaimed
 		if err != nil {
-			outcome = "error"
+			outcome = observability.CertificateError
 		} else if !found {
-			outcome = "empty"
+			outcome = observability.CertificateEmpty
 		}
 		observer.ObserveCertificateClaim("public_url", outcome)
 	}
@@ -153,15 +156,15 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 			w.config.Observer.ObserveCertificateMilestone("cleanup", completedAt.Sub(saved.CreatedAt))
 		}
 	}
-	outcome := "progress"
+	outcome := observability.CertificateProgress
 	if work.State == "failed" || work.State == "canceled" {
-		outcome = "terminal"
+		outcome = observability.CertificateTerminal
 	} else if err != nil {
-		outcome = "retry"
+		outcome = observability.CertificateRetry
 	}
 	w.observeWork(string(stage), outcome, started)
 	if err != nil || work.State != stage && (work.State == "waiting_for_install" || work.State == "failed") && completedAt.Sub(work.CreatedAt) >= 30*time.Second {
-		w.logWork(work, string(stage), outcome, completedAt)
+		w.logWork(work, string(stage), string(outcome), completedAt)
 	}
 	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
 		return true, err
@@ -169,7 +172,7 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (w *PublicURLWorker) observeWork(stage, outcome string, started time.Time) {
+func (w *PublicURLWorker) observeWork(stage string, outcome observability.CertificateWorkOutcome, started time.Time) {
 	if w.config.Observer != nil {
 		w.config.Observer.ObserveCertificateWork(stage, outcome, time.Since(started))
 	}

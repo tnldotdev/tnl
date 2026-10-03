@@ -74,6 +74,34 @@ func CanonicalizeHostname(input string) (string, error) {
 	return hostname, nil
 }
 
+// MemberWildcardHostname returns the DNS wildcard for a one-label public URL
+// beneath a member namespace. callers must validate the hostname and domain
+// and check that the public URL belongs to a member.
+func MemberWildcardHostname(hostname, domain string) string {
+	memberHost, ok := strings.CutSuffix(hostname, "."+domain)
+	if !ok {
+		return ""
+	}
+	service, member, ok := strings.Cut(memberHost, ".")
+	if !ok || service == "" || member == "" || strings.Contains(member, ".") {
+		return ""
+	}
+	return MemberNamespaceWildcard(member+"."+domain, domain)
+}
+
+// MemberNamespaceWildcard returns a DNS wildcard beneath one member label.
+func MemberNamespaceWildcard(namespace, domain string) string {
+	member, ok := strings.CutSuffix(namespace, "."+domain)
+	if !ok || member == "" || strings.Contains(member, ".") {
+		return ""
+	}
+	canonical, err := CanonicalizeHostname(namespace)
+	if err != nil || canonical != namespace {
+		return ""
+	}
+	return "*." + namespace
+}
+
 func CanonicalizeAuthority(input string) (string, error) {
 	if strings.HasPrefix(input, "[") || net.ParseIP(input) != nil {
 		return "", invalid(ErrorIPLiteral)

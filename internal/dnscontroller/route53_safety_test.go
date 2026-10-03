@@ -270,6 +270,8 @@ func TestRoute53ProviderReleaseHTTPResponseRecovery(t *testing.T) {
 						_, _ = fmt.Fprintf(w, `<Tag><Key>%s</Key><Value>%s</Value></Tag>`, aws.ToString(tag.Key), aws.ToString(tag.Value))
 					}
 					_, _ = io.WriteString(w, `</Tags></ResourceTagSet></ListTagsForResourceResponse>`)
+				case "GET /2013-04-01/hostedzone/Z123/rrset":
+					_, _ = io.WriteString(w, `<ListResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/"><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>`)
 				case "DELETE /2013-04-01/hostedzone/Z123":
 					deletes.Add(1)
 					if mode == "nonempty" {

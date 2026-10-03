@@ -144,6 +144,79 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 	}
 }
 
+func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T) {
+	client, provider := route53TestProvider(t, "tunnels.example.test")
+	record := PublicURLRecord{
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", PublicURLID: "public_url_one",
+		CanonicalHostname: "api.member.tunnels.example.test", WildcardHostname: "*.member.tunnels.example.test",
+		IngressIPv4Addresses: []string{"192.0.2.10"},
+	}
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.changes) != 2 || client.changes[0].Action != types.ChangeActionUpsert ||
+		aws.ToString(client.changes[0].ResourceRecordSet.Name) != "_tnl-wildcard.member.tunnels.example.test." ||
+		client.changes[0].ResourceRecordSet.Type != types.RRTypeTxt ||
+		client.changes[1].Action != types.ChangeActionUpsert ||
+		aws.ToString(client.changes[1].ResourceRecordSet.Name) != "*.member.tunnels.example.test." ||
+		client.changes[1].ResourceRecordSet.Type != types.RRTypeA {
+		t.Fatalf("wildcard changes = %#v", client.changes)
+	}
+	client.recordSets[dnsName(memberWildcardOwnerName(record.WildcardHostname))] = []types.ResourceRecordSet{*client.changes[0].ResourceRecordSet}
+	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{*client.changes[1].ResourceRecordSet}
+	client.changes = nil
+	record.PublicURLID, record.CanonicalHostname = "public_url_two", "other.member.tunnels.example.test"
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) != 0 {
+		t.Fatalf("second member URL changed shared wildcard: %#v, %v", client.changes, err)
+	}
+	if _, err := provider.RemovePublicURL(t.Context(), record); err == nil || len(client.changes) != 0 {
+		t.Fatalf("removed shared wildcard with one public URL: %#v, %v", client.changes, err)
+	}
+	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{
+		*simpleRecordSet(record.WildcardHostname, types.RRTypeCname, []string{"foreign.example.test."}),
+	}
+	if _, err := provider.PublishPublicURL(t.Context(), record); err == nil || len(client.changes) != 0 {
+		t.Fatalf("overwrote conflicting wildcard: %#v, %v", client.changes, err)
+	}
+}
+
+func TestRoute53ProviderReleasesOnlyOwnedClaimedMemberWildcards(t *testing.T) {
+	work := testDNSWork(time.Now().UTC())
+	work.ProviderZoneID = "Z123"
+	client, provider := route53TestProvider(t, work.CanonicalDomain)
+	client.get.HostedZone.CallerReference = aws.String(work.Reference)
+	client.tags = ownedRoute53Tags(work)
+	const wildcard = "*.member.claimed.example.test"
+	owner := simpleRecordSet(memberWildcardOwnerName(wildcard), types.RRTypeTxt, []string{memberWildcardOwnerValue(work.DomainID)})
+	address := simpleRecordSet(wildcard, types.RRTypeA, []string{"192.0.2.10"})
+	foreignOwner := simpleRecordSet("_tnl-wildcard.foreign.claimed.example.test", types.RRTypeTxt, []string{`"someone-else"`})
+	client.listRecords = func(_ context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		switch aws.ToString(input.StartRecordName) {
+		case "":
+			return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{*foreignOwner},
+				IsTruncated: true, NextRecordName: owner.Name, NextRecordType: types.RRTypeTxt}, nil
+		case aws.ToString(owner.Name):
+			if input.StartRecordType != types.RRTypeTxt {
+				t.Errorf("wildcard owner cursor = %#v", input)
+			}
+			return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{*owner}}, nil
+		case dnsName(wildcard):
+			return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{*address}}, nil
+		}
+		t.Errorf("unexpected DNS listing from %#v", input)
+		return &route53.ListResourceRecordSetsOutput{}, nil
+	}
+	if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil {
+		t.Fatal(err)
+	}
+	if client.deletedZoneID != "Z123" || len(client.changes) != 2 ||
+		client.changes[0].Action != types.ChangeActionDelete || client.changes[1].Action != types.ChangeActionDelete ||
+		aws.ToString(client.changes[0].ResourceRecordSet.Name) != dnsName(wildcard) ||
+		aws.ToString(client.changes[1].ResourceRecordSet.Name) != aws.ToString(owner.Name) {
+		t.Fatalf("claimed wildcard release = %#v, deleted zone %q", client.changes, client.deletedZoneID)
+	}
+}
+
 func TestRoute53ProviderPreservesForeignChallengeValuesDuringReplacementAndCleanup(t *testing.T) {
 	const recordName = "_acme-challenge.member.tunnels.example.test"
 	client, provider := route53TestProvider(t, "tunnels.example.test")
