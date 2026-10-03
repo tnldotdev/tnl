@@ -23,7 +23,7 @@ development tracks in parallel.
 +-----------------------------------------------------------+
 ```
 
-## start developing
+## try tnl
 
 First, install the NPM package:
 
@@ -31,7 +31,21 @@ First, install the NPM package:
 npm install -D @tnldotdev/tnl@next
 ```
 
-Then, initialize with the helper:
+Run the built-in demo without configuring or starting an app:
+
+```bash
+npx tnl publish --demo
+```
+
+Sign in when prompted. Once the public URL is ready, it opens in your browser.
+Click **ping** and compare the stamp and request count with the terminal
+running `tnl`. The page is served from a local process on your computer.
+By default, only your current IP can visit; use `--allow-all-ips` if you want
+someone else to try it. Ctrl+C stops the demo and removes its public URL.
+
+## start developing
+
+Initialize with the helper:
 
 ```bash
 npx tnl init

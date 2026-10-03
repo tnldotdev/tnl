@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -338,6 +339,67 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 				t.Fatalf("error output = %q", got)
 			}
 		})
+	}
+}
+
+func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"publish", "--demo", "--open=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTunnelCLIUnits(parsed, &flags)
+	flags.Publish.Name = "from-environment"
+	if err := prepareDemoPublish(&flags.Publish, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Publish.Target != "" || flags.Publish.Name != "" || !flags.Publish.Ephemeral || flags.Publish.Open {
+		t.Fatalf("demo flags = %+v", flags.Publish)
+	}
+	flags.Publish.openFromCLI = false
+	if err := prepareDemoPublish(&flags.Publish, "", true); err != nil || !flags.Publish.Open {
+		t.Fatalf("interactive demo = %+v, error = %v", flags.Publish, err)
+	}
+
+	for _, args := range [][]string{
+		{"publish", "--demo", "3000"},
+		{"publish", "--demo", "--name", "saved"},
+		{"publish", "--demo", "--public-url", "https://saved.example"},
+		{"publish", "--demo", "--ephemeral=false"},
+	} {
+		var invalid cli
+		invalidParser, err := kong.New(&invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := invalidParser.Parse(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applyTunnelCLIUnits(parsed, &invalid)
+		if err := prepareDemoPublish(&invalid.Publish, "", false); err == nil {
+			t.Fatalf("accepted %q", args)
+		}
+	}
+}
+
+func TestDemoPublishDoesNotLoadProjectConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte("this is not valid typescript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	var stdout, stderr bytes.Buffer
+	err := run(t.Context(), []string{
+		"publish", "--demo", "--server", "http://control.example", "--state-dir", filepath.Join(directory, "state"),
+	}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "server must be an HTTPS origin") ||
+		strings.Contains(err.Error(), "typescript") {
+		t.Fatalf("demo reached project configuration: %v", err)
 	}
 }
 

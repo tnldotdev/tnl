@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
@@ -18,10 +19,12 @@ type publishCommand struct {
 	tunnelFlags `embed:""`
 	Target      string            `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or HTTP URL on this computer."`
 	Output      publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo        bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
 	projectRoot      string
+	demoNameFromCLI  bool
 	Service          string `kong:"-"`
 }
 
@@ -32,6 +35,20 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	defer func() { result = output.finish(ctx, result) }()
+	var localDemo *demo.Server
+	if flags.Demo {
+		localDemo, err = demo.Start(output.demoPing)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result = errors.Join(result, localDemo.Close(closeCtx))
+		}()
+		flags.Target = localDemo.Target()
+		output.setDemoStamp(localDemo.Stamp())
+	}
 	target, err := localproxy.NormalizeTarget(flags.Target)
 	if err != nil {
 		return err
@@ -84,6 +101,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
+		if localDemo != nil && event.Type == publisher.EventReady {
+			localDemo.SetPublicURL(event.PublicURL)
+		}
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
 	err = publisher.Run(ctx, publisherConfig)

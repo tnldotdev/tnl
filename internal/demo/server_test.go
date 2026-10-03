@@ -1,0 +1,110 @@
+package demo
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
+	var mu sync.Mutex
+	var received []State
+	demo, err := Start(func(state State) error {
+		mu.Lock()
+		received = append(received, state)
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if closed {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := demo.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+	address := strings.TrimPrefix(demo.Target(), "http://")
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || host != "127.0.0.1" {
+		t.Fatalf("demo listener = %s: %v", demo.Target(), err)
+	}
+	client := &http.Client{Timeout: time.Second}
+	get := func(path string) *http.Response {
+		t.Helper()
+		response, err := client.Get(demo.Target() + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	page := get("/")
+	data, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), "Fira+Code") ||
+		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "request count") ||
+		page.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
+	}
+
+	response, err := client.Post(demo.Target()+"/ping", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("ping before ready = %d", response.StatusCode)
+	}
+	demo.SetPublicURL("https://actual.generated.tnl.dev")
+	for count := uint64(1); count <= 2; count++ {
+		response, err := client.Post(demo.Target()+"/ping", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pong State
+		err = json.NewDecoder(response.Body).Decode(&pong)
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || pong.PublicURL != "https://actual.generated.tnl.dev" ||
+			pong.Stamp != demo.Stamp() || len(pong.Stamp) != 8 || pong.RequestCount != count {
+			t.Fatalf("pong %d = %+v, status %d, error %v", count, pong, response.StatusCode, err)
+		}
+	}
+	mu.Lock()
+	if len(received) != 2 || received[0].RequestCount != 1 || received[1].RequestCount != 2 || received[1].Stamp != demo.Stamp() {
+		t.Fatalf("terminal callbacks = %+v", received)
+	}
+	mu.Unlock()
+	stateResponse := get("/state")
+	var state State
+	if err := json.NewDecoder(stateResponse.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, stateResponse.Body)
+	stateResponse.Body.Close()
+	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 {
+		t.Fatalf("state = %+v", state)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := demo.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	if response, err := client.Get(demo.Target() + "/"); err == nil {
+		response.Body.Close()
+		t.Fatal("demo still accepts connections after stopping")
+	}
+}
