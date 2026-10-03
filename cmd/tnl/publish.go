@@ -37,6 +37,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	defer func() { result = output.finish(ctx, result) }()
 	var localDemo *demo.Server
 	if flags.Demo {
+		flags.projectRoot, err = currentProjectRoot(ctx)
+		if err != nil {
+			return err
+		}
 		localDemo, err = demo.Start(output.demoPing)
 		if err != nil {
 			return err

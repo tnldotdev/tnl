@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -400,6 +401,22 @@ func TestDemoPublishDoesNotLoadProjectConfiguration(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "server must be an HTTPS origin") ||
 		strings.Contains(err.Error(), "typescript") {
 		t.Fatalf("demo reached project configuration: %v", err)
+	}
+}
+
+func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	var stdout, stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := run(ctx, []string{
+		"--no-config", "publish", "--demo", "--server", "https://127.0.0.1:1",
+		"--state-dir", filepath.Join(directory, "state"),
+	}, &stdout, &stderr)
+	if err == nil || strings.Contains(err.Error(), "absolute tunnel project path is required") ||
+		!strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("demo did not reach control discovery after registering its tunnel: %v", err)
 	}
 }
 
