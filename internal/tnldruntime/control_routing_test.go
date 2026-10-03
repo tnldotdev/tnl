@@ -39,14 +39,16 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 				status                int
 			}{
 				{http.MethodGet, "/v1/health", "control", http.StatusOK},
+				{http.MethodGet, "/v1/discovery", "control", http.StatusOK},
+				{http.MethodGet, "/v1/client-ip", "control", http.StatusOK},
 				{http.MethodGet, "/v1/identity", test.identitySurface, test.identityStatus},
 				{http.MethodPatch, "/v1/identity", test.identitySurface, http.StatusNotFound},
 				{http.MethodGet, "/v1/teams-unknown", "control", http.StatusNotFound},
 			} {
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, httptest.NewRequest(check.method, check.path, nil))
-				if response.Code != check.status {
-					t.Fatalf("%s %s status = %d, want %d", check.method, check.path, response.Code, check.status)
+				if response.Code != check.status || response.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("%s %s = %d, %v; want %d and no-store", check.method, check.path, response.Code, response.Header(), check.status)
 				}
 			}
 			response := httptest.NewRecorder()

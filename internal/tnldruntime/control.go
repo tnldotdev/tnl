@@ -100,6 +100,7 @@ func newPublicAPIHandler(
 	controlObserved := metrics.APIRequests("control", mux)
 	authorityObserved := metrics.APIRequests("authority", mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if matchedAPIPattern(r, func(candidate *http.Request) string {
 			_, pattern := mux.Handler(candidate)
 			if authorityRoutes.Matches(pattern) {
