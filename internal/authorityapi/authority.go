@@ -4,14 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -65,8 +66,8 @@ func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.
 		return
 	}
 	if err != nil {
-		log.Printf("verify OIDC token: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		operatorlog.Report("verify OIDC token", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDeploymentDomain, controlstate.OIDCIdentity{
@@ -132,8 +133,8 @@ func (h *handler) GetIdentityContext(response http.ResponseWriter, request *http
 	}
 	identity, err := h.store.IdentityContext(request.Context(), principal.IdentityID)
 	if err != nil {
-		log.Printf("read identity context: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		operatorlog.Report("read identity context", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, identityContextResponse(identity))
@@ -146,8 +147,8 @@ func (h *handler) ListTeams(response http.ResponseWriter, request *http.Request)
 	}
 	teams, err := h.store.ListTeams(request.Context(), principal.IdentityID)
 	if err != nil {
-		log.Printf("list teams: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		operatorlog.Report("list teams", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.TeamPage{Teams: make([]authorityv1.Team, len(teams))}
@@ -205,8 +206,8 @@ func (h *handler) GetTeam(response http.ResponseWriter, request *http.Request, t
 		return
 	}
 	if err != nil {
-		log.Printf("get team: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		operatorlog.Report("get team", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, teamResponse(team))
@@ -383,8 +384,8 @@ func (h *handler) ListTeamDomains(response http.ResponseWriter, request *http.Re
 		return
 	}
 	if err != nil {
-		log.Printf("list team domains: %v", err)
-		writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
+		operatorlog.Report("list team domains", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.DomainPage{Domains: make([]authorityv1.Domain, len(domains))}

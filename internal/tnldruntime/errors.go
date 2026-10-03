@@ -1,9 +1,8 @@
 package tnldruntime
 
 import (
-	"log"
-
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 )
 
 // logOperationalError emits only authored, bounded error content. raw network,
@@ -12,7 +11,5 @@ func logOperationalError(operation failure.Operation, reason failure.Reason, cau
 	if cause == nil {
 		return
 	}
-	err := failure.Wrap(operation, reason, cause)
-	_, definition, _ := failure.Describe(err)
-	log.Printf("%s reason=%s: %s; %s", operation, reason, definition.Message, definition.Action)
+	operatorlog.Report(operation, reason, "", cause)
 }

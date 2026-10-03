@@ -21,6 +21,12 @@ their problem responses in the OpenAPI sources. The handwritten tunnel
 protocol owns its error codes. These boundaries may share a reason without
 sharing presentation or exposing an underlying cause.
 
+Control, built-in authority, private ingress, and private relay use one HTTP
+problem envelope: `type`, `title`, `status`, `code`, `detail`, and `request_id`.
+`code` is chosen from the serving API's OpenAPI source; `detail` is authored
+safe text, and `request_id` correlates an unexpected failure with operator
+logs. The public URL usage receiver is external and owns its own HTTP contract.
+
 Worker failure fields and local tunnel history store the reason ID, not the
 untrusted provider, visitor, or database error text. Resolve a stored reason
 through its definition when displaying it. Operator logs likewise use the
