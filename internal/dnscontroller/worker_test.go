@@ -619,7 +619,11 @@ func TestWorkerRouteFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 				if test.terminal {
 					wantState, wantAt = controlstate.PublicURLDNSFailed, time.Time{}
 				}
-				if store.publicURLSaved.State != wantState || !store.publicURLSaved.AvailableAt.Equal(wantAt) || store.publicURLSaved.LastError != "server.dns_failed" ||
+				wantReason := "server.dns_failed"
+				if test.terminal {
+					wantReason = "server.dns_conflict"
+				}
+				if store.publicURLSaved.State != wantState || !store.publicURLSaved.AvailableAt.Equal(wantAt) || store.publicURLSaved.LastError != wantReason ||
 					store.publicURLSaved.DNSRevision != 7 || store.publicURLSaved.WorkEpoch != 9 || store.publicURLSaves != 1 {
 					t.Fatalf("saved failure = %#v", store.publicURLSaved)
 				}

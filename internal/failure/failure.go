@@ -86,10 +86,25 @@ func Of(err error) (*Error, bool) {
 
 // Describe returns authored text for the outermost typed failure.
 func Describe(err error) (Reason, Definition, bool) {
-	typed, ok := Of(err)
+	reason, ok := ReasonOf(err)
 	if !ok {
 		return "", Definition{}, false
 	}
-	definition, found := DefinitionFor(typed.reason)
-	return typed.reason, definition, found
+	definition, found := DefinitionFor(reason)
+	return reason, definition, found
+}
+
+// ReasonOf also accepts domain errors that carry a typed reason while retaining
+// their own error identities and retry behavior.
+func ReasonOf(err error) (Reason, bool) {
+	if typed, ok := Of(err); ok {
+		return typed.reason, true
+	}
+	var reasoned interface{ FailureReason() Reason }
+	if errors.As(err, &reasoned) {
+		reason := reasoned.FailureReason()
+		_, ok := DefinitionFor(reason)
+		return reason, ok
+	}
+	return "", false
 }

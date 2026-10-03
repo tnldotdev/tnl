@@ -687,7 +687,7 @@ func TestStoredFailureReasonOmitsProviderText(t *testing.T) {
 
 	message := strings.Repeat("e\u0301", 1000)
 	stored := storedFailureReason(terminalf("%s", message))
-	if stored != "server.certificate_failed" || strings.Contains(stored, message) {
+	if stored != "server.certificate_rejected" || strings.Contains(stored, message) {
 		t.Fatalf("stored error reason = %q", stored)
 	}
 }
