@@ -32,6 +32,7 @@ const (
 	telemetryCommandCompleted  telemetryEventName = "command_completed"
 	telemetryCommandFailed     telemetryEventName = "command_failed"
 	telemetryPublishRunStarted telemetryEventName = "publish_run_started"
+	telemetryDemoPingReceived  telemetryEventName = "demo_ping_received"
 )
 
 type telemetryTrackedCommand string
@@ -68,6 +69,15 @@ const (
 	telemetryOther telemetryFrameworkName = "other"
 )
 
+type telemetryPublishMode string
+
+const (
+	telemetryPublishApp        telemetryPublishMode = "app"
+	telemetryPublishDemo       telemetryPublishMode = "demo"
+	telemetryPublishDemoGuest  telemetryPublishMode = "demo_guest"
+	telemetryPublishDemoSigned telemetryPublishMode = "demo_signed_in"
+)
+
 type telemetryPayload struct {
 	InstallationID string                  `json:"installation_id"`
 	InvocationID   string                  `json:"invocation_id"`
@@ -76,6 +86,7 @@ type telemetryPayload struct {
 	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
 	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
 	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
+	PublishMode    telemetryPublishMode    `json:"publish_mode,omitempty"`
 	Framework      telemetryFrameworkName  `json:"framework,omitempty"`
 	Version        string                  `json:"version"`
 	OS             string                  `json:"os"`
@@ -93,6 +104,8 @@ type telemetryInvocation struct {
 	reporter telemetryReporter
 	id       string
 	ready    atomic.Bool
+	modeMu   sync.RWMutex
+	mode     telemetryPublishMode
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
@@ -105,10 +118,21 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
 	payload.InvocationID = i.id
+	if payload.Command == telemetryPublish {
+		i.modeMu.RLock()
+		payload.PublishMode = i.mode
+		i.modeMu.RUnlock()
+	}
 	if payload.Event == telemetryPublishRunStarted {
 		i.ready.Store(true)
 	}
 	i.reporter.Report(payload)
+}
+
+func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
+	i.modeMu.Lock()
+	i.mode = mode
+	i.modeMu.Unlock()
 }
 
 func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
@@ -237,6 +261,13 @@ func newTelemetryReady(command telemetryTrackedCommand, kind telemetryServerKind
 	payload.Event = telemetryPublishRunStarted
 	payload.ServerKind = kind
 	payload.Framework = framework
+	return payload
+}
+
+func newTelemetryDemoPing() telemetryPayload {
+	payload := newTelemetryBase(telemetryPublish)
+	payload.Event = telemetryDemoPingReceived
+	payload.PublishMode = telemetryPublishDemo
 	return payload
 }
 

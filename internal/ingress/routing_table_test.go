@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -20,8 +21,7 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 				entry.PublicUrlId = "public_url_" + name
 				entry.CanonicalHostname = name + ".example"
 				entry.PolicyRevision = 1
-				entry.IpPolicy = ingressv1.Allowlist
-				entry.AllowedIpPrefixes = []string{"192.0.2.0/24"}
+				hashedRoutingPolicyForTest(t, &entry, "192.0.2.0/24")
 				recoveryEpisodeID := int64(1)
 				entry.RecoveryEpisodeId = &recoveryEpisodeID
 				return ingressv1.IngressRoutingTableEvent{
@@ -48,20 +48,24 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 			}
 			// neither input nor lookup mutations may change retained or new entries.
 			for _, event := range []ingressv1.IngressRoutingTableEvent{first, second} {
-				event.Entry.AllowedIpPrefixes[0] = "198.51.100.0/24"
+				event.Entry.AllowedIpHashes[0].Digest = "changed"
 				event.Entry.PublisherConnections[0].RelayId = "changed"
 				*event.Entry.RecoveryEpisodeId = 99
 				entry, ok := lookup(event.CanonicalHostname, now)
 				if !ok {
 					t.Fatal("route missing after page")
 				}
-				entry.AllowedIpPrefixes[0] = "203.0.113.0/24"
+				entry.AllowedIpHashes[0].Digest = "changed"
 				entry.PublisherConnections[0].RelayId = "changed"
 				*entry.RecoveryEpisodeId = 100
 			}
 			// a valid first event must not leak out when a later event is stale.
 			updated, stale := makeEvent(3, "first"), makeEvent(4, "second")
-			updated.Entry.AllowedIpPrefixes[0] = "198.51.100.0/24"
+			updatedHash, err := ippolicy.Hash(policyTestKey, netip.MustParsePrefix("198.51.100.0/24"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			updated.Entry.AllowedIpHashes[0].Digest = updatedHash.Digest
 			stale.EntryRevision = 2
 			if err := table.ApplyPage(2, ingressv1.IngressRoutingTablePage{
 				ThroughRevision: 4, NextRevision: 4, Events: []ingressv1.IngressRoutingTableEvent{updated, stale},
@@ -93,9 +97,17 @@ func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
 	entry := forwardingTestEntry(now, "relay.example:443")
 	entry.CanonicalHostname = "route.example"
 	entry.PolicyRevision = 1
-	entry.IpPolicy = ingressv1.Allowlist
+	entry.IpPolicy = ingressv1.HashedAllowlist
+	key := append([]byte(nil), policyTestKey[:]...)
+	entry.IpPolicyKey = &key
 	for index := range 256 {
-		entry.AllowedIpPrefixes = append(entry.AllowedIpPrefixes, fmt.Sprintf("2001:db8:%x::/48", index))
+		hashed, err := ippolicy.Hash(policyTestKey, netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x::/48", index)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry.AllowedIpHashes = append(entry.AllowedIpHashes, ingressv1.HashedIPPrefix{
+			Family: ingressv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
+		})
 	}
 	event := ingressv1.IngressRoutingTableEvent{
 		RoutingTableRevision: 1, Kind: ingressv1.PublicUrlUpsert,
@@ -110,15 +122,16 @@ func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := table.Lookup(entry.CanonicalHostname, now)
-	if !ok || len(got.AllowedIpPrefixes) != 256 {
-		t.Fatalf("large routing table entry = %t, %d prefixes", ok, len(got.AllowedIpPrefixes))
+	if !ok || len(got.AllowedIpHashes) != 256 {
+		t.Fatalf("large routing table entry = %t, %d hashes", ok, len(got.AllowedIpHashes))
 	}
-	prefixes := make([]netip.Prefix, len(got.AllowedIpPrefixes))
-	for index, value := range got.AllowedIpPrefixes {
-		prefixes[index] = netip.MustParsePrefix(value)
+	entries := make([]ippolicy.Entry, len(got.AllowedIpHashes))
+	for index, value := range got.AllowedIpHashes {
+		entries[index] = ippolicy.Entry{Family: string(value.Family), Bits: value.PrefixLength, Digest: value.Digest}
 	}
-	if !ipAllowed(netip.MustParseAddr("2001:db8:ff::1"), prefixes) ||
-		ipAllowed(netip.MustParseAddr("2001:db8:100::1"), prefixes) {
+	policy, err := ippolicy.New(policyTestKey, entries)
+	if err != nil || !policy.Allows(netip.MustParseAddr("2001:db8:ff::1")) ||
+		policy.Allows(netip.MustParseAddr("2001:db8:100::1")) {
 		t.Fatal("large routing table IP policy matched the wrong source")
 	}
 }

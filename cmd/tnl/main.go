@@ -287,10 +287,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
-			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
+			preference := clientstate.TelemetryEnabledAt
+			if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
+				preference = clientstate.DemoTelemetryEnabledAt
+			}
+			if enabled, preferenceErr := preference(ctx, root); preferenceErr == nil && enabled {
 				if reporter := reporterFactories[0](root); reporter != nil {
 					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
 						telemetry = invocation
+						if telemetryCommand == telemetryPublish {
+							mode := telemetryPublishApp
+							if flags.Publish.Demo {
+								mode = telemetryPublishDemo
+							}
+							telemetry.SetPublishMode(mode)
+						}
 					}
 				}
 			}

@@ -1,6 +1,7 @@
 package controlstate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -75,6 +76,15 @@ func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID)
 	if err != nil || !slices.Equal(loaded.AllowedIPPrefixes, route.AllowedIPPrefixes) {
 		t.Fatalf("loaded policy: %d prefixes, %v", len(loaded.AllowedIPPrefixes), err)
+	}
+	var ciphertext, hashes, sealedDigest []byte
+	if err := database.pool.QueryRow(t.Context(), `SELECT allowed_ip_policy_ciphertext,
+		allowed_ip_hashes, request_digest_ciphertext
+		FROM control.public_urls WHERE id = $1`, route.ID).Scan(
+		&ciphertext, &hashes, &sealedDigest,
+	); err != nil || bytes.Contains(ciphertext, []byte("198.18.")) ||
+		bytes.Contains(hashes, []byte("198.18.")) || len(sealedDigest) <= 32 {
+		t.Fatalf("saved public URL retained raw policy or digest: %v", err)
 	}
 	update := AuthorizedPublicURLUpdateRequest{
 		PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,

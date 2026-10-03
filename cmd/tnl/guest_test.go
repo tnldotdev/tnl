@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -25,7 +26,7 @@ func (c *guestDemoControlStub) CreateGuestDemo(context.Context) (controlv1.Guest
 		AccessToken: c.token, GuestId: "guest_0123456789abcdefghijkl",
 		TeamId: "tm_0123456789abcdefghijkl", MembershipId: "mem_0123456789abcdefghijkl",
 		DomainId: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
-		SourceIp: "192.0.2.7",
+		ExpiresAt: time.Now().UTC().Add(72 * time.Hour),
 	}, nil
 }
 

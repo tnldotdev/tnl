@@ -30,7 +30,7 @@ SET dns_work_owner = $1,
     updated_at = GREATEST(routes.updated_at, $3)
 FROM candidate
 WHERE routes.id = candidate.id
-RETURNING routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+RETURNING routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.request_digest_ciphertext, routes.request_digest_storage_key_id
 `
 
 type ClaimDNSPublicURLWorkParams struct {
@@ -49,13 +49,11 @@ func (q *Queries) ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicU
 		&i.MembershipID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
-		&i.RequestDigest,
 		&i.CanonicalHostname,
 		&i.Target,
 		&i.PublicURLScope,
 		&i.PolicyRevision,
 		&i.IpPolicy,
-		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
@@ -76,6 +74,12 @@ func (q *Queries) ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicU
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
+		&i.AllowedIpPolicyCiphertext,
+		&i.AllowedIpPolicyStorageKeyID,
+		&i.AllowedIpHashes,
+		&i.AllowedIpHashKeyID,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 	)
 	return i, err
 }
@@ -94,7 +98,7 @@ WHERE id = $5
   AND dns_work_epoch = $7
   AND dns_work_expires_at > $4
   AND dns_revision = $8
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id
 `
 
 type SaveDNSPublicURLWorkParams struct {
@@ -127,13 +131,11 @@ func (q *Queries) SaveDNSPublicURLWork(ctx context.Context, arg SaveDNSPublicURL
 		&i.MembershipID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
-		&i.RequestDigest,
 		&i.CanonicalHostname,
 		&i.Target,
 		&i.PublicURLScope,
 		&i.PolicyRevision,
 		&i.IpPolicy,
-		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
@@ -154,6 +156,12 @@ func (q *Queries) SaveDNSPublicURLWork(ctx context.Context, arg SaveDNSPublicURL
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
+		&i.AllowedIpPolicyCiphertext,
+		&i.AllowedIpPolicyStorageKeyID,
+		&i.AllowedIpHashes,
+		&i.AllowedIpHashKeyID,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 	)
 	return i, err
 }

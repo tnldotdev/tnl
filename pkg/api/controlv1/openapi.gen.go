@@ -224,6 +224,7 @@ const (
 	DnsSetupPending      ProblemCode = "dns_setup_pending"
 	Forbidden            ProblemCode = "forbidden"
 	GuestDemoOnly        ProblemCode = "guest_demo_only"
+	GuestIpChanged       ProblemCode = "guest_ip_changed"
 	GuestIssuanceLimited ProblemCode = "guest_issuance_limited"
 	GuestTrialExhausted  ProblemCode = "guest_trial_exhausted"
 	Internal             ProblemCode = "internal"
@@ -249,6 +250,8 @@ func (e ProblemCode) Valid() bool {
 	case Forbidden:
 		return true
 	case GuestDemoOnly:
+		return true
+	case GuestIpChanged:
 		return true
 	case GuestIssuanceLimited:
 		return true
@@ -679,10 +682,10 @@ type GuestDemoNumber struct {
 type GuestDemoSession struct {
 	AccessToken  string            `json:"access_token"`
 	DomainId     DomainID          `json:"domain_id"`
+	ExpiresAt    time.Time         `json:"expires_at"`
 	GuestId      ResourceID        `json:"guest_id"`
 	MembershipId MembershipID      `json:"membership_id"`
 	Namespace    CanonicalHostname `json:"namespace"`
-	SourceIp     string            `json:"source_ip"`
 	TeamId       TeamID            `json:"team_id"`
 }
 

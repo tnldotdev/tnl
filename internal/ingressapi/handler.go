@@ -307,9 +307,18 @@ func routingTableEvent(event controlstate.IngressRoutingTableEvent) ingressv1.In
 }
 
 func routingTableEntry(projection controlstate.IngressRoutingTableProjection) ingressv1.IngressRoutingTableEntry {
-	prefixes := make([]string, len(projection.AllowedIPPrefixes))
-	for index, prefix := range projection.AllowedIPPrefixes {
-		prefixes[index] = prefix.String()
+	hashed := []ingressv1.HashedIPPrefix{}
+	var verifier *[]byte
+	if projection.IPPolicy == controlstate.IPPolicyHashedAllowlist {
+		entries := make([]ingressv1.HashedIPPrefix, len(projection.AllowedIPHashes))
+		for index, entry := range projection.AllowedIPHashes {
+			entries[index] = ingressv1.HashedIPPrefix{
+				Family: ingressv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest,
+			}
+		}
+		hashed = entries
+		key := append([]byte(nil), projection.IPPolicyKey[:]...)
+		verifier = &key
 	}
 	connections := make([]ingressv1.IngressRoutingPublisherConnection, len(projection.PublisherConnections))
 	for index, connection := range projection.PublisherConnections {
@@ -330,9 +339,10 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 	return ingressv1.IngressRoutingTableEntry{
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
-		PolicyRevision:    int64(projection.PolicyRevision),
-		IpPolicy:          ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),
-		AllowedIpPrefixes: prefixes, PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
-		RecoveryEpisodeId: recoveryEpisodeID, PublisherConnections: connections,
+		PolicyRevision:  int64(projection.PolicyRevision),
+		IpPolicy:        ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),
+		AllowedIpHashes: hashed, IpPolicyKey: verifier,
+		PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
+		RecoveryEpisodeId:  recoveryEpisodeID, PublisherConnections: connections,
 	}
 }

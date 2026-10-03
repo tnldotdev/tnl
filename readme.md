@@ -34,9 +34,10 @@ npx --yes @tnldotdev/tnl publish --demo
 On tnl.dev, the public URL opens in your browser when ready. Click **ping** and
 match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
-at a time. Only your current IP can visit, and the trial allows 15 minutes
-ready or about 5 MiB of traffic across runs. Ctrl+C stops the demo and removes
-its public URL. Run `tnl login` to publish your own app.
+at a time. Only your current IP can visit. A guest credential lasts 72 hours
+and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
+stops the demo and removes its public URL. Run `tnl login` to publish your own
+app. CLI telemetry is off for the demo until you run `tnl telemetry on`.
 
 ## start developing
 

@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/readiness"
 )
@@ -200,7 +200,9 @@ type IngressRoutingTableProjection struct {
 	CanonicalHostname    string                                   `json:"canonical_hostname"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
 	IPPolicy             IPPolicy                                 `json:"ip_policy"`
-	AllowedIPPrefixes    []netip.Prefix                           `json:"allowed_ip_prefixes"`
+	AllowedIPHashes      []ippolicy.Entry                         `json:"allowed_ip_hashes,omitempty"`
+	IPPolicyKeyID        string                                   `json:"ip_policy_key_id,omitempty"`
+	IPPolicyKey          [32]byte                                 `json:"-"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	RecoveryEpisodeID    *uint64                                  `json:"recovery_episode_id,omitempty"`
 	PublisherConnections []IngressRoutingTablePublisherConnection `json:"publisher_connections"`
@@ -324,14 +326,14 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	spent, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
+	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: read guest trial allowance: %w", err)
 	}
-	if spent.Valid && spent.Bool {
-		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "guest_trial_limit"); err != nil {
+	if spentReason != "" {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, spentReason); err != nil {
 			return PublishRunSetup{}, err
 		}
 		if err := pendingEvents.publish(ctx, queries); err != nil {
@@ -747,6 +749,8 @@ type pendingIngressRoutingTableEvent struct {
 	publishRunNumber    int64
 	canonicalHostname   string
 	projection          []byte
+	policyCiphertext    []byte
+	policyStorageKeyID  string
 	projectionExpiresAt time.Time
 	createdAt           time.Time
 	published           *publishedIngressRoutingTableEvent
@@ -770,12 +774,27 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	projection := IngressRoutingTableProjection{
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
-		IPPolicy: policy, AllowedIPPrefixes: append([]netip.Prefix(nil), route.AllowedIpPrefixes...),
+		IPPolicy:             policy,
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
 	}
-	if projection.AllowedIPPrefixes == nil {
-		projection.AllowedIPPrefixes = []netip.Prefix{}
+	var policyCiphertext []byte
+	policyStorageKeyID := ""
+	if eventKind == IngressPublicURLTombstone || eventKind == IngressChallengeTombstone {
+		projection.IPPolicy = IPPolicyAllowAll
+	} else if policy == IPPolicyAllowlist {
+		if len(route.AllowedIpHashes) == 0 || !route.AllowedIpHashKeyID.Valid {
+			return nil, errors.New("controlstate: routing policy is not protected")
+		}
+		if err := json.Unmarshal(route.AllowedIpHashes, &projection.AllowedIPHashes); err != nil || len(projection.AllowedIPHashes) == 0 {
+			return nil, errors.New("controlstate: stored hashed routing policy is invalid")
+		}
+		projection.IPPolicy = IPPolicyHashedAllowlist
+		projection.IPPolicyKeyID = route.AllowedIpHashKeyID.String
+		policyCiphertext = route.AllowedIpPolicyCiphertext
+		policyStorageKeyID = route.AllowedIpPolicyStorageKeyID.String
+	} else if policy != IPPolicyAllowAll || len(route.AllowedIpHashes) != 0 {
+		return nil, errors.New("controlstate: routing policy is inconsistent")
 	}
 	if eventKind == "public_url_upsert" {
 		episode, err := queries.GetOpenPublicURLRecoveryEpisode(ctx, controlstatedb.GetOpenPublicURLRecoveryEpisodeParams{
@@ -812,6 +831,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	pending.events = append(pending.events, pendingIngressRoutingTableEvent{
 		eventKind: eventKind, publicURLID: route.ID, publishRunNumber: session.PublishRunNumber,
 		canonicalHostname: route.CanonicalHostname, projection: payload,
+		policyCiphertext: policyCiphertext, policyStorageKeyID: policyStorageKeyID,
 		projectionExpiresAt: projectionExpiresAt, createdAt: now, published: published,
 	})
 	return published, nil
@@ -870,14 +890,18 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 			routingTableRevision, err = queries.InsertFinalIngressRoutingTableEvent(ctx, controlstatedb.InsertFinalIngressRoutingTableEventParams{
 				EventKind: string(event.eventKind), PublicURLID: event.publicURLID, PublishRunNumber: event.publishRunNumber,
 				CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevisions[index],
-				Projection: event.projection, PublicUrlExpiresAt: publicURLExpiresAt, CreatedAt: timestamptz(event.createdAt),
+				Projection: event.projection, PolicyCiphertext: event.policyCiphertext,
+				PolicyStorageKeyID: nullableText(event.policyStorageKeyID),
+				PublicUrlExpiresAt: publicURLExpiresAt, CreatedAt: timestamptz(event.createdAt),
 				UpdatedAt: timestamptz(event.createdAt),
 			})
 		} else {
 			routingTableRevision, err = queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
 				EventKind: string(event.eventKind), PublicURLID: event.publicURLID, PublishRunNumber: event.publishRunNumber,
 				CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevisions[index],
-				Projection: event.projection, PublicUrlExpiresAt: publicURLExpiresAt, CreatedAt: timestamptz(event.createdAt),
+				Projection: event.projection, PolicyCiphertext: event.policyCiphertext,
+				PolicyStorageKeyID: nullableText(event.policyStorageKeyID),
+				PublicUrlExpiresAt: publicURLExpiresAt, CreatedAt: timestamptz(event.createdAt),
 			})
 		}
 		if err != nil {

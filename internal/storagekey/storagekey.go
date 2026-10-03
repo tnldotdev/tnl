@@ -4,6 +4,8 @@ package storagekey
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -24,8 +26,10 @@ var errInvalidCiphertext = errors.New("storagekey: invalid ciphertext")
 type Keyring struct {
 	currentID  string
 	current    cipher.AEAD
+	currentIP  [32]byte
 	previousID string
 	previous   cipher.AEAD
+	previousIP [32]byte
 }
 
 func New(current, previous string) (*Keyring, error) {
@@ -38,6 +42,9 @@ func New(current, previous string) (*Keyring, error) {
 		return nil, err
 	}
 	keyring := &Keyring{currentID: keyID(currentKey), current: currentAEAD}
+	if err := deriveIPMasterKey(&keyring.currentIP, currentKey); err != nil {
+		return nil, err
+	}
 	if previous == "" {
 		return keyring, nil
 	}
@@ -53,7 +60,41 @@ func New(current, previous string) (*Keyring, error) {
 		return nil, err
 	}
 	keyring.previousID = keyID(previousKey)
+	if err := deriveIPMasterKey(&keyring.previousIP, previousKey); err != nil {
+		return nil, err
+	}
 	return keyring, nil
+}
+
+// IPPolicyKey derives a purpose-specific verifier without exposing the storage key.
+func (k *Keyring) IPPolicyKey(keyID, purpose string) ([32]byte, error) {
+	if k == nil || purpose == "" {
+		return [32]byte{}, errors.New("storagekey: invalid IP policy key request")
+	}
+	master := [32]byte{}
+	switch keyID {
+	case k.currentID:
+		master = k.currentIP
+	case k.previousID:
+		if k.previousID == "" {
+			return [32]byte{}, errors.New("storagekey: IP policy key is unavailable")
+		}
+		master = k.previousIP
+	default:
+		return [32]byte{}, errors.New("storagekey: IP policy key is unavailable")
+	}
+	mac := hmac.New(sha256.New, master[:])
+	_, _ = mac.Write([]byte("tnl/ip-policy-purpose/v1\x00" + purpose))
+	return [32]byte(mac.Sum(nil)), nil
+}
+
+func deriveIPMasterKey(destination *[32]byte, storageKey []byte) error {
+	derived, err := hkdf.Key(sha256.New, storageKey, nil, "tnl/ip-policy-root/v1", len(destination))
+	if err != nil {
+		return fmt.Errorf("storagekey: derive IP policy key: %w", err)
+	}
+	copy(destination[:], derived)
+	return nil
 }
 
 func (k *Keyring) CurrentID() string {

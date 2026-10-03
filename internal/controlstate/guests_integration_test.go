@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/netip"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,11 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
 		t.Fatal(err)
+	}
+	var storedTrial string
+	if err := database.pool.QueryRow(t.Context(), `SELECT row_to_json(trial)::text FROM control.guest_trials AS trial WHERE id=$1`, guest.ID).Scan(&storedTrial); err != nil ||
+		strings.Contains(storedTrial, guest.SourceIP.String()) {
+		t.Fatalf("guest trial stored plaintext source IP: %v", err)
 	}
 	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now); err != nil || number != 1 {
 		t.Fatalf("first demo number = %d, %v", number, err)
@@ -82,6 +89,49 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(4*time.Second)); !errors.Is(err, ErrGuestTrialSpent) {
 		t.Fatalf("spent guest trial allocated another number: %v", err)
+	}
+}
+
+func TestIntegrationGuestIssuanceSerializesOneNetwork(t *testing.T) {
+	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "guest_issuance")
+	other, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(other.Close)
+	const callers = 40
+	results := make(chan error, callers)
+	var workers sync.WaitGroup
+	for index := range callers {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+			if err == nil {
+				owner := database
+				if index%2 == 1 {
+					owner = other
+				}
+				err = owner.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now)
+			}
+			results <- err
+		}()
+	}
+	workers.Wait()
+	close(results)
+	allowed, limited := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			allowed++
+		case errors.Is(err, ErrGuestIssuance):
+			limited++
+		default:
+			t.Fatalf("guest issuance = %v", err)
+		}
+	}
+	if allowed != 32 || limited != callers-32 {
+		t.Fatalf("guest issuance allowed=%d limited=%d", allowed, limited)
 	}
 }
 
@@ -176,5 +226,100 @@ func TestIntegrationGuestHeartbeatClosesExhaustedTrial(t *testing.T) {
 	var activeRunID *string
 	if err := database.pool.QueryRow(t.Context(), `SELECT active_publish_run_id FROM control.guest_trials WHERE id = $1`, guest.ID).Scan(&activeRunID); err != nil || activeRunID != nil {
 		t.Fatalf("guest retained active run = %v, %v", activeRunID, err)
+	}
+	var endReason string
+	if err := database.pool.QueryRow(t.Context(), `SELECT end_reason FROM control.guest_trials WHERE id=$1`, guest.ID).Scan(&endReason); err != nil || endReason != "transfer_limit" {
+		t.Fatalf("guest byte cutoff reason = %q, %v", endReason, err)
+	}
+	stats, err := database.RecentGuestTrialStats(t.Context(), now.Add(2*time.Second))
+	if err != nil || stats.Issued != 1 || stats.TransferLimit != 1 || stats.Expired != 0 {
+		t.Fatalf("committed guest totals = %+v, %v", stats, err)
+	}
+}
+
+func TestIntegrationGuestExpiryRevokesCredentialAndForgetsIPDigests(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "guest_expiry")
+	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+		t.Fatal(err)
+	}
+	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(GuestLifetime-time.Second)); err != nil || number != 1 {
+		t.Fatalf("demo before expiry = %d, %v", number, err)
+	}
+	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(GuestLifetime)); !errors.Is(err, ErrGuestTrialSpent) {
+		t.Fatalf("expired trial issued another demo number: %v", err)
+	}
+	if removed, err := database.ForgetGuestPrivateState(t.Context(), now.Add(GuestLifetime+time.Second)); err != nil || removed != 2 {
+		t.Fatalf("guest cleanup removed %d records: %v", removed, err)
+	}
+	if _, err := database.GuestTrialByAccessToken(t.Context(), guest.Token); !errors.Is(err, ErrGuestUnknown) {
+		t.Fatalf("expired credential remains usable: %v", err)
+	}
+	var scrubbed bool
+	if err := database.pool.QueryRow(t.Context(), `SELECT source_ip_digest IS NULL AND source_ip_key_id IS NULL
+		AND issuance_ip_digest IS NULL AND credential_id IS NULL AND credential_hash IS NULL
+		AND end_reason = 'expired' AND ended_at = expires_at
+		FROM control.guest_trials WHERE id=$1`, guest.ID).Scan(&scrubbed); err != nil || !scrubbed {
+		t.Fatalf("expired guest retained private data: %t, %v", scrubbed, err)
+	}
+	stats, err := database.RecentGuestTrialStats(t.Context(), now.Add(GuestLifetime+time.Second))
+	if err != nil || stats.Issued != 0 || stats.Allocated != 1 || stats.Expired != 1 {
+		t.Fatalf("expired guest totals = %+v, %v", stats, err)
+	}
+}
+
+func TestIntegrationGuestExpiryClosesRunWithoutHeartbeat(t *testing.T) {
+	for _, test := range []struct {
+		name, reason string
+		elapsed      time.Duration
+		ready        bool
+	}{
+		{"trial_expired", "guest_expired", GuestLifetime + time.Second, false},
+		{"ready_time_spent", "guest_ready_limit", GuestReadyAllowance + 12*time.Second, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, now, request, _ := newPublishRunPrerequisites(t)
+			guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls
+				(public_url_id, guest_id, created_at) VALUES ($1, $2, $3)`, request.PublicURLID, guest.ID, now); err != nil {
+				t.Fatal(err)
+			}
+			setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.ready {
+				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2 WHERE id=$1`, guest.ID, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at=$2 WHERE id=$1`,
+				setup.PublishRunID, now.Add(GuestLifetime+time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			closed, err := database.ExpireSavedPublishRuns(t.Context(), now.Add(test.elapsed))
+			if err != nil || closed != 1 {
+				t.Fatalf("expiry cleanup closed %d runs: %v", closed, err)
+			}
+			var reason string
+			if err := database.pool.QueryRow(t.Context(), `SELECT close_reason FROM control.publish_runs WHERE id=$1`,
+				setup.PublishRunID).Scan(&reason); err != nil || reason != test.reason {
+				t.Fatalf("guest closure = %q, want %q: %v", reason, test.reason, err)
+			}
+			var endReason string
+			if err := database.pool.QueryRow(t.Context(), `SELECT end_reason FROM control.guest_trials WHERE id=$1`, guest.ID).Scan(&endReason); err != nil ||
+				endReason != map[string]string{"guest_expired": "expired", "guest_ready_limit": "ready_limit"}[test.reason] {
+				t.Fatalf("guest outcome = %q, %v", endReason, err)
+			}
+		})
 	}
 }

@@ -12,8 +12,9 @@ const (
 type IPPolicy string
 
 const (
-	IPPolicyAllowAll  IPPolicy = "allow_all"
-	IPPolicyAllowlist IPPolicy = "allowlist"
+	IPPolicyAllowAll        IPPolicy = "allow_all"
+	IPPolicyAllowlist       IPPolicy = "allowlist"
+	IPPolicyHashedAllowlist IPPolicy = "hashed_allowlist"
 )
 
 // PublicURLLifecycleState is the stored state of a public URL.

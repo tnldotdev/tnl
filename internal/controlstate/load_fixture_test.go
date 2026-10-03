@@ -50,10 +50,12 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadPublicURLs, history: *loadHistory, leases: make(map[string][]RelayLease)}
 	_, err := database.pool.Exec(t.Context(), `
 		INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
-			request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy,
+			request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
+			target, public_url_scope, policy_revision, ip_policy,
 			lifecycle_state, dns_state, created_at, updated_at)
 		SELECT 'public_url_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
-			request_digest, 'load-' || n || '.example.test', target, public_url_scope, policy_revision,
+			request_digest_ciphertext, request_digest_storage_key_id, 'load-' || n || '.example.test',
+			target, public_url_scope, policy_revision,
 			ip_policy, lifecycle_state, dns_state, created_at, updated_at
 		FROM control.public_urls CROSS JOIN generate_series(0, $1::integer - 1) AS n WHERE id = $2`, *loadPublicURLs, request.PublicURLID)
 	if err != nil {

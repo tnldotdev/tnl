@@ -77,6 +77,36 @@ func TestKeyringRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestIPPolicyKeysArePurposeBoundAcrossStorageKeyRotation(t *testing.T) {
+	first, err := New(encodedKey(1), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := first.IPPolicyKey(first.CurrentID(), "url:one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := first.IPPolicyKey(first.CurrentID(), "url:two")
+	if err != nil || before == second || before == [32]byte{} {
+		t.Fatalf("purpose keys overlap: %x %x, %v", before, second, err)
+	}
+	rotated, err := New(encodedKey(2), encodedKey(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := rotated.IPPolicyKey(rotated.PreviousID(), "url:one")
+	if err != nil || previous != before {
+		t.Fatalf("previous verifier changed: %x, %v", previous, err)
+	}
+	current, err := rotated.IPPolicyKey(rotated.CurrentID(), "url:one")
+	if err != nil || current == before {
+		t.Fatalf("rotation retained the old verifier: %x, %v", current, err)
+	}
+	if _, err := rotated.IPPolicyKey("unavailable", "url:one"); err == nil {
+		t.Fatal("unknown key version accepted")
+	}
+}
+
 func encodedKey(value byte) string {
 	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{value}, keySize))
 }

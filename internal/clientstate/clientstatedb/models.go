@@ -29,6 +29,7 @@ type ClientSetting struct {
 	InstallationID       string
 	WorktreeHashSalt     []byte
 	TelemetryEnabled     int64
+	DemoTelemetryEnabled int64
 }
 
 type ControlSession struct {
@@ -51,7 +52,7 @@ type GuestSession struct {
 	MembershipID      string
 	DomainID          string
 	Namespace         string
-	SourceIp          string
+	ExpiresAt         int64
 	CreatedAt         int64
 }
 

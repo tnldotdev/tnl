@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -33,7 +34,8 @@ type PublicURL struct {
 	ID                string
 	PublishRunNumber  uint64
 	RecoveryEpisodeID uint64
-	AllowedIPPrefixes []netip.Prefix
+	HashedIPPolicy    *ippolicy.Policy
+	AllowAll          bool
 	Backends          []routebackend.Backend
 }
 
@@ -447,17 +449,11 @@ func addressPort(address net.Addr) (netip.AddrPort, error) {
 	return endpoint, nil
 }
 
-func ipAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
-	if len(prefixes) == 0 {
-		return true
+func (route PublicURL) allowsIP(source netip.Addr) bool {
+	if route.HashedIPPolicy != nil {
+		return route.HashedIPPolicy.Allows(source)
 	}
-	source = source.Unmap()
-	for _, prefix := range prefixes {
-		if prefix.Contains(source) {
-			return true
-		}
-	}
-	return false
+	return route.AllowAll
 }
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {

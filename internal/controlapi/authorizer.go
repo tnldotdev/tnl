@@ -315,6 +315,8 @@ func (h *handler) authorizeMutation(
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl login to continue")
 	case errors.Is(err, authorization.ErrGuestDemoOnly):
 		writeProblem(response, http.StatusForbidden, controlv1.GuestDemoOnly, "guest access only publishes the built-in demo; run tnl login for your own app or settings")
+	case errors.Is(err, authorization.ErrGuestIPChanged):
+		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl login to continue")
 	case errors.Is(err, authorization.ErrForbidden):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:

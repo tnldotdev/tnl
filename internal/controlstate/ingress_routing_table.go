@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 )
 
 const MaximumIngressRoutingTablePageSize = 1000
@@ -88,9 +89,10 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 		Entries:               make([]IngressRoutingTableEvent, 0, len(rows)),
 	}
 	for _, row := range rows {
-		event, err := ingressRoutingTableEvent(
+		event, err := d.ingressRoutingTableEvent(
 			row.ID, row.EventKind, row.PublicURLID, row.PublishRunNumber,
-			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
+			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PolicyCiphertext,
+			row.PolicyStorageKeyID, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {
 			return IngressRoutingTableSnapshot{}, err
@@ -167,9 +169,10 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	}
 	page.Events = make([]IngressRoutingTableEvent, 0, len(rows))
 	for _, row := range rows {
-		event, err := ingressRoutingTableEvent(
+		event, err := d.ingressRoutingTableEvent(
 			row.ID, row.EventKind, row.PublicURLID, row.PublishRunNumber,
-			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PublicUrlExpiresAt, row.CreatedAt,
+			row.CanonicalHostname, row.EntryRevision, row.Projection, row.PolicyCiphertext,
+			row.PolicyStorageKeyID, row.PublicUrlExpiresAt, row.CreatedAt,
 		)
 		if err != nil {
 			return IngressRoutingTablePage{}, err
@@ -192,7 +195,7 @@ func validateIngressRoutingTableClock(clock controlstatedb.ControlIngressRouting
 	return nil
 }
 
-func ingressRoutingTableEvent(
+func (d *Database) ingressRoutingTableEvent(
 	routingTableRevision int64,
 	eventKind string,
 	publicURLID string,
@@ -200,6 +203,8 @@ func ingressRoutingTableEvent(
 	canonicalHostname string,
 	entryRevision int64,
 	payload []byte,
+	policyCiphertext []byte,
+	policyStorageKeyID pgtype.Text,
 	publicURLExpiresAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 ) (IngressRoutingTableEvent, error) {
@@ -220,6 +225,40 @@ func ingressRoutingTableEvent(
 	if projection.PublicURLID != publicURLID || projection.PublishRunNumber != uint64(publishRunNumber) ||
 		projection.CanonicalHostname != canonicalHostname {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table projection identity mismatch")
+	}
+	if projection.IPPolicy == IPPolicyHashedAllowlist {
+		if projection.IPPolicyKeyID == "" || len(projection.AllowedIPHashes) == 0 {
+			return IngressRoutingTableEvent{}, errors.New("controlstate: hashed IP policy is invalid")
+		}
+		if len(policyCiphertext) != 0 {
+			prefixes, err := d.openIPPolicy(publicURLID, policyStorageKeyID.String, policyCiphertext)
+			if err != nil {
+				return IngressRoutingTableEvent{}, fmt.Errorf("controlstate: open routing policy: %w", err)
+			}
+			key, err := d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "url:"+publicURLID)
+			if err != nil {
+				return IngressRoutingTableEvent{}, err
+			}
+			projection.AllowedIPHashes = make([]ippolicy.Entry, len(prefixes))
+			for index, prefix := range prefixes {
+				projection.AllowedIPHashes[index], err = ippolicy.Hash(key, prefix)
+				if err != nil {
+					return IngressRoutingTableEvent{}, err
+				}
+			}
+			projection.IPPolicyKeyID = d.storageKey.CurrentID()
+		}
+		key, err := d.storageKey.IPPolicyKey(projection.IPPolicyKeyID, "url:"+publicURLID)
+		if err != nil && len(policyCiphertext) == 0 && publicURLExpiresAt.Valid &&
+			!publicURLExpiresAt.Time.After(time.Now()) {
+			// an expired guest event must remain replayable after its verifier expires,
+			// but its old digest must not authorize another visitor.
+			key, err = d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "url:"+publicURLID)
+		}
+		if err != nil {
+			return IngressRoutingTableEvent{}, fmt.Errorf("controlstate: derive routing policy verifier: %w", err)
+		}
+		projection.IPPolicyKey = key
 	}
 	var expiration *time.Time
 	if publicURLExpiresAt.Valid {

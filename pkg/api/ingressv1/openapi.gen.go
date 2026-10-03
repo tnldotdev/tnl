@@ -21,10 +21,28 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for HashedIPPrefixFamily.
+const (
+	Ipv4 HashedIPPrefixFamily = "ipv4"
+	Ipv6 HashedIPPrefixFamily = "ipv6"
+)
+
+// Valid indicates whether the value is a known member of the HashedIPPrefixFamily enum.
+func (e HashedIPPrefixFamily) Valid() bool {
+	switch e {
+	case Ipv4:
+		return true
+	case Ipv6:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IngressRoutingTableEntryIpPolicy.
 const (
-	AllowAll  IngressRoutingTableEntryIpPolicy = "allow_all"
-	Allowlist IngressRoutingTableEntryIpPolicy = "allowlist"
+	AllowAll        IngressRoutingTableEntryIpPolicy = "allow_all"
+	HashedAllowlist IngressRoutingTableEntryIpPolicy = "hashed_allowlist"
 )
 
 // Valid indicates whether the value is a known member of the IngressRoutingTableEntryIpPolicy enum.
@@ -32,7 +50,7 @@ func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
 	switch e {
 	case AllowAll:
 		return true
-	case Allowlist:
+	case HashedAllowlist:
 		return true
 	default:
 		return false
@@ -62,6 +80,16 @@ func (e IngressRoutingTableEventKind) Valid() bool {
 		return false
 	}
 }
+
+// HashedIPPrefix defines model for HashedIPPrefix.
+type HashedIPPrefix struct {
+	Digest       string               `json:"digest"`
+	Family       HashedIPPrefixFamily `json:"family"`
+	PrefixLength int                  `json:"prefix_length"`
+}
+
+// HashedIPPrefixFamily defines model for HashedIPPrefix.Family.
+type HashedIPPrefixFamily string
 
 // Identifier defines model for Identifier.
 type Identifier = string
@@ -133,9 +161,12 @@ type IngressRoutingPublisherConnection struct {
 
 // IngressRoutingTableEntry defines model for IngressRoutingTableEntry.
 type IngressRoutingTableEntry struct {
-	AllowedIpPrefixes    []string                            `json:"allowed_ip_prefixes"`
-	CanonicalHostname    string                              `json:"canonical_hostname"`
-	IpPolicy             IngressRoutingTableEntryIpPolicy    `json:"ip_policy"`
+	AllowedIpHashes   []HashedIPPrefix                 `json:"allowed_ip_hashes"`
+	CanonicalHostname string                           `json:"canonical_hostname"`
+	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
+
+	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
+	IpPolicyKey          *[]byte                             `json:"ip_policy_key,omitempty"`
 	PolicyRevision       int64                               `json:"policy_revision"`
 	PublicUrlExpiresAt   time.Time                           `json:"public_url_expires_at"`
 	PublicUrlId          Identifier                          `json:"public_url_id"`

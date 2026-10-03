@@ -37,6 +37,17 @@ relay to the publisher.
 Only control connects to PostgreSQL. Ingress receives a short-lived routing
 table. Each relay knows its own lease and the publishers connected to it.
 
+Control encrypts saved signed-in IP allowlists and request digests with
+`TNLD_STORAGE_KEY`. Guest trials keep a keyed digest of their issuing IP,
+never its address; a guest credential expires 72 hours after issuance. For each
+public URL, control derives a purpose-specific verifier from the storage key
+and sends it only over the authenticated ingress API. PostgreSQL routing
+events contain hashed IP prefixes, not the verifier or the original CIDRs.
+Ingress masks a visitor address to each permitted prefix length and checks its
+digest before forwarding; an absent verifier rejects the visitor. Ingress and
+relays never receive `TNLD_STORAGE_KEY`. The separate visitor-network usage
+sketch estimates distinct networks and cannot authorize a visitor.
+
 Standalone composes control, ingress, and two logical relay services in one
 `tnld` process. It uses the same role boundaries through in-process adapters.
 

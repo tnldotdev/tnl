@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -107,21 +107,30 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	if err != nil {
 		return PublicURL{}, err
 	}
-	prefixes := make([]netip.Prefix, 0, len(entry.AllowedIpPrefixes))
-	for _, value := range entry.AllowedIpPrefixes {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || prefix != prefix.Masked() {
-			return PublicURL{}, errors.New("ingress: routing-table IP prefix is invalid")
+	var hashed *ippolicy.Policy
+	if entry.IpPolicy == ingressv1.HashedAllowlist {
+		if entry.IpPolicyKey == nil || len(*entry.IpPolicyKey) != 32 || len(entry.AllowedIpHashes) == 0 {
+			return PublicURL{}, errors.New("ingress: routing-table hashed IP policy is incomplete")
 		}
-		prefixes = append(prefixes, prefix)
-	}
-	if entry.IpPolicy == ingressv1.AllowAll && len(prefixes) != 0 ||
-		entry.IpPolicy == ingressv1.Allowlist && len(prefixes) == 0 {
+		var key [32]byte
+		copy(key[:], *entry.IpPolicyKey)
+		entries := make([]ippolicy.Entry, 0, len(entry.AllowedIpHashes))
+		for _, item := range entry.AllowedIpHashes {
+			entries = append(entries, ippolicy.Entry{
+				Family: string(item.Family), Bits: item.PrefixLength, Digest: item.Digest,
+			})
+		}
+		policy, err := ippolicy.New(key, entries)
+		if err != nil {
+			return PublicURL{}, fmt.Errorf("ingress: routing-table hashed IP policy: %w", err)
+		}
+		hashed = &policy
+	} else if entry.IpPolicy != ingressv1.AllowAll || len(entry.AllowedIpHashes) != 0 || entry.IpPolicyKey != nil {
 		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
 	}
 	route := PublicURL{
 		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
-		AllowedIPPrefixes: prefixes, Backends: backends,
+		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
 	}
 	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {
 		route.RecoveryEpisodeID = uint64(*entry.RecoveryEpisodeId)

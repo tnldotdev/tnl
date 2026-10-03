@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
@@ -14,14 +13,15 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 	if err := Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(t.Context(), databaseURL)
+	database, err := Open(t.Context(), databaseURL, testStorageKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(database.Close)
+	pool := database.pool
 	now := time.Now().UTC().Truncate(time.Second)
-	seedControlPublicURL(t, &Database{pool: pool}, now, "legacy")
-	insertTestPublishRun(t, &Database{pool: pool}, testPublishRun{
+	seedControlPublicURL(t, database, now, "legacy")
+	insertTestPublishRun(t, database, testPublishRun{
 		ID: "legacy-session", PublicURLID: "public_url_legacy", TeamID: "team_legacy", ActingIdentityID: "identity_legacy",
 		CertificateCacheKey: "legacy-cache", CertificateScope: "route",
 		CertificateIdentifiers: []string{"route-legacy.example.test"}, ChallengeMethod: "tls-alpn-01",

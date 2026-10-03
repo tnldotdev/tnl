@@ -130,7 +130,7 @@ func publicURLConfig(backends ...routebackend.Backend) Config {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true}, ""
 	}}
 }
 

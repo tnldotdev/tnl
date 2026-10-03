@@ -13,7 +13,9 @@ import (
 
 const advanceGuestDemoNumber = `-- name: AdvanceGuestDemoNumber :one
 UPDATE control.guest_trials
-SET last_demo_number = last_demo_number + 1, updated_at = $1
+SET last_demo_number = last_demo_number + 1,
+    first_demo_allocated_at = COALESCE(first_demo_allocated_at, $1),
+    updated_at = $1
 WHERE id = $2 AND last_demo_number < 9223372036854775807
 RETURNING last_demo_number
 `
@@ -38,6 +40,7 @@ WHERE guest.id = (
     WHERE public_url_id = $3
 )
   AND guest.active_publish_run_id IS NULL
+  AND guest.expires_at > $2
   AND guest.used_ready_ns < 900000000000
   AND guest.used_bytes < 5242880
 `
@@ -72,17 +75,19 @@ func (q *Queries) CountGuestCurrentPublicURLs(ctx context.Context, guestID strin
 
 const countRecentGuestTrialsByIP = `-- name: CountRecentGuestTrialsByIP :one
 SELECT count(*) FROM control.guest_trials
-WHERE source_ip = $1
-  AND created_at >= $2
+WHERE source_ip_key_id = $1
+  AND issuance_ip_digest = $2
+  AND created_at >= $3
 `
 
 type CountRecentGuestTrialsByIPParams struct {
-	SourceIp string
-	Since    pgtype.Timestamptz
+	SourceIpKeyID    pgtype.Text
+	IssuanceIpDigest pgtype.Text
+	Since            pgtype.Timestamptz
 }
 
 func (q *Queries) CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecentGuestTrialsByIPParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countRecentGuestTrialsByIP, arg.SourceIp, arg.Since)
+	row := q.db.QueryRow(ctx, countRecentGuestTrialsByIP, arg.SourceIpKeyID, arg.IssuanceIpDigest, arg.Since)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -94,19 +99,156 @@ SET used_ready_ns = used_ready_ns + CASE
         WHEN active_ready_at IS NULL THEN 0
         ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
     END,
+    end_reason = COALESCE(end_reason, CASE
+        WHEN $2::text = 'guest_expired' OR expires_at <= $1::timestamptz THEN 'expired'
+        WHEN $2::text = 'guest_transfer_limit' OR used_bytes >= 5242880 THEN 'transfer_limit'
+        WHEN $2::text = 'guest_ready_limit' OR used_ready_ns + CASE
+            WHEN active_ready_at IS NULL THEN 0
+            ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
+        END >= 900000000000 THEN 'ready_limit'
+    END),
+    ended_at = COALESCE(ended_at, CASE
+        WHEN $2::text = 'guest_expired' OR expires_at <= $1::timestamptz THEN expires_at
+        WHEN $2::text IN ('guest_transfer_limit', 'guest_ready_limit') OR used_bytes >= 5242880
+            OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0 ELSE
+                GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
+            END >= 900000000000 THEN $1::timestamptz
+    END),
     active_ready_at = NULL,
     active_publish_run_id = NULL,
     updated_at = $1
-WHERE active_publish_run_id = $2
+WHERE active_publish_run_id = $3
 `
 
 type FinishGuestPublishRunParams struct {
 	ClosedAt     pgtype.Timestamptz
+	CloseReason  string
 	PublishRunID pgtype.Text
 }
 
 func (q *Queries) FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, finishGuestPublishRun, arg.ClosedAt, arg.PublishRunID)
+	result, err := q.db.Exec(ctx, finishGuestPublishRun, arg.ClosedAt, arg.CloseReason, arg.PublishRunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetExpiredGuestCredentials = `-- name: ForgetExpiredGuestCredentials :execrows
+UPDATE control.guest_trials SET credential_id = NULL, credential_hash = NULL,
+    source_ip_digest = NULL, source_ip_key_id = NULL,
+    end_reason = COALESCE(end_reason, 'expired'),
+    ended_at = COALESCE(ended_at, expires_at)
+WHERE id IN (
+    SELECT guest.id FROM control.guest_trials AS guest
+    WHERE guest.expires_at <= $1
+      AND guest.source_ip_digest IS NOT NULL
+      AND guest.active_publish_run_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM control.guest_public_urls AS owned
+          JOIN control.public_urls AS route ON route.id = owned.public_url_id
+          WHERE owned.guest_id = guest.id AND route.lifecycle_state <> 'deleted'
+      )
+    ORDER BY guest.expires_at, guest.id LIMIT $2
+    FOR UPDATE OF guest SKIP LOCKED
+)
+`
+
+type ForgetExpiredGuestCredentialsParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetExpiredGuestCredentials, arg.Now, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetExpiredGuestRoutingHashes = `-- name: ForgetExpiredGuestRoutingHashes :execrows
+UPDATE control.ingress_routing_table_events AS event
+SET projection = convert_to(
+    jsonb_set(
+        convert_from(event.projection, 'UTF8')::jsonb - 'allowed_ip_hashes' - 'ip_policy_key_id',
+        '{ip_policy}', '"allow_all"'::jsonb
+    )::text, 'UTF8'
+)
+WHERE event.id IN (
+    SELECT candidate.id FROM control.ingress_routing_table_events AS candidate
+    JOIN control.guest_public_urls AS owned ON owned.public_url_id = candidate.public_url_id
+    JOIN control.guest_trials AS guest ON guest.id = owned.guest_id
+    JOIN control.public_urls AS route ON route.id = owned.public_url_id
+    WHERE guest.expires_at <= $1
+      AND route.lifecycle_state = 'deleted'
+      AND candidate.public_url_expires_at <= $1
+      AND convert_from(candidate.projection, 'UTF8')::jsonb ->> 'ip_policy' = 'hashed_allowlist'
+    ORDER BY candidate.id LIMIT $2
+    FOR UPDATE OF candidate SKIP LOCKED
+)
+`
+
+type ForgetExpiredGuestRoutingHashesParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) ForgetExpiredGuestRoutingHashes(ctx context.Context, arg ForgetExpiredGuestRoutingHashesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetExpiredGuestRoutingHashes, arg.Now, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetExpiredGuestRunDigests = `-- name: ForgetExpiredGuestRunDigests :execrows
+UPDATE control.publish_runs AS run
+SET request_digest_ciphertext = NULL, request_digest_storage_key_id = NULL
+WHERE run.id IN (
+    SELECT candidate.id FROM control.publish_runs AS candidate
+    JOIN control.guest_public_urls AS owned ON owned.public_url_id = candidate.public_url_id
+    JOIN control.guest_trials AS guest ON guest.id = owned.guest_id
+    JOIN control.public_urls AS route ON route.id = owned.public_url_id
+    WHERE guest.expires_at <= $1
+      AND route.lifecycle_state = 'deleted'
+      AND candidate.closed_at IS NOT NULL
+      AND candidate.request_digest_ciphertext IS NOT NULL
+    ORDER BY candidate.id LIMIT $2
+    FOR UPDATE OF candidate SKIP LOCKED
+)
+`
+
+type ForgetExpiredGuestRunDigestsParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) ForgetExpiredGuestRunDigests(ctx context.Context, arg ForgetExpiredGuestRunDigestsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetExpiredGuestRunDigests, arg.Now, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetOldGuestIssuanceDigests = `-- name: ForgetOldGuestIssuanceDigests :execrows
+UPDATE control.guest_trials AS trial SET issuance_ip_digest = NULL
+WHERE trial.id IN (
+    SELECT candidate.id FROM control.guest_trials AS candidate
+    WHERE candidate.issuance_ip_digest IS NOT NULL AND candidate.created_at < $1
+    ORDER BY candidate.created_at, candidate.id LIMIT $2
+    FOR UPDATE OF candidate SKIP LOCKED
+)
+`
+
+type ForgetOldGuestIssuanceDigestsParams struct {
+	Cutoff    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) ForgetOldGuestIssuanceDigests(ctx context.Context, arg ForgetOldGuestIssuanceDigestsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetOldGuestIssuanceDigests, arg.Cutoff, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -114,11 +256,11 @@ func (q *Queries) FinishGuestPublishRun(ctx context.Context, arg FinishGuestPubl
 }
 
 const getGuestTrialByCredentialID = `-- name: GetGuestTrialByCredentialID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE credential_id = $1
 `
 
-func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID string) (ControlGuestTrial, error) {
+func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error) {
 	row := q.db.QueryRow(ctx, getGuestTrialByCredentialID, credentialID)
 	var i ControlGuestTrial
 	err := row.Scan(
@@ -130,9 +272,16 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 		&i.MembershipID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,
-		&i.SourceIp,
+		&i.SourceIpDigest,
+		&i.SourceIpKeyID,
+		&i.IssuanceIpDigest,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
+		&i.FirstDemoAllocatedAt,
+		&i.FirstReadyAt,
+		&i.EndReason,
+		&i.EndedAt,
 		&i.LastDemoNumber,
 		&i.ActivePublishRunID,
 		&i.ActiveReadyAt,
@@ -143,7 +292,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 }
 
 const getGuestTrialByID = `-- name: GetGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE id = $1
 `
 
@@ -159,9 +308,16 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 		&i.MembershipID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,
-		&i.SourceIp,
+		&i.SourceIpDigest,
+		&i.SourceIpKeyID,
+		&i.IssuanceIpDigest,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
+		&i.FirstDemoAllocatedAt,
+		&i.FirstReadyAt,
+		&i.EndReason,
+		&i.EndedAt,
 		&i.LastDemoNumber,
 		&i.ActivePublishRunID,
 		&i.ActiveReadyAt,
@@ -204,10 +360,14 @@ func (q *Queries) GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURL
 }
 
 const guestRunAllowanceSpent = `-- name: GuestRunAllowanceSpent :one
-SELECT used_bytes >= 5242880
-    OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
+SELECT CASE
+    WHEN expires_at <= $1::timestamptz THEN 'guest_expired'
+    WHEN used_bytes >= 5242880 THEN 'guest_transfer_limit'
+    WHEN used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
         ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
-    END >= 900000000000 AS spent
+    END >= 900000000000 THEN 'guest_ready_limit'
+    ELSE ''
+END::text AS reason
 FROM control.guest_trials
 WHERE active_publish_run_id = $2
 `
@@ -217,11 +377,11 @@ type GuestRunAllowanceSpentParams struct {
 	PublishRunID pgtype.Text
 }
 
-func (q *Queries) GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (pgtype.Bool, error) {
+func (q *Queries) GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error) {
 	row := q.db.QueryRow(ctx, guestRunAllowanceSpent, arg.Now, arg.PublishRunID)
-	var spent pgtype.Bool
-	err := row.Scan(&spent)
-	return spent, err
+	var reason string
+	err := row.Scan(&reason)
+	return reason, err
 }
 
 const insertGuestPublicURL = `-- name: InsertGuestPublicURL :exec
@@ -243,25 +403,30 @@ func (q *Queries) InsertGuestPublicURL(ctx context.Context, arg InsertGuestPubli
 const insertGuestTrial = `-- name: InsertGuestTrial :one
 INSERT INTO control.guest_trials (
     id, credential_id, credential_hash, namespace_label, team_id,
-    membership_id, domain_id, dns_authority_reference, source_ip, created_at, updated_at
+    membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id,
+    issuance_ip_digest, expires_at, created_at, updated_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, $8, $9, $10, $10
+    $7, $8, $9, $10,
+    $11, $12, $13, $13
 )
-RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
+RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
 `
 
 type InsertGuestTrialParams struct {
 	ID                    string
-	CredentialID          string
+	CredentialID          pgtype.Text
 	CredentialHash        []byte
 	NamespaceLabel        string
 	TeamID                string
 	MembershipID          string
 	DomainID              string
 	DnsAuthorityReference string
-	SourceIp              string
+	SourceIpDigest        pgtype.Text
+	SourceIpKeyID         pgtype.Text
+	IssuanceIpDigest      pgtype.Text
+	ExpiresAt             pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 }
 
@@ -275,7 +440,10 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		arg.MembershipID,
 		arg.DomainID,
 		arg.DnsAuthorityReference,
-		arg.SourceIp,
+		arg.SourceIpDigest,
+		arg.SourceIpKeyID,
+		arg.IssuanceIpDigest,
+		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
 	var i ControlGuestTrial
@@ -288,9 +456,16 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		&i.MembershipID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,
-		&i.SourceIp,
+		&i.SourceIpDigest,
+		&i.SourceIpKeyID,
+		&i.IssuanceIpDigest,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
+		&i.FirstDemoAllocatedAt,
+		&i.FirstReadyAt,
+		&i.EndReason,
+		&i.EndedAt,
 		&i.LastDemoNumber,
 		&i.ActivePublishRunID,
 		&i.ActiveReadyAt,
@@ -301,7 +476,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 }
 
 const lockGuestTrialByID = `-- name: LockGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error) {
@@ -316,9 +491,16 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 		&i.MembershipID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,
-		&i.SourceIp,
+		&i.SourceIpDigest,
+		&i.SourceIpKeyID,
+		&i.IssuanceIpDigest,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
+		&i.FirstDemoAllocatedAt,
+		&i.FirstReadyAt,
+		&i.EndReason,
+		&i.EndedAt,
 		&i.LastDemoNumber,
 		&i.ActivePublishRunID,
 		&i.ActiveReadyAt,
@@ -330,9 +512,11 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 
 const markGuestRunReady = `-- name: MarkGuestRunReady :execrows
 UPDATE control.guest_trials
-SET active_ready_at = $1, updated_at = $1
+SET active_ready_at = $1, updated_at = $1,
+    first_ready_at = COALESCE(first_ready_at, $1)
 WHERE active_publish_run_id = $2
   AND active_ready_at IS NULL
+  AND expires_at > $1
 `
 
 type MarkGuestRunReadyParams struct {
@@ -348,19 +532,62 @@ func (q *Queries) MarkGuestRunReady(ctx context.Context, arg MarkGuestRunReadyPa
 	return result.RowsAffected(), nil
 }
 
+const recentGuestTrialStats = `-- name: RecentGuestTrialStats :one
+SELECT
+    count(*) FILTER (WHERE created_at >= $1)::bigint AS issued,
+    count(*) FILTER (WHERE first_demo_allocated_at >= $1)::bigint AS allocated,
+    count(*) FILTER (WHERE first_ready_at >= $1)::bigint AS ready,
+    count(*) FILTER (WHERE end_reason = 'expired' AND ended_at >= $1)::bigint AS expired,
+    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= $1)::bigint AS ready_limit,
+    count(*) FILTER (WHERE end_reason = 'transfer_limit' AND ended_at >= $1)::bigint AS transfer_limit
+FROM control.guest_trials
+`
+
+type RecentGuestTrialStatsRow struct {
+	Issued        int64
+	Allocated     int64
+	Ready         int64
+	Expired       int64
+	ReadyLimit    int64
+	TransferLimit int64
+}
+
+func (q *Queries) RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error) {
+	row := q.db.QueryRow(ctx, recentGuestTrialStats, since)
+	var i RecentGuestTrialStatsRow
+	err := row.Scan(
+		&i.Issued,
+		&i.Allocated,
+		&i.Ready,
+		&i.Expired,
+		&i.ReadyLimit,
+		&i.TransferLimit,
+	)
+	return i, err
+}
+
 const updateGuestTransferredBytes = `-- name: UpdateGuestTransferredBytes :execrows
-UPDATE control.guest_trials AS guest
-SET used_bytes = GREATEST(guest.used_bytes, (
-        SELECT COALESCE(SUM(buckets.ingress_bytes + buckets.egress_bytes), 0)::bigint
-        FROM control.public_url_usage_buckets AS buckets
-        JOIN control.guest_public_urls AS routes ON routes.public_url_id = buckets.public_url_id
-        WHERE routes.guest_id = guest.id
-    )),
-    updated_at = GREATEST(guest.updated_at, $1)
-WHERE guest.id = (
-    SELECT route.guest_id FROM control.guest_public_urls AS route
-    WHERE route.public_url_id = $2
+WITH observed AS (
+    SELECT routes.guest_id, COALESCE(SUM(buckets.ingress_bytes + buckets.egress_bytes), 0)::bigint AS bytes
+    FROM control.guest_public_urls AS routes
+    LEFT JOIN control.public_url_usage_buckets AS buckets ON buckets.public_url_id = routes.public_url_id
+    WHERE routes.guest_id = (
+        SELECT owned.guest_id FROM control.guest_public_urls AS owned WHERE owned.public_url_id = $2
+    )
+    GROUP BY routes.guest_id
 )
+UPDATE control.guest_trials AS guest
+SET used_bytes = GREATEST(guest.used_bytes, observed.bytes),
+    end_reason = COALESCE(guest.end_reason, CASE
+        WHEN guest.expires_at <= $1::timestamptz THEN 'expired'
+        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN 'transfer_limit'
+    END),
+    ended_at = COALESCE(guest.ended_at, CASE
+        WHEN guest.expires_at <= $1::timestamptz THEN guest.expires_at
+        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN $1::timestamptz
+    END),
+    updated_at = GREATEST(guest.updated_at, $1)
+FROM observed WHERE guest.id = observed.guest_id
 `
 
 type UpdateGuestTransferredBytesParams struct {

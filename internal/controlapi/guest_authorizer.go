@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ type guestAuthorizer struct {
 type guestAuthorizationStore interface {
 	GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 	GuestOwnsPublicURL(context.Context, string, string) (bool, error)
+	GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
@@ -49,8 +49,8 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	}
 	if request.Operation == authorization.OperationPublicURLUpdate ||
 		request.Operation != authorization.OperationPublicURLDelete &&
-			(guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance) {
-		if guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance {
+			(!guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance) {
+		if !guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance {
 			return authorization.Decision{}, controlstate.ErrGuestTrialSpent
 		}
 		return authorization.Decision{}, authorization.ErrGuestDemoOnly
@@ -73,9 +73,17 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		request.ActingMembershipID != "" && request.ActingMembershipID != guest.MembershipID {
 		return authorization.Decision{}, authorization.ErrGuestDemoOnly
 	}
-	prefix := netip.PrefixFrom(guest.SourceIP, guest.SourceIP.BitLen()).String()
-	if len(request.AllowedIPPrefixes) != 1 || request.AllowedIPPrefixes[0] != prefix {
-		return authorization.Decision{}, authorization.ErrGuestDemoOnly
+	if request.Operation == authorization.OperationPublicURLCreate {
+		if len(request.AllowedIPPrefixes) != 1 {
+			return authorization.Decision{}, authorization.ErrGuestDemoOnly
+		}
+		matched, err := a.store.GuestSourceMatches(guest, request.AllowedIPPrefixes[0])
+		if err != nil {
+			return authorization.Decision{}, authorization.ErrUnavailable
+		}
+		if !matched {
+			return authorization.Decision{}, authorization.ErrGuestIPChanged
+		}
 	}
 	if request.Operation != authorization.OperationPublicURLCreate {
 		if request.PublicURLID == "" {

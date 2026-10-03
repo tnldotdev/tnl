@@ -52,6 +52,8 @@ INSERT INTO control.ingress_routing_table_events (
     canonical_hostname,
     entry_revision,
     projection,
+    policy_ciphertext,
+    policy_storage_key_id,
     public_url_expires_at,
     created_at
 ) VALUES (
@@ -61,6 +63,8 @@ INSERT INTO control.ingress_routing_table_events (
     sqlc.arg(canonical_hostname),
     sqlc.arg(entry_revision),
     sqlc.arg(projection),
+    sqlc.narg(policy_ciphertext),
+    sqlc.narg(policy_storage_key_id),
     sqlc.narg(public_url_expires_at),
     sqlc.arg(created_at)
 )
@@ -83,6 +87,8 @@ WITH clock_guard AS MATERIALIZED (
         canonical_hostname,
         entry_revision,
         projection,
+        policy_ciphertext,
+        policy_storage_key_id,
         public_url_expires_at,
         created_at
     ) SELECT
@@ -92,6 +98,8 @@ WITH clock_guard AS MATERIALIZED (
         sqlc.arg(canonical_hostname),
         sqlc.arg(entry_revision),
         sqlc.arg(projection),
+        sqlc.narg(policy_ciphertext),
+        sqlc.narg(policy_storage_key_id),
         sqlc.narg(public_url_expires_at),
         sqlc.arg(created_at)
     FROM clock_guard

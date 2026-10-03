@@ -23,9 +23,12 @@ func runTelemetryPreference(ctx context.Context, command telemetryPreferenceComm
 	if err != nil {
 		return err
 	}
-	var enabled bool
+	var enabled, demoEnabled bool
 	if action == "status" {
 		enabled, err = clientstate.TelemetryEnabledAt(ctx, root)
+		if err == nil {
+			demoEnabled, err = clientstate.DemoTelemetryEnabledAt(ctx, root)
+		}
 	} else {
 		state, openErr := clientstate.Open(ctx, root)
 		if openErr != nil {
@@ -36,6 +39,9 @@ func runTelemetryPreference(ctx context.Context, command telemetryPreferenceComm
 			return err
 		}
 		enabled, err = state.TelemetryEnabled(ctx)
+		if err == nil {
+			demoEnabled, err = state.DemoTelemetryEnabled(ctx)
+		}
 	}
 	if err != nil {
 		return err
@@ -44,8 +50,15 @@ func runTelemetryPreference(ctx context.Context, command telemetryPreferenceComm
 	if enabled {
 		value = "on"
 	}
+	demoValue := "off"
+	if demoEnabled {
+		demoValue = "on"
+	}
 	return clioutput.Write(output, clioutput.Frame{
 		Command: "tnl telemetry " + action, State: value,
-		Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "usage telemetry", Value: value})},
+		Blocks: []clioutput.Block{clioutput.Fields(
+			clioutput.Field{Label: "usage telemetry", Value: value},
+			clioutput.Field{Label: "demo telemetry", Value: demoValue},
+		)},
 	})
 }

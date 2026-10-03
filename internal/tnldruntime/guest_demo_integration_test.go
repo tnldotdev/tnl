@@ -66,7 +66,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	if err := json.Unmarshal(guestResponse.Body.Bytes(), &guest); err != nil {
 		t.Fatal(err)
 	}
-	if guest.SourceIp != "192.0.2.7" || !strings.HasPrefix(guest.Namespace, "guest-") {
+	if !strings.HasPrefix(guest.Namespace, "guest-") {
 		t.Fatalf("guest metadata = %+v", guest)
 	}
 	create := func(hostname string, ip string) *httptest.ResponseRecorder {
@@ -228,7 +228,11 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		}
 	})
 	localDemo.SetGuest()
-	address, err := netip.ParseAddr(issued.SourceIp)
+	clientIP, err := authenticated.Control.ClientIP(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, err := netip.ParseAddr(clientIP.Ip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +249,10 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)
+	var firstReadyAt time.Time
+	if err := inspect.QueryRow(`SELECT first_ready_at FROM control.guest_trials WHERE id = $1`, issued.GuestId).Scan(&firstReadyAt); err != nil || firstReadyAt.IsZero() {
+		t.Fatalf("guest trial did not record its first ready run: %v", err)
+	}
 	waitForReadyPublisherConnections(t, inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, inspect, 1)
 	localDemo.SetPublicURL(ready.PublicURL)
@@ -270,4 +278,29 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		t.Fatalf("guest pong = %d, %+v, %v", ping.StatusCode, pong, decodeErr)
 	}
 	stopIntegrationPublisher(t, handle)
+	var deleted bool
+	if err := inspect.QueryRow(`SELECT lifecycle_state = 'deleted' AND request_digest_ciphertext IS NULL
+		AND request_digest_storage_key_id IS NULL AND allowed_ip_hashes IS NULL
+		FROM control.public_urls WHERE id = $1`, ready.PublicURLID).Scan(&deleted); err != nil || !deleted {
+		t.Fatalf("stopped demo retained saved policy or digest: %t, %v", deleted, err)
+	}
+	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer privateState.Close()
+	if _, err := privateState.ForgetGuestPrivateState(t.Context(), time.Now().Add(73*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var scrubbed bool
+	if err := inspect.QueryRow(`SELECT source_ip_digest IS NULL AND credential_hash IS NULL
+		FROM control.guest_trials WHERE id = $1`, issued.GuestId).Scan(&scrubbed); err != nil || !scrubbed {
+		t.Fatalf("expired guest retained source binding: %t, %v", scrubbed, err)
+	}
+	var retainedHashes int
+	if err := inspect.QueryRow(`SELECT count(*) FROM control.ingress_routing_table_events
+		WHERE public_url_id = $1 AND convert_from(projection, 'UTF8')::jsonb ? 'allowed_ip_hashes'`,
+		ready.PublicURLID).Scan(&retainedHashes); err != nil || retainedHashes != 0 {
+		t.Fatalf("expired guest routing events retained %d IP hashes: %v", retainedHashes, err)
+	}
 }

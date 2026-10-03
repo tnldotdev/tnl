@@ -25,6 +25,8 @@ WITH clock_guard AS MATERIALIZED (
         canonical_hostname,
         entry_revision,
         projection,
+        policy_ciphertext,
+        policy_storage_key_id,
         public_url_expires_at,
         created_at
     ) SELECT
@@ -35,13 +37,15 @@ WITH clock_guard AS MATERIALIZED (
         $5,
         $6,
         $7,
-        $8
+        $8,
+        $9,
+        $10
     FROM clock_guard
     RETURNING id AS routing_table_revision
 ), advanced AS (
     UPDATE control.ingress_routing_table_clock
     SET current_revision = inserted.routing_table_revision,
-        updated_at = $9
+        updated_at = $11
     FROM inserted
     WHERE id = 1
       AND current_revision < inserted.routing_table_revision
@@ -58,6 +62,8 @@ type InsertFinalIngressRoutingTableEventParams struct {
 	CanonicalHostname  string
 	EntryRevision      int64
 	Projection         []byte
+	PolicyCiphertext   []byte
+	PolicyStorageKeyID pgtype.Text
 	PublicUrlExpiresAt pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
@@ -74,6 +80,8 @@ func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg I
 		arg.CanonicalHostname,
 		arg.EntryRevision,
 		arg.Projection,
+		arg.PolicyCiphertext,
+		arg.PolicyStorageKeyID,
 		arg.PublicUrlExpiresAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -91,6 +99,8 @@ INSERT INTO control.ingress_routing_table_events (
     canonical_hostname,
     entry_revision,
     projection,
+    policy_ciphertext,
+    policy_storage_key_id,
     public_url_expires_at,
     created_at
 ) VALUES (
@@ -101,7 +111,9 @@ INSERT INTO control.ingress_routing_table_events (
     $5,
     $6,
     $7,
-    $8
+    $8,
+    $9,
+    $10
 )
 RETURNING id
 `
@@ -113,6 +125,8 @@ type InsertIngressRoutingTableEventParams struct {
 	CanonicalHostname  string
 	EntryRevision      int64
 	Projection         []byte
+	PolicyCiphertext   []byte
+	PolicyStorageKeyID pgtype.Text
 	PublicUrlExpiresAt pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 }
@@ -125,6 +139,8 @@ func (q *Queries) InsertIngressRoutingTableEvent(ctx context.Context, arg Insert
 		arg.CanonicalHostname,
 		arg.EntryRevision,
 		arg.Projection,
+		arg.PolicyCiphertext,
+		arg.PolicyStorageKeyID,
 		arg.PublicUrlExpiresAt,
 		arg.CreatedAt,
 	)
@@ -157,7 +173,7 @@ func (q *Queries) LatestIngressRoutingEntryRevision(ctx context.Context, arg Lat
 }
 
 const listIngressRoutingTableEvents = `-- name: ListIngressRoutingTableEvents :many
-SELECT id, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at
+SELECT id, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at, policy_ciphertext, policy_storage_key_id
 FROM control.ingress_routing_table_events
 WHERE id > $1
   AND id <= $2
@@ -190,6 +206,8 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 			&i.Projection,
 			&i.PublicUrlExpiresAt,
 			&i.CreatedAt,
+			&i.PolicyCiphertext,
+			&i.PolicyStorageKeyID,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +227,7 @@ WITH latest AS (
     GROUP BY history.canonical_hostname,
         CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'public_url' ELSE 'challenge' END
 )
-SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at
+SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at, events.policy_ciphertext, events.policy_storage_key_id
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.id = latest.routing_table_revision
 WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
@@ -243,6 +261,8 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 			&i.Projection,
 			&i.PublicUrlExpiresAt,
 			&i.CreatedAt,
+			&i.PolicyCiphertext,
+			&i.PolicyStorageKeyID,
 		); err != nil {
 			return nil, err
 		}

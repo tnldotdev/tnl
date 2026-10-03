@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/netip"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
@@ -21,7 +20,7 @@ type GuestSession struct {
 	MembershipID string
 	DomainID     string
 	Namespace    string
-	SourceIP     string
+	ExpiresAt    time.Time
 }
 
 func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
@@ -39,7 +38,7 @@ func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 	session := GuestSession{
 		GuestID: stored.GuestID, AccessToken: string(access), TeamID: stored.TeamID,
 		MembershipID: stored.MembershipID, DomainID: stored.DomainID, Namespace: stored.Namespace,
-		SourceIP: stored.SourceIp,
+		ExpiresAt: time.Unix(0, stored.ExpiresAt).UTC(),
 	}
 	if err := validateGuestSession(session); err != nil {
 		return GuestSession{}, true, err
@@ -58,7 +57,8 @@ func (s *Store) SaveGuestSession(ctx context.Context, session GuestSession) erro
 	return s.database.queries.SaveGuestSession(ctx, clientstatedb.SaveGuestSessionParams{
 		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, StoredAccessToken: access,
 		TeamID: session.TeamID, MembershipID: session.MembershipID,
-		DomainID: session.DomainID, Namespace: session.Namespace, SourceIp: session.SourceIP,
+		DomainID: session.DomainID, Namespace: session.Namespace,
+		ExpiresAt: session.ExpiresAt.UnixNano(),
 		CreatedAt: time.Now().UTC().UnixNano(),
 	})
 }
@@ -83,9 +83,8 @@ func validateGuestSession(session GuestSession) error {
 	if err != nil || namespace != session.Namespace {
 		return errors.New("clientstate: guest namespace is invalid")
 	}
-	ip, err := netip.ParseAddr(session.SourceIP)
-	if err != nil || !ip.IsValid() || ip.Zone() != "" {
-		return errors.New("clientstate: guest source IP is invalid")
+	if session.ExpiresAt.IsZero() {
+		return errors.New("clientstate: guest expiry is invalid")
 	}
 	return nil
 }

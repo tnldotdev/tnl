@@ -44,6 +44,7 @@ var (
 	ErrUnsupported          = errors.New("controlclient: unsupported")
 	ErrGuestTrialExhausted  = errors.New("guest demo trial used up; run `tnl login` to keep publishing your own app")
 	ErrGuestDemoOnly        = errors.New("guest access only publishes the built-in demo; run `tnl login` for your own app or settings, or `tnl publish --demo` to try tnl")
+	ErrGuestIPChanged       = errors.New("your IP changed since the guest demo started; run `tnl login` to keep publishing")
 	ErrGuestIssuanceLimited = errors.New("guest demo creation is limited on this network; run `tnl login` to keep publishing")
 )
 
@@ -332,6 +333,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrGuestTrialExhausted
 	case controlv1.GuestDemoOnly:
 		return ErrGuestDemoOnly
+	case controlv1.GuestIpChanged:
+		return ErrGuestIPChanged
 	case controlv1.GuestIssuanceLimited:
 		return ErrGuestIssuanceLimited
 	case controlv1.NotFound:
