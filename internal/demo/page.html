@@ -4,40 +4,200 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>local demo - tnl</title>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
-      :root { color-scheme: light; --paper: #fff; --ink: #111; --muted: #666; --rule: #b8b8b8; --subtle: #f5f5f5; }
-      * { box-sizing: border-box; }
-      body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.75 "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace; }
-      a { color: inherit; }
-      a:hover, button:hover { background: var(--subtle); }
-      a:focus-visible, button:focus-visible { outline: 1px dashed var(--ink); outline-offset: 4px; }
-      .site { max-width: 780px; min-height: 100vh; margin: auto; padding: 32px 24px; display: flex; flex-direction: column; }
-      header { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
-      header strong { font-size: 18px; letter-spacing: -.05em; }
-      header a { padding: 8px; text-decoration: none; }
-      main { padding: 64px 0 80px; }
-      h1 { margin: 0 0 16px; font-size: clamp(25px, 5vw, 36px); line-height: 1.3; letter-spacing: -.04em; }
-      p { margin: 0; }
-      .muted { color: var(--muted); }
-      .diagram { position: relative; margin: 48px 0 32px; padding: 30px 24px 20px; border: 1px solid var(--rule); }
-      .diagram figcaption { position: absolute; top: -.85em; left: 16px; padding: 0 8px; background: var(--paper); color: var(--muted); }
-      pre { margin: 0; font: inherit; line-height: 1.5; }
-      .url { display: block; width: fit-content; max-width: 100%; margin: 3px 0; overflow-wrap: anywhere; font-weight: 500; }
-      .computer { position: relative; margin: 20px 0 16px; padding: 22px 16px 14px; width: fit-content; max-width: 100%; border: 1px solid var(--rule); }
-      .computer-label { position: absolute; top: -.85em; left: 10px; padding: 0 6px; background: var(--paper); }
-      .values { display: grid; grid-template-columns: auto auto; gap: 0 20px; margin: 12px 0 0; }
-      .values dt { color: var(--muted); }
-      .values dd { margin: 0; }
-      .return { margin-top: 14px; color: var(--muted); }
-      .browser-response { position: relative; width: fit-content; max-width: 100%; margin-top: 24px; padding: 22px 16px 14px; border: 1px solid var(--rule); }
-      .response-label { position: absolute; top: -.85em; left: 10px; padding: 0 6px; background: var(--paper); }
-      .browser-response pre { font-weight: 500; }
-      button { min-height: 44px; padding: 8px 18px; border: 1px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
-      button:disabled { color: var(--muted); cursor: wait; }
-      .result { min-height: 3em; margin-top: 16px; }
-      footer { margin-top: auto; color: var(--muted); white-space: nowrap; overflow: hidden; font-size: 12px; }
-      @media (max-width: 480px) { .site { padding: 24px 16px; } main { padding-top: 48px; } .diagram { padding: 30px 16px 20px; } .browser-response .values { grid-template-columns: 1fr; gap: 0; } .browser-response .values dd { margin-bottom: 8px; } }
+      :root {
+        color-scheme: light;
+        --paper: #fff;
+        --ink: #111;
+        --muted: #666;
+        --rule: #b8b8b8;
+        --subtle: #f5f5f5;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          14px/1.75 "Fira Code",
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      a {
+        color: inherit;
+      }
+      a:hover,
+      button:hover {
+        background: var(--subtle);
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 1px dashed var(--ink);
+        outline-offset: 4px;
+      }
+      .site {
+        max-width: 780px;
+        min-height: 100vh;
+        margin: auto;
+        padding: 32px 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 44px;
+      }
+      header strong {
+        font-size: 18px;
+        letter-spacing: -0.05em;
+      }
+      header a {
+        padding: 8px;
+        text-decoration: none;
+      }
+      main {
+        padding: 64px 0 80px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        font-size: clamp(25px, 5vw, 36px);
+        line-height: 1.3;
+        letter-spacing: -0.04em;
+      }
+      p {
+        margin: 0;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .diagram {
+        position: relative;
+        margin: 48px 0 32px;
+        padding: 30px 24px 20px;
+        border: 1px solid var(--rule);
+      }
+      .diagram figcaption {
+        position: absolute;
+        top: -0.85em;
+        left: 16px;
+        padding: 0 8px;
+        background: var(--paper);
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        font: inherit;
+        line-height: 1.5;
+      }
+      .url {
+        display: block;
+        width: fit-content;
+        max-width: 100%;
+        margin: 3px 0;
+        overflow-wrap: anywhere;
+        font-weight: 500;
+      }
+      .computer {
+        position: relative;
+        margin: 20px 0 16px;
+        padding: 22px 16px 14px;
+        width: fit-content;
+        max-width: 100%;
+        border: 1px solid var(--rule);
+      }
+      .computer-label {
+        position: absolute;
+        top: -0.85em;
+        left: 10px;
+        padding: 0 6px;
+        background: var(--paper);
+      }
+      .values {
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 0 20px;
+        margin: 12px 0 0;
+      }
+      .values dt {
+        color: var(--muted);
+      }
+      .values dd {
+        margin: 0;
+      }
+      .return {
+        margin-top: 14px;
+        color: var(--muted);
+      }
+      .browser-response {
+        position: relative;
+        width: fit-content;
+        max-width: 100%;
+        margin-top: 24px;
+        padding: 22px 16px 14px;
+        border: 1px solid var(--rule);
+      }
+      .response-label {
+        position: absolute;
+        top: -0.85em;
+        left: 10px;
+        padding: 0 6px;
+        background: var(--paper);
+      }
+      .browser-response pre {
+        font-weight: 500;
+      }
+      button {
+        min-height: 44px;
+        padding: 8px 18px;
+        border: 1px solid var(--ink);
+        background: var(--paper);
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: wait;
+      }
+      .result {
+        min-height: 3em;
+        margin-top: 16px;
+      }
+      footer {
+        margin-top: auto;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        font-size: 12px;
+      }
+      @media (max-width: 480px) {
+        .site {
+          padding: 24px 16px;
+        }
+        main {
+          padding-top: 48px;
+        }
+        .diagram {
+          padding: 30px 16px 20px;
+        }
+        .browser-response .values {
+          grid-template-columns: 1fr;
+          gap: 0;
+        }
+        .browser-response .values dd {
+          margin-bottom: 8px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -46,13 +206,18 @@
       <main>
         <h1>this page is running on your computer.</h1>
         <p class="muted">ping it and check the terminal running tnl.</p>
-        <figure class="diagram" aria-label="a browser reaches this local demo through a public URL and the tnl server">
+        <figure
+          class="diagram"
+          aria-label="a browser reaches this local demo through a public URL and the tnl server"
+        >
           <figcaption>[ ping / pong ]</figcaption>
-          <pre>browser
+          <pre>
+browser
   | ping over HTTPS
   v</pre>
           <a id="public-url" class="url" href="#">waiting for public URL</a>
-          <pre>  |
+          <pre>
+  |
   v
 tnl server
   | encrypted traffic
@@ -61,8 +226,10 @@ tnl server
             <div class="computer-label">[ your computer ]</div>
             <pre>tnl -> local demo</pre>
             <dl class="values">
-              <dt>stamp</dt><dd id="stamp">...</dd>
-              <dt>count</dt><dd id="request-count">0</dd>
+              <dt>stamp</dt>
+              <dd id="stamp">...</dd>
+              <dt>count</dt>
+              <dd id="request-count">0</dd>
             </dl>
           </div>
           <p class="return">pong returns along the same path.</p>
@@ -70,15 +237,19 @@ tnl server
             <div class="response-label">[ browser ]</div>
             <pre id="pong">waiting for ping</pre>
             <dl class="values">
-              <dt>round trip</dt><dd id="round-trip">-- ms</dd>
-              <dt>generated at</dt><dd id="generated-at">--</dd>
+              <dt>round trip</dt>
+              <dd id="round-trip">-- ms</dd>
+              <dt>generated at</dt>
+              <dd id="generated-at">--</dd>
             </dl>
           </div>
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
         <p id="result" class="result muted" role="status" aria-live="polite"></p>
       </main>
-      <footer aria-label="tnl.dev demo">──[ tnl.dev :: demo ]───────────────────────────────────────────</footer>
+      <footer aria-label="tnl.dev demo">
+        ──[ tnl.dev :: demo ]───────────────────────────────────────────
+      </footer>
     </div>
     <script>
       const button = document.getElementById("ping");
@@ -95,10 +266,14 @@ tnl server
         if (!response.ok) throw new Error("request failed");
         return response.json();
       }
-      request("/state").then((state) => {
-        show(state);
-        button.disabled = !state.public_url;
-      }).catch(() => { result.textContent = "could not reach the local demo. try refreshing."; });
+      request("/state")
+        .then((state) => {
+          show(state);
+          button.disabled = !state.public_url;
+        })
+        .catch(() => {
+          result.textContent = "could not reach the local demo. try refreshing.";
+        });
       button.addEventListener("click", async () => {
         button.disabled = true;
         document.getElementById("pong").textContent = "sending ping...";
@@ -109,7 +284,8 @@ tnl server
           show(state);
           document.getElementById("pong").textContent = "pong";
           document.getElementById("round-trip").textContent = elapsed + " ms";
-          document.getElementById("generated-at").textContent = new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
+          document.getElementById("generated-at").textContent =
+            new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
           result.textContent = "find the same stamp and count in the terminal running tnl.";
         } catch {
           document.getElementById("pong").textContent = "ping failed";
