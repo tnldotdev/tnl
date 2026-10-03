@@ -63,6 +63,19 @@ func (e IngressRoutingTableEventKind) Valid() bool {
 	}
 }
 
+// GuestVisitorRequest defines model for GuestVisitorRequest.
+type GuestVisitorRequest struct {
+	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
+	IngressRunId         Identifier `json:"ingress_run_id"`
+	PublicUrlId          Identifier `json:"public_url_id"`
+	VisitorConnectionId  Identifier `json:"visitor_connection_id"`
+}
+
+// GuestVisitorReservation defines model for GuestVisitorReservation.
+type GuestVisitorReservation struct {
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // Identifier defines model for Identifier.
 type Identifier = string
 
@@ -135,6 +148,7 @@ type IngressRoutingPublisherConnection struct {
 type IngressRoutingTableEntry struct {
 	AllowedIpPrefixes    []string                            `json:"allowed_ip_prefixes"`
 	CanonicalHostname    string                              `json:"canonical_hostname"`
+	GuestId              *Identifier                         `json:"guest_id,omitempty"`
 	IpPolicy             IngressRoutingTableEntryIpPolicy    `json:"ip_policy"`
 	PolicyRevision       int64                               `json:"policy_revision"`
 	PublicUrlExpiresAt   time.Time                           `json:"public_url_expires_at"`
@@ -276,6 +290,9 @@ type RegisterIngressJSONRequestBody = IngressRegistration
 // DrainIngressJSONRequestBody defines body for DrainIngress for application/json ContentType.
 type DrainIngressJSONRequestBody = IngressDrainRequest
 
+// ReserveGuestVisitorJSONRequestBody defines body for ReserveGuestVisitor for application/json ContentType.
+type ReserveGuestVisitorJSONRequestBody = GuestVisitorRequest
+
 // ObservePublicURLRecoveryJSONRequestBody defines body for ObservePublicURLRecovery for application/json ContentType.
 type ObservePublicURLRecoveryJSONRequestBody = PublicURLRecoveryObservationRequest
 
@@ -386,6 +403,25 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReserveGuestVisitorWithBody Reserve or renew one guest visitor slot across all ingress processes
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+	ReserveGuestVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReserveGuestVisitor Reserve or renew one guest visitor slot across all ingress processes
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+	ReserveGuestVisitor(ctx context.Context, ingressId IngressID, body ReserveGuestVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseGuestVisitor Release one guest visitor slot
+	//
+	// Corresponds with DELETE /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id} (the `ReleaseGuestVisitor` operationId).
+	ReleaseGuestVisitor(ctx context.Context, ingressId IngressID, visitorConnectionId Identifier, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ObservePublicURLRecoveryWithBody Record the first publisher byte after public URL recovery
 	//
@@ -498,6 +534,55 @@ func (c *Client) DrainIngressWithBody(ctx context.Context, ingressId IngressID, 
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 func (c *Client) DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainIngressRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReserveGuestVisitorWithBody Reserve or renew one guest visitor slot across all ingress processes
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+func (c *Client) ReserveGuestVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReserveGuestVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReserveGuestVisitor Reserve or renew one guest visitor slot across all ingress processes
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+func (c *Client) ReserveGuestVisitor(ctx context.Context, ingressId IngressID, body ReserveGuestVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReserveGuestVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseGuestVisitor Release one guest visitor slot
+//
+// Corresponds with DELETE /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id} (the `ReleaseGuestVisitor` operationId).
+func (c *Client) ReleaseGuestVisitor(ctx context.Context, ingressId IngressID, visitorConnectionId Identifier, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseGuestVisitorRequest(c.Server, ingressId, visitorConnectionId)
 	if err != nil {
 		return nil, err
 	}
@@ -723,6 +808,94 @@ func NewDrainIngressRequestWithBody(server string, ingressId IngressID, contentT
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReserveGuestVisitorRequest calls the generic ReserveGuestVisitor builder with application/json body
+func NewReserveGuestVisitorRequest(server string, ingressId IngressID, body ReserveGuestVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReserveGuestVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewReserveGuestVisitorRequestWithBody constructs an http.Request for the ReserveGuestVisitor method, with any body, and a specified content type
+func NewReserveGuestVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/guest-visitors", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReleaseGuestVisitorRequest constructs an http.Request for the ReleaseGuestVisitor method
+func NewReleaseGuestVisitorRequest(server string, ingressId IngressID, visitorConnectionId Identifier) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "visitor_connection_id", visitorConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/guest-visitors/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1109,6 +1282,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithResponse(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainIngressResponse, error)
 
+	// ReserveGuestVisitorWithBodyWithResponse Reserve or renew one guest visitor slot across all ingress processes
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+	ReserveGuestVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReserveGuestVisitorResponse, error)
+
+	// ReserveGuestVisitorWithResponse Reserve or renew one guest visitor slot across all ingress processes
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+	ReserveGuestVisitorWithResponse(ctx context.Context, ingressId IngressID, body ReserveGuestVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*ReserveGuestVisitorResponse, error)
+
+	// ReleaseGuestVisitorWithResponse Release one guest visitor slot
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id} (the `ReleaseGuestVisitor` operationId).
+	ReleaseGuestVisitorWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId Identifier, reqEditors ...RequestEditorFn) (*ReleaseGuestVisitorResponse, error)
+
 	// ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1256,6 +1450,95 @@ func (r DrainIngressResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DrainIngressResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReserveGuestVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GuestVisitorReservation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReserveGuestVisitorResponse) GetJSON200() *GuestVisitorReservation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReserveGuestVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReserveGuestVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReserveGuestVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReserveGuestVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReserveGuestVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReleaseGuestVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseGuestVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseGuestVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseGuestVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseGuestVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseGuestVisitorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1554,6 +1837,45 @@ func (c *ClientWithResponses) DrainIngressWithResponse(ctx context.Context, ingr
 	return ParseDrainIngressResponse(rsp)
 }
 
+// ReserveGuestVisitorWithBodyWithResponse Reserve or renew one guest visitor slot across all ingress processes
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+func (c *ClientWithResponses) ReserveGuestVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReserveGuestVisitorResponse, error) {
+	rsp, err := c.ReserveGuestVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReserveGuestVisitorResponse(rsp)
+}
+
+// ReserveGuestVisitorWithResponse Reserve or renew one guest visitor slot across all ingress processes
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/guest-visitors (the `ReserveGuestVisitor` operationId).
+func (c *ClientWithResponses) ReserveGuestVisitorWithResponse(ctx context.Context, ingressId IngressID, body ReserveGuestVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*ReserveGuestVisitorResponse, error) {
+	rsp, err := c.ReserveGuestVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReserveGuestVisitorResponse(rsp)
+}
+
+// ReleaseGuestVisitorWithResponse Release one guest visitor slot
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id} (the `ReleaseGuestVisitor` operationId).
+func (c *ClientWithResponses) ReleaseGuestVisitorWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId Identifier, reqEditors ...RequestEditorFn) (*ReleaseGuestVisitorResponse, error) {
+	rsp, err := c.ReleaseGuestVisitor(ctx, ingressId, visitorConnectionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseGuestVisitorResponse(rsp)
+}
+
 // ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1711,6 +2033,68 @@ func ParseDrainIngressResponse(rsp *http.Response) (*DrainIngressResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReserveGuestVisitorResponse parses an HTTP response from a ReserveGuestVisitorWithResponse call
+func ParseReserveGuestVisitorResponse(rsp *http.Response) (*ReserveGuestVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReserveGuestVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GuestVisitorReservation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReleaseGuestVisitorResponse parses an HTTP response from a ReleaseGuestVisitorWithResponse call
+func ParseReleaseGuestVisitorResponse(rsp *http.Response) (*ReleaseGuestVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseGuestVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -1900,6 +2284,12 @@ type ServerInterface interface {
 	// DrainIngress Stop a matching ingress process from accepting new visitors
 	// (POST /internal/v1/ingresses/{ingress_id}/drain)
 	DrainIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+	// ReserveGuestVisitor Reserve or renew one guest visitor slot across all ingress processes
+	// (POST /internal/v1/ingresses/{ingress_id}/guest-visitors)
+	ReserveGuestVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+	// ReleaseGuestVisitor Release one guest visitor slot
+	// (DELETE /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id})
+	ReleaseGuestVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID, visitorConnectionId Identifier)
 	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
 	// (POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed)
 	ObservePublicURLRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
@@ -1957,6 +2347,67 @@ func (siw *ServerInterfaceWrapper) DrainIngress(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DrainIngress(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReserveGuestVisitor operation middleware
+func (siw *ServerInterfaceWrapper) ReserveGuestVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReserveGuestVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReleaseGuestVisitor operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseGuestVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "visitor_connection_id" -------------
+	var visitorConnectionId Identifier
+
+	err = runtime.BindStyledParameterWithOptions("simple", "visitor_connection_id", r.PathValue("visitor_connection_id"), &visitorConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "visitor_connection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseGuestVisitor(w, r, ingressId, visitorConnectionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2328,6 +2779,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/snapshot", wrapper.GetIngressRoutingTableSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/events", wrapper.GetIngressRoutingTableEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/usage-reports", wrapper.ReportIngressUsage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/guest-visitors", wrapper.ReserveGuestVisitor)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id}", wrapper.ReleaseGuestVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed", wrapper.ObservePublicURLRecovery)
 
 	return m

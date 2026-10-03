@@ -55,6 +55,20 @@ type childExitError struct {
 func (e *childExitError) Error() string { return fmt.Sprintf("command exited with status %d", e.code) }
 
 func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if flags.AccessToken == "" {
+		serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
+		if err != nil {
+			return err
+		}
+		guestErr := requireSignInOutsideDemo(ctx, state, serverURL, "")
+		closeErr := state.Close()
+		if guestErr != nil {
+			return guestErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
 	telemetry := optionalTelemetryReporter(reporters)
 	configuredCommand := flags.Command
 	if detail := devCommandRecursion(configuredCommand, flags.commandDir); detail != "" {

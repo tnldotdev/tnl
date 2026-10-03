@@ -30,6 +30,7 @@ const alternateAttemptTimeout = 250 * time.Millisecond
 const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
 
 type PublicURL struct {
+	GuestID           string
 	ID                string
 	PublishRunNumber  uint64
 	RecoveryEpisodeID uint64
@@ -85,6 +86,7 @@ type Config struct {
 	Metrics                         Metrics
 	Observer                        OperationObserver
 	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
+	OpenGuestVisitor                func(context.Context, string, string, func()) (func(), error)
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
 	OnForwardingFailure             func(string, uint64, string, string, int)

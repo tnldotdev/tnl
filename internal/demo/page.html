@@ -77,6 +77,7 @@ tnl server
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
         <p id="result" class="result muted" role="status" aria-live="polite"></p>
+        <p id="sign-in" class="muted" hidden>to publish your own app and keep this namespace, run <code>tnl login</code> in your terminal.</p>
       </main>
       <footer aria-label="tnl.dev demo">──[ tnl.dev :: demo ]───────────────────────────────────────────</footer>
     </div>
@@ -89,6 +90,7 @@ tnl server
         url.href = state.public_url;
         document.getElementById("stamp").textContent = state.stamp;
         document.getElementById("request-count").textContent = state.request_count;
+        document.getElementById("sign-in").hidden = !state.guest;
       }
       async function request(path, options) {
         const response = await fetch(path, options);

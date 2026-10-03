@@ -181,3 +181,22 @@ func TestExplicitHostnameUsesReadyDomainWhenDefaultIsPending(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimedGuestNamespaceRemainsMemberOwned(t *testing.T) {
+	current := teamContext{
+		membership:     authorityv1.Membership{MemberSlug: "original", ManagedLabel: "original", Role: authorityv1.TeamRoleMember},
+		guestNamespace: "guest-0123456789abcdef.tnl.wtf",
+		domains:        []authorityv1.Domain{{Id: "dom_managed", CanonicalDomain: "tnl.wtf", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}},
+	}
+	hostname, domain, scope, err := resolvePublishHostname(
+		"https://demo-01234567.guest-0123456789abcdef.tnl.wtf", "", "", current,
+	)
+	if err != nil || hostname != "demo-01234567.guest-0123456789abcdef.tnl.wtf" || domain.Id != "dom_managed" || scope != controlv1.Member {
+		t.Fatalf("claimed guest public URL = %q, %+v, %q, %v", hostname, domain, scope, err)
+	}
+	if _, _, _, err := resolvePublishHostname(
+		"https://nested.demo-01234567.guest-0123456789abcdef.tnl.wtf", "", "", current,
+	); err == nil {
+		t.Fatal("nested guest public URL was accepted as a member URL")
+	}
+}

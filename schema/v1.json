@@ -417,6 +417,10 @@
           "description": "Absolute lifetime of newly issued control sessions.",
           "default": "720h"
         },
+        "guest_demo_enabled": {
+          "type": "boolean",
+          "description": "Allow limited anonymous tnl publish --demo runs."
+        },
         "public_url_usage_url": {
           "type": "string",
           "description": "Public URL usage receiver base URL."

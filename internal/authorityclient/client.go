@@ -210,6 +210,30 @@ func (c *Client) AuthorizeServiceOperation(
 	)
 }
 
+// ReserveGuestNamespace reserves a managed label with the hosted authority.
+func (c *Client) ReserveGuestNamespace(
+	ctx context.Context, serviceSecret string, guestID, label string,
+) (authorityv1.GuestNamespaceReservation, error) {
+	return requestWithToken[authorityv1.GuestNamespaceReservation](ctx, c, serviceSecret,
+		func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ReserveGuestNamespace(ctx, authorityv1.GuestNamespaceReservationRequest{
+				GuestId: guestID, NamespaceLabel: label,
+			}, editors...)
+		})
+}
+
+// ClaimGuestNamespace attaches a verified guest namespace to a signed-in identity.
+func (c *Client) ClaimGuestNamespace(
+	ctx context.Context, serviceSecret, guestID, accessToken string,
+) (authorityv1.GuestNamespaceClaim, error) {
+	return requestWithToken[authorityv1.GuestNamespaceClaim](ctx, c, serviceSecret,
+		func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ClaimGuestNamespace(ctx, guestID, authorityv1.GuestNamespaceClaimRequest{
+				AccessToken: accessToken,
+			}, editors...)
+		})
+}
+
 type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)
 
 func request[T any](ctx context.Context, client *Client, call authorityRequest) (T, error) {

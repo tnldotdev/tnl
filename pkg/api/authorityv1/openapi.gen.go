@@ -351,6 +351,32 @@ type DomainPage struct {
 // DomainState defines model for DomainState.
 type DomainState string
 
+// GuestNamespaceClaim defines model for GuestNamespaceClaim.
+type GuestNamespaceClaim struct {
+	MembershipId   MembershipID `json:"membership_id"`
+	NamespaceLabel string       `json:"namespace_label"`
+	TeamId         TeamID       `json:"team_id"`
+}
+
+// GuestNamespaceClaimRequest defines model for GuestNamespaceClaimRequest.
+type GuestNamespaceClaimRequest struct {
+	AccessToken string `json:"access_token"`
+}
+
+// GuestNamespaceReservation defines model for GuestNamespaceReservation.
+type GuestNamespaceReservation struct {
+	DnsAuthorityReference string   `json:"dns_authority_reference"`
+	DomainId              DomainID `json:"domain_id"`
+	ManagedDomain         string   `json:"managed_domain"`
+	NamespaceLabel        string   `json:"namespace_label"`
+}
+
+// GuestNamespaceReservationRequest defines model for GuestNamespaceReservationRequest.
+type GuestNamespaceReservationRequest struct {
+	GuestId        ResourceID `json:"guest_id"`
+	NamespaceLabel string     `json:"namespace_label"`
+}
+
 // Identity defines model for Identity.
 type Identity struct {
 	Administrator   bool                 `json:"administrator"`
@@ -565,6 +591,12 @@ type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 // AuthorizeServiceOperationJSONRequestBody defines body for AuthorizeServiceOperation for application/json ContentType.
 type AuthorizeServiceOperationJSONRequestBody = ServiceAuthorizationRequest
 
+// ReserveGuestNamespaceJSONRequestBody defines body for ReserveGuestNamespace for application/json ContentType.
+type ReserveGuestNamespaceJSONRequestBody = GuestNamespaceReservationRequest
+
+// ClaimGuestNamespaceJSONRequestBody defines body for ClaimGuestNamespace for application/json ContentType.
+type ClaimGuestNamespaceJSONRequestBody = GuestNamespaceClaimRequest
+
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
 
@@ -730,6 +762,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReserveGuestNamespaceWithBody Reserve a managed namespace for a server-issued guest
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+	ReserveGuestNamespaceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReserveGuestNamespace Reserve a managed namespace for a server-issued guest
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+	ReserveGuestNamespace(ctx context.Context, body ReserveGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimGuestNamespaceWithBody Claim a guest namespace after signing in
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+	ClaimGuestNamespaceWithBody(ctx context.Context, guestId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimGuestNamespace Claim a guest namespace after signing in
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+	ClaimGuestNamespace(ctx context.Context, guestId ResourceID, body ClaimGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams for the authenticated identity
 	//
@@ -1023,6 +1083,74 @@ func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentT
 // Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceOperationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReserveGuestNamespaceWithBody Reserve a managed namespace for a server-issued guest
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+func (c *Client) ReserveGuestNamespaceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReserveGuestNamespaceRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReserveGuestNamespace Reserve a managed namespace for a server-issued guest
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+func (c *Client) ReserveGuestNamespace(ctx context.Context, body ReserveGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReserveGuestNamespaceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimGuestNamespaceWithBody Claim a guest namespace after signing in
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+func (c *Client) ClaimGuestNamespaceWithBody(ctx context.Context, guestId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimGuestNamespaceRequestWithBody(c.Server, guestId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimGuestNamespace Claim a guest namespace after signing in
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+func (c *Client) ClaimGuestNamespace(ctx context.Context, guestId ResourceID, body ClaimGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimGuestNamespaceRequest(c.Server, guestId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1539,6 +1667,93 @@ func NewAuthorizeServiceOperationRequestWithBody(server string, contentType stri
 	}
 
 	operationPath := fmt.Sprintf("/v1/service/authorize")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReserveGuestNamespaceRequest calls the generic ReserveGuestNamespace builder with application/json body
+func NewReserveGuestNamespaceRequest(server string, body ReserveGuestNamespaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReserveGuestNamespaceRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReserveGuestNamespaceRequestWithBody constructs an http.Request for the ReserveGuestNamespace method, with any body, and a specified content type
+func NewReserveGuestNamespaceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/guest-namespaces")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClaimGuestNamespaceRequest calls the generic ClaimGuestNamespace builder with application/json body
+func NewClaimGuestNamespaceRequest(server string, guestId ResourceID, body ClaimGuestNamespaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimGuestNamespaceRequestWithBody(server, guestId, "application/json", bodyReader)
+}
+
+// NewClaimGuestNamespaceRequestWithBody constructs an http.Request for the ClaimGuestNamespace method, with any body, and a specified content type
+func NewClaimGuestNamespaceRequestWithBody(server string, guestId ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "guest_id", guestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/guest-namespaces/%s/claim", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2240,6 +2455,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
+	// ReserveGuestNamespaceWithBodyWithResponse Reserve a managed namespace for a server-issued guest
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+	ReserveGuestNamespaceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReserveGuestNamespaceResponse, error)
+
+	// ReserveGuestNamespaceWithResponse Reserve a managed namespace for a server-issued guest
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+	ReserveGuestNamespaceWithResponse(ctx context.Context, body ReserveGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*ReserveGuestNamespaceResponse, error)
+
+	// ClaimGuestNamespaceWithBodyWithResponse Claim a guest namespace after signing in
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+	ClaimGuestNamespaceWithBodyWithResponse(ctx context.Context, guestId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimGuestNamespaceResponse, error)
+
+	// ClaimGuestNamespaceWithResponse Claim a guest namespace after signing in
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+	ClaimGuestNamespaceWithResponse(ctx context.Context, guestId ResourceID, body ClaimGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimGuestNamespaceResponse, error)
+
 	// ListTeamsWithResponse List teams for the authenticated identity
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2697,6 +2940,102 @@ func (r AuthorizeServiceOperationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthorizeServiceOperationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReserveGuestNamespaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GuestNamespaceReservation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReserveGuestNamespaceResponse) GetJSON200() *GuestNamespaceReservation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReserveGuestNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReserveGuestNamespaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReserveGuestNamespaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReserveGuestNamespaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReserveGuestNamespaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClaimGuestNamespaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GuestNamespaceClaim
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimGuestNamespaceResponse) GetJSON200() *GuestNamespaceClaim {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimGuestNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimGuestNamespaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimGuestNamespaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimGuestNamespaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimGuestNamespaceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3469,6 +3808,58 @@ func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.
 	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
+// ReserveGuestNamespaceWithBodyWithResponse Reserve a managed namespace for a server-issued guest
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+func (c *ClientWithResponses) ReserveGuestNamespaceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReserveGuestNamespaceResponse, error) {
+	rsp, err := c.ReserveGuestNamespaceWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReserveGuestNamespaceResponse(rsp)
+}
+
+// ReserveGuestNamespaceWithResponse Reserve a managed namespace for a server-issued guest
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/guest-namespaces (the `ReserveGuestNamespace` operationId).
+func (c *ClientWithResponses) ReserveGuestNamespaceWithResponse(ctx context.Context, body ReserveGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*ReserveGuestNamespaceResponse, error) {
+	rsp, err := c.ReserveGuestNamespace(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReserveGuestNamespaceResponse(rsp)
+}
+
+// ClaimGuestNamespaceWithBodyWithResponse Claim a guest namespace after signing in
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+func (c *ClientWithResponses) ClaimGuestNamespaceWithBodyWithResponse(ctx context.Context, guestId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimGuestNamespaceResponse, error) {
+	rsp, err := c.ClaimGuestNamespaceWithBody(ctx, guestId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimGuestNamespaceResponse(rsp)
+}
+
+// ClaimGuestNamespaceWithResponse Claim a guest namespace after signing in
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/guest-namespaces/{guest_id}/claim (the `ClaimGuestNamespace` operationId).
+func (c *ClientWithResponses) ClaimGuestNamespaceWithResponse(ctx context.Context, guestId ResourceID, body ClaimGuestNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimGuestNamespaceResponse, error) {
+	rsp, err := c.ClaimGuestNamespace(ctx, guestId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimGuestNamespaceResponse(rsp)
+}
+
 // ListTeamsWithResponse List teams for the authenticated identity
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3943,6 +4334,72 @@ func ParseAuthorizeServiceOperationResponse(rsp *http.Response) (*AuthorizeServi
 	return response, nil
 }
 
+// ParseReserveGuestNamespaceResponse parses an HTTP response from a ReserveGuestNamespaceWithResponse call
+func ParseReserveGuestNamespaceResponse(rsp *http.Response) (*ReserveGuestNamespaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReserveGuestNamespaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GuestNamespaceReservation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClaimGuestNamespaceResponse parses an HTTP response from a ClaimGuestNamespaceWithResponse call
+func ParseClaimGuestNamespaceResponse(rsp *http.Response) (*ClaimGuestNamespaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimGuestNamespaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GuestNamespaceClaim
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamsResponse parses an HTTP response from a ListTeamsWithResponse call
 func ParseListTeamsResponse(rsp *http.Response) (*ListTeamsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4396,6 +4853,12 @@ type ServerInterface interface {
 	// AuthorizeServiceOperation Authorize a control operation using current authority state
 	// (POST /v1/service/authorize)
 	AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request)
+	// ReserveGuestNamespace Reserve a managed namespace for a server-issued guest
+	// (POST /v1/service/guest-namespaces)
+	ReserveGuestNamespace(w http.ResponseWriter, r *http.Request)
+	// ClaimGuestNamespace Claim a guest namespace after signing in
+	// (POST /v1/service/guest-namespaces/{guest_id}/claim)
+	ClaimGuestNamespace(w http.ResponseWriter, r *http.Request, guestId ResourceID)
 	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -4535,6 +4998,46 @@ func (siw *ServerInterfaceWrapper) AuthorizeServiceOperation(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AuthorizeServiceOperation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReserveGuestNamespace operation middleware
+func (siw *ServerInterfaceWrapper) ReserveGuestNamespace(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReserveGuestNamespace(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClaimGuestNamespace operation middleware
+func (siw *ServerInterfaceWrapper) ClaimGuestNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "guest_id" -------------
+	var guestId ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "guest_id", r.PathValue("guest_id"), &guestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "guest_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClaimGuestNamespace(w, r, guestId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5130,6 +5633,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}/default", wrapper.SetTeamDefaultDomain)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.ReleaseTeamDomain)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/authorize", wrapper.AuthorizeServiceOperation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/guest-namespaces", wrapper.ReserveGuestNamespace)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/guest-namespaces/{guest_id}/claim", wrapper.ClaimGuestNamespace)
 
 	return m
 }

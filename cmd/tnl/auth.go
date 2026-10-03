@@ -41,8 +41,28 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	if err != nil {
 		return err
 	}
+	fields := []clioutput.Field{{Label: "control", Value: authenticated.ServerEndpoint}}
+	guestState, err := state.Server(ctx, serverURL)
+	if err != nil {
+		return err
+	}
+	if guest, found, err := guestState.GuestSession(ctx); err != nil {
+		return err
+	} else if found && authenticated.Discovery.GuestDemoEnabled {
+		claimed, err := authenticated.Control.ClaimGuestDemo(ctx, guest.AccessToken)
+		if err != nil {
+			return fmt.Errorf("signed in, but could not claim the guest namespace; run tnl login again: %w", err)
+		}
+		if err := guestState.SavePreferredGuestNamespace(ctx, claimed.Namespace); err != nil {
+			return err
+		}
+		if err := guestState.RemoveGuestSession(ctx); err != nil {
+			return err
+		}
+		fields = append(fields, clioutput.Field{Label: "claimed namespace", Value: claimed.Namespace})
+	}
 	return writeHumanFrame(output, "tnl login", "authenticated", "saved for future commands",
-		clioutput.Fields(clioutput.Field{Label: "control", Value: authenticated.ServerEndpoint}),
+		clioutput.Fields(fields...),
 	)
 }
 

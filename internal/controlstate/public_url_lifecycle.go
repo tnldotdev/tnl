@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -166,6 +167,11 @@ func (d *Database) MarkPublishRunReady(
 		if err != nil {
 			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark publish run ready: update session: %w", err)
 		}
+		if _, err := queries.MarkGuestRunReady(ctx, controlstatedb.MarkGuestRunReadyParams{
+			PublishRunID: text(session.ID), ReadyAt: timestamptz(now),
+		}); err != nil {
+			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark guest run ready: %w", err)
+		}
 		publishedEvent, err = pendingEvents.addRouteEvent(
 			ctx, queries, route, session, connections, "public_url_upsert", now,
 		)
@@ -189,6 +195,7 @@ func (d *Database) MarkPublishRunReady(
 
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
+	GuestID              string                                   `json:"guest_id,omitempty"`
 	PublishRunID         string                                   `json:"publish_run_id"`
 	PublicURLID          string                                   `json:"public_url_id"`
 	PublishRunNumber     uint64                                   `json:"publish_run_number"`
@@ -318,6 +325,24 @@ func (d *Database) HeartbeatPublishRun(
 	route, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
 	if err != nil {
 		return PublishRunSetup{}, err
+	}
+	spent, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
+		PublishRunID: text(session.ID), Now: timestamptz(now),
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return PublishRunSetup{}, fmt.Errorf("controlstate: read guest trial allowance: %w", err)
+	}
+	if spent.Valid && spent.Bool {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "guest_trial_limit"); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PublishRunSetup{}, err
+		}
+		return PublishRunSetup{}, ErrGuestTrialSpent
 	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
@@ -753,6 +778,14 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	}
 	if projection.AllowedIPPrefixes == nil {
 		projection.AllowedIPPrefixes = []netip.Prefix{}
+	}
+	if strings.Contains(route.CanonicalHostname, ".guest-") {
+		guestID, err := queries.GuestForPublicURL(ctx, route.ID)
+		if err == nil {
+			projection.GuestID = guestID
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("controlstate: read guest routing owner: %w", err)
+		}
 	}
 	if eventKind == "public_url_upsert" {
 		episode, err := queries.GetOpenPublicURLRecoveryEpisode(ctx, controlstatedb.GetOpenPublicURLRecoveryEpisodeParams{

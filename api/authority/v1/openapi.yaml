@@ -371,6 +371,54 @@ paths:
                 $ref: "#/components/schemas/ServiceAuthorizationDecision"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/service/guest-namespaces:
+    post:
+      operationId: reserveGuestNamespace
+      summary: Reserve a managed namespace for a server-issued guest
+      security:
+        - hostedServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuestNamespaceReservationRequest"
+      responses:
+        "200":
+          description: Reserved guest namespace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestNamespaceReservation"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service/guest-namespaces/{guest_id}/claim:
+    post:
+      operationId: claimGuestNamespace
+      summary: Claim a guest namespace after signing in
+      security:
+        - hostedServiceAuth: []
+      parameters:
+        - name: guest_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuestNamespaceClaimRequest"
+      responses:
+        "200":
+          description: Claimed namespace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestNamespaceClaim"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -434,6 +482,52 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    GuestNamespaceReservationRequest:
+      type: object
+      additionalProperties: false
+      required: [guest_id, namespace_label]
+      properties:
+        guest_id:
+          $ref: "#/components/schemas/ResourceID"
+        namespace_label:
+          type: string
+          pattern: "^guest-[0-9a-f]{16}$"
+    GuestNamespaceReservation:
+      type: object
+      additionalProperties: false
+      required: [domain_id, managed_domain, namespace_label, dns_authority_reference]
+      properties:
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        managed_domain:
+          type: string
+          minLength: 1
+        dns_authority_reference:
+          type: string
+          minLength: 1
+        namespace_label:
+          type: string
+          pattern: "^guest-[0-9a-f]{16}$"
+    GuestNamespaceClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [access_token]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+    GuestNamespaceClaim:
+      type: object
+      additionalProperties: false
+      required: [team_id, membership_id, namespace_label]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        namespace_label:
+          type: string
+          pattern: "^guest-[0-9a-f]{16}$"
     ResourceID:
       type: string
       minLength: 1

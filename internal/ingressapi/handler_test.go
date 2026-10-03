@@ -90,6 +90,64 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 }
 
+type guestIngressStoreStub struct {
+	*ingressStoreStub
+	reserve func(controlstate.IngressLeaseIdentity, string, string) (time.Time, error)
+}
+
+func (s guestIngressStoreStub) ReserveGuestVisitor(_ context.Context, lease controlstate.IngressLeaseIdentity, routeID, visitorID string, _ time.Time) (time.Time, error) {
+	return s.reserve(lease, routeID, visitorID)
+}
+
+func (s guestIngressStoreStub) ReleaseGuestVisitor(context.Context, string, string) error { return nil }
+
+func TestGuestVisitorReservationChecksLeaseAndCapacity(t *testing.T) {
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	call := 0
+	store := guestIngressStoreStub{ingressStoreStub: &ingressStoreStub{}, reserve: func(lease controlstate.IngressLeaseIdentity, routeID, visitorID string) (time.Time, error) {
+		if lease.IngressID != "ingress-1" || lease.IngressRunID != "run-1" || lease.IngressLeaseRevision != 7 ||
+			routeID != "url-1" || visitorID != "vc-1" {
+			t.Fatalf("guest slot inputs = %+v, %q, %q", lease, routeID, visitorID)
+		}
+		call++
+		if call > 1 {
+			return time.Time{}, controlstate.ErrGuestConnectionsFull
+		}
+		return now.Add(30 * time.Second), nil
+	}}
+	h := testIngressHandler(t, store, now, nil)
+	request := ingressv1.GuestVisitorRequest{
+		IngressRunId: "run-1", IngressLeaseRevision: 7, PublicUrlId: "url-1", VisitorConnectionId: "vc-1",
+	}
+	path := "/internal/v1/ingresses/ingress-1/guest-visitors"
+	for index := range 2 {
+		response := serveIngressJSON(t, h, http.MethodPost, path, request)
+		if index == 0 {
+			var reserved ingressv1.GuestVisitorReservation
+			decodeIngressResponse(t, response, &reserved)
+			if response.Code != http.StatusOK || !reserved.ExpiresAt.Equal(now.Add(30*time.Second)) {
+				t.Fatalf("reserved guest visitor = %+v, status = %d", reserved, response.Code)
+			}
+		} else if response.Code != http.StatusTooManyRequests {
+			t.Fatalf("guest capacity = %d, %s", response.Code, response.Body.String())
+		}
+	}
+	directStore := guestIngressStoreStub{
+		ingressStoreStub: &ingressStoreStub{},
+		reserve: func(controlstate.IngressLeaseIdentity, string, string) (time.Time, error) {
+			return now.Add(30 * time.Second), nil
+		},
+	}
+	direct, err := NewDirectClient(DirectConfig{Store: directStore, LeaseDuration: 30 * time.Second, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reservation, err := direct.ReserveGuestVisitor(t.Context(), "ingress-1", request); err != nil ||
+		!reservation.ExpiresAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("standalone guest visitor = %+v, error = %v", reservation, err)
+	}
+}
+
 func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 	now := time.Now().UTC()
 	event := controlstate.IngressRoutingTableEvent{
@@ -97,6 +155,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		CanonicalHostname: "example.test", EntryRevision: 4, PublicUrlExpiresAt: timePointer(now.Add(time.Minute)),
 		CreatedAt: now,
 		Projection: controlstate.IngressRoutingTableProjection{
+			GuestID:      "guest_0123456789abcdefghijkl",
 			PublishRunID: "session-1", PublicURLID: "route-1", PublishRunNumber: 3,
 			CanonicalHostname: "example.test", PolicyRevision: 4, IPPolicy: "allowlist",
 			AllowedIPPrefixes:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
@@ -154,6 +213,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		t.Fatalf("routing page after %d calls = %#v", calls, page)
 	}
 	if page.Events[0].Entry.AllowedIpPrefixes[0] != "192.0.2.0/24" ||
+		page.Events[0].Entry.GuestId == nil || *page.Events[0].Entry.GuestId != "guest_0123456789abcdefghijkl" ||
 		page.Events[0].Entry.PublisherConnections[0].RelayId != "relay-1" {
 		t.Fatalf("routing entry = %#v", page.Events[0].Entry)
 	}

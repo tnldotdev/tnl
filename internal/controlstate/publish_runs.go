@@ -276,6 +276,19 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
 	}
+	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
+		reserved, err := queries.BeginGuestPublishRun(ctx, controlstatedb.BeginGuestPublishRunParams{
+			PublishRunID: text(publishRunID), StartedAt: timestamptz(now), PublicURLID: request.PublicURLID,
+		})
+		if err != nil {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: reserve guest publish run: %w", err)
+		}
+		if reserved != 1 {
+			return PublishRunSetup{}, ErrGuestTrialSpent
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return PublishRunSetup{}, err
+	}
 
 	connections := controlstatedb.InsertPublishRunConnectionsParams{
 		PublishRunID: publishRunID, PublicURLID: request.PublicURLID, PublishRunNumber: session.PublishRunNumber,

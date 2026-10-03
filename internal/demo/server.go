@@ -23,6 +23,7 @@ type State struct {
 	Stamp        string `json:"stamp"`
 	RequestCount uint64 `json:"request_count"`
 	GeneratedAt  string `json:"generated_at,omitempty"`
+	Guest        bool   `json:"guest,omitempty"`
 }
 
 type Server struct {
@@ -63,6 +64,12 @@ func (d *Server) Stamp() string { return d.state.Stamp }
 func (d *Server) SetPublicURL(value string) {
 	d.mu.Lock()
 	d.state.PublicURL = value
+	d.mu.Unlock()
+}
+
+func (d *Server) SetGuest() {
+	d.mu.Lock()
+	d.state.Guest = true
 	d.mu.Unlock()
 }
 

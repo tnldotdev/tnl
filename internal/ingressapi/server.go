@@ -54,3 +54,11 @@ func (s generatedServer) GetIngressRoutingTableSnapshot(
 func (s generatedServer) ReportIngressUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	s.handler.reportUsage(response, request, ingressID)
 }
+
+func (s generatedServer) ReserveGuestVisitor(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.reserveGuestVisitor(response, request, ingressID)
+}
+
+func (s generatedServer) ReleaseGuestVisitor(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID, visitorID ingressv1.Identifier) {
+	s.handler.releaseGuestVisitor(response, request, ingressID, visitorID)
+}

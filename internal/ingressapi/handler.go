@@ -327,7 +327,12 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		value := int64(*projection.RecoveryEpisodeID)
 		recoveryEpisodeID = &value
 	}
+	var guestID *string
+	if projection.GuestID != "" {
+		guestID = &projection.GuestID
+	}
 	return ingressv1.IngressRoutingTableEntry{
+		GuestId:      guestID,
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
 		PolicyRevision:    int64(projection.PolicyRevision),

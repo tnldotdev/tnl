@@ -150,6 +150,43 @@ paths:
           description: Usage reports committed or replayed
         default:
           $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/guest-visitors:
+    post:
+      operationId: reserveGuestVisitor
+      summary: Reserve or renew one guest visitor slot across all ingress processes
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuestVisitorRequest"
+      responses:
+        "200":
+          description: Slot reserved or renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestVisitorReservation"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/guest-visitors/{visitor_connection_id}:
+    delete:
+      operationId: releaseGuestVisitor
+      summary: Release one guest visitor slot
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - name: visitor_connection_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+      responses:
+        "204":
+          description: Slot released
+        default:
+          $ref: "#/components/responses/Problem"
   /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
     post:
       operationId: observePublicURLRecovery
@@ -213,6 +250,29 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    GuestVisitorRequest:
+      type: object
+      additionalProperties: false
+      required: [ingress_run_id, ingress_lease_revision, public_url_id, visitor_connection_id]
+      properties:
+        ingress_run_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        public_url_id:
+          $ref: "#/components/schemas/Identifier"
+        visitor_connection_id:
+          $ref: "#/components/schemas/Identifier"
+    GuestVisitorReservation:
+      type: object
+      additionalProperties: false
+      required: [expires_at]
+      properties:
+        expires_at:
+          type: string
+          format: date-time
     Identifier:
       type: string
       minLength: 1
@@ -418,6 +478,8 @@ components:
         public_url_expires_at:
           type: string
           format: date-time
+        guest_id:
+          $ref: "#/components/schemas/Identifier"
         recovery_episode_id:
           type: integer
           format: int64

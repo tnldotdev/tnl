@@ -172,6 +172,27 @@ func TestDemoPingKeepsNDJSONOnStdout(t *testing.T) {
 	}
 }
 
+func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.setDemoStamp("01234567")
+	output.setGuestDemo()
+	if err := output.starting("tun_0123456789abcdefghijkl", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo-01234567.guest-0123456789abcdef.tnl.dev", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "15 min / about 5 MiB across runs") ||
+		!strings.Contains(stderr.String(), "tnl login to keep your namespace") ||
+		!strings.Contains(stderr.String(), "01234567") {
+		t.Fatalf("guest ready output = %q", stderr.String())
+	}
+}
+
 func TestPublishOutputSummarizesLargeProviderPolicy(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl dev", &stdout, &stderr, nil)

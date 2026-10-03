@@ -262,5 +262,9 @@ func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1
 		value := *source.RecoveryEpisodeId
 		result.RecoveryEpisodeId = &value
 	}
+	if source.GuestId != nil {
+		value := *source.GuestId
+		result.GuestId = &value
+	}
 	return result
 }

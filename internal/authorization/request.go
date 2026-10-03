@@ -39,6 +39,7 @@ var (
 	ErrInvalid         = errors.New("authorization: invalid request")
 	ErrUnauthenticated = errors.New("authorization: unauthenticated")
 	ErrForbidden       = errors.New("authorization: forbidden")
+	ErrGuestDemoOnly   = errors.New("authorization: guest demo options require sign-in")
 	ErrUnavailable     = errors.New("authorization: unavailable")
 )
 
@@ -75,6 +76,7 @@ type Request struct {
 // Decision contains current authority state accepted by control. RetrySecret is
 // internal key material and is never part of the authority wire response.
 type Decision struct {
+	GuestID               string
 	IdentityID            string
 	TeamID                string
 	ActingMembershipID    string

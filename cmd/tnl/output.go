@@ -76,6 +76,7 @@ type publishOutput struct {
 	allowedPrefixCount    int
 	framework             string
 	demoStamp             string
+	guestDemo             bool
 	openURL               func(string) error
 }
 
@@ -202,6 +203,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 		if !o.printed {
 			o.printed = true
 			footer := "ctrl+c to stop"
+			if o.guestDemo {
+				footer = "tnl login to keep your namespace; ctrl+c to stop"
+			}
 			var openErr error
 			if o.openURL != nil && !o.opened && o.demoStamp == "" {
 				o.opened = true
@@ -216,6 +220,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 					clioutput.Field{Label: "demo", Value: "running on this computer"},
 					clioutput.Field{Label: "stamp", Value: o.demoStamp},
 				)
+			}
+			if o.guestDemo {
+				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
 			}
 			if o.framework != "" {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
@@ -310,6 +317,12 @@ func (o *publishOutput) setFramework(framework string) {
 func (o *publishOutput) setDemoStamp(stamp string) {
 	o.mu.Lock()
 	o.demoStamp = stamp
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) setGuestDemo() {
+	o.mu.Lock()
+	o.guestDemo = true
 	o.mu.Unlock()
 }
 

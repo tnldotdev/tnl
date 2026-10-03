@@ -45,6 +45,11 @@ func TestControlAuthorityModesAreExclusive(t *testing.T) {
 	if err := builtin.Validate(); err != nil {
 		t.Fatalf("built-in authority with OIDC: %v", err)
 	}
+	builtin.GuestDemoEnabled = true
+	if err := builtin.Validate(); err == nil || !strings.Contains(err.Error(), "external authority") {
+		t.Fatalf("guest demo with unsupported built-in authority = %v", err)
+	}
+	builtin.GuestDemoEnabled = false
 
 	external := builtin
 	external.LoginToken = ""
@@ -52,6 +57,10 @@ func TestControlAuthorityModesAreExclusive(t *testing.T) {
 	external.HostedSecret = "hosted-service-secret-012345678901"
 	if err := external.Validate(); err != nil {
 		t.Fatalf("external authority: %v", err)
+	}
+	external.GuestDemoEnabled = true
+	if err := external.Validate(); err != nil {
+		t.Fatalf("external guest demo: %v", err)
 	}
 	external.LoginToken = testLoginToken
 	if err := external.Validate(); err == nil || !strings.Contains(err.Error(), "login token") {

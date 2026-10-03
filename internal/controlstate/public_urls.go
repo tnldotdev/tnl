@@ -60,6 +60,7 @@ type PublicURL struct {
 }
 
 type CreatePublicURLRequest struct {
+	GuestID               string
 	TeamID                string
 	DomainID              string
 	MembershipID          string
@@ -156,6 +157,25 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: read idempotent public_url: %w", err)
 	}
+	if request.GuestID != "" {
+		guest, err := queries.LockGuestTrialByID(ctx, request.GuestID)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && guest.ClaimedAt.Valid {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+		if err != nil {
+			return PublicURL{}, fmt.Errorf("controlstate: lock guest trial: %w", err)
+		}
+		if guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
+			return PublicURL{}, ErrGuestTrialSpent
+		}
+		count, err := queries.CountGuestCurrentPublicURLs(ctx, request.GuestID)
+		if err != nil {
+			return PublicURL{}, err
+		}
+		if count != 0 {
+			return PublicURL{}, ErrPublishRunOpen
+		}
+	}
 
 	enabled, err := queries.LockPublicURLCreationControl(ctx)
 	if err != nil {
@@ -212,6 +232,13 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			}
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
+	}
+	if request.GuestID != "" {
+		if err := queries.InsertGuestPublicURL(ctx, controlstatedb.InsertGuestPublicURLParams{
+			PublicURLID: publicURLID, GuestID: request.GuestID, CreatedAt: timestamptz(now),
+		}); err != nil {
+			return PublicURL{}, fmt.Errorf("controlstate: create guest public_url: %w", err)
+		}
 	}
 	if err := queries.InsertPublicURLCreateAuditEvent(ctx, controlstatedb.InsertPublicURLCreateAuditEventParams{
 		ActorIdentityID: text(request.ActingIdentityID), RequestID: request.IdempotencyKey,
@@ -748,6 +775,11 @@ func closePublishRun(
 		State: string(state), ClosedAt: timestamptz(now), CloseReason: text(reason), PublishRunID: session.ID,
 	}); err != nil {
 		return fmt.Errorf("controlstate: close publish run: update session: %w", err)
+	}
+	if _, err := queries.FinishGuestPublishRun(ctx, controlstatedb.FinishGuestPublishRunParams{
+		PublishRunID: text(session.ID), ClosedAt: timestamptz(now),
+	}); err != nil {
+		return fmt.Errorf("controlstate: finish guest publish run: %w", err)
 	}
 	return nil
 }

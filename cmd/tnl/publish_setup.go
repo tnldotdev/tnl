@@ -155,15 +155,35 @@ func preparePublisherServices(
 	if current.team.PolicyRevision < 0 {
 		return publisherServices{}, errors.New("authority returned an invalid team policy revision")
 	}
+	if current.team.Kind == authorityv1.Personal {
+		preferred, found, err := publisherState.PreferredGuestNamespace(ctx)
+		if err != nil {
+			return publisherServices{}, err
+		}
+		if found && strings.HasSuffix(preferred, "."+discovery.ManagedDeploymentDomain) &&
+			strings.Count(strings.TrimSuffix(preferred, "."+discovery.ManagedDeploymentDomain), ".") == 0 {
+			current.guestNamespace = preferred
+		}
+	}
 	hostname, domain, publicURLScope, err := resolvePublishHostname(publicURL, name, selectedDomain, current)
 	if err != nil {
 		return publisherServices{}, err
+	}
+	namespace := namespaceForMembership(current.membership, domain)
+	if current.guestNamespace != "" && domain.Kind == authorityv1.Managed {
+		if publicURL == "" && selectedDomain == "" && selectedTeam == "" {
+			hostname = strings.TrimSuffix(hostname, "."+namespace) + "." + current.guestNamespace
+		}
+		if memberHostnameWithin(hostname, current.guestNamespace) {
+			namespace = current.guestNamespace
+			publicURLScope = controlv1.Member
+		}
 	}
 	return publisherServices{
 		authenticated:  authenticated,
 		state:          publisherState,
 		hostname:       hostname,
-		namespace:      namespaceForMembership(current.membership, domain),
+		namespace:      namespace,
 		teamID:         current.team.Id,
 		membershipID:   current.membership.Id,
 		domainID:       domain.Id,
@@ -217,12 +237,17 @@ func resolvePublishHostname(
 		return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
 	}
 	publicURLScope := controlv1.Shared
-	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
+	if memberHostnameWithin(hostname, namespace) || current.guestNamespace != "" && memberHostnameWithin(hostname, current.guestNamespace) {
 		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
 		return "", authorityv1.Domain{}, "", errors.New("shared public URLs require a team administrator or owner")
 	}
 	return hostname, domain, publicURLScope, nil
+}
+
+func memberHostnameWithin(hostname, namespace string) bool {
+	return hostname == namespace || strings.HasSuffix(hostname, "."+namespace) &&
+		strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0
 }
 
 func readyDomain(current teamContext, selected string) (authorityv1.Domain, error) {

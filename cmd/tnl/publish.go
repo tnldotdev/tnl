@@ -63,6 +63,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	defer state.Close()
+	if !flags.Demo {
+		if err := requireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+			return err
+		}
+	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
 		Project: flags.projectRoot, Service: flags.Service,
@@ -82,7 +87,22 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return err
 	}
-	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl publish", os.Stdin, stderr)
+	var guest *clientstate.GuestSession
+	if flags.Demo {
+		guest, err = guestForDemo(ctx, state, serverURL, flags)
+		if err != nil {
+			return err
+		}
+		if guest != nil {
+			output.setGuestDemo()
+			localDemo.SetGuest()
+		}
+	}
+	accessToken := flags.AccessToken
+	if guest != nil {
+		accessToken = guest.AccessToken
+	}
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, accessToken, "tnl publish", os.Stdin, stderr)
 	if err != nil {
 		return err
 	}
@@ -97,13 +117,25 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	services, err := preparePublisherServices(
-		ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
-	)
+	if guest != nil && policy.current != guest.SourceIP {
+		return errors.New("your IP changed since the guest demo started; run tnl login to keep publishing")
+	}
+	var services publisherServices
+	if guest != nil {
+		services, err = guestPublisherServices(ctx, state, serverURL, flags.Name, *guest, authenticated.Control)
+	} else {
+		services, err = preparePublisherServices(
+			ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
+		)
+	}
 	if err != nil {
 		return err
 	}
-	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	requestLimit := flags.requestLimit()
+	if guest != nil {
+		requestLimit = min(requestLimit, 4)
+	}
+	publisherConfig := services.config(target, policy.prefixes, requestLimit)
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
 		if localDemo != nil && event.Type == publisher.EventReady {

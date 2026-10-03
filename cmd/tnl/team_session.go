@@ -32,9 +32,10 @@ type teamAPI interface {
 }
 
 type teamContext struct {
-	team       authorityv1.Team
-	membership authorityv1.Membership
-	domains    []authorityv1.Domain
+	team           authorityv1.Team
+	membership     authorityv1.Membership
+	domains        []authorityv1.Domain
+	guestNamespace string
 }
 
 type teamSession struct {
@@ -54,6 +55,10 @@ func openTeamSession(ctx context.Context, flags remoteFlags, command string, dia
 	}
 	store, err := database.Server(ctx, serverURL)
 	if err != nil {
+		database.Close()
+		return nil, err
+	}
+	if err := requireSignInOutsideDemo(ctx, database, serverURL, flags.AccessToken); err != nil {
 		database.Close()
 		return nil, err
 	}

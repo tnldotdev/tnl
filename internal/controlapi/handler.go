@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -41,6 +42,7 @@ type Config struct {
 	HostedSecretPrevious        string
 	HTTPClient                  *http.Client
 	DNSAutomation               bool
+	GuestDemoEnabled            bool
 	Metrics                     *observability.Metrics
 	Route53CredentialsReadiness func(context.Context) error
 	ControlReadiness            func() error
@@ -118,6 +120,14 @@ type handler struct {
 	dnsAuthorities DNSAuthorityStore
 	revocations    HostedRevocationStore
 	admin          AdminStore
+	guests         interface {
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
+		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
+		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
+		ClaimGuestTrial(context.Context, string, time.Time) error
+		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
+	}
+	guestAuthority *authorityclient.Client
 	readiness      func(context.Context) error
 	authorizer     publicURLAuthorizer
 	hostedSecrets  serviceapi.BearerSecrets
@@ -134,6 +144,15 @@ func NewHandler(
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, dnsAuthorities: store,
 		revocations: store, admin: store, readiness: readiness}
+	if guestStore, ok := store.(interface {
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
+		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
+		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
+		ClaimGuestTrial(context.Context, string, time.Time) error
+		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
+	}); ok {
+		h.guests = guestStore
+	}
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
 	}
@@ -162,6 +181,15 @@ func NewHandler(
 		}
 		if store != nil {
 			h.authorizer = hostedAuthorizer{client: client, secret: cfg.HostedSecret, store: store}
+			h.guestAuthority = client
+		}
+	}
+	if cfg.GuestDemoEnabled && h.guests != nil && h.authorizer != nil {
+		if guestStore, ok := store.(guestAuthorizationStore); ok {
+			h.authorizer = guestAuthorizer{
+				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDeploymentDomain,
+				dnsAutomation: cfg.DNSAutomation,
+			}
 		}
 	}
 	mux := http.NewServeMux()
@@ -241,6 +269,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
 		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
 		DnsAutomation:           cfg.DNSAutomation,
+		GuestDemoEnabled:        cfg.GuestDemoEnabled,
 		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}

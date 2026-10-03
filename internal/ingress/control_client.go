@@ -135,6 +135,36 @@ func (c *HTTPControlClient) ReportIngressUsage(
 	return nil
 }
 
+func (c *HTTPControlClient) ReserveGuestVisitor(
+	ctx context.Context, ingressID string, body ingressv1.GuestVisitorRequest,
+) (ingressv1.GuestVisitorReservation, error) {
+	response, err := c.client.ReserveGuestVisitorWithResponse(ctx, ingressID, body)
+	if err != nil {
+		return ingressv1.GuestVisitorReservation{}, err
+	}
+	if response == nil {
+		return ingressv1.GuestVisitorReservation{}, ingressHTTPProblem(0, nil)
+	}
+	if response.JSON200 == nil {
+		return ingressv1.GuestVisitorReservation{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	return *response.JSON200, nil
+}
+
+func (c *HTTPControlClient) ReleaseGuestVisitor(ctx context.Context, ingressID, visitorID string) error {
+	response, err := c.client.ReleaseGuestVisitorWithResponse(ctx, ingressID, visitorID)
+	if err != nil {
+		return err
+	}
+	if response == nil {
+		return ingressHTTPProblem(0, nil)
+	}
+	if response.StatusCode() != http.StatusNoContent {
+		return ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	return nil
+}
+
 func (c *HTTPControlClient) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,

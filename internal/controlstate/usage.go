@@ -127,6 +127,11 @@ func (d *Database) ReportIngressUsage(
 		if err := applyIngressUsageReport(ctx, queries, identity, report, receivedAt, latest); err != nil {
 			return err
 		}
+		if _, err := queries.UpdateGuestTransferredBytes(ctx, controlstatedb.UpdateGuestTransferredBytesParams{
+			GuestRouteID: report.PublicURLID, ObservedAt: timestamptz(receivedAt),
+		}); err != nil {
+			return fmt.Errorf("controlstate: update guest transfer usage: %w", err)
+		}
 	}
 	var observedThrough pgtype.Timestamptz
 	if batch.ObservedThrough != nil {

@@ -110,6 +110,23 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		return nil
 	}
 	defer release()
+	visitorID, err := opaqueid.New(visitorConnectionIDPrefix)
+	if err != nil {
+		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
+	}
+	if route.GuestID != "" && !denied && !challenge {
+		if s.config.OpenGuestVisitor == nil {
+			return errors.New("ingress: guest visitor admission is unavailable")
+		}
+		releaseGuest, err := s.config.OpenGuestVisitor(s.openContext, route.ID, visitorID, func() { _ = public.Close() })
+		if err != nil {
+			if usage != nil {
+				usage.CapacityDenied(time.Now().UTC())
+			}
+			return err
+		}
+		defer releaseGuest()
+	}
 	var challengeDeadline time.Time
 	if challenge {
 		challengeDeadline = time.Now().Add(challengeConnectionTimeout)
@@ -132,10 +149,6 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
 	if err != nil {
 		return fmt.Errorf("ingress: encode proxy header: %w", err)
-	}
-	visitorID, err := opaqueid.New(visitorConnectionIDPrefix)
-	if err != nil {
-		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 	}
 	openTimeout := s.config.OpenTimeout
 	if challenge {

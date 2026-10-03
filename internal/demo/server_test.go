@@ -69,6 +69,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		t.Fatalf("ping before ready = %d", response.StatusCode)
 	}
 	demo.SetPublicURL("https://actual.generated.tnl.dev")
+	demo.SetGuest()
 	for count := uint64(1); count <= 2; count++ {
 		response, err := client.Post(demo.Target()+"/ping", "", nil)
 		if err != nil {
@@ -99,7 +100,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, stateResponse.Body)
 	stateResponse.Body.Close()
-	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 || state.GeneratedAt == "" {
+	if state.PublicURL != "https://actual.generated.tnl.dev" || state.RequestCount != 2 || state.GeneratedAt == "" || !state.Guest {
 		t.Fatalf("state = %+v", state)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

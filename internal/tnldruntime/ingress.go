@@ -200,9 +200,10 @@ func (d *daemon) startIngressRuntime(
 		MaxControlConnections:           settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:             settings.standaloneRelayConnectionLimit,
 		Metrics:                         metrics, Observer: metrics,
-		OpenUsage:       usage.Open,
-		ObserveRecovery: recovery.Observe,
-		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },
+		OpenUsage:        usage.Open,
+		OpenGuestVisitor: controller.OpenGuestVisitor,
+		ObserveRecovery:  recovery.Observe,
+		OnError:          func(err error) { log.Printf("ingress connection: %v", err) },
 		OnForwardingFailure: func(publicURLID string, version uint64, visitorID, reason string, attempts int) {
 			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
 				publicURLID, version, visitorID, reason, attempts)
