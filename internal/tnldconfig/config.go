@@ -84,6 +84,7 @@ type Config struct {
 	AuthorityEndpoint    string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"External authority URL. Defaults to the control URL."`
 	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
 	RefreshTokenLifetime time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
+	GuestDemoEnabled     bool          `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
 
 	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
 	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
@@ -210,6 +211,9 @@ func (c Config) Validate() error {
 }
 
 func (c Config) validateControl() error {
+	if c.GuestDemoEnabled && c.AuthorityEndpoint == "" {
+		return errors.New("guest demos require an external authority that supports namespace reservations")
+	}
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
 		return err
 	}

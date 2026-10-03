@@ -96,6 +96,19 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 	if err := responseError(500, nil, []byte(`{"code":"future_code"}`)); errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unknown 5xx problem mapping=%v", err)
 	}
+	for _, test := range []struct {
+		code string
+		want error
+	}{
+		{"guest_demo_only", ErrGuestDemoOnly},
+		{"guest_trial_exhausted", ErrGuestTrialExhausted},
+		{"guest_issuance_limited", ErrGuestIssuanceLimited},
+	} {
+		err := responseError(http.StatusForbidden, nil, []byte(`{"code":"`+test.code+`"}`))
+		if !errors.Is(err, test.want) || !strings.Contains(err.Error(), "tnl login") {
+			t.Fatalf("guest problem %s = %v", test.code, err)
+		}
+	}
 }
 
 type responseBody struct {

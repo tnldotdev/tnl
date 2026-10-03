@@ -110,3 +110,8 @@ func NewHandler(cfg Config, store Store) (*http.ServeMux, error) {
 func (h *handler) AuthorizeServiceOperation(response http.ResponseWriter, _ *http.Request) {
 	notFound(response, nil)
 }
+
+// hosted guest domain lookup is not available through the built-in authority.
+func (h *handler) GetGuestDomain(response http.ResponseWriter, _ *http.Request, _ authorityv1.GetGuestDomainParams) {
+	notFound(response, nil)
+}

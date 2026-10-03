@@ -223,6 +223,9 @@ const (
 	Conflict             ProblemCode = "conflict"
 	DnsSetupPending      ProblemCode = "dns_setup_pending"
 	Forbidden            ProblemCode = "forbidden"
+	GuestDemoOnly        ProblemCode = "guest_demo_only"
+	GuestIssuanceLimited ProblemCode = "guest_issuance_limited"
+	GuestTrialExhausted  ProblemCode = "guest_trial_exhausted"
 	Internal             ProblemCode = "internal"
 	InvalidRequest       ProblemCode = "invalid_request"
 	IssuanceRetry        ProblemCode = "issuance_retry"
@@ -244,6 +247,12 @@ func (e ProblemCode) Valid() bool {
 	case DnsSetupPending:
 		return true
 	case Forbidden:
+		return true
+	case GuestDemoOnly:
+		return true
+	case GuestIssuanceLimited:
+		return true
+	case GuestTrialExhausted:
 		return true
 	case Internal:
 		return true
@@ -598,10 +607,13 @@ type ConnectionAssignment struct {
 
 // ControlDiscovery defines model for ControlDiscovery.
 type ControlDiscovery struct {
-	Authentication          AuthenticationFacts `json:"authentication"`
-	AuthorityEndpoint       string              `json:"authority_endpoint"`
-	DnsAutomation           bool                `json:"dns_automation"`
-	ManagedDeploymentDomain CanonicalHostname   `json:"managed_deployment_domain"`
+	Authentication    AuthenticationFacts `json:"authentication"`
+	AuthorityEndpoint string              `json:"authority_endpoint"`
+	DnsAutomation     bool                `json:"dns_automation"`
+
+	// GuestDemoEnabled Whether this server accepts limited anonymous demo publishers.
+	GuestDemoEnabled        bool              `json:"guest_demo_enabled"`
+	ManagedDeploymentDomain CanonicalHostname `json:"managed_deployment_domain"`
 }
 
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
@@ -657,6 +669,22 @@ type DNSRecordType string
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
+
+// GuestDemoNumber defines model for GuestDemoNumber.
+type GuestDemoNumber struct {
+	Number int64 `json:"number"`
+}
+
+// GuestDemoSession defines model for GuestDemoSession.
+type GuestDemoSession struct {
+	AccessToken  string            `json:"access_token"`
+	DomainId     DomainID          `json:"domain_id"`
+	GuestId      ResourceID        `json:"guest_id"`
+	MembershipId MembershipID      `json:"membership_id"`
+	Namespace    CanonicalHostname `json:"namespace"`
+	SourceIp     string            `json:"source_ip"`
+	TeamId       TeamID            `json:"team_id"`
+}
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
@@ -1093,6 +1121,16 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateGuestDemo Create a restricted guest credential for the built-in demo
+	//
+	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
+	CreateGuestDemo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
+	//
+	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
+	AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth Confirm that the control HTTP server is serving
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
@@ -1429,6 +1467,36 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 // Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetControlDiscoveryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGuestDemo Create a restricted guest credential for the built-in demo
+//
+// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
+func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGuestDemoRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
+//
+// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
+func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateGuestDemoNumberRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2197,6 +2265,60 @@ func NewGetControlDiscoveryRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateGuestDemoRequest constructs an http.Request for the CreateGuestDemo method
+func NewCreateGuestDemoRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/guest-demo")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAllocateGuestDemoNumberRequest constructs an http.Request for the AllocateGuestDemoNumber method
+func NewAllocateGuestDemoNumberRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/guest-demo/number")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3084,6 +3206,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
+	// CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
+	CreateGuestDemoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateGuestDemoResponse, error)
+
+	// AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
+	AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error)
+
 	// GetHealthWithResponse Confirm that the control HTTP server is serving
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3734,6 +3870,102 @@ func (r GetControlDiscoveryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetControlDiscoveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateGuestDemoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GuestDemoSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateGuestDemoResponse) GetJSON201() *GuestDemoSession {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateGuestDemoResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateGuestDemoResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateGuestDemoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateGuestDemoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateGuestDemoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AllocateGuestDemoNumberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GuestDemoNumber
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AllocateGuestDemoNumberResponse) GetJSON200() *GuestDemoNumber {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AllocateGuestDemoNumberResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AllocateGuestDemoNumberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AllocateGuestDemoNumberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllocateGuestDemoNumberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AllocateGuestDemoNumberResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4698,6 +4930,32 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
+// CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
+func (c *ClientWithResponses) CreateGuestDemoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateGuestDemoResponse, error) {
+	rsp, err := c.CreateGuestDemo(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGuestDemoResponse(rsp)
+}
+
+// AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
+func (c *ClientWithResponses) AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error) {
+	rsp, err := c.AllocateGuestDemoNumber(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateGuestDemoNumberResponse(rsp)
+}
+
 // GetHealthWithResponse Confirm that the control HTTP server is serving
 //
 // Returns a wrapper object for the known response body format(s).
@@ -5353,6 +5611,72 @@ func ParseGetControlDiscoveryResponse(rsp *http.Response) (*GetControlDiscoveryR
 	return response, nil
 }
 
+// ParseCreateGuestDemoResponse parses an HTTP response from a CreateGuestDemoWithResponse call
+func ParseCreateGuestDemoResponse(rsp *http.Response) (*CreateGuestDemoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateGuestDemoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GuestDemoSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAllocateGuestDemoNumberResponse parses an HTTP response from a AllocateGuestDemoNumberWithResponse call
+func ParseAllocateGuestDemoNumberResponse(rsp *http.Response) (*AllocateGuestDemoNumberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AllocateGuestDemoNumberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GuestDemoNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
 func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5941,6 +6265,12 @@ type ServerInterface interface {
 	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
+	// CreateGuestDemo Create a restricted guest credential for the built-in demo
+	// (POST /v1/guest-demo)
+	CreateGuestDemo(w http.ResponseWriter, r *http.Request)
+	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
+	// (POST /v1/guest-demo/number)
+	AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request)
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -6213,6 +6543,34 @@ func (siw *ServerInterfaceWrapper) GetControlDiscovery(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetControlDiscovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateGuestDemo operation middleware
+func (siw *ServerInterfaceWrapper) CreateGuestDemo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateGuestDemo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AllocateGuestDemoNumber operation middleware
+func (siw *ServerInterfaceWrapper) AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AllocateGuestDemoNumber(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6907,6 +7265,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/client-ip", wrapper.GetClientIP)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)

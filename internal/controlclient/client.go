@@ -33,15 +33,18 @@ const (
 )
 
 var (
-	ErrUnauthenticated   = errors.New("controlclient: unauthenticated")
-	ErrNotFound          = errors.New("controlclient: not found")
-	ErrNameUnavailable   = errors.New("controlclient: public URL hostname unavailable")
-	ErrStatusConflict    = errors.New("controlclient: status conflict")
-	ErrCertificateStatus = errors.New("controlclient: certificate status conflict")
-	ErrDNSProofPending   = errors.New("controlclient: DNS setup pending")
-	ErrRateLimited       = errors.New("controlclient: rate limited")
-	ErrUnavailable       = errors.New("controlclient: temporarily unavailable")
-	ErrUnsupported       = errors.New("controlclient: unsupported")
+	ErrUnauthenticated      = errors.New("controlclient: unauthenticated")
+	ErrNotFound             = errors.New("controlclient: not found")
+	ErrNameUnavailable      = errors.New("controlclient: public URL hostname unavailable")
+	ErrStatusConflict       = errors.New("controlclient: status conflict")
+	ErrCertificateStatus    = errors.New("controlclient: certificate status conflict")
+	ErrDNSProofPending      = errors.New("controlclient: DNS setup pending")
+	ErrRateLimited          = errors.New("controlclient: rate limited")
+	ErrUnavailable          = errors.New("controlclient: temporarily unavailable")
+	ErrUnsupported          = errors.New("controlclient: unsupported")
+	ErrGuestTrialExhausted  = errors.New("guest demo trial used up; run `tnl login` to keep publishing your own app")
+	ErrGuestDemoOnly        = errors.New("guest access only publishes the built-in demo; run `tnl login` for your own app or settings, or `tnl publish --demo` to try tnl")
+	ErrGuestIssuanceLimited = errors.New("guest demo creation is limited on this network; run `tnl login` to keep publishing")
 )
 
 type Client struct {
@@ -87,6 +90,14 @@ func (c *Client) Discovery(ctx context.Context) (controlv1.ControlDiscovery, err
 
 func (c *Client) ClientIP(ctx context.Context) (controlv1.ClientIPResponse, error) {
 	return request[controlv1.ClientIPResponse](ctx, c, "", c.api.GetClientIP)
+}
+
+func (c *Client) CreateGuestDemo(ctx context.Context) (controlv1.GuestDemoSession, error) {
+	return request[controlv1.GuestDemoSession](ctx, c, "", c.api.CreateGuestDemo)
+}
+
+func (c *Client) AllocateGuestDemoNumber(ctx context.Context) (controlv1.GuestDemoNumber, error) {
+	return requestWithAccess[controlv1.GuestDemoNumber](ctx, c, c.api.AllocateGuestDemoNumber)
 }
 
 func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
@@ -317,6 +328,12 @@ func responseError(status int, header http.Header, payload []byte) error {
 	switch problem.Code {
 	case controlv1.Unauthenticated:
 		return ErrUnauthenticated
+	case controlv1.GuestTrialExhausted:
+		return ErrGuestTrialExhausted
+	case controlv1.GuestDemoOnly:
+		return ErrGuestDemoOnly
+	case controlv1.GuestIssuanceLimited:
+		return ErrGuestIssuanceLimited
 	case controlv1.NotFound:
 		return ErrNotFound
 	case controlv1.NameUnavailable:

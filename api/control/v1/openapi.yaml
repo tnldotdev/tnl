@@ -71,6 +71,35 @@ paths:
                 $ref: "#/components/schemas/ControlDiscovery"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/guest-demo:
+    post:
+      operationId: createGuestDemo
+      summary: Create a restricted guest credential for the built-in demo
+      security: []
+      responses:
+        "201":
+          description: Guest credential and managed namespace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestDemoSession"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/guest-demo/number:
+    post:
+      operationId: allocateGuestDemoNumber
+      summary: Allocate a new hostname number for this guest trial
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Next demo number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestDemoNumber"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls:
     get:
       operationId: listPublicURLs
@@ -681,18 +710,59 @@ components:
     ControlDiscovery:
       type: object
       additionalProperties: false
-      required: [managed_deployment_domain, dns_automation, authority_endpoint, authentication]
+      required:
+        [
+          managed_deployment_domain,
+          dns_automation,
+          guest_demo_enabled,
+          authority_endpoint,
+          authentication,
+        ]
       properties:
         managed_deployment_domain:
           $ref: "#/components/schemas/CanonicalHostname"
         dns_automation:
           type: boolean
+        guest_demo_enabled:
+          type: boolean
+          description: Whether this server accepts limited anonymous demo publishers.
         authority_endpoint:
           type: string
           format: uri
           pattern: "^https://"
         authentication:
           $ref: "#/components/schemas/AuthenticationFacts"
+    GuestDemoSession:
+      type: object
+      additionalProperties: false
+      required: [access_token, guest_id, team_id, membership_id, domain_id, namespace, source_ip]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+        guest_id:
+          $ref: "#/components/schemas/ResourceID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          $ref: "#/components/schemas/CanonicalHostname"
+        source_ip:
+          type: string
+          minLength: 2
+          maxLength: 45
+    GuestDemoNumber:
+      type: object
+      additionalProperties: false
+      required: [number]
+      properties:
+        number:
+          type: integer
+          format: int64
+          minimum: 1
     AuthenticationFacts:
       type: object
       additionalProperties: false
@@ -1406,6 +1476,9 @@ components:
           invalid_request,
           unauthenticated,
           forbidden,
+          guest_demo_only,
+          guest_issuance_limited,
+          guest_trial_exhausted,
           not_found,
           conflict,
           rate_limited,
