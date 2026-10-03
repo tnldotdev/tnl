@@ -10,6 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -113,7 +114,8 @@ func (s *teamSession) currentMembership(ctx context.Context) (authorityv1.Member
 	if s.projectTeam != "" {
 		selected, err := s.resolveMembership(ctx, s.projectTeam)
 		if err != nil {
-			return authorityv1.Membership{}, fmt.Errorf("resolve project team %q: %w (use --team to override or tnl team list to find a membership)", s.projectTeam, err)
+			return authorityv1.Membership{}, failure.Wrap("resolve project team", failure.TeamNotFound,
+				fmt.Errorf("resolve project team %q: %w (use --team to override or tnl team list to find a membership)", s.projectTeam, err))
 		}
 		return selected, nil
 	}
@@ -126,7 +128,8 @@ func (s *teamSession) currentMembership(ctx context.Context) (authorityv1.Member
 		teamID = s.identity.PersonalTeamId
 		membership, found = membershipForTeam(s.identity.Memberships, teamID)
 		if !found {
-			return authorityv1.Membership{}, errors.New("authenticated identity has no personal-team membership")
+			return authorityv1.Membership{}, failure.Wrap("select personal team", failure.TeamNotFound,
+				errors.New("authenticated identity has no personal-team membership"))
 		}
 	}
 	if err := s.store.SaveSelectedTeam(ctx, teamID); err != nil {
@@ -159,14 +162,16 @@ func (s *teamSession) resolveMembership(ctx context.Context, team string) (autho
 		}
 	}
 	if len(matches) == 0 {
-		return authorityv1.Membership{}, fmt.Errorf("team %q is not in the current identity's memberships", team)
+		return authorityv1.Membership{}, failure.Wrap("select team", failure.TeamNotFound,
+			fmt.Errorf("team %q is not in the current identity's memberships", team))
 	}
 	if len(matches) > 1 {
 		ids := make([]string, len(matches))
 		for index := range matches {
 			ids[index] = matches[index].TeamId
 		}
-		return authorityv1.Membership{}, fmt.Errorf("team name %q is ambiguous; matching IDs: %s", team, strings.Join(ids, ", "))
+		return authorityv1.Membership{}, failure.Wrap("select team", failure.TeamSelectionAmbiguous,
+			fmt.Errorf("team name %q is ambiguous; matching IDs: %s", team, strings.Join(ids, ", ")))
 	}
 	return matches[0], nil
 }

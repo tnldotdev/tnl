@@ -277,6 +277,11 @@ func TestParseLoginInput(t *testing.T) {
 	if err != nil || parsed != token {
 		t.Fatalf("token = %q, error = %v", parsed, err)
 	}
+	if _, err := parseLoginInput([]byte("invalid-token")); err == nil {
+		t.Fatal("invalid login token was accepted")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.LoginTokenInvalid {
+		t.Fatalf("invalid login token reason = %q, %v", reason, err)
+	}
 }
 
 func TestAuthenticationBrowserOpenerRequiresTTY(t *testing.T) {

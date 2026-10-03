@@ -23,6 +23,12 @@ const (
 	ClientStateUnavailable      Reason = "client.state_unavailable"
 	CurrentDirectoryUnavailable Reason = "client.current_directory_unavailable"
 	TeamNotFound                Reason = "client.team_not_found"
+	TeamSelectionAmbiguous      Reason = "client.team_selection_ambiguous"
+	DomainNotAvailable          Reason = "client.domain_not_available"
+	DomainNotReady              Reason = "client.domain_not_ready"
+	InvalidDomainName           Reason = "client.invalid_domain_name"
+	LoginTokenInvalid           Reason = "client.login_token_invalid"
+	LoginTerminalRequired       Reason = "client.login_terminal_required"
 	ProjectConfigInvalid        Reason = "client.project_config_invalid"
 	InitPackageManager          Reason = "client.init_package_manager"
 	InitFramework               Reason = "client.init_framework"
@@ -151,6 +157,30 @@ var definitions = map[Reason]Definition{
 	TeamNotFound: {
 		Class: NotFound, Message: "team not found",
 		Action: "run tnl team list and choose a team you belong to", Retry: RetryAfterChange,
+	},
+	TeamSelectionAmbiguous: {
+		Class: Conflict, Message: "more than one team has the selected name",
+		Action: "run tnl team list and select a team by ID with --team", Retry: RetryAfterChange,
+	},
+	DomainNotAvailable: {
+		Class: NotFound, Message: "the selected domain is not available to this team",
+		Action: "run tnl domain list and select a domain owned by the current team", Retry: RetryAfterChange,
+	},
+	DomainNotReady: {
+		Class: Unavailable, Message: "the selected domain is not ready for public URLs",
+		Action: "check tnl domain status and complete its required DNS records", Retry: RetryAfterChange,
+	},
+	InvalidDomainName: {
+		Class: Invalid, Message: "the domain name is not a canonical DNS name",
+		Action: "use lowercase ASCII DNS labels without a trailing dot", Retry: RetryAfterChange,
+	},
+	LoginTokenInvalid: {
+		Class: Unauthenticated, Message: "the login token is invalid",
+		Action: "get a new login token for this server and retry", Retry: RetryAfterChange,
+	},
+	LoginTerminalRequired: {
+		Class: Invalid, Message: "login-token authentication requires an interactive terminal",
+		Action: "run tnl login in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
