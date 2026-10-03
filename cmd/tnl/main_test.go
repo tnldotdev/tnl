@@ -312,8 +312,8 @@ func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
 
 func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 	for _, test := range []struct {
-		command string
-		wantErr string
+		command    string
+		wantErr    string
 		wantReason failure.Reason
 	}{
 		{command: "dev", wantErr: "validate control URL", wantReason: failure.InvalidControlURL},
