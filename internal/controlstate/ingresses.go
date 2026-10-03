@@ -212,26 +212,6 @@ func (d *Database) BeginIngressDrain(
 	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
 }
 
-// EnsureVisitorNetworkHashMasterKey encrypts an existing plaintext key before
-// control starts serving. ingress leases also ensure this key in their own transaction.
-func (d *Database) EnsureVisitorNetworkHashMasterKey(ctx context.Context, now time.Time) (retErr error) {
-	if err := d.requireOpen(); err != nil {
-		return err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return fmt.Errorf("controlstate: ensure visitor network hash key: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "visitor network hash key", &retErr)()
-	if _, err := d.ensurePublicURLUsageConfiguration(ctx, controlstatedb.New(tx), now); err != nil {
-		return fmt.Errorf("controlstate: ensure visitor network hash key: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("controlstate: ensure visitor network hash key: commit: %w", err)
-	}
-	return nil
-}
-
 func (d *Database) ensurePublicURLUsageConfiguration(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -246,49 +226,18 @@ func (d *Database) ensurePublicURLUsageConfiguration(
 		return [32]byte{}, err
 	}
 	configuration, err := queries.EnsurePublicURLUsageConfiguration(ctx, controlstatedb.EnsurePublicURLUsageConfigurationParams{
-		VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: text(d.storageKey.CurrentID()),
+		VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: d.storageKey.CurrentID(),
 		CreatedAt: timestamptz(createdAt),
 	})
 	if err != nil {
 		return [32]byte{}, err
 	}
-	if legacy := configuration.VisitorNetworkHashMasterKey; legacy != nil {
-		if len(legacy) != len(candidate) {
-			return [32]byte{}, errors.New("controlstate: invalid visitor network hash key")
-		}
-		ciphertext, err := d.sealSecret(visitorNetworkHashMasterKeyContext(), legacy)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		updated, err := queries.EncryptLegacyVisitorNetworkHashMasterKey(ctx, controlstatedb.EncryptLegacyVisitorNetworkHashMasterKeyParams{
-			VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: text(d.storageKey.CurrentID()),
-			PreviousMasterKey: legacy,
-		})
-		if err != nil || updated != 1 {
-			return [32]byte{}, errors.New("controlstate: cannot encrypt visitor network hash key")
-		}
-		return [32]byte(legacy), nil
-	}
-	key, previous, err := d.openSecret(
-		configuration.VisitorNetworkHashMasterKeyStorageKeyID.String,
+	key, _, err := d.openSecret(
+		configuration.VisitorNetworkHashMasterKeyStorageKeyID,
 		visitorNetworkHashMasterKeyContext(), configuration.VisitorNetworkHashMasterKeyCiphertext,
 	)
 	if err != nil || len(key) != len(candidate) {
 		return [32]byte{}, errors.New("controlstate: invalid visitor network hash key")
-	}
-	if previous {
-		ciphertext, err := d.sealSecret(visitorNetworkHashMasterKeyContext(), key)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		updated, err := queries.RotateVisitorNetworkHashMasterKey(ctx, controlstatedb.RotateVisitorNetworkHashMasterKeyParams{
-			VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: text(d.storageKey.CurrentID()),
-			PreviousKeyID:      configuration.VisitorNetworkHashMasterKeyStorageKeyID,
-			PreviousCiphertext: configuration.VisitorNetworkHashMasterKeyCiphertext,
-		})
-		if err != nil || updated != 1 {
-			return [32]byte{}, errors.New("controlstate: cannot re-encrypt visitor network hash key")
-		}
 	}
 	return [32]byte(key), nil
 }

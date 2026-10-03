@@ -23,13 +23,11 @@ Foreign keys cover saved control-owned relationships, including publish run
 usage and certificate orders. External authority IDs and historical process-run
 IDs do not require local authority or current-lease rows.
 
-Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` before
-serving ingress leases. On the first start after the encryption migration, it
-seals the existing key and clears the plaintext column in one transaction, so
-the date-scoped keys already held by ingress do not change. Storage-key rotation
-also re-encrypts this master key. Database files, write-ahead logs, and backups
-can still contain the earlier plaintext value until their cleanup or retention
-periods end.
+Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` when
+an ingress first registers. The encryption migration discards earlier usage
+reports, buckets, deliveries, ingress usage runs, and the old plaintext key;
+the next ingress registration creates a new key. Storage-key rotation also
+re-encrypts this master key.
 
 ## acquire locks in one order
 

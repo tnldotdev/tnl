@@ -71,7 +71,6 @@ type Querier interface {
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
-	EncryptLegacyVisitorNetworkHashMasterKey(ctx context.Context, arg EncryptLegacyVisitorNetworkHashMasterKeyParams) (int64, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureExternalAuthorityPrincipal(ctx context.Context, arg EnsureExternalAuthorityPrincipalParams) (ControlIdentity, error)
 	EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) (EnsureExternalRetryMasterKeyRow, error)
@@ -291,7 +290,6 @@ type Querier interface {
 	RotateExternalRetryMasterKey(ctx context.Context, arg RotateExternalRetryMasterKeyParams) error
 	RotateRelayCertificateOrderPrivateKey(ctx context.Context, arg RotateRelayCertificateOrderPrivateKeyParams) error
 	RotateRelayServicePrivateKey(ctx context.Context, arg RotateRelayServicePrivateKeyParams) error
-	RotateVisitorNetworkHashMasterKey(ctx context.Context, arg RotateVisitorNetworkHashMasterKeyParams) (int64, error)
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)

@@ -34,9 +34,6 @@ func (d *daemon) startControlWorkers(
 	d.database = database
 	database.Instrument(metrics)
 	metrics.RegisterDatabase(database.PrometheusMetrics)
-	if err := database.EnsureVisitorNetworkHashMasterKey(ctx, time.Now()); err != nil {
-		return fmt.Errorf("prepare visitor network hash key: %w", err)
-	}
 	d.start("expire saved publish runs", func() error {
 		return runExpiredPublishRunCleanup(lifetime, database, metrics)
 	})
