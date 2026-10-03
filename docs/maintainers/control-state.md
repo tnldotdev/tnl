@@ -23,6 +23,12 @@ Foreign keys cover saved control-owned relationships, including publish run
 usage and certificate orders. External authority IDs and historical process-run
 IDs do not require local authority or current-lease rows.
 
+Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` when
+an ingress first registers. The encryption migration discards earlier usage
+reports, buckets, deliveries, ingress usage runs, and the old plaintext key;
+the next ingress registration creates a new key. Storage-key rotation also
+re-encrypts this master key.
+
 ## acquire locks in one order
 
 Every transaction must choose its complete lock order before it starts taking
