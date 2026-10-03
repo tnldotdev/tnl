@@ -377,7 +377,7 @@ func (o *publishOutput) emitLocked(event publishEvent) error {
 }
 
 func boundedOutputError(err error) string {
-	message := err.Error()
+	message := clioutput.DisplayErrorMessage(err.Error())
 	if code, ok := diagnostic.CodeOf(err); ok {
 		message = diagnostic.Summary(code)
 	}

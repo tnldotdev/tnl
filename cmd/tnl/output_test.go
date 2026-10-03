@@ -229,6 +229,26 @@ func TestRunPublishNDJSONFailureHasSingleOwner(t *testing.T) {
 	}
 }
 
+func TestNDJSONErrorMessageHidesClientStatePrefix(t *testing.T) {
+	var stdout bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("clientstate: saved state is unavailable")
+	if err := output.failed(cause); err != nil {
+		t.Fatal(err)
+	}
+	var event publishEvent
+	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Message != "saved state is unavailable" || cause.Error() != "clientstate: saved state is unavailable" ||
+		event.SchemaVersion != 1 || event.Type != publishEventError {
+		t.Fatalf("event = %+v; original cause = %v", event, cause)
+	}
+}
+
 func TestPublishOutputNDJSONRetainsFailedErrorEventWrite(t *testing.T) {
 	writeErr := errors.New("output closed")
 	output, err := newPublishOutput("ndjson", "tnl publish", errorWriter{writeErr}, io.Discard, nil)

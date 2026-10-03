@@ -101,6 +101,11 @@ func CommandOf(err error) (string, bool) {
 	return contextual.command, true
 }
 
+// DisplayErrorMessage removes internal client-state package qualifiers from CLI text.
+func DisplayErrorMessage(message string) string {
+	return strings.ReplaceAll(message, "clientstate: ", "")
+}
+
 // Text renders wrapped prose.
 func Text(value string) Block { return textBlock(value) }
 

@@ -127,7 +127,7 @@ func TextForCommandError(command string, err error) (string, bool) {
 	_ = errors.As(err, &classified)
 	detail := ""
 	if classified.showDetail {
-		detail = classified.message
+		detail = clioutput.DisplayErrorMessage(classified.message)
 	}
 	details := []string{definition.Summary}
 	if detail == "" || detail == definition.Summary || detail == definition.Title {
