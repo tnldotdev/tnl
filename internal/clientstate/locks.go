@@ -38,6 +38,14 @@ func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error)
 	return openLockContext(ctx, filepath.Join(store.locksDir, "control-session.lock"), "control session")
 }
 
+// LockGuestSessionContext serializes guest credential issuance for one selected server.
+func LockGuestSessionContext(ctx context.Context, store *Store) (*Lock, error) {
+	if store == nil {
+		return nil, errors.New("clientstate: state store is required")
+	}
+	return openLockContext(ctx, filepath.Join(store.locksDir, "guest-session.lock"), "guest session")
+}
+
 func prepareRoot(root string) (string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", errors.New("clientstate: state directory is required")

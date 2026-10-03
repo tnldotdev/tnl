@@ -186,6 +186,31 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ControlGuestPublicUrl struct {
+	PublicURLID string
+	GuestID     string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ControlGuestTrial struct {
+	ID                    string
+	CredentialID          string
+	CredentialHash        []byte
+	NamespaceLabel        string
+	TeamID                string
+	MembershipID          string
+	DomainID              string
+	DnsAuthorityReference string
+	SourceIp              string
+	UsedReadyNs           int64
+	UsedBytes             int64
+	LastDemoNumber        int64
+	ActivePublishRunID    pgtype.Text
+	ActiveReadyAt         pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type ControlIdentity struct {
 	ID              string
 	Kind            string
