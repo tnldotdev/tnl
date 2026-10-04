@@ -239,7 +239,10 @@ func TestDevReportsARecursiveCommandBeforeOpeningASession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"tnl dev"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := runDev(t.Context(), devCommand{Command: []string{"pnpm", "dev"}, commandDir: root}, nil, io.Discard, io.Discard)
+	stateRoot := filepath.Join(root, "state")
+	err := runDev(t.Context(), devCommand{
+		remoteFlags: remoteFlags{StateDir: stateRoot}, Command: []string{"pnpm", "dev"}, commandDir: root,
+	}, nil, io.Discard, io.Discard)
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.DevCommandRecursion {
 		t.Fatalf("preflight error = %v, code = %s", err, code)
 	}
@@ -247,6 +250,9 @@ func TestDevReportsARecursiveCommandBeforeOpeningASession(t *testing.T) {
 	if !ok || !strings.Contains(text, "pnpm dev") || !strings.Contains(text, diagnostic.HelpURL(diagnostic.DevCommandRecursion)) ||
 		!strings.Contains(text, "TNL_DEV_COMMAND_RECURSION") {
 		t.Fatalf("preflight output = %q", text)
+	}
+	if _, err := os.Stat(stateRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recursive command opened client state: %v", err)
 	}
 }
 

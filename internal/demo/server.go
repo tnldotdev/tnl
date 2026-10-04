@@ -3,9 +3,7 @@ package demo
 
 import (
 	"context"
-	"crypto/rand"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,9 +24,9 @@ var symbolsFont []byte
 
 type State struct {
 	PublicURL    string `json:"public_url"`
-	Stamp        string `json:"stamp"`
 	RequestCount uint64 `json:"request_count"`
 	GeneratedAt  string `json:"generated_at,omitempty"`
+	Guest        bool   `json:"guest,omitempty"`
 }
 
 type Server struct {
@@ -42,10 +40,6 @@ type Server struct {
 
 // Start binds the demo only to loopback and returns a ready local HTTP server.
 func Start(onPing func(State) error) (*Server, error) {
-	stamp := make([]byte, 4)
-	if _, err := rand.Read(stamp); err != nil {
-		return nil, fmt.Errorf("create demo stamp: %w", err)
-	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for local demo: %w", err)
@@ -53,7 +47,6 @@ func Start(onPing func(State) error) (*Server, error) {
 	demo := &Server{
 		listener: listener,
 		done:     make(chan error, 1),
-		state:    State{Stamp: hex.EncodeToString(stamp)},
 		onPing:   onPing,
 	}
 	demo.server = &http.Server{Handler: demo, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
@@ -63,12 +56,16 @@ func Start(onPing func(State) error) (*Server, error) {
 
 func (d *Server) Target() string { return "http://" + d.listener.Addr().String() }
 
-func (d *Server) Stamp() string { return d.state.Stamp }
-
 // SetPublicURL uses the hostname confirmed by the publisher when it becomes ready.
 func (d *Server) SetPublicURL(value string) {
 	d.mu.Lock()
 	d.state.PublicURL = value
+	d.mu.Unlock()
+}
+
+func (d *Server) SetGuest() {
+	d.mu.Lock()
+	d.state.Guest = true
 	d.mu.Unlock()
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -435,6 +436,55 @@ func TestDemoPublishDoesNotLoadProjectConfiguration(t *testing.T) {
 	reason, _, typed := failure.Describe(err)
 	if !typed || reason != failure.InvalidControlURL || strings.Contains(err.Error(), "typescript") {
 		t.Fatalf("demo reached project configuration: %v", err)
+	}
+}
+
+func TestGuestCommandExplainsSignInAndDemoWithoutPrompting(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := database.Server(t.Context(), "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveGuestSession(t.Context(), clientstate.GuestSession{
+		GuestID: "gst_0123456789abcdefghijkl", AccessToken: token.String(),
+		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
+		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err = run(t.Context(), []string{"--no-config", "team", "current", "--server=https://control.example", "--state-dir", root}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("guest was prompted for team access")
+	}
+	if reason, _, typed := failure.Describe(err); !typed || reason != failure.GuestSignInRequired {
+		t.Fatalf("guest sign-in reason = %q, typed = %t", reason, typed)
+	}
+	writeCommandError(&stderr, err)
+	if !strings.Contains(stderr.String(), "tnl login") || !strings.Contains(stderr.String(), "tnl publish --demo") ||
+		strings.Contains(stderr.String(), "authentication required") || stdout.Len() != 0 {
+		t.Fatalf("guest command output = %q, stdout = %q", stderr.String(), stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	err = run(t.Context(), []string{"--no-config", "dev", "--server=https://control.example", "--state-dir", root}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("guest dev without a configured child attempted to prompt for sign-in")
+	}
+	writeCommandError(&stderr, err)
+	if !strings.Contains(stderr.String(), "tnl publish --demo") || !strings.Contains(stderr.String(), "tnl login") || stdout.Len() != 0 {
+		t.Fatalf("guest dev output = %q, stdout = %q", stderr.String(), stdout.String())
 	}
 }
 

@@ -246,8 +246,6 @@
             <div class="computer-label">[ your computer ]</div>
             <pre>tnl -> local demo</pre>
             <dl class="values">
-              <dt>stamp</dt>
-              <dd id="stamp">...</dd>
               <dt>count</dt>
               <dd id="request-count">0</dd>
               <dt>browser pong</dt>
@@ -260,6 +258,9 @@
           </div>
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
+        <p id="sign-in" class="muted" hidden>
+          to publish your own app, run <code>tnl login</code> in your terminal.
+        </p>
       </main>
       <footer aria-label="tnl.dev demo">
         ──[ tnl.dev :: demo ]───────────────────────────────────────────
@@ -272,8 +273,8 @@
         const url = document.getElementById("public-url");
         url.textContent = state.public_url;
         url.href = state.public_url;
-        document.getElementById("stamp").textContent = state.stamp;
         document.getElementById("request-count").textContent = state.request_count;
+        document.getElementById("sign-in").hidden = !state.guest;
       }
       async function request(path, options) {
         const response = await fetch(path, options);

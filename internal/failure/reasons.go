@@ -51,6 +51,7 @@ const (
 	GuestTrialExhausted         Reason = "client.guest_trial_exhausted"
 	GuestDemoOnly               Reason = "client.guest_demo_only"
 	GuestIssuanceLimited        Reason = "client.guest_issuance_limited"
+	GuestSignInRequired         Reason = "client.guest_sign_in_required"
 	GuestIPChanged              Reason = "client.guest_ip_changed"
 	ServerResponseInvalid       Reason = "client.server_response_invalid"
 	ServerRequestInvalid        Reason = "client.server_request_invalid"
@@ -283,6 +284,10 @@ var definitions = map[Reason]Definition{
 	GuestIssuanceLimited: {
 		Class: RateLimited, Message: "guest demo creation is limited on this network",
 		Action: "wait an hour or run tnl login to continue", Retry: RetryLater,
+	},
+	GuestSignInRequired: {
+		Class: Unauthenticated, Message: "this command needs sign-in",
+		Action: "run tnl login to manage this server, or tnl publish --demo to try the built-in demo", Retry: RetryAfterChange,
 	},
 	GuestIPChanged: {
 		Class: Forbidden, Message: "your IP changed since this guest demo started",
