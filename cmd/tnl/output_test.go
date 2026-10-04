@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/webhookips"
@@ -118,6 +119,57 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	}
 	if len(opened) != 1 || opened[0] != "https://demo.example" {
 		t.Fatalf("opened = %#v", opened)
+	}
+}
+
+func TestDemoOutputMatchesPageAndPrintsReadyBeforeOpening(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", &stdout, &stderr, func(url string) error {
+		if url != "https://real.generated.tnl.dev" || !strings.Contains(stderr.String(), "stamp") {
+			t.Fatalf("browser opened before demo was ready: %q, %q", url, stderr.String())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.setDemoStamp("a1b2c3d4")
+	if err := output.starting("tunnel_1", "http://127.0.0.1:12345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://real.generated.tnl.dev", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.demoPing(demo.State{Stamp: "a1b2c3d4", RequestCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "https://real.generated.tnl.dev") ||
+		strings.Count(stderr.String(), "a1b2c3d4") != 2 ||
+		!strings.Contains(stderr.String(), "|  count") || strings.Contains(stderr.String(), "request count") ||
+		!strings.Contains(stderr.String(), "ping received") ||
+		strings.ContainsRune(stderr.String(), '\x1b') {
+		t.Fatalf("demo output = %q, stdout = %q", stderr.String(), stdout.String())
+	}
+}
+
+func TestDemoPingKeepsNDJSONOnStdout(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_1", "http://127.0.0.1:12345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.demoPing(demo.State{Stamp: "a1b2c3d4", RequestCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var event publishEvent
+	if err := json.NewDecoder(&stdout).Decode(&event); err != nil || event.Type != publishEventStarting {
+		t.Fatalf("NDJSON event = %+v, error = %v", event, err)
+	}
+	if !strings.Contains(stderr.String(), "ping received") || strings.Contains(stdout.String(), "a1b2c3d4") {
+		t.Fatalf("output = %q / %q", stdout.String(), stderr.String())
 	}
 }
 

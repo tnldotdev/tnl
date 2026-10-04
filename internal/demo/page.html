@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>local demo - tnl</title>
+    <style>
+      @font-face {
+        font-family: "Fira Code Variable";
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url("/fonts/fira-code-symbols2-wght-normal.woff2") format("woff2");
+        unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;
+      }
+      @font-face {
+        font-family: "Fira Code Variable";
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url("/fonts/fira-code-latin-wght-normal.woff2") format("woff2");
+        unicode-range:
+          U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+          U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      :root {
+        color-scheme: light;
+        --paper: #fff;
+        --ink: #111;
+        --muted: #666;
+        --rule: #b8b8b8;
+        --subtle: #f5f5f5;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          14px/1.75 "Fira Code Variable",
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      a {
+        color: inherit;
+      }
+      a:hover,
+      button:hover {
+        background: var(--subtle);
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 1px dashed var(--ink);
+        outline-offset: 4px;
+      }
+      .site {
+        max-width: 780px;
+        min-height: 100vh;
+        margin: auto;
+        padding: 32px 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 44px;
+      }
+      header a {
+        padding: 8px;
+        text-decoration: none;
+      }
+      header .brand {
+        display: inline-flex;
+        width: 44px;
+        height: 44px;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      header .brand svg {
+        display: block;
+        width: 26px;
+        height: 18px;
+      }
+      main {
+        padding: 64px 0 80px;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(30px, 5vw, 48px);
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .intro {
+        margin: 16px 0 0;
+      }
+      .intro code {
+        font: inherit;
+      }
+      .diagram {
+        position: relative;
+        margin: 48px 0 32px;
+        padding: 30px 24px 20px;
+        border: 1px solid var(--rule);
+      }
+      .diagram figcaption {
+        position: absolute;
+        top: -0.85em;
+        left: 16px;
+        padding: 0 8px;
+        background: var(--paper);
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        font: inherit;
+        line-height: 1.5;
+      }
+      .url {
+        display: block;
+        width: fit-content;
+        max-width: 100%;
+        margin: 3px 0;
+        overflow-wrap: anywhere;
+        font-weight: 500;
+      }
+      .computer {
+        position: relative;
+        margin: 20px 0 16px;
+        padding: 22px 16px 14px;
+        width: fit-content;
+        max-width: 100%;
+        border: 1px solid var(--rule);
+      }
+      .computer-label {
+        position: absolute;
+        top: -0.85em;
+        left: 10px;
+        padding: 0 6px;
+        background: var(--paper);
+      }
+      .values {
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 0 20px;
+        margin: 12px 0 0;
+      }
+      .values dt {
+        color: var(--muted);
+      }
+      .values dd {
+        margin: 0;
+      }
+      button {
+        min-height: 44px;
+        padding: 8px 18px;
+        border: 1px solid var(--ink);
+        background: var(--paper);
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: wait;
+      }
+      footer {
+        margin-top: auto;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        font-size: 12px;
+      }
+      @media (max-width: 480px) {
+        .site {
+          padding: 24px 16px;
+        }
+        main {
+          padding-top: 48px;
+        }
+        .diagram {
+          padding: 30px 16px 20px;
+        }
+        .computer .values {
+          grid-template-columns: 1fr;
+          gap: 0;
+        }
+        .computer .values dd {
+          margin-bottom: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="site">
+      <header>
+        <a class="brand" href="https://tnl.dev/" aria-label="tnl home">
+          <svg viewBox="0 0 3569 2508" aria-hidden="true" focusable="false">
+            <g fill="currentColor">
+              <path
+                transform="translate(0 1980) scale(1 -1)"
+                d="M1075 59Q1016 20 932-5Q848-30 750-30Q556-30 458 70.5Q360 171 360 338V872H130V1059H360V1292L624 1324V1059H974L947 872H624V339Q624 257 664 219Q704 181 793 181Q850 181 897.5 194.5Q945 208 984 229Z"
+              />
+              <path
+                transform="translate(1200 1980) scale(1 -1)"
+                d="M161 0V1059H391L410 928Q478 1008 563 1048.5Q648 1089 746 1089Q889 1089 964 1006.5Q1039 924 1039 775V0H775V672Q775 752 765 800.5Q755 849 727 870.5Q699 892 646 892Q603 892 563.5 873Q524 854 489.5 822Q455 790 425 751V0Z"
+              />
+              <path
+                transform="translate(2400 1980) scale(1 -1)"
+                d="M665 1482V308Q665 239 705.5 210Q746 181 815 181Q858 181 898 190.5Q938 200 974 214L1039 34Q989 9 917.5-10.5Q846-30 752-30Q579-30 490 69Q401 168 401 336V1295H84V1482Z"
+              />
+            </g>
+          </svg>
+        </a>
+        <a href="https://tnl.dev/docs">[ docs ]</a>
+      </header>
+      <main>
+        <h1>tnl demo</h1>
+        <p class="intro muted">a small local app started by <code>tnl publish --demo</code>.</p>
+        <figure
+          class="diagram"
+          aria-label="a browser reaches this local demo through a public URL and the tnl server"
+        >
+          <figcaption>[ ping / pong ]</figcaption>
+          <pre>
+ browser
+  | ping over HTTPS
+  ↓</pre>
+          <a id="public-url" class="url" href="#">tnl.dev</a>
+          <pre>
+  |
+  ↓
+ tnl server
+  | encrypted traffic
+  ↓</pre>
+          <div class="computer">
+            <div class="computer-label">[ your computer ]</div>
+            <pre>tnl -> local demo</pre>
+            <dl class="values">
+              <dt>stamp</dt>
+              <dd id="stamp">...</dd>
+              <dt>count</dt>
+              <dd id="request-count">0</dd>
+              <dt>browser pong</dt>
+              <dd id="pong" role="status" aria-live="polite">waiting for ping</dd>
+              <dt>round trip</dt>
+              <dd id="round-trip">-- ms</dd>
+              <dt>generated at</dt>
+              <dd id="generated-at">--</dd>
+            </dl>
+          </div>
+        </figure>
+        <button id="ping" type="button" disabled>[ ping ]</button>
+      </main>
+      <footer aria-label="tnl.dev demo">
+        ──[ tnl.dev :: demo ]───────────────────────────────────────────
+      </footer>
+    </div>
+    <script>
+      const button = document.getElementById("ping");
+      const pong = document.getElementById("pong");
+      function show(state) {
+        const url = document.getElementById("public-url");
+        url.textContent = state.public_url;
+        url.href = state.public_url;
+        document.getElementById("stamp").textContent = state.stamp;
+        document.getElementById("request-count").textContent = state.request_count;
+      }
+      async function request(path, options) {
+        const response = await fetch(path, options);
+        if (!response.ok) throw new Error("request failed");
+        return response.json();
+      }
+      request("/state")
+        .then((state) => {
+          show(state);
+          button.disabled = !state.public_url;
+        })
+        .catch(() => {
+          pong.textContent = "could not reach the local demo. try refreshing.";
+        });
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        pong.textContent = "sending ping...";
+        try {
+          const started = performance.now();
+          const state = await request("/ping", { method: "POST" });
+          const elapsed = Math.round(performance.now() - started);
+          show(state);
+          pong.textContent = "pong";
+          document.getElementById("round-trip").textContent = elapsed + " ms";
+          document.getElementById("generated-at").textContent =
+            new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
+        } catch {
+          pong.textContent = "ping failed. try again.";
+        } finally {
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

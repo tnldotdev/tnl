@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -355,6 +357,57 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 	}
 }
 
+func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"publish", "--demo", "--open=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTunnelCLIUnits(parsed, &flags)
+	flags.Publish.Name = "from-environment"
+	if err := prepareDemoPublish(&flags.Publish, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Publish.Target != "" || flags.Publish.Name != "" || !flags.Publish.Ephemeral || flags.Publish.Open {
+		t.Fatalf("demo flags = %+v", flags.Publish)
+	}
+	flags.Publish.openFromCLI = false
+	if err := prepareDemoPublish(&flags.Publish, "", true); err != nil || !flags.Publish.Open {
+		t.Fatalf("interactive demo = %+v, error = %v", flags.Publish, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		args   []string
+		reason failure.Reason
+		action string
+	}{
+		{"target", []string{"publish", "--demo", "3000"}, failure.DemoTargetNotAllowed, "remove the service or target"},
+		{"config", []string{"--config", "missing.yml", "publish", "--demo"}, failure.DemoConfigNotUsed, "remove --config"},
+		{"name", []string{"publish", "--demo", "--name", "saved"}, failure.DemoURLManaged, "remove --name or --public-url"},
+		{"public url", []string{"publish", "--demo", "--public-url", "https://saved.example"}, failure.DemoURLManaged, "remove --name or --public-url"},
+		{"ephemeral", []string{"publish", "--demo", "--ephemeral=false"}, failure.DemoMustBeEphemeral, "remove --ephemeral=false"},
+		{"request limit", []string{"publish", "--demo", "--request-limit", "0"}, failure.InvalidTunnelFlags, "--request-limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(t.Context(), test.args, &stdout, &stderr)
+			reason, _, typed := failure.Describe(err)
+			if !typed || reason != test.reason || stdout.Len() != 0 {
+				t.Fatalf("demo options %v = reason %q, typed %t, stdout %q, error %v", test.args, reason, typed, stdout.String(), err)
+			}
+			writeCommandError(&stderr, err)
+			if !strings.Contains(stderr.String(), test.action) || strings.Contains(stderr.String(), "tnl could not start or maintain this tunnel") {
+				t.Fatalf("demo options %v = %q, want action %q", test.args, stderr.String(), test.action)
+			}
+		})
+	}
+}
+
 func TestCLIErrorPresentationUsesTypedCopyWithoutChangingCause(t *testing.T) {
 	cause := errors.New("clientstate: saved state is unavailable")
 	state := failure.Wrap("open client state", failure.ClientStateUnavailable, cause)
@@ -366,6 +419,38 @@ func TestCLIErrorPresentationUsesTypedCopyWithoutChangingCause(t *testing.T) {
 			!errors.Is(err, cause) {
 			t.Fatalf("CLI error = %q, cause = %v", output.String(), err)
 		}
+	}
+}
+
+func TestDemoPublishDoesNotLoadProjectConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte("this is not valid typescript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	var stdout, stderr bytes.Buffer
+	err := run(t.Context(), []string{
+		"publish", "--demo", "--server", "http://control.example", "--state-dir", filepath.Join(directory, "state"),
+	}, &stdout, &stderr)
+	reason, _, typed := failure.Describe(err)
+	if !typed || reason != failure.InvalidControlURL || strings.Contains(err.Error(), "typescript") {
+		t.Fatalf("demo reached project configuration: %v", err)
+	}
+}
+
+func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	var stdout, stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := run(ctx, []string{
+		"--no-config", "publish", "--demo", "--server", "https://127.0.0.1:1",
+		"--state-dir", filepath.Join(directory, "state"),
+	}, &stdout, &stderr)
+	if err == nil || strings.Contains(err.Error(), "absolute tunnel project path is required") ||
+		!strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("demo did not reach control discovery after registering its tunnel: %v", err)
 	}
 }
 

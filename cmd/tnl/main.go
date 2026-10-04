@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"golang.org/x/term"
 )
 
 type cli struct {
@@ -27,7 +28,7 @@ type cli struct {
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Dev         devCommand       `cmd:"" help:"Start and publish a development service; override its child command after --." group:"start"`
-	Publish     publishCommand   `cmd:"" help:"Publish an already-running local HTTP service or port." group:"start"`
+	Publish     publishCommand   `cmd:"" help:"Publish a local HTTP service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
@@ -266,7 +267,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parser, err := kong.New(
 		&flags,
 		kong.Name("tnl"),
-		kong.Description("Publish local services at stable public URLs. Run tnl dev to start an app, or tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
+		kong.Description("Publish local services at stable public URLs. Try tnl publish --demo, run tnl dev to start an app, or tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "start", Title: "Start here:"},
 			{Key: "manage", Title: "Manage:"},
@@ -289,6 +290,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
+		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
+			return err
+		}
+	}
 	telemetryCommand, collectTelemetry := selectedTelemetryCommand(parsed)
 	var telemetry *telemetryInvocation
 	if !flags.NoTelemetry && collectTelemetry &&
@@ -318,6 +324,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	projectStateRoot := ""
 	switch parsedCommand {
 	case "publish <service-or-target>", "dev <service>", "config check", "config generate":
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
+			break
+		}
 		projectStateRoot, err = commandStateRoot(parsed)
 		if err != nil {
 			return err
@@ -529,6 +538,7 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	case "publish <service-or-target>":
 		apply(&flags.Publish.tunnelFlags)
 		flags.Publish.openFromCLI = open
+		flags.Publish.demoNameFromCLI = name
 	case "dev <service>":
 		apply(&flags.Dev.tunnelFlags)
 		flags.Dev.openFromCLI = open

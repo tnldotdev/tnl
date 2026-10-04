@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -75,6 +76,7 @@ type publishOutput struct {
 	providers             []providerCount
 	allowedPrefixCount    int
 	framework             string
+	demoStamp             string
 	openURL               func(string) error
 }
 
@@ -206,7 +208,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			o.printed = true
 			footer := "ctrl+c to stop"
 			var openErr error
-			if o.openURL != nil && !o.opened {
+			if o.openURL != nil && !o.opened && o.demoStamp == "" {
 				o.opened = true
 				openErr = o.openPublicURL(url)
 				if openErr == nil {
@@ -214,6 +216,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				}
 			}
 			var fields []clioutput.Field
+			if o.demoStamp != "" {
+				fields = append(fields,
+					clioutput.Field{Label: "demo", Value: "running on this computer"},
+					clioutput.Field{Label: "stamp", Value: o.demoStamp},
+				)
+			}
 			if o.framework != "" {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
@@ -258,7 +266,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	} else if err := o.emitLocked(publishEvent{Type: publishEventReady, URL: url, PublishRunNumber: publishRunNumber}); err != nil {
 		return err
 	}
-	if o.mode != publishOutputHuman && o.openURL != nil && !o.opened {
+	if (o.mode != publishOutputHuman || o.demoStamp != "") && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openPublicURL(url); err != nil {
 			presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, err))
@@ -306,6 +314,23 @@ func (o *publishOutput) setFramework(framework string) {
 	o.mu.Lock()
 	o.framework = framework
 	o.mu.Unlock()
+}
+
+func (o *publishOutput) setDemoStamp(stamp string) {
+	o.mu.Lock()
+	o.demoStamp = stamp
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) demoPing(state demo.State) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return writeHumanFrame(o.stderr, o.command, "ping received", "pong sent",
+		clioutput.Fields(
+			clioutput.Field{Label: "stamp", Value: state.Stamp},
+			clioutput.Field{Label: "count", Value: fmt.Sprint(state.RequestCount)},
+		),
+	)
 }
 
 func (o *publishOutput) logf(format string, arguments ...any) {
