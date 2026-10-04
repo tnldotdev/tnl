@@ -2,11 +2,12 @@ package controlapi
 
 import (
 	"errors"
-	"log"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -23,7 +24,7 @@ func (h *handler) authenticatePublishRunRequest(
 	}
 	if h.store == nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		log.Printf("authenticate publish run request_id=%s: store unavailable", requestID)
+		operatorlog.Report("authenticate publish run", failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
 		return controlstate.PublishRunAuthentication{}, false
 	}
 	authentication, err := h.store.PublishRunAuthentication(
@@ -35,7 +36,7 @@ func (h *handler) authenticatePublishRunRequest(
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		log.Printf("authenticate publish run request_id=%s: %v", requestID, err)
+		operatorlog.Report("authenticate publish run", failure.ServerAPIInternal, requestID, err)
 		return controlstate.PublishRunAuthentication{}, false
 	}
 	return authentication, true

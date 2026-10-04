@@ -10,6 +10,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -97,15 +98,17 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 		t.Fatalf("unknown 5xx problem mapping=%v", err)
 	}
 	for _, test := range []struct {
-		code string
-		want error
+		code       string
+		want       error
+		wantReason failure.Reason
 	}{
-		{"guest_demo_only", ErrGuestDemoOnly},
-		{"guest_trial_exhausted", ErrGuestTrialExhausted},
-		{"guest_issuance_limited", ErrGuestIssuanceLimited},
+		{"guest_demo_only", ErrGuestDemoOnly, failure.GuestDemoOnly},
+		{"guest_trial_exhausted", ErrGuestTrialExhausted, failure.GuestTrialExhausted},
+		{"guest_issuance_limited", ErrGuestIssuanceLimited, failure.GuestIssuanceLimited},
 	} {
 		err := responseError(http.StatusForbidden, nil, []byte(`{"code":"`+test.code+`"}`))
-		if !errors.Is(err, test.want) || !strings.Contains(err.Error(), "tnl login") {
+		reason, definition, typed := failure.Describe(err)
+		if !errors.Is(err, test.want) || !typed || reason != test.wantReason || !strings.Contains(definition.Action, "tnl login") {
 			t.Fatalf("guest problem %s = %v", test.code, err)
 		}
 	}

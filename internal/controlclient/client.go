@@ -20,6 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -33,18 +34,18 @@ const (
 )
 
 var (
-	ErrUnauthenticated      = errors.New("controlclient: unauthenticated")
-	ErrNotFound             = errors.New("controlclient: not found")
-	ErrNameUnavailable      = errors.New("controlclient: public URL hostname unavailable")
-	ErrStatusConflict       = errors.New("controlclient: status conflict")
-	ErrCertificateStatus    = errors.New("controlclient: certificate status conflict")
-	ErrDNSProofPending      = errors.New("controlclient: DNS setup pending")
-	ErrRateLimited          = errors.New("controlclient: rate limited")
-	ErrUnavailable          = errors.New("controlclient: temporarily unavailable")
-	ErrUnsupported          = errors.New("controlclient: unsupported")
-	ErrGuestTrialExhausted  = errors.New("guest demo trial used up; run `tnl login` to keep publishing your own app")
-	ErrGuestDemoOnly        = errors.New("guest access only publishes the built-in demo; run `tnl login` for your own app or settings, or `tnl publish --demo` to try tnl")
-	ErrGuestIssuanceLimited = errors.New("guest demo creation is limited on this network; run `tnl login` to keep publishing")
+	ErrUnauthenticated      = failure.Wrap("authenticate control request", failure.Authentication, errors.New("controlclient: unauthenticated"))
+	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
+	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
+	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
+	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
+	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
+	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
+	ErrUnavailable          = failure.Wrap("request control API", failure.ServerUnavailable, errors.New("controlclient: temporarily unavailable"))
+	ErrUnsupported          = failure.Wrap("request control API", failure.ServerResponseInvalid, errors.New("controlclient: unsupported"))
+	ErrGuestTrialExhausted  = failure.Wrap("publish guest demo", failure.GuestTrialExhausted, errors.New("controlclient: guest demo trial exhausted"))
+	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
+	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
 )
 
 type Client struct {
@@ -67,7 +68,7 @@ func NewExternallyAuthenticated(server string, httpClient *http.Client) (*Client
 func New(server string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
 	server, err := clientstate.CanonicalServer(server)
 	if err != nil {
-		return nil, errors.New("controlclient: tnl server must be an HTTPS origin")
+		return nil, failure.Wrap("select control server", failure.InvalidControlURL, err)
 	}
 	httpClient = httpclient.NoRedirects(httpClient)
 	apiClient, err := controlv1.NewClient(
@@ -79,7 +80,7 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 		}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("controlclient: configure generated client: %w", err)
+		return nil, failure.Wrap("configure control client", failure.ServerRequestInvalid, err)
 	}
 	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }
@@ -126,7 +127,7 @@ func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1
 			return routes, nil
 		}
 		if len(page.PublicUrls) == 0 || *page.NextCursor == cursor {
-			return nil, errors.New("controlclient: invalid public URL cursor")
+			return nil, failure.Wrap("list public URLs", failure.ServerResponseInvalid, errors.New("controlclient: invalid public URL cursor"))
 		}
 		cursor = *page.NextCursor
 	}
@@ -137,7 +138,7 @@ func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1
 func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname string) (controlv1.PublicURL, error) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if teamID == "" || err != nil || canonical != hostname {
-		return controlv1.PublicURL{}, errors.New("controlclient: team and canonical hostname are required")
+		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerRequestInvalid, errors.New("controlclient: team and canonical hostname are required"))
 	}
 	params := &controlv1.ListPublicURLsParams{TeamId: teamID, CanonicalHostname: &hostname}
 	page, err := requestWithAccess[controlv1.PublicURLPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
@@ -147,7 +148,7 @@ func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname st
 		return controlv1.PublicURL{}, err
 	}
 	if page.NextCursor != nil || len(page.PublicUrls) > 1 {
-		return controlv1.PublicURL{}, errors.New("controlclient: server returned an unfiltered hostname lookup")
+		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerResponseInvalid, errors.New("controlclient: server returned an unfiltered hostname lookup"))
 	}
 	if len(page.PublicUrls) == 0 {
 		return controlv1.PublicURL{}, ErrNotFound
@@ -155,7 +156,7 @@ func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname st
 	route := page.PublicUrls[0]
 	if route.Id == "" || route.TeamId != teamID || route.CanonicalHostname != hostname ||
 		(route.LifecycleState != controlv1.Enabled && route.LifecycleState != controlv1.Suspended) {
-		return controlv1.PublicURL{}, errors.New("controlclient: server returned an invalid hostname lookup")
+		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerResponseInvalid, errors.New("controlclient: server returned an invalid hostname lookup"))
 	}
 	return route, nil
 }
@@ -284,7 +285,7 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 	defer response.Body.Close()
 	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
 	if errors.Is(err, httpjson.ErrTooLarge) {
-		return zero, errors.New("controlclient: response exceeds limit")
+		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: response exceeds limit"))
 	}
 	if err != nil {
 		return zero, unavailableError(ctx, err)
@@ -296,19 +297,19 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, nil
 	}
 	if len(payload) == 0 {
-		return zero, errors.New("controlclient: successful response has an empty body")
+		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: successful response has an empty body"))
 	}
 	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
-		return zero, errors.New("controlclient: successful response has a null body")
+		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: successful response has a null body"))
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	var result T
 	err = httpjson.Decode(decoder, &result)
 	if errors.Is(err, httpjson.ErrTrailingContent) {
-		return zero, errors.New("controlclient: response contains trailing JSON")
+		return zero, failure.Wrap("decode control response", failure.ServerResponseInvalid, errors.New("controlclient: response contains trailing JSON"))
 	}
 	if err != nil {
-		return zero, fmt.Errorf("controlclient: decode response: %w", err)
+		return zero, failure.Wrap("decode control response", failure.ServerResponseInvalid, err)
 	}
 	return result, nil
 }
@@ -323,7 +324,7 @@ func unavailableError(ctx context.Context, err error) error {
 func responseError(status int, header http.Header, payload []byte) error {
 	var problem controlv1.Problem
 	if json.Unmarshal(payload, &problem) != nil {
-		return fmt.Errorf("controlclient: HTTP %d", status)
+		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
 	case controlv1.Unauthenticated:
@@ -356,7 +357,11 @@ func responseError(status int, header http.Header, payload []byte) error {
 		if status >= 500 && status < 600 && problem.Code.Valid() {
 			return ErrUnavailable
 		}
-		return &ProblemError{Status: status, Problem: problem}
+		cause := &ProblemError{Status: status, Problem: problem}
+		if status == http.StatusForbidden {
+			return failure.Wrap("request control API", failure.ServerDenied, cause)
+		}
+		return failure.Wrap("request control API", failure.ServerRequestInvalid, cause)
 	}
 }
 

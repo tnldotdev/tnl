@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/problemtype"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -93,7 +94,9 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		config.Now = time.Now
 	}
 	if config.Report == nil {
-		config.Report = func(err error) { log.Printf("ingress control: %v", err) }
+		config.Report = func(err error) {
+			operatorlog.Report("renew ingress lease", failure.ServerControlConnectionFailed, "", err)
+		}
 	}
 	return &Controller{
 		client: config.Client, routingTable: config.RoutingTable, registration: config.Registration,
@@ -293,7 +296,7 @@ func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{
 			}
 			var problem *serviceapi.ProblemError
 			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
-				problemtype.Is(problem.Type, "routing_table_resnapshot_required") {
+				problem.Code == string(ingressv1.RoutingTableResnapshotRequired) {
 				c.mu.Lock()
 				c.routingStatus.Resnapshots++
 				c.routingStatus.CaughtUp = false
@@ -588,6 +591,7 @@ func ingressControlError(operation string, err error) error {
 	if problem.Type != "" {
 		body = &ingressv1.Problem{
 			Status: problem.Status, Type: problem.Type, Title: problem.Title, Detail: problem.Detail,
+			Code: ingressv1.ProblemCode(problem.Code), RequestId: problem.RequestID,
 		}
 	}
 	return &ControlProblemError{Operation: operation, Status: problem.Status, Problem: body}
@@ -597,7 +601,7 @@ func (c *Controller) responseError(operation string, err error) error {
 	err = ingressControlError(operation, err)
 	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
-		problemtype.Is(problem.Problem.Type, "ingress_lease_stale") {
+		problem.Problem.Code == ingressv1.IngressLeaseStale {
 		c.mu.Lock()
 		c.leaseLost = true
 		c.mu.Unlock()

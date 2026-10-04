@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"golang.org/x/term"
 )
 
@@ -49,7 +50,8 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 func readLoginToken(input io.Reader, output io.Writer) (credentials.LoginToken, error) {
 	file, ok := input.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return "", errors.New("login-token authentication requires an interactive terminal")
+		return "", failure.Wrap("read login token", failure.LoginTerminalRequired,
+			errors.New("login-token authentication requires an interactive terminal"))
 	}
 	if _, err := fmt.Fprint(output, "Login token: "); err != nil {
 		return "", err
@@ -81,7 +83,7 @@ func interactiveBrowserOpener(input io.Reader) func(string) error {
 func parseLoginInput(data []byte) (credentials.LoginToken, error) {
 	token := credentials.LoginToken(strings.TrimSpace(string(data)))
 	if _, err := credentials.ParseLoginToken(token); err != nil {
-		return "", errors.New("invalid login token")
+		return "", failure.Wrap("validate login token", failure.LoginTokenInvalid, err)
 	}
 	return token, nil
 }

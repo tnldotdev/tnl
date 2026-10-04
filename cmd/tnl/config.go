@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
@@ -25,24 +26,24 @@ type projectConfiguration struct {
 func selectProjectConfiguration(ctx context.Context, flags cli) (projectconfig.Selection, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return projectconfig.Selection{}, "", fmt.Errorf("read working directory: %w", err)
+		return projectconfig.Selection{}, "", failure.Wrap("read working directory", failure.CurrentDirectoryUnavailable, err)
 	}
 	selection, err := projectconfig.SelectProjectConfig(ctx, cwd, flags.ConfigPath, os.Getenv("TNL_CONFIG"), flags.NoConfig)
-	return selection, cwd, err
+	return selection, cwd, failure.Wrap("select project configuration", failure.ProjectConfigInvalid, err)
 }
 
 func loadProjectConfiguration(ctx context.Context, flags cli, stateRoot string) (projectConfiguration, error) {
 	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {
-		return projectConfiguration{}, err
+		return projectConfiguration{}, failure.Wrap("open client state", failure.ClientStateUnavailable, err)
 	}
 	salt, err := state.WorktreeHashSalt(ctx)
 	closeErr := state.Close()
 	if err != nil {
-		return projectConfiguration{}, err
+		return projectConfiguration{}, failure.Wrap("read worktree identity", failure.ClientStateUnavailable, err)
 	}
 	if closeErr != nil {
-		return projectConfiguration{}, closeErr
+		return projectConfiguration{}, failure.Wrap("close client state", failure.ClientStateUnavailable, closeErr)
 	}
 	return loadProjectConfigurationWithSalt(ctx, flags, salt)
 }
@@ -54,7 +55,7 @@ func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]b
 	}
 	project, err := projectconfig.Resolve(ctx, selection, cwd, salt)
 	if err != nil {
-		return projectConfiguration{}, err
+		return projectConfiguration{}, failure.Wrap("load project configuration", failure.ProjectConfigInvalid, err)
 	}
 	return projectConfiguration{Project: project}, nil
 }
@@ -115,11 +116,16 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.Target == "" {
 		if service != "" {
-			return fmt.Errorf("local target is required for service %q through publish.target", service)
+			return failure.Wrap("select target for service", failure.MissingTarget,
+				fmt.Errorf("local target is required for service %q through publish.target", service))
 		}
-		return errors.New("local target is required as an argument or publish.target in project configuration")
+		return failure.Wrap("select local target", failure.MissingTarget,
+			errors.New("local target is required as an argument or publish.target in project configuration"))
 	}
-	return validateTunnelFlags(flags.tunnelFlags)
+	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
+		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+	}
+	return nil
 }
 
 func (c projectConfiguration) applyDev(flags *devCommand) error {
@@ -131,7 +137,7 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 			return err
 		}
 	} else if _, found := c.Config.Services[service]; !found {
-		return fmt.Errorf("service %q is not configured", service)
+		return failure.Wrap("select project service", failure.ServiceNotConfigured, fmt.Errorf("service %q is not configured", service))
 	}
 	effective, err := c.EffectiveService(service)
 	if err != nil {
@@ -171,7 +177,8 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("port must be between 1 and 65535"))
 	}
 	if flags.startupTimeoutFromCLI && flags.StartupTimeout == 0 {
-		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
+		return failure.Wrap("validate startup timeout", failure.InvalidStartupTimeout,
+			errors.New("startup timeout must be greater than zero and at most 10 minutes"))
 	}
 	if len(flags.Command) == 0 && effective.Dev != nil && effective.Dev.Command != nil {
 		flags.Command = slices.Clone(effective.Dev.Command)
@@ -195,7 +202,10 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 	if flags.StartupTimeout == 0 {
 		flags.StartupTimeout = defaultDevStartupTimeout
 	}
-	return validateTunnelFlags(flags.tunnelFlags)
+	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
+		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+	}
+	return nil
 }
 
 func (c projectConfiguration) defaultService() (string, error) {
@@ -303,7 +313,7 @@ func runConfigPath(ctx context.Context, flags cli, stdout io.Writer) error {
 
 func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 	if !loaded.Found() {
-		return errors.New("no project configuration file found")
+		return failure.Wrap("check project configuration", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
 	}
 	return clioutput.Write(stdout, clioutput.Frame{
 		Command: "tnl config check", State: "valid",

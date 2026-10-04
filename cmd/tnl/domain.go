@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -211,7 +212,8 @@ func runDomainStatus(ctx context.Context, command domainStatusCommand, output, d
 	}
 	domain, ok := teamDomain(current.domains, command.Domain)
 	if !ok {
-		return fmt.Errorf("domain %q is not available to the selected team", command.Domain)
+		return failure.Wrap("select team domain", failure.DomainNotAvailable,
+			fmt.Errorf("domain %q is not available to the selected team", command.Domain))
 	}
 	return writeDomainStatus(output, domain, domain.Id == current.team.DefaultDomainId)
 }
@@ -318,7 +320,8 @@ func mutateDomain(ctx context.Context, flags remoteFlags, command, value string,
 	if ok {
 		return mutate(session, current, domain)
 	}
-	return fmt.Errorf("domain %q is not available to the selected team", value)
+	return failure.Wrap("select team domain", failure.DomainNotAvailable,
+		fmt.Errorf("domain %q is not available to the selected team", value))
 }
 
 func teamDomain(domains []authorityv1.Domain, value string) (authorityv1.Domain, bool) {

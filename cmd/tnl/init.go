@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"golang.org/x/term"
 )
@@ -200,12 +201,12 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	plan.manager, err = detectPackageManager(ctx, root, packageConfig.PackageManager)
 	if err != nil {
 		plan.installBlocked = true
-		plan.actions = append(plan.actions, err.Error())
+		plan.actions = append(plan.actions, presentFailure(failure.Wrap("select package manager", failure.InitPackageManager, err)).action)
 	}
 	plan.framework, err = detectFramework(root, packageConfig)
 	frameworkUnclear := err != nil
 	if frameworkUnclear {
-		plan.actions = append(plan.actions, err.Error())
+		plan.actions = append(plan.actions, presentFailure(failure.Wrap("detect framework", failure.InitFramework, err)).action)
 	}
 	apiKind := detectAPIServer(packageConfig)
 	if apiKind != "" && plan.framework == "vite" && startsAPIServer(packageConfig.Scripts["dev"]) {
@@ -338,7 +339,8 @@ func readInitAnswer[T any](input *bufio.Reader, output io.Writer, label, descrip
 		}
 		parsed, invalid := parse(value)
 		if invalid != nil {
-			if err := writeHumanFrame(output, "tnl init", "invalid input", "enter a value or press enter to skip", clioutput.Text(invalid.Error())); err != nil {
+			if err := writeHumanFrame(output, "tnl init", "invalid input", "enter a value or press enter to skip",
+				clioutput.Text(presentFailure(failure.Wrap("read setup input", failure.InvalidSetupInput, invalid)).message)); err != nil {
 				return empty, err
 			}
 			if errors.Is(err, io.EOF) {

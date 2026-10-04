@@ -133,14 +133,15 @@ func assertProblem(t *testing.T, response *httptest.ResponseRecorder, status int
 		t.Fatalf("problem status/headers = %d, %v", response.Code, response.Header())
 	}
 	var problem struct {
-		Type, Title, Detail string
-		Status              int
+		Type, Title, Code, Detail string
+		RequestID                 string `json:"request_id"`
+		Status                    int
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
 	if problem.Type != problemtype.URL(kind) || problem.Title != strings.ReplaceAll(kind, "_", " ") ||
-		problem.Status != status || problem.Detail != detail {
+		problem.Status != status || problem.Code != kind || problem.RequestID == "" || problem.Detail != detail {
 		t.Fatalf("problem = %+v", problem)
 	}
 }

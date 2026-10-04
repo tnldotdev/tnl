@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -160,6 +161,8 @@ func TestExplicitHostnameUsesReadyDomainWhenDefaultIsPending(t *testing.T) {
 	}
 	if _, _, _, err := resolvePublishHostname("", "api", "", current); err == nil {
 		t.Fatal("default-domain name was accepted while its domain is pending")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.DomainNotReady {
+		t.Fatalf("pending domain reason = %q, %v", reason, err)
 	}
 	hostname, domain, scope, err = resolvePublishHostname("", "api", "ready.example.test", current)
 	if err != nil || hostname != "api.member.ready.example.test" || domain.Id != "domain_ready" || scope != controlv1.Member {
