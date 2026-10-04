@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/demo"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
@@ -47,7 +48,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		localDemo, err = demo.Start(demoPingHandler(output, telemetry))
 		if err != nil {
-			return err
+			return failure.Wrap("start local demo", failure.DemoLocalServiceUnavailable, err)
 		}
 		defer func() {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -381,25 +381,31 @@ func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 		t.Fatalf("interactive demo = %+v, error = %v", flags.Publish, err)
 	}
 
-	for _, args := range [][]string{
-		{"publish", "--demo", "3000"},
-		{"publish", "--demo", "--name", "saved"},
-		{"publish", "--demo", "--public-url", "https://saved.example"},
-		{"publish", "--demo", "--ephemeral=false"},
+	for _, test := range []struct {
+		name   string
+		args   []string
+		reason failure.Reason
+		action string
+	}{
+		{"target", []string{"publish", "--demo", "3000"}, failure.DemoTargetNotAllowed, "remove the service or target"},
+		{"config", []string{"--config", "missing.yml", "publish", "--demo"}, failure.DemoConfigNotUsed, "remove --config"},
+		{"name", []string{"publish", "--demo", "--name", "saved"}, failure.DemoURLManaged, "remove --name or --public-url"},
+		{"public url", []string{"publish", "--demo", "--public-url", "https://saved.example"}, failure.DemoURLManaged, "remove --name or --public-url"},
+		{"ephemeral", []string{"publish", "--demo", "--ephemeral=false"}, failure.DemoMustBeEphemeral, "remove --ephemeral=false"},
+		{"request limit", []string{"publish", "--demo", "--request-limit", "0"}, failure.InvalidTunnelFlags, "--request-limit"},
 	} {
-		var invalid cli
-		invalidParser, err := kong.New(&invalid)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := invalidParser.Parse(args)
-		if err != nil {
-			t.Fatal(err)
-		}
-		applyTunnelCLIUnits(parsed, &invalid)
-		if err := prepareDemoPublish(&invalid.Publish, "", false); err == nil {
-			t.Fatalf("accepted %q", args)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(t.Context(), test.args, &stdout, &stderr)
+			reason, _, typed := failure.Describe(err)
+			if !typed || reason != test.reason || stdout.Len() != 0 {
+				t.Fatalf("demo options %v = reason %q, typed %t, stdout %q, error %v", test.args, reason, typed, stdout.String(), err)
+			}
+			writeCommandError(&stderr, err)
+			if !strings.Contains(stderr.String(), test.action) || strings.Contains(stderr.String(), "tnl could not start or maintain this tunnel") {
+				t.Fatalf("demo options %v = %q, want action %q", test.args, stderr.String(), test.action)
+			}
+		})
 	}
 }
 
