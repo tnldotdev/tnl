@@ -85,8 +85,10 @@ func (d *Server) Close(ctx context.Context) error {
 func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	switch {
 	case r.URL.Path == "/" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -122,7 +124,7 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		d.state.GeneratedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		d.state.GeneratedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		state.GeneratedAt = d.state.GeneratedAt
 		d.mu.Unlock()
 		writeState(w, state)

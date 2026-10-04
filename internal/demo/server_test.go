@@ -56,9 +56,12 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "round trip") ||
 		!strings.Contains(string(data), "generated at") ||
 		page.Header.Get("Cache-Control") != "no-store" ||
+		page.Header.Get("X-Frame-Options") != "DENY" ||
+		page.Header.Get("Permissions-Policy") != "camera=(), microphone=(), geolocation=()" ||
 		strings.Contains(string(data), "fonts.googleapis.com") ||
 		strings.Contains(page.Header.Get("Content-Security-Policy"), "fonts.gstatic.com") ||
-		!strings.Contains(page.Header.Get("Content-Security-Policy"), "font-src 'self'") {
+		!strings.Contains(page.Header.Get("Content-Security-Policy"), "font-src 'self'") ||
+		!strings.Contains(page.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
 	}
 	for _, name := range []string{"fira-code-latin-wght-normal.woff2", "fira-code-symbols2-wght-normal.woff2"} {
