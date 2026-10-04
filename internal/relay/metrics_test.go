@@ -97,13 +97,13 @@ func TestPublisherAcceptorReportsConnectionCapacity(t *testing.T) {
 	rejections := 0
 	acceptor := &PublisherAcceptor{capacity: func() { rejections++ }}
 	code := acceptor.controlErrorCode(&ControlProblemError{Problem: &relayv1.Problem{
-		Type: "https://tnl.dev/p/relay-connection-capacity-exhausted",
+		Code: relayv1.RelayConnectionCapacityExhausted,
 	}})
 	if code != tunnelv1.CapacityExceeded || rejections != 1 {
 		t.Fatalf("capacity error: code=%s rejections=%d", code, rejections)
 	}
 	code = acceptor.controlErrorCode(&ControlProblemError{Problem: &relayv1.Problem{
-		Type: "https://tnl.dev/p/stale-connection-assignment",
+		Code: relayv1.StaleConnectionAssignment,
 	}})
 	if code != tunnelv1.StaleConnectionAssignment || rejections != 1 {
 		t.Fatalf("non-capacity error: code=%s rejections=%d", code, rejections)

@@ -19,10 +19,12 @@ const MaximumRequestBytes = 64 << 10
 // ProblemError describes a private service API failure without HTTP client or
 // server details.
 type ProblemError struct {
-	Status int
-	Type   string
-	Title  string
-	Detail string
+	Status    int
+	Type      string
+	Title     string
+	Code      string
+	Detail    string
+	RequestID string
 }
 
 func (e *ProblemError) Error() string {
@@ -34,7 +36,7 @@ func (e *ProblemError) Error() string {
 
 func NewProblemError(status int, problemType, detail string) *ProblemError {
 	return &ProblemError{
-		Status: status, Type: problemtype.URL(problemType),
+		Status: status, Type: problemtype.URL(problemType), Code: problemType,
 		Title: strings.ReplaceAll(problemType, "_", " "), Detail: detail,
 	}
 }
@@ -86,16 +88,7 @@ func WriteProblem(response http.ResponseWriter, status int, problemType, detail 
 }
 
 func WriteProblemError(response http.ResponseWriter, problem *ProblemError) {
-	response.Header().Set("Content-Type", "application/problem+json")
-	response.WriteHeader(problem.Status)
-	_ = json.NewEncoder(response).Encode(struct {
-		Type   string `json:"type"`
-		Title  string `json:"title"`
-		Status int    `json:"status"`
-		Detail string `json:"detail"`
-	}{
-		Type: problem.Type, Title: problem.Title, Status: problem.Status, Detail: problem.Detail,
-	})
+	problem.RequestID = problemtype.Write(response, problem.Status, problem.Code, problem.Title, problem.Detail)
 }
 
 // AuthenticateClusterRequest applies the private API's cache and authentication

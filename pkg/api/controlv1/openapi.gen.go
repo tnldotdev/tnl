@@ -741,7 +741,7 @@ type OIDCAuthenticationFactsLoginFlow string
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
-	Detail    *string                 `json:"detail,omitempty"`
+	Detail    string                  `json:"detail"`
 	Details   *map[string]interface{} `json:"details,omitempty"`
 	RequestId string                  `json:"request_id"`
 	RetryAt   *time.Time              `json:"retry_at,omitempty"`

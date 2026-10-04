@@ -2,10 +2,10 @@ package tnldruntime
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -50,7 +50,7 @@ func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore, me
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			log.Printf("routing history cleanup: %v", err)
+			logOperationalError("clean up routing history", failure.ServerWorkerFailed, err)
 		}
 		timer := time.NewTimer(delay)
 		select {

@@ -284,10 +284,14 @@ func TestWorkerJoinsTransportAndRetryPersistenceFailures(t *testing.T) {
 		t.Fatalf("process = %v, %v", found, err)
 	}
 	want := []retryCall{
-		{work[0], now.Add(time.Second), "publicurlusageworker: receiver returned HTTP 503", now},
-		{work[1], now.Add(time.Second), "publicurlusageworker: receiver returned HTTP 503", now},
+		{work[0], now.Add(time.Second), "server.usage_delivery_failed", now},
+		{work[1], now.Add(time.Second), "server.usage_delivery_failed", now},
 	}
 	if !reflect.DeepEqual(store.retryCalls, want) || len(store.completeCalls) != 0 {
-		t.Fatalf("retry calls = %#v; completions = %#v", store.retryCalls, store.completeCalls)
+		messages := make([]string, 0, len(store.retryCalls))
+		for _, call := range store.retryCalls {
+			messages = append(messages, call.message)
+		}
+		t.Fatalf("retry messages = %q; completions = %d", messages, len(store.completeCalls))
 	}
 }
