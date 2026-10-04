@@ -26,6 +26,7 @@ const (
 	ProjectConfigMissing        Reason = "client.project_config_missing"
 	ClientStateLocked           Reason = "client.state_locked"
 	ClientStateUnavailable      Reason = "client.state_unavailable"
+	GuestSessionInvalid         Reason = "client.guest_session_invalid"
 	CurrentDirectoryUnavailable Reason = "client.current_directory_unavailable"
 	TeamNotFound                Reason = "client.team_not_found"
 	TeamSelectionAmbiguous      Reason = "client.team_selection_ambiguous"
@@ -183,6 +184,10 @@ var definitions = map[Reason]Definition{
 	ClientStateUnavailable: {
 		Class: Unavailable, Message: "tnl could not use the client state",
 		Action: "check the state directory and its permissions, then retry", Retry: RetryAfterChange,
+	},
+	GuestSessionInvalid: {
+		Class: Invalid, Message: "the saved guest demo state is invalid",
+		Action: "run tnl login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
 	},
 	CurrentDirectoryUnavailable: {
 		Class: Unavailable, Message: "tnl could not read the working directory",

@@ -98,6 +98,9 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		t.Fatalf("first demo number = %d, %s", allocated.Code, allocated.Body.String())
 	}
 	hostname := "demo-1." + guest.Namespace
+	if changed := create(hostname, "192.0.2.8/32"); changed.Code != http.StatusForbidden || !strings.Contains(changed.Body.String(), `"guest_ip_changed"`) {
+		t.Fatalf("changed guest visitor IP = %d, %s", changed.Code, changed.Body.String())
+	}
 	allowed := create(hostname, "192.0.2.7/32")
 	if allowed.Code != http.StatusCreated {
 		t.Fatalf("guest demo URL = %d, %s", allowed.Code, allowed.Body.String())

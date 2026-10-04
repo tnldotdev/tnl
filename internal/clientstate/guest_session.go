@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
@@ -29,11 +29,11 @@ func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 		return GuestSession{}, false, nil
 	}
 	if err != nil {
-		return GuestSession{}, false, fmt.Errorf("clientstate: read guest session: %w", err)
+		return GuestSession{}, false, failure.Wrap("read guest demo state", failure.ClientStateUnavailable, err)
 	}
 	access, err := s.secrets.Open(ctx, guestSessionContext(stored.GuestID), stored.StoredAccessToken)
 	if err != nil {
-		return GuestSession{}, true, err
+		return GuestSession{}, true, failure.Wrap("open guest demo credential", failure.ClientStateUnavailable, err)
 	}
 	session := GuestSession{
 		GuestID: stored.GuestID, AccessToken: string(access), TeamID: stored.TeamID,
@@ -52,19 +52,23 @@ func (s *Store) SaveGuestSession(ctx context.Context, session GuestSession) erro
 	}
 	access, err := s.secrets.Seal(ctx, guestSessionContext(session.GuestID), []byte(session.AccessToken))
 	if err != nil {
-		return err
+		return failure.Wrap("protect guest demo credential", failure.ClientStateUnavailable, err)
 	}
-	return s.database.queries.SaveGuestSession(ctx, clientstatedb.SaveGuestSessionParams{
+	if err := s.database.queries.SaveGuestSession(ctx, clientstatedb.SaveGuestSessionParams{
 		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, StoredAccessToken: access,
 		TeamID: session.TeamID, MembershipID: session.MembershipID,
 		DomainID: session.DomainID, Namespace: session.Namespace,
 		ExpiresAt: session.ExpiresAt.UnixNano(),
 		CreatedAt: time.Now().UTC().UnixNano(),
-	})
+	}); err != nil {
+		return failure.Wrap("save guest demo state", failure.ClientStateUnavailable, err)
+	}
+	return nil
 }
 
 func (s *Store) RemoveGuestSession(ctx context.Context) error {
-	return s.database.queries.DeleteGuestSession(ctx, s.controlEndpoint)
+	return failure.Wrap("remove guest demo state", failure.ClientStateUnavailable,
+		s.database.queries.DeleteGuestSession(ctx, s.controlEndpoint))
 }
 
 func guestSessionContext(guestID string) string { return "guest-session:" + guestID + ":access" }
@@ -74,17 +78,21 @@ func validateGuestSession(session GuestSession) error {
 		!opaqueid.Valid(session.TeamID, opaqueid.TeamPrefix) ||
 		!opaqueid.Valid(session.MembershipID, opaqueid.MembershipPrefix) ||
 		!validOpaqueValue(session.DomainID, 256) {
-		return errors.New("clientstate: guest session is invalid")
+		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
+			errors.New("clientstate: guest session is invalid"))
 	}
 	if _, _, err := credentials.ParseAccessToken(credentials.AccessToken(session.AccessToken)); err != nil {
-		return errors.New("clientstate: guest credential is invalid")
+		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
+			errors.New("clientstate: guest credential is invalid"))
 	}
 	namespace, err := naming.CanonicalizeHostname(session.Namespace)
 	if err != nil || namespace != session.Namespace {
-		return errors.New("clientstate: guest namespace is invalid")
+		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
+			errors.New("clientstate: guest namespace is invalid"))
 	}
 	if session.ExpiresAt.IsZero() {
-		return errors.New("clientstate: guest expiry is invalid")
+		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
+			errors.New("clientstate: guest expiry is invalid"))
 	}
 	return nil
 }

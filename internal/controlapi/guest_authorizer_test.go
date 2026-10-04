@@ -47,7 +47,7 @@ func (guestFallback) Authorize(context.Context, authorization.Request) (authoriz
 
 func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	guest := controlstate.GuestTrial{
-		ID: "guest_1", TeamID: "tm_1", MembershipID: "mem_1", DomainID: "dom_1",
+		ID: "gst_1", TeamID: "tm_1", MembershipID: "mem_1", DomainID: "dom_1",
 		NamespaceLabel: "guest-01234567", DNSAuthorityReference: "da_1",
 		LastDemoNumber: 1,
 		ExpiresAt:      time.Now().Add(72 * time.Hour),

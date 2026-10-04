@@ -45,8 +45,8 @@ var (
 	ErrUnsupported          = failure.Wrap("request control API", failure.ServerResponseInvalid, errors.New("controlclient: unsupported"))
 	ErrGuestTrialExhausted  = failure.Wrap("publish guest demo", failure.GuestTrialExhausted, errors.New("controlclient: guest demo trial exhausted"))
 	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
-	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
 	ErrGuestIPChanged       = failure.Wrap("publish guest demo", failure.GuestIPChanged, errors.New("controlclient: guest demo source IP changed"))
+	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
 )
 
 type Client struct {
