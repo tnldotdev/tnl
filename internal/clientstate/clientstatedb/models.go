@@ -51,7 +51,6 @@ type GuestSession struct {
 	MembershipID      string
 	DomainID          string
 	Namespace         string
-	SourceIp          string
 	CreatedAt         int64
 }
 

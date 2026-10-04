@@ -1,11 +1,13 @@
 -- name: InsertGuestTrial :one
 INSERT INTO control.guest_trials (
     id, credential_id, credential_hash, namespace_label, team_id,
-    membership_id, domain_id, dns_authority_reference, source_ip, created_at, updated_at
+    membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id,
+    issuance_ip_digest, created_at, updated_at
 ) VALUES (
     sqlc.arg(id), sqlc.arg(credential_id), sqlc.arg(credential_hash),
     sqlc.arg(namespace_label), sqlc.arg(team_id), sqlc.arg(membership_id),
-    sqlc.arg(domain_id), sqlc.arg(dns_authority_reference), sqlc.arg(source_ip), sqlc.arg(created_at), sqlc.arg(created_at)
+    sqlc.arg(domain_id), sqlc.arg(dns_authority_reference), sqlc.arg(source_ip_digest), sqlc.arg(source_ip_key_id),
+    sqlc.arg(issuance_ip_digest), sqlc.arg(created_at), sqlc.arg(created_at)
 )
 RETURNING *;
 
@@ -28,7 +30,8 @@ WHERE guest_route.guest_id = sqlc.arg(guest_id)
 
 -- name: CountRecentGuestTrialsByIP :one
 SELECT count(*) FROM control.guest_trials
-WHERE source_ip = sqlc.arg(source_ip)
+WHERE source_ip_key_id = sqlc.arg(source_ip_key_id)
+  AND issuance_ip_digest = sqlc.arg(issuance_ip_digest)
   AND created_at >= sqlc.arg(since);
 
 -- name: AdvanceGuestDemoNumber :one
