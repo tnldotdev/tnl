@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -29,6 +30,7 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 		GuestID: "gst_0123456789abcdefghijkl", AccessToken: token.String(),
 		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
 		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
+		ExpiresAt: time.Now().Add(time.Hour).UTC(),
 	}
 	if err := store.SaveGuestSession(t.Context(), guest); err != nil {
 		t.Fatal(err)

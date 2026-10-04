@@ -1,7 +1,7 @@
 {
   "managed_deployment_domain": "example",
   "dns_automation": true,
-  "guest_demo_enabled": false,
+  "guest_demo": false,
   "authority_endpoint": "https://control.example",
   "authentication": {
     "methods": ["login_token"]

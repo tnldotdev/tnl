@@ -204,6 +204,7 @@ type ControlGuestTrial struct {
 	SourceIpDigest        string
 	SourceIpKeyID         string
 	IssuanceIpDigest      string
+	ExpiresAt             pgtype.Timestamptz
 	UsedReadyNs           int64
 	UsedBytes             int64
 	LastDemoNumber        int64

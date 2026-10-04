@@ -457,6 +457,7 @@ func TestGuestCommandExplainsSignInAndDemoWithoutPrompting(t *testing.T) {
 		GuestID: "gst_0123456789abcdefghijkl", AccessToken: token.String(),
 		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
 		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}

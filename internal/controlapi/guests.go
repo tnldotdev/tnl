@@ -50,12 +50,8 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		if !domain.NamespaceAvailable {
 			continue
 		}
-		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, time.Now()); err != nil {
-			if errors.Is(err, controlstate.ErrGuestIssuance) {
-				response.Header().Set("Retry-After", "3600")
-				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
-				return
-			}
+		issuedAt := time.Now()
+		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, issuedAt); err != nil {
 			var conflict *pgconn.PgError
 			if errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
 				continue
@@ -67,6 +63,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			AccessToken: string(guest.Token), GuestId: guest.ID, TeamId: guest.TeamID,
 			MembershipId: guest.MembershipID, DomainId: domain.DomainId,
 			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDeploymentDomain,
+			ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
 		})
 		return
 	}
@@ -92,19 +89,8 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest trial")
 		return
 	}
-	address, err := guestRequestAddress(request)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
-		return
-	}
-	prefix := netip.PrefixFrom(address, address.BitLen()).String()
-	matched, err := h.guests.GuestSourceMatches(guest, prefix)
-	if err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest IP")
-		return
-	}
-	if !matched {
-		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl login to continue")
+	if !guest.ExpiresAt.After(time.Now()) {
+		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl login to continue")
 		return
 	}
 	number, err := h.guests.AllocateGuestDemoNumber(request.Context(), guest.ID, time.Now())

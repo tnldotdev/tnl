@@ -20,6 +20,7 @@ type GuestSession struct {
 	MembershipID string
 	DomainID     string
 	Namespace    string
+	ExpiresAt    time.Time
 }
 
 func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
@@ -37,6 +38,7 @@ func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 	session := GuestSession{
 		GuestID: stored.GuestID, AccessToken: string(access), TeamID: stored.TeamID,
 		MembershipID: stored.MembershipID, DomainID: stored.DomainID, Namespace: stored.Namespace,
+		ExpiresAt: time.Unix(0, stored.ExpiresAt).UTC(),
 	}
 	if err := validateGuestSession(session); err != nil {
 		return GuestSession{}, true, err
@@ -56,6 +58,7 @@ func (s *Store) SaveGuestSession(ctx context.Context, session GuestSession) erro
 		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, StoredAccessToken: access,
 		TeamID: session.TeamID, MembershipID: session.MembershipID,
 		DomainID: session.DomainID, Namespace: session.Namespace,
+		ExpiresAt: session.ExpiresAt.UnixNano(),
 		CreatedAt: time.Now().UTC().UnixNano(),
 	}); err != nil {
 		return failure.Wrap("save guest demo state", failure.ClientStateUnavailable, err)
@@ -86,6 +89,10 @@ func validateGuestSession(session GuestSession) error {
 	if err != nil || namespace != session.Namespace {
 		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
 			errors.New("clientstate: guest namespace is invalid"))
+	}
+	if session.ExpiresAt.IsZero() {
+		return failure.Wrap("validate guest demo state", failure.GuestSessionInvalid,
+			errors.New("clientstate: guest expiry is invalid"))
 	}
 	return nil
 }

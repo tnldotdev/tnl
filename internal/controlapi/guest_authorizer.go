@@ -49,8 +49,8 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	}
 	if request.Operation == authorization.OperationPublicURLUpdate ||
 		request.Operation != authorization.OperationPublicURLDelete &&
-			(guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance) {
-		if guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance {
+			(!guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance) {
+		if !guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance {
 			return authorization.Decision{}, controlstate.ErrGuestTrialSpent
 		}
 		return authorization.Decision{}, authorization.ErrGuestDemoOnly

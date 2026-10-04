@@ -11,6 +11,7 @@ CREATE TABLE control.guest_trials (
     source_ip_digest text NOT NULL CHECK (source_ip_digest ~ '^[A-Za-z0-9_-]{43}$'),
     source_ip_key_id text NOT NULL CHECK (source_ip_key_id <> ''),
     issuance_ip_digest text NOT NULL CHECK (issuance_ip_digest ~ '^[A-Za-z0-9_-]{43}$'),
+    expires_at timestamptz NOT NULL,
     used_ready_ns bigint NOT NULL DEFAULT 0 CHECK (used_ready_ns >= 0),
     used_bytes bigint NOT NULL DEFAULT 0 CHECK (used_bytes >= 0),
     last_demo_number bigint NOT NULL DEFAULT 0 CHECK (last_demo_number >= 0),
@@ -19,7 +20,8 @@ CREATE TABLE control.guest_trials (
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     CHECK (active_ready_at IS NULL OR active_publish_run_id IS NOT NULL),
-    CHECK (updated_at >= created_at)
+    CHECK (updated_at >= created_at),
+    CHECK (expires_at > created_at)
 );
 CREATE INDEX guest_trials_issuance_created ON control.guest_trials (source_ip_key_id, issuance_ip_digest, created_at DESC);
 

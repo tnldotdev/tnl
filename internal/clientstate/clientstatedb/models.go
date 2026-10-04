@@ -51,6 +51,7 @@ type GuestSession struct {
 	MembershipID      string
 	DomainID          string
 	Namespace         string
+	ExpiresAt         int64
 	CreatedAt         int64
 }
 

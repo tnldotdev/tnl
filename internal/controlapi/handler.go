@@ -271,7 +271,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
 		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
 		DnsAutomation:           cfg.DNSAutomation,
-		GuestDemoEnabled:        cfg.GuestDemoEnabled,
+		GuestDemo:               cfg.GuestDemoEnabled,
 		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}

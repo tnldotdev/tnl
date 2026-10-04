@@ -22,6 +22,7 @@ import (
 const (
 	GuestReadyAllowance = 15 * time.Minute
 	GuestByteAllowance  = 5 << 20
+	GuestLifetime       = 72 * time.Hour
 )
 
 var (
@@ -39,6 +40,7 @@ type GuestTrial struct {
 	DNSAuthorityReference string
 	SourceIPDigest        string
 	SourceIPKeyID         string
+	ExpiresAt             time.Time
 	UsedReady             time.Duration
 	UsedBytes             int64
 	LastDemoNumber        int64
@@ -117,7 +119,7 @@ func (d *Database) CreateGuestTrial(ctx context.Context, guest NewGuestTrial, do
 		NamespaceLabel: guest.NamespaceLabel, TeamID: guest.TeamID, MembershipID: guest.MembershipID,
 		DomainID: domainID, DnsAuthorityReference: dnsAuthorityReference,
 		SourceIpDigest: sourceDigest, SourceIpKeyID: keyID, IssuanceIpDigest: issuanceDigest,
-		CreatedAt: timestamptz(now),
+		ExpiresAt: timestamptz(now.Add(GuestLifetime)), CreatedAt: timestamptz(now),
 	}); err != nil {
 		return err
 	}
@@ -171,7 +173,7 @@ func (d *Database) GuestTrialByAccessToken(ctx context.Context, token credential
 		ID: row.ID, NamespaceLabel: row.NamespaceLabel, TeamID: row.TeamID,
 		MembershipID: row.MembershipID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference,
 		UsedReady: time.Duration(row.UsedReadyNs), UsedBytes: row.UsedBytes, LastDemoNumber: row.LastDemoNumber,
-		SourceIPDigest: row.SourceIpDigest, SourceIPKeyID: row.SourceIpKeyID,
+		ExpiresAt: row.ExpiresAt.Time, SourceIPDigest: row.SourceIpDigest, SourceIPKeyID: row.SourceIpKeyID,
 	}
 	return guest, nil
 }
@@ -224,7 +226,7 @@ func (d *Database) AllocateGuestDemoNumber(ctx context.Context, guestID string, 
 	if err != nil {
 		return 0, err
 	}
-	if guest.UsedBytes >= GuestByteAllowance || guest.UsedReadyNs >= int64(GuestReadyAllowance) {
+	if !guest.ExpiresAt.Valid || !guest.ExpiresAt.Time.After(at) || guest.UsedBytes >= GuestByteAllowance || guest.UsedReadyNs >= int64(GuestReadyAllowance) {
 		return 0, ErrGuestTrialSpent
 	}
 	count, err := queries.CountGuestCurrentPublicURLs(ctx, guestID)
