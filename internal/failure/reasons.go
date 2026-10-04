@@ -75,8 +75,11 @@ const (
 	ServerDNSFailed             Reason = "server.dns_failed"
 	ServerDNSConflict           Reason = "server.dns_conflict"
 	ServerUsageDeliveryFailed   Reason = "server.usage_delivery_failed"
+	ServerAPIInternal           Reason = "server.api_internal"
 	Unexpected                  Reason = "internal.unexpected"
 )
+
+const ServerControlConnectionFailed Reason = "server.control_connection_failed"
 
 var definitions = map[Reason]Definition{
 	InvalidControlURL: {
@@ -347,6 +350,10 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "a publisher or relay connection failed",
 		Action: "check the network path and current connection assignment", Retry: RetryLater,
 	},
+	ServerControlConnectionFailed: {
+		Class: Unavailable, Message: "ingress or relay could not reach control",
+		Action: "check the private control listener and cluster authentication if retries continue", Retry: RetryLater,
+	},
 	ServerCertificateFailed: {
 		Class: Unavailable, Message: "certificate work failed",
 		Action: "check ACME access and DNS validation, then retry", Retry: RetryLater,
@@ -366,6 +373,10 @@ var definitions = map[Reason]Definition{
 	ServerUsageDeliveryFailed: {
 		Class: Unavailable, Message: "usage delivery failed",
 		Action: "check the configured usage receiver and retry", Retry: RetryLater,
+	},
+	ServerAPIInternal: {
+		Class: Internal, Message: "server API request failed unexpectedly",
+		Action: "check process health and correlate the request ID with service diagnostics", Retry: RetryLater,
 	},
 	Unexpected: {
 		Class: Internal, Message: "the operation failed unexpectedly",

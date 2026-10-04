@@ -49,7 +49,8 @@ func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
 						t.Fatalf("direct error = %v", err)
 					}
 					status = direct.Status
-					problem = &ingressv1.Problem{Status: direct.Status, Type: direct.Type, Title: direct.Title, Detail: direct.Detail}
+					problem = &ingressv1.Problem{Status: direct.Status, Type: direct.Type, Title: direct.Title,
+						Code: ingressv1.ProblemCode(direct.Code), Detail: direct.Detail}
 				} else {
 					wire := httptest.NewRecorder()
 					testIngressHandler(t, store, time.Now(), nil).ServeHTTP(wire, authenticatedIngressRequest(http.MethodGet,
@@ -61,7 +62,14 @@ func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
 					status = response.StatusCode()
 					problem = response.ApplicationproblemJSON409
 				}
-				want := ingressv1.Problem{Status: http.StatusConflict, Type: problemtype.URL(test.name), Title: strings.ReplaceAll(test.name, "_", " "), Detail: test.detail}
+				if transport == "HTTP" {
+					if problem == nil || problem.RequestId == "" || problem.Details == nil {
+						t.Fatalf("HTTP problem has no correlation ID or details: %#v", problem)
+					}
+					problem.RequestId, problem.Details = "", nil
+				}
+				want := ingressv1.Problem{Status: http.StatusConflict, Type: problemtype.URL(test.name),
+					Title: strings.ReplaceAll(test.name, "_", " "), Code: ingressv1.ProblemCode(test.name), Detail: test.detail}
 				if status != http.StatusConflict || !reflect.DeepEqual(problem, &want) {
 					t.Fatalf("response = %d %#v, want %#v", status, problem, want)
 				}

@@ -42,6 +42,6 @@ func (c *staleRecoveryControl) ObserveRecovery(context.Context, string, uint64, 
 	c.calls++
 	return ingressv1.PublicURLRecoveryObservation{}, &ControlProblemError{
 		Operation: "observe route recovery", Status: http.StatusConflict,
-		Problem: &ingressv1.Problem{Type: "https://tnl.dev/p/recovery-episode-stale"},
+		Problem: &ingressv1.Problem{Code: ingressv1.RecoveryEpisodeStale},
 	}
 }
