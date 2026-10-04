@@ -50,6 +50,7 @@ const (
 	InvalidRole                 Reason = "server.invalid_role"
 	DatabaseUnavailable         Reason = "server.database_unavailable"
 	ServerConfigInvalid         Reason = "server.config_invalid"
+	ServerListenAddressInvalid  Reason = "server.listen_address_invalid"
 	ServerDatabaseURLInvalid    Reason = "server.database_url_invalid"
 	ServerStorageKeyInvalid     Reason = "server.storage_key_invalid"
 	ServerACMEInvalid           Reason = "server.acme_invalid"
@@ -266,12 +267,16 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "server configuration is invalid",
 		Action: "run tnld config check and correct the reported setting", Retry: RetryAfterChange,
 	},
+	ServerListenAddressInvalid: {
+		Class: Invalid, Message: "listen address must be a canonical host and port",
+		Action: "set a host:port address with a port between 1 and 65535", Retry: RetryAfterChange,
+	},
 	ServerDatabaseURLInvalid: {
-		Class: Invalid, Message: "TNLD_DATABASE_URL must be a pooled PostgreSQL URL",
+		Class: Invalid, Message: "database URL must be a pooled PostgreSQL URL",
 		Action: "set the pooled runtime URL and reserve TNLD_DATABASE_DIRECT_URL for tnld migrate", Retry: RetryAfterChange,
 	},
 	ServerStorageKeyInvalid: {
-		Class: Invalid, Message: "TNLD_STORAGE_KEY is missing or invalid",
+		Class: Invalid, Message: "storage key is missing or invalid",
 		Action: "set an unpadded base64url 32-byte key for control, then retry", Retry: RetryAfterChange,
 	},
 	ServerACMEInvalid: {
@@ -311,7 +316,7 @@ var definitions = map[Reason]Definition{
 		Action: "run tnld --help and correct the command", Retry: RetryAfterChange,
 	},
 	DirectDatabaseURLMissing: {
-		Class: Invalid, Message: "TNLD_DATABASE_DIRECT_URL is required for migration",
+		Class: Invalid, Message: "direct database URL is required for migration",
 		Action: "set a direct PostgreSQL URL with migration permissions, then rerun tnld migrate", Retry: RetryAfterChange,
 	},
 	ServerMigrationFailed: {

@@ -48,3 +48,18 @@ func TestDomainFailureKeepsItsTypeAndSafeReason(t *testing.T) {
 		t.Fatalf("domain failure = %q, %#v, %t", reason, definition, ok)
 	}
 }
+
+func TestSettingContextNamesOnlyAnAllowedField(t *testing.T) {
+	cause := errors.New("postgresql://user:secret@database.example/tnl")
+	err := WrapSetting("validate database URL", ServerDatabaseURLInvalid, SettingDatabaseURL, cause)
+	typed, ok := Of(fmt.Errorf("serve control: %w", err))
+	if !ok || typed.Setting() != SettingDatabaseURL || !errors.Is(err, cause) {
+		t.Fatalf("typed setting = %v, cause = %v", typed, err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("unknown or user-supplied setting was accepted")
+		}
+	}()
+	_ = WrapSetting("validate database URL", ServerDatabaseURLInvalid, Setting("postgresql://secret"), cause)
+}

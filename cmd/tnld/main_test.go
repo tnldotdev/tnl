@@ -37,9 +37,9 @@ func TestWriteTerminalErrorRendersJoinedErrorsOnOneSafeLine(t *testing.T) {
 
 func TestWriteTerminalErrorUsesTypedOperatorCopy(t *testing.T) {
 	var output bytes.Buffer
-	writeTerminalError(&output, failure.Wrap("validate storage key", failure.ServerStorageKeyInvalid,
+	writeTerminalError(&output, failure.WrapSetting("validate storage key", failure.ServerStorageKeyInvalid, failure.SettingStorageKey,
 		errors.New("storagekey: key=secret-do-not-print")))
-	want := "tnld: validate storage key: TNLD_STORAGE_KEY is missing or invalid; " +
+	want := "tnld: validate storage key TNLD_STORAGE_KEY: storage key is missing or invalid; " +
 		"set an unpadded base64url 32-byte key for control, then retry\n"
 	if output.String() != want {
 		t.Fatalf("terminal error = %q, want %q", output.String(), want)

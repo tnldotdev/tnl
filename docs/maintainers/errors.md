@@ -10,6 +10,8 @@ action, class, and retry policy in `internal/failure/reasons.go`. Wrap the
 underlying error at the operation that knows what failed. If the failure needs
 extra data, give its owner a typed field, such as a setting name or retry
 duration; never pass credentials or arbitrary provider text as display fields.
+`failure.WrapSetting` accepts only known `TNLD_*` setting names, not their
+values, and `tnld` names the failing setting in its one-line error.
 Add an adapter only for surfaces where that reason can occur, and cover the
 mapping with a test. The reason ID keeps its meaning once machine output uses
 it; use a new ID for a different failure.
