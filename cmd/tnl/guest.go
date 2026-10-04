@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -95,7 +96,8 @@ func requireSignInOutsideDemo(ctx context.Context, state *clientstate.Database, 
 	if _, found, err := store.GuestSession(ctx); err != nil {
 		return err
 	} else if found {
-		return errors.New("this command needs sign-in. run `tnl login` to use your own app or manage this server; to try tnl without sign-in, run `tnl publish --demo`")
+		return failure.Wrap("use a signed-in command", failure.GuestSignInRequired,
+			errors.New("saved guest credential does not authorize this command"))
 	}
 	return nil
 }

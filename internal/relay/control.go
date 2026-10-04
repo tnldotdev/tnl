@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"net/netip"
@@ -13,7 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/problemtype"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -83,7 +83,9 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		config.LeaseChanged = func(relayv1.RelayLease, relayv1.RelayLease) {}
 	}
 	if config.Report == nil {
-		config.Report = func(err error) { log.Printf("relay control: %v", err) }
+		config.Report = func(err error) {
+			operatorlog.Report("renew relay lease", failure.ServerControlConnectionFailed, "", err)
+		}
 	}
 	registration := config.Registration
 	registration.InternalNetworks = slices.Clone(registration.InternalNetworks)
@@ -486,6 +488,7 @@ func relayControlError(operation string, err error) error {
 	if problem.Type != "" {
 		body = &relayv1.Problem{
 			Status: problem.Status, Type: problem.Type, Title: problem.Title, Detail: problem.Detail,
+			Code: relayv1.ProblemCode(problem.Code), RequestId: problem.RequestID,
 		}
 	}
 	return &ControlProblemError{Operation: operation, Status: problem.Status, Problem: body}
@@ -495,7 +498,7 @@ func (c *Controller) responseError(operation string, err error) error {
 	err = relayControlError(operation, err)
 	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
-		problemtype.Is(problem.Problem.Type, "relay_lease_stale") {
+		problem.Problem.Code == relayv1.RelayLeaseStale {
 		c.clearLease()
 	}
 	return err
@@ -521,19 +524,18 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 	if !errors.As(err, &problem) || problem.Problem == nil {
 		return tunnelv1.Internal
 	}
-	switch problem.Problem.Type {
-	case problemtype.URL("unauthenticated"), problemtype.URL("relay_identity_mismatch"),
-		problemtype.URL("invalid_publisher_connection_credential"):
+	switch problem.Problem.Code {
+	case relayv1.Unauthenticated, relayv1.InvalidPublisherConnectionCredential:
 		return tunnelv1.Unauthenticated
-	case problemtype.URL("stale_connection_assignment"), problemtype.URL("relay_lease_stale"):
+	case relayv1.StaleConnectionAssignment, relayv1.RelayLeaseStale:
 		return tunnelv1.StaleConnectionAssignment
-	case problemtype.URL("publisher_connection_already_claimed"):
+	case relayv1.PublisherConnectionAlreadyClaimed:
 		return tunnelv1.DuplicatePublisherConnection
-	case problemtype.URL("relay_draining"):
+	case relayv1.RelayDraining:
 		return tunnelv1.DrainingPublisherConnection
-	case problemtype.URL("relay_connection_capacity_exhausted"):
+	case relayv1.RelayConnectionCapacityExhausted:
 		return tunnelv1.CapacityExceeded
-	case problemtype.URL("publisher_connection_unavailable"):
+	case relayv1.PublisherConnectionUnavailable:
 		return tunnelv1.Unavailable
 	default:
 		return tunnelv1.Internal

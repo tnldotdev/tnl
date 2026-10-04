@@ -537,10 +537,28 @@ components:
         ready_at:
           type: string
           format: date-time
+    ProblemCode:
+      type: string
+      enum:
+        - invalid_request
+        - invalid_json
+        - unsupported_media_type
+        - unauthenticated
+        - not_found
+        - internal
+        - relay_registration_conflict
+        - relay_lease_stale
+        - certificate_unavailable
+        - stale_connection_assignment
+        - publisher_connection_already_claimed
+        - invalid_publisher_connection_credential
+        - relay_draining
+        - relay_connection_capacity_exhausted
+        - publisher_connection_unavailable
     Problem:
       type: object
       additionalProperties: false
-      required: [type, title, status, detail]
+      required: [type, title, status, code, detail, request_id]
       properties:
         type:
           type: string
@@ -551,5 +569,17 @@ components:
           type: integer
           minimum: 400
           maximum: 599
+        code:
+          $ref: "#/components/schemas/ProblemCode"
         detail:
           type: string
+          minLength: 1
+        request_id:
+          type: string
+          minLength: 1
+        retry_at:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true

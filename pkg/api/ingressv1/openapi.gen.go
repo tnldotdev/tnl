@@ -81,6 +81,63 @@ func (e IngressRoutingTableEventKind) Valid() bool {
 	}
 }
 
+// Defines values for ProblemCode.
+const (
+	IngressAlreadyRunning          ProblemCode = "ingress_already_running"
+	IngressLeaseStale              ProblemCode = "ingress_lease_stale"
+	Internal                       ProblemCode = "internal"
+	InvalidJson                    ProblemCode = "invalid_json"
+	InvalidRequest                 ProblemCode = "invalid_request"
+	InvalidUsageReport             ProblemCode = "invalid_usage_report"
+	NotFound                       ProblemCode = "not_found"
+	RecoveryEpisodeStale           ProblemCode = "recovery_episode_stale"
+	RoutingTableResnapshotRequired ProblemCode = "routing_table_resnapshot_required"
+	StaleUsageReport               ProblemCode = "stale_usage_report"
+	Unauthenticated                ProblemCode = "unauthenticated"
+	UnsupportedMediaType           ProblemCode = "unsupported_media_type"
+	UsageBucketFinalized           ProblemCode = "usage_bucket_finalized"
+	UsageReportConflict            ProblemCode = "usage_report_conflict"
+	UsageRouteNotFound             ProblemCode = "usage_route_not_found"
+)
+
+// Valid indicates whether the value is a known member of the ProblemCode enum.
+func (e ProblemCode) Valid() bool {
+	switch e {
+	case IngressAlreadyRunning:
+		return true
+	case IngressLeaseStale:
+		return true
+	case Internal:
+		return true
+	case InvalidJson:
+		return true
+	case InvalidRequest:
+		return true
+	case InvalidUsageReport:
+		return true
+	case NotFound:
+		return true
+	case RecoveryEpisodeStale:
+		return true
+	case RoutingTableResnapshotRequired:
+		return true
+	case StaleUsageReport:
+		return true
+	case Unauthenticated:
+		return true
+	case UnsupportedMediaType:
+		return true
+	case UsageBucketFinalized:
+		return true
+	case UsageReportConflict:
+		return true
+	case UsageRouteNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
 	Digest       string               `json:"digest"`
@@ -243,11 +300,18 @@ type IngressUsageReportBatch struct {
 
 // Problem defines model for Problem.
 type Problem struct {
-	Detail string `json:"detail"`
-	Status int    `json:"status"`
-	Title  string `json:"title"`
-	Type   string `json:"type"`
+	Code      ProblemCode             `json:"code"`
+	Detail    string                  `json:"detail"`
+	Details   *map[string]interface{} `json:"details,omitempty"`
+	RequestId string                  `json:"request_id"`
+	RetryAt   *time.Time              `json:"retry_at,omitempty"`
+	Status    int                     `json:"status"`
+	Title     string                  `json:"title"`
+	Type      string                  `json:"type"`
 }
+
+// ProblemCode defines model for ProblemCode.
+type ProblemCode string
 
 // PublicURLRecoveryObservation defines model for PublicURLRecoveryObservation.
 type PublicURLRecoveryObservation struct {

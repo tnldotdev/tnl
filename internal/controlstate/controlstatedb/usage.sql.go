@@ -397,26 +397,34 @@ func (q *Queries) EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUs
 const ensurePublicURLUsageConfiguration = `-- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
     id,
-    visitor_network_hash_master_key,
+    visitor_network_hash_master_key_ciphertext,
+    visitor_network_hash_master_key_storage_key_id,
     created_at
 ) VALUES (
     1,
     $1,
-    $2
+    $2,
+    $3
 )
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-RETURNING id, visitor_network_hash_master_key, created_at
+RETURNING id, created_at, visitor_network_hash_master_key_ciphertext, visitor_network_hash_master_key_storage_key_id
 `
 
 type EnsurePublicURLUsageConfigurationParams struct {
-	VisitorNetworkHashMasterKey []byte
-	CreatedAt                   pgtype.Timestamptz
+	VisitorNetworkHashMasterKeyCiphertext   []byte
+	VisitorNetworkHashMasterKeyStorageKeyID string
+	CreatedAt                               pgtype.Timestamptz
 }
 
 func (q *Queries) EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error) {
-	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKey, arg.CreatedAt)
+	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKeyCiphertext, arg.VisitorNetworkHashMasterKeyStorageKeyID, arg.CreatedAt)
 	var i ControlPublicUrlUsageConfiguration
-	err := row.Scan(&i.ID, &i.VisitorNetworkHashMasterKey, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.VisitorNetworkHashMasterKeyCiphertext,
+		&i.VisitorNetworkHashMasterKeyStorageKeyID,
+	)
 	return i, err
 }
 

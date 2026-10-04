@@ -148,7 +148,7 @@ func (w *Worker) publicURLRecord(
 }
 
 func (w *Worker) applyPublicURLFailure(work *controlstate.DNSPublicURLWork, operationErr error, now time.Time) {
-	work.LastError = truncateError(operationErr)
+	work.LastError = storedFailureReason(operationErr)
 	work.AvailableAt = w.retryAvailableAt(work.Attempts, now)
 	var terminal *terminalError
 	if errors.As(operationErr, &terminal) {

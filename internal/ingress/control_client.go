@@ -159,7 +159,9 @@ func ingressHTTPProblem(status int, problem *ingressv1.Problem) error {
 	if problem != nil {
 		result.Type = problem.Type
 		result.Title = problem.Title
+		result.Code = string(problem.Code)
 		result.Detail = problem.Detail
+		result.RequestID = problem.RequestId
 	}
 	return result
 }

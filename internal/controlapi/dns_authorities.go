@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -99,7 +100,11 @@ func dnsAuthorityResponse(authority controlstate.DNSAuthority) controlv1.DNSAuth
 		}
 	}
 	if authority.LastError != "" {
-		result.LastError = &authority.LastError
+		definition, ok := failure.DefinitionFor(failure.Reason(authority.LastError))
+		if !ok {
+			definition, _ = failure.DefinitionFor(failure.Unexpected)
+		}
+		result.LastError = &definition.Message
 	}
 	return result
 }

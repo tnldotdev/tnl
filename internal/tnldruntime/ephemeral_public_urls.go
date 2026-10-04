@@ -2,9 +2,9 @@ package tnldruntime
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -18,7 +18,7 @@ func runEphemeralPublicURLCleanup(ctx context.Context, store ephemeralPublicURLS
 	return runBatchCleanup(ctx, ephemeralPublicURLCleanupInterval, store.DeleteExpiredEphemeralPublicURLs, func(deleted int, err error) {
 		metrics.ObserveCleanup("ephemeral_public_urls", deleted, false, err)
 		if err != nil && ctx.Err() == nil {
-			log.Printf("ephemeral public URL cleanup: %v", err)
+			logOperationalError("clean up ephemeral public URLs", failure.ServerWorkerFailed, err)
 		}
 	})
 }

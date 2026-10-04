@@ -437,9 +437,10 @@ type ControlPublicUrlUsageBucket struct {
 }
 
 type ControlPublicUrlUsageConfiguration struct {
-	ID                          int16
-	VisitorNetworkHashMasterKey []byte
-	CreatedAt                   pgtype.Timestamptz
+	ID                                      int16
+	CreatedAt                               pgtype.Timestamptz
+	VisitorNetworkHashMasterKeyCiphertext   []byte
+	VisitorNetworkHashMasterKeyStorageKeyID string
 }
 
 type ControlPublicUrlUsageDelivery struct {

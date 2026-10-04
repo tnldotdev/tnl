@@ -1,11 +1,13 @@
 -- name: EnsurePublicURLUsageConfiguration :one
 INSERT INTO control.public_url_usage_configuration (
     id,
-    visitor_network_hash_master_key,
+    visitor_network_hash_master_key_ciphertext,
+    visitor_network_hash_master_key_storage_key_id,
     created_at
 ) VALUES (
     1,
-    sqlc.arg(visitor_network_hash_master_key),
+    sqlc.arg(visitor_network_hash_master_key_ciphertext),
+    sqlc.arg(visitor_network_hash_master_key_storage_key_id),
     sqlc.arg(created_at)
 )
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
