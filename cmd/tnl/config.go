@@ -96,14 +96,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err != nil {
 		return err
 	}
-	configuredTeam, err := c.configuredTeamForService(service, effective)
-	if err != nil {
-		return err
-	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
 	} else {
-		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, configuredTeam)
+		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, effective.Team)
 		if err != nil {
 			return err
 		}
@@ -150,14 +146,10 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 	if err != nil {
 		return err
 	}
-	configuredTeam, err := c.configuredTeamForService(service, effective)
-	if err != nil {
-		return err
-	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
 	} else {
-		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, configuredTeam)
+		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, effective.Team)
 		if err != nil {
 			return err
 		}
@@ -356,28 +348,6 @@ func projectTeamForServer(server string, configuredServer, configuredTeam *strin
 		}
 	}
 	return *configuredTeam, nil
-}
-
-func (c projectConfiguration) configuredTeamForService(service string, effective config.TNL) (*string, error) {
-	if service == "" || effective.Team == nil || c.Config.Server == nil {
-		return effective.Team, nil
-	}
-	settings := c.Config.Services[service]
-	if settings.Team != nil || settings.Server == nil {
-		return effective.Team, nil
-	}
-	projectServer, err := clientstate.CanonicalServer(*c.Config.Server)
-	if err != nil {
-		return nil, err
-	}
-	serviceServer, err := clientstate.CanonicalServer(*settings.Server)
-	if err != nil {
-		return nil, err
-	}
-	if projectServer != serviceServer {
-		return nil, nil
-	}
-	return effective.Team, nil
 }
 
 func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {

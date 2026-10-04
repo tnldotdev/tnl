@@ -165,6 +165,8 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"multi-label name":       {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},
 		"public URL path":        {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be an HTTPS public URL"},
 		"root name with service": {`{"version":1,"tnl":{"tunnel":{"name":"api"},"services":{"api":{}}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api\n  services:\n    api: {}\n", "tunnel.name and tunnel.public_url belong under services.NAME.tunnel"},
+		"service server":         {`{"version":1,"tnl":{"services":{"web":{"server":"https://control.example"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      server: https://control.example\n", "server"},
+		"service team":           {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
 		"obsolete subdomain":     {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
 		"target":                 {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
 		"ip":                     {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},

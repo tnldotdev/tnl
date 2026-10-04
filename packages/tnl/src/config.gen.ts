@@ -53,7 +53,7 @@ export interface TnlConfig {
   publish?: Publish;
   dev?: Dev;
   /**
-   * Named local services with optional project-setting overrides.
+   * Named local services with optional tunnel, publish, and dev overrides.
    */
   services?: {
     [k: string]:
@@ -62,14 +62,6 @@ export interface TnlConfig {
            * Service directory relative to the project configuration.
            */
           directory?: string;
-          /**
-           * Control URL override for this service.
-           */
-          server?: string;
-          /**
-           * Team override for this service.
-           */
-          team?: string;
           /**
            * PublicURL and tunnel overrides for this service.
            */

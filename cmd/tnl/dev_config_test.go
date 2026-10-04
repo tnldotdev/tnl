@@ -114,21 +114,21 @@ func TestRuntimeProjectMetadataUsesTheSelectedTunnelAssignment(t *testing.T) {
 	}
 }
 
-func TestDevUsesSelectedServiceMetadataForOtherServer(t *testing.T) {
+func TestDevUsesSelectedServiceMetadataForExplicitTeamOverride(t *testing.T) {
 	root := t.TempDir()
-	selectedServer, unrelatedServer := "https://selected.example", "https://unrelated.example"
+	selectedServer := "https://selected.example"
 	flags := devCommand{
-		Service: "api", commandDir: filepath.Join(root, "apps", "api"),
+		Service: "api", Team: "studio", commandDir: filepath.Join(root, "apps", "api"),
 		project: projectConfiguration{Project: projectconfig.Project{
 			Root: root, Selection: projectconfig.Selection{Path: filepath.Join(root, "tnl.config.ts")},
 			Config: config.TNL{Server: &selectedServer, Services: config.Services{
-				"api": {}, "web": {Server: &unrelatedServer},
+				"api": {}, "web": {},
 			}},
 		}},
 	}
 	reason, err := devMetadataPartialReason(flags, selectedServer, selectedServer)
-	if err != nil || reason == "" {
-		t.Fatalf("unrelated server metadata reason = %q, %v", reason, err)
+	if err != nil || !strings.Contains(reason, "overrides") {
+		t.Fatalf("explicit team metadata reason = %q, %v", reason, err)
 	}
 	metadata, err := selectedDevMetadata(flags, publisherServices{
 		namespace: "member.example.test", hostname: "api.member.example.test",
@@ -136,11 +136,6 @@ func TestDevUsesSelectedServiceMetadataForOtherServer(t *testing.T) {
 	if err != nil || metadata.Services["api"].URL != "https://api.member.example.test" ||
 		metadata.ServiceDirectories["api"] != "apps/api" || len(metadata.Services) != 1 {
 		t.Fatalf("selected metadata = %#v, %v", metadata, err)
-	}
-	flags.Team = "studio"
-	reason, err = devMetadataPartialReason(flags, selectedServer, selectedServer)
-	if err != nil || !strings.Contains(reason, "overrides") {
-		t.Fatalf("explicit team metadata reason = %q, %v", reason, err)
 	}
 }
 

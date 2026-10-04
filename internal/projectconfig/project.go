@@ -136,12 +136,6 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	if !found {
 		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
 	}
-	if service.Server != nil {
-		result.Server = service.Server
-	}
-	if service.Team != nil {
-		result.Team = service.Team
-	}
 	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
 	result.Publish = mergePublish(result.Publish, service.Publish)
 	result.Dev = mergeDev(result.Dev, service.Dev)

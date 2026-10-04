@@ -134,7 +134,10 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
-	if err := validateServiceValues(config.Server, config.Team, config.Tunnel, config.Publish, config.Dev); err != nil {
+	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
+		return err
+	}
+	if err := validateServiceValues(config.Tunnel, config.Publish, config.Dev); err != nil {
 		return err
 	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
@@ -158,14 +161,14 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceDirectory(service.Directory); err != nil {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
-		if err := validateServiceValues(service.Server, service.Team, service.Tunnel, service.Publish, service.Dev); err != nil {
+		if err := validateServiceValues(service.Tunnel, service.Publish, service.Dev); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publish, dev *Dev) error {
+func validateServerAndTeam(server, team *string) error {
 	if server != nil && (strings.TrimSpace(*server) == "" || strings.TrimSpace(*server) != *server) {
 		return errors.New("server must not be empty or surrounded by whitespace")
 	}
@@ -177,6 +180,10 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 	if team != nil && (strings.TrimSpace(*team) == "" || strings.TrimSpace(*team) != *team) {
 		return errors.New("team must not be empty or surrounded by whitespace")
 	}
+	return nil
+}
+
+func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 	if tunnel != nil {
 		if tunnel.RequestLimit != nil && *tunnel.RequestLimit <= 0 {
 			return errors.New("tunnel.request_limit must be greater than zero")

@@ -154,14 +154,6 @@
                 "minLength": 1,
                 "description": "Service directory relative to the project configuration."
               },
-              "server": {
-                "type": "string",
-                "description": "Control URL override for this service."
-              },
-              "team": {
-                "type": "string",
-                "description": "Team override for this service."
-              },
               "tunnel": {
                 "allOf": [
                   {
@@ -260,7 +252,7 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named local services with optional project-setting overrides."
+          "description": "Named local services with optional tunnel, publish, and dev overrides."
         }
       },
       "additionalProperties": false,

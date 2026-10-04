@@ -212,10 +212,10 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 			Root:     root,
 			Worktree: worktree,
 			Config: config.TNL{
-				Server: &rootServer,
-				Dev:    &config.Dev{StartupTimeout: &rootTimeout},
+				Server: &rootServer, Team: &serviceTeam,
+				Dev: &config.Dev{StartupTimeout: &rootTimeout},
 				Services: map[string]config.Service{
-					"web": {Team: &serviceTeam, Publish: &config.Publish{Target: &target}},
+					"web": {Publish: &config.Publish{Target: &target}},
 				},
 			},
 		},
@@ -509,37 +509,34 @@ func TestCrossServerTeamPrecedence(t *testing.T) {
 	}
 }
 
-func TestServiceServerOverrideDoesNotInheritRootTeam(t *testing.T) {
+func TestServicesInheritProjectServerAndTeam(t *testing.T) {
 	rootServer, otherServer := "https://root.example", "https://other.example"
-	rootTeam, serviceTeam := "root-team", "service-team"
+	rootTeam := "root-team"
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server: &rootServer, Team: &rootTeam,
 		Services: config.Services{
-			"api":  {Server: &otherServer, Publish: &config.Publish{Target: &target}},
-			"web":  {Server: &otherServer, Team: &serviceTeam},
-			"same": {Server: &rootServer},
+			"api": {Publish: &config.Publish{Target: &target}},
+			"web": {},
 		},
 	}}}
-	for _, test := range []struct{ service, team string }{
-		{"api", ""}, {"web", serviceTeam}, {"same", rootTeam},
-	} {
-		flags := devCommand{Service: test.service}
-		if err := project.applyDev(&flags); err != nil || flags.selectedTeam != test.team {
-			t.Fatalf("dev %s team = %q, %v", test.service, flags.selectedTeam, err)
+	for _, service := range []string{"api", "web"} {
+		flags := devCommand{Service: service}
+		if err := project.applyDev(&flags); err != nil || flags.ServerURL != rootServer || flags.selectedTeam != rootTeam {
+			t.Fatalf("dev %s selection = %q, %q, %v", service, flags.ServerURL, flags.selectedTeam, err)
 		}
 	}
 	publish := publishCommand{Target: "api"}
-	if err := project.applyPublish(&publish); err != nil || publish.selectedTeam != "" || publish.ServerURL != otherServer {
+	if err := project.applyPublish(&publish); err != nil || publish.selectedTeam != rootTeam || publish.ServerURL != rootServer {
 		t.Fatalf("publish api = %#v, %v", publish, err)
 	}
-	effective, err := project.EffectiveService("api")
-	if err != nil {
-		t.Fatal(err)
+	other := devCommand{Service: "api", remoteFlags: remoteFlags{ServerURL: otherServer}}
+	if err := project.applyDev(&other); err != nil || other.selectedTeam != "" {
+		t.Fatalf("cross-server dev selection = %#v, %v", other, err)
 	}
-	selected, err := project.configuredTeamForService("api", effective)
-	if err != nil || selected != nil {
-		t.Fatalf("api metadata team = %v, %v", selected, err)
+	effective, err := project.EffectiveService("api")
+	if err != nil || effective.Server == nil || *effective.Server != rootServer || effective.Team == nil || *effective.Team != rootTeam {
+		t.Fatalf("api project context = %#v, %v", effective, err)
 	}
 }
 
