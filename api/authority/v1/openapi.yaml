@@ -959,7 +959,7 @@ components:
     Problem:
       type: object
       additionalProperties: false
-      required: [type, title, status, code, request_id]
+      required: [type, title, status, code, detail, request_id]
       properties:
         type:
           type: string
@@ -992,6 +992,7 @@ components:
           minLength: 1
         detail:
           type: string
+          minLength: 1
         retry_at:
           type: string
           format: date-time

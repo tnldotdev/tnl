@@ -2,12 +2,13 @@ package controlapi
 
 import (
 	"errors"
-	"log"
 	"math"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -22,8 +23,8 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 	}
 	counts, err := h.admin.AdminRuntimeCounts(request.Context(), now)
 	if err != nil {
-		log.Printf("read admin server status: %v", err)
-		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		operatorlog.Report("read admin server status", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	values := []int64{
@@ -181,8 +182,8 @@ func (h *handler) writeAdminStateError(response http.ResponseWriter, operation s
 	case errors.Is(err, controlstate.ErrRelayLeaseStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "relay lease is stale")
 	default:
-		log.Printf("%s: %v", operation, err)
-		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 

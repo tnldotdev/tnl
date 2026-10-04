@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/tnldruntime"
 )
@@ -30,9 +31,19 @@ func main() {
 }
 
 func writeTerminalError(output io.Writer, err error) {
+	typed, ok := failure.Of(err)
+	if !ok {
+		err = failure.Wrap("run tnld", failure.Unexpected, err)
+		typed, _ = failure.Of(err)
+	}
+	_, definition, _ := failure.Describe(err)
+	operation := string(typed.Operation())
+	if setting := typed.Setting(); setting != "" {
+		operation += " " + string(setting)
+	}
 	var text strings.Builder
 	lineBreak := false
-	for _, character := range err.Error() {
+	for _, character := range fmt.Sprintf("%s: %s; %s", operation, definition.Message, definition.Action) {
 		if character == '\r' || character == '\n' {
 			lineBreak = true
 			continue
@@ -50,7 +61,16 @@ func writeTerminalError(output io.Writer, err error) {
 	_, _ = fmt.Fprintf(output, "tnld: %s\n", text.String())
 }
 
-func run(ctx context.Context, args []string, stdout io.Writer) error {
+func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
+	operation := failure.Operation("parse command")
+	reason := failure.ServerCommandInvalid
+	defer func() {
+		if result != nil {
+			if _, typed := failure.Of(result); !typed {
+				result = failure.Wrap(operation, reason, result)
+			}
+		}
+	}()
 	var flags tnldCLI
 	parser, err := newTNLDParser(&flags, stdout)
 	if err != nil {
@@ -60,14 +80,20 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if parsed.Command() != "" {
+		operation = failure.Operation(parsed.Command())
+	}
 	switch parsed.Command() {
 	case "migrate":
+		reason = failure.ServerMigrationFailed
 		directURL := os.Getenv("TNLD_DATABASE_DIRECT_URL")
 		if directURL == "" {
-			return errors.New("TNLD_DATABASE_DIRECT_URL is required")
+			return failure.WrapSetting(operation, failure.DirectDatabaseURLMissing, failure.SettingDatabaseDirectURL,
+				errors.New("TNLD_DATABASE_DIRECT_URL is required"))
 		}
 		return controlstate.Migrate(ctx, directURL)
 	case "login-token":
+		reason = failure.ServerOutputUnavailable
 		token, err := credentials.NewLoginToken()
 		if err != nil {
 			return err
@@ -75,14 +101,16 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		_, err = fmt.Fprintln(stdout, token)
 		return err
 	case "serve":
+		reason = failure.ServerStartupFailed
 		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, tnldconfig.Config(flags.Serve.Values), parsed)
 		if err != nil {
 			return err
 		}
 		return tnldruntime.Serve(ctx, cfg)
 	case "config check":
+		reason = failure.ServerConfigInvalid
 		if flags.Config.Check.ConfigPath == "" {
-			return errors.New("--config or TNLD_CONFIG is required")
+			return failure.Wrap(operation, failure.ServerConfigFileInvalid, errors.New("--config or TNLD_CONFIG is required"))
 		}
 		base, err := parseDefaultsAndEnvironment()
 		if err != nil {
@@ -91,6 +119,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		_, err = resolveConfigFile(flags.Config.Check.ConfigPath, base, nil)
 		return err
 	case "version":
+		reason = failure.ServerOutputUnavailable
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
 		return err
 	default:
@@ -140,14 +169,16 @@ func resolveServeCommand(path string, base tnldconfig.Config, parsed *kong.Conte
 
 func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[string]bool) (tnldconfig.Config, error) {
 	if strings.EqualFold(filepath.Ext(path), ".ts") {
-		return tnldconfig.Config{}, errors.New("tnld configuration must use .yml, .yaml, or .json")
+		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
+			errors.New("tnld configuration must use .yml, .yaml, or .json"))
 	}
 	document, err := config.LoadDocument(path)
 	if err != nil {
-		return tnldconfig.Config{}, err
+		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid, err)
 	}
 	if document.TNLD == nil {
-		return tnldconfig.Config{}, errors.New("tnld configuration section is required")
+		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
+			errors.New("tnld configuration section is required"))
 	}
 	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
 	directory := filepath.Dir(path)

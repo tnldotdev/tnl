@@ -20,6 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -32,11 +33,11 @@ const (
 )
 
 var (
-	ErrUnauthenticated = errors.New("authorityclient: unauthenticated")
-	ErrNotFound        = errors.New("authorityclient: not found")
-	ErrDNSProofPending = errors.New("authorityclient: DNS proof pending")
-	ErrRateLimited     = errors.New("authorityclient: rate limited")
-	ErrUnavailable     = errors.New("authorityclient: temporarily unavailable")
+	ErrUnauthenticated = failure.Wrap("authenticate authority request", failure.Authentication, errors.New("authorityclient: unauthenticated"))
+	ErrNotFound        = failure.Wrap("read authority resource", failure.ServerResourceNotFound, errors.New("authorityclient: not found"))
+	ErrDNSProofPending = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("authorityclient: DNS proof pending"))
+	ErrRateLimited     = failure.Wrap("request authority API", failure.ServerRateLimited, errors.New("authorityclient: rate limited"))
+	ErrUnavailable     = failure.Wrap("request authority API", failure.ServerUnavailable, errors.New("authorityclient: temporarily unavailable"))
 )
 
 type Client struct {
@@ -48,7 +49,10 @@ type Client struct {
 func New(endpoint string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
 	canonical, err := clientstate.CanonicalServer(endpoint)
 	if err != nil || canonical != endpoint {
-		return nil, errors.New("authorityclient: endpoint must be a canonical HTTPS origin")
+		if err == nil {
+			err = errors.New("authority endpoint is not canonical")
+		}
+		return nil, failure.Wrap("validate authority endpoint", failure.InvalidAuthorityURL, err)
 	}
 	httpClient = httpclient.NoRedirects(httpClient)
 	apiClient, err := authorityv1.NewClient(
@@ -60,7 +64,7 @@ func New(endpoint string, httpClient *http.Client, access credentials.AccessToke
 		}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("authorityclient: configure generated client: %w", err)
+		return nil, failure.Wrap("configure authority client", failure.InvalidAuthorityURL, err)
 	}
 	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }
@@ -235,7 +239,7 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 	}
 	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
 	if errors.Is(err, httpjson.ErrTooLarge) {
-		return zero, errors.New("authorityclient: response exceeds limit")
+		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: response exceeds limit"))
 	}
 	if err != nil {
 		return zero, unavailableError(ctx, err)
@@ -247,20 +251,20 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 		return zero, nil
 	}
 	if len(payload) == 0 {
-		return zero, errors.New("authorityclient: successful response has an empty body")
+		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has an empty body"))
 	}
 	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
-		return zero, errors.New("authorityclient: successful response has a null body")
+		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has a null body"))
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	var result T
 	err = httpjson.Decode(decoder, &result)
 	if errors.Is(err, httpjson.ErrTrailingContent) {
-		return zero, errors.New("authorityclient: response contains trailing JSON")
+		return zero, failure.Wrap("decode authority response", failure.ServerResponseInvalid, errors.New("authorityclient: response contains trailing JSON"))
 	}
 	if err != nil {
-		return zero, fmt.Errorf("authorityclient: decode response: %w", err)
+		return zero, failure.Wrap("decode authority response", failure.ServerResponseInvalid, err)
 	}
 	return result, nil
 }
@@ -277,15 +281,15 @@ func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse,
 	access := credentials.AccessToken(response.AccessToken)
 	refresh := credentials.RefreshToken(response.RefreshToken)
 	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid access token")
+		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid access token"))
 	}
 	if _, _, err := credentials.ParseRefreshToken(refresh); err != nil {
-		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid refresh token")
+		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid refresh token"))
 	}
 	if !opaqueid.Valid(response.SessionId, opaqueid.ControlSessionPrefix) || expectedSessionID != "" && response.SessionId != expectedSessionID ||
 		!response.AccessExpiresAt.After(time.Now()) || response.RefreshExpiresAt.Before(response.AccessExpiresAt) ||
 		!expectedRefreshExpiry.IsZero() && !response.RefreshExpiresAt.Equal(expectedRefreshExpiry) {
-		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid control session")
+		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid control session"))
 	}
 	return clientstate.ControlSession{
 		SessionID: response.SessionId, AccessToken: access.String(), AccessExpiresAt: response.AccessExpiresAt,
@@ -306,7 +310,7 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrUnavailable
 	}
 	if json.Unmarshal(payload, &problem) != nil {
-		return fmt.Errorf("authorityclient: HTTP %d", status)
+		return failure.Wrap("request authority API", failure.ServerResponseInvalid, fmt.Errorf("authorityclient: HTTP %d", status))
 	}
 	switch problem.Code {
 	case authorityv1.Unauthenticated:
@@ -318,7 +322,14 @@ func responseError(status int, header http.Header, payload []byte) error {
 	case authorityv1.Unavailable:
 		return ErrUnavailable
 	}
-	return &ProblemError{Status: status, Problem: problem}
+	cause := &ProblemError{Status: status, Problem: problem}
+	if status == http.StatusForbidden {
+		return failure.Wrap("request authority API", failure.ServerDenied, cause)
+	}
+	if status == http.StatusConflict {
+		return failure.Wrap("request authority API", failure.ServerConflict, cause)
+	}
+	return failure.Wrap("request authority API", failure.ServerRequestInvalid, cause)
 }
 
 type RateLimitError struct{ RetryAfter time.Duration }

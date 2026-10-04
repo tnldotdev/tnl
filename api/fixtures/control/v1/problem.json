@@ -3,6 +3,7 @@
   "title": "Name unavailable",
   "status": 409,
   "code": "name_unavailable",
+  "detail": "The public URL hostname is unavailable",
   "request_id": "req_example",
   "details": {}
 }

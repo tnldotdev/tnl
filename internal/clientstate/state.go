@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
@@ -73,13 +74,20 @@ func DatabasePath(root string) string {
 func DefaultDir() (string, error) {
 	root, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("clientstate: resolve user config directory: %w", err)
+		return "", failure.Wrap("find client state directory", failure.ClientStateUnavailable, err)
 	}
 	return filepath.Join(root, "tnl"), nil
 }
 
 // Open creates and migrates the shared local client database.
-func Open(ctx context.Context, root string) (*Database, error) {
+func Open(ctx context.Context, root string) (result *Database, retErr error) {
+	defer func() {
+		if retErr != nil {
+			if _, typed := failure.Of(retErr); !typed {
+				retErr = failure.Wrap("open client state", failure.ClientStateUnavailable, retErr)
+			}
+		}
+	}()
 	root, err := prepareRoot(root)
 	if err != nil {
 		return nil, err
@@ -194,10 +202,10 @@ func (d *Database) SaveServer(ctx context.Context, serverOrigin string) error {
 func CanonicalServer(value string) (string, error) {
 	server, err := naming.CanonicalControlURL(value)
 	if errors.Is(err, naming.ErrInvalidControlPort) {
-		return "", errors.New("clientstate: server port must be between 1 and 65535")
+		return "", failure.Wrap("validate control URL port", failure.InvalidControlPort, err)
 	}
 	if err != nil {
-		return "", errors.New("clientstate: server must be an HTTPS origin")
+		return "", failure.Wrap("validate control URL", failure.InvalidControlURL, err)
 	}
 	return server, nil
 }

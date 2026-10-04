@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -231,29 +232,34 @@ func readyDomain(current teamContext, selected string) (authorityv1.Domain, erro
 	}
 	canonical, err := naming.CanonicalizeHostname(selected)
 	if err != nil || canonical != selected {
-		return authorityv1.Domain{}, errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")
+		return authorityv1.Domain{}, failure.Wrap("validate domain", failure.InvalidDomainName,
+			errors.New("domain must use lowercase ASCII DNS labels without a trailing dot"))
 	}
 	for _, domain := range current.domains {
 		if domain.CanonicalDomain == selected {
 			if domain.State != authorityv1.DomainStateReady {
-				return authorityv1.Domain{}, fmt.Errorf("domain %s is not ready", selected)
+				return authorityv1.Domain{}, failure.Wrap("select domain", failure.DomainNotReady,
+					fmt.Errorf("domain %s is not ready", selected))
 			}
 			return domain, nil
 		}
 	}
-	return authorityv1.Domain{}, fmt.Errorf("domain %s is not available to the selected team", selected)
+	return authorityv1.Domain{}, failure.Wrap("select domain", failure.DomainNotAvailable,
+		fmt.Errorf("domain %s is not available to the selected team", selected))
 }
 
 func defaultReadyDomain(current teamContext) (authorityv1.Domain, error) {
 	for _, domain := range current.domains {
 		if domain.Id == current.team.DefaultDomainId {
 			if domain.State != authorityv1.DomainStateReady {
-				return authorityv1.Domain{}, fmt.Errorf("default domain %s is not ready", domain.CanonicalDomain)
+				return authorityv1.Domain{}, failure.Wrap("select default domain", failure.DomainNotReady,
+					fmt.Errorf("default domain %s is not ready", domain.CanonicalDomain))
 			}
 			return domain, nil
 		}
 	}
-	return authorityv1.Domain{}, errors.New("selected team has no available default domain")
+	return authorityv1.Domain{}, failure.Wrap("select default domain", failure.DomainNotAvailable,
+		errors.New("selected team has no available default domain"))
 }
 
 func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (authorityv1.Domain, error) {
@@ -267,7 +273,8 @@ func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (auth
 		}
 	}
 	if selected.Id == "" {
-		return authorityv1.Domain{}, fmt.Errorf("hostname %s is outside the selected team's ready domains", hostname)
+		return authorityv1.Domain{}, failure.Wrap("select domain for hostname", failure.DomainNotAvailable,
+			fmt.Errorf("hostname %s is outside the selected team's ready domains", hostname))
 	}
 	return selected, nil
 }

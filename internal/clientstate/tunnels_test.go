@@ -3,13 +3,38 @@ package clientstate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
+
+func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("authorization token=secret-do-not-store")
+	if err := tunnel.Finish(t.Context(), failure.Wrap("request control API", failure.ServerUnavailable, cause)); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := database.db.QueryRowContext(t.Context(), "SELECT last_error FROM local_tunnels WHERE id = ?", tunnel.ID()).Scan(&stored); err != nil || stored != string(failure.ServerUnavailable) {
+		t.Fatalf("stored tunnel error = %q, %v", stored, err)
+	}
+}
 
 func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
