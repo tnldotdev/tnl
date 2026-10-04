@@ -17,6 +17,11 @@ const (
 	AdminUnavailable            Reason = "client.admin_unavailable"
 	ServiceNotConfigured        Reason = "client.service_not_configured"
 	InvalidTunnelFlags          Reason = "client.invalid_tunnel_flags"
+	DemoTargetNotAllowed        Reason = "client.demo_target_not_allowed"
+	DemoConfigNotUsed           Reason = "client.demo_config_not_used"
+	DemoURLManaged              Reason = "client.demo_url_managed"
+	DemoMustBeEphemeral         Reason = "client.demo_must_be_ephemeral"
+	DemoLocalServiceUnavailable Reason = "client.demo_local_service_unavailable"
 	InvalidStartupTimeout       Reason = "client.invalid_startup_timeout"
 	ProjectConfigMissing        Reason = "client.project_config_missing"
 	ClientStateLocked           Reason = "client.state_locked"
@@ -141,6 +146,26 @@ var definitions = map[Reason]Definition{
 	InvalidTunnelFlags: {
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
 		Action: "check --public-url, --name, --allow-ip, --allow-provider, and --request-limit", Retry: RetryAfterChange,
+	},
+	DemoTargetNotAllowed: {
+		Class: Invalid, Message: "the built-in demo starts its own local service",
+		Action: "remove the service or target argument from tnl publish --demo", Retry: RetryAfterChange,
+	},
+	DemoConfigNotUsed: {
+		Class: Invalid, Message: "the built-in demo does not use project configuration",
+		Action: "remove --config from tnl publish --demo", Retry: RetryAfterChange,
+	},
+	DemoURLManaged: {
+		Class: Invalid, Message: "the built-in demo chooses its own public URL",
+		Action: "remove --name or --public-url from tnl publish --demo", Retry: RetryAfterChange,
+	},
+	DemoMustBeEphemeral: {
+		Class: Invalid, Message: "the built-in demo needs an ephemeral public URL",
+		Action: "remove --ephemeral=false from tnl publish --demo", Retry: RetryAfterChange,
+	},
+	DemoLocalServiceUnavailable: {
+		Class: Unavailable, Message: "tnl could not start the local demo",
+		Action: "check that loopback networking is available, then retry", Retry: RetryLater,
 	},
 	InvalidStartupTimeout: {
 		Class: Invalid, Message: "startup timeout must be greater than zero and at most 10 minutes",
