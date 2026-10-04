@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -133,14 +134,16 @@ func (d *daemon) startIngressRuntime(
 	runtime.controller = controller
 	metrics.RegisterIngressRouting(controller.RoutingStatus)
 	metrics.RegisterIngressLease(func() time.Time { return controller.Lease().LeaseExpiresAt })
-	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { log.Printf("ingress usage: %v", err) })
+	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) {
+		logOperationalError("report ingress usage", failure.ServerWorkerFailed, err)
+	})
 	if err != nil {
 		return err
 	}
 	usage.SetObserver(metrics)
 	runtime.usage = usage
 	recovery, err := ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
-		log.Printf("ingress recovery: %v", err)
+		logOperationalError("report ingress recovery", failure.ServerWorkerFailed, err)
 	})
 	if err != nil {
 		return err
@@ -157,7 +160,7 @@ func (d *daemon) startIngressRuntime(
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
 		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
 		OnSessionClosed: func(relayServiceID, relayID, origin string, cause error) {
-			log.Printf("ingress pooled relay session closed relay_service_id=%s relay_id=%s origin=%s cause=%v", relayServiceID, relayID, origin, cause)
+			logOperationalError("close ingress relay session", failure.ServerConnectionFailed, cause)
 		},
 	})
 	if err != nil {
@@ -176,7 +179,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
-				log.Printf("ingress public URL %q: %v", hostname, err)
+				logOperationalError("read ingress public URL", failure.ServerIngressFailed, err)
 				return ingress.PublicURL{}, "invalid_projection"
 			}
 			return route, ""
@@ -188,7 +191,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			backends, err := forwarder.Backends(entry)
 			if err != nil {
-				log.Printf("ingress challenge public URL %q: %v", hostname, err)
+				logOperationalError("read ingress certificate challenge", failure.ServerIngressFailed, err)
 				return nil, "invalid_projection"
 			}
 			return backends, ""
@@ -202,7 +205,7 @@ func (d *daemon) startIngressRuntime(
 		Metrics:                         metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
-		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },
+		OnError:         func(err error) { logOperationalError("serve ingress connection", failure.ServerIngressFailed, err) },
 		OnForwardingFailure: func(publicURLID string, version uint64, visitorID, reason string, attempts int) {
 			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
 				publicURLID, version, visitorID, reason, attempts)

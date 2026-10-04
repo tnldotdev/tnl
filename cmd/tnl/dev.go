@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -150,7 +151,8 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 		if metadataErr != nil {
-			partialReason = "other project settings could not be resolved: " + metadataErr.Error()
+			presented := presentFailure(failure.Wrap("resolve project metadata", failure.ProjectConfigInvalid, metadataErr))
+			partialReason = presented.message + "; " + presented.action
 		}
 		if err := writeHumanFrame(stderr, "tnl dev", "partial project metadata", "selected service can still start",
 			clioutput.Text(partialReason)); err != nil {
@@ -320,7 +322,8 @@ func devMetadataPartialReason(flags devCommand, selectedServer, fallbackServer s
 	for name := range flags.project.Config.Services {
 		effective, err := flags.project.EffectiveService(name)
 		if err != nil {
-			return "another configured service could not be resolved: " + err.Error(), nil
+			presented := presentFailure(failure.Wrap("resolve configured service", failure.ProjectConfigInvalid, err))
+			return presented.message + "; " + presented.action, nil
 		}
 		if metadataServerDiffers(effective.Server, selectedServer, fallbackServer) {
 			return "another configured service uses a different server", nil
@@ -328,7 +331,8 @@ func devMetadataPartialReason(flags devCommand, selectedServer, fallbackServer s
 	}
 	root, err := flags.project.EffectiveService("")
 	if err != nil {
-		return "the project default could not be resolved: " + err.Error(), nil
+		presented := presentFailure(failure.Wrap("resolve project default", failure.ProjectConfigInvalid, err))
+		return presented.message + "; " + presented.action, nil
 	}
 	if metadataServerDiffers(root.Server, selectedServer, fallbackServer) {
 		return "the project default uses a different server", nil

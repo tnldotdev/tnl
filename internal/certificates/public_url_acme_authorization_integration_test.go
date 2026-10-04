@@ -190,9 +190,10 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					continue
 				}
 				failures++
-				if !transient || !strings.Contains(saved.LastError, transientFetchError) || saved.State != "authorizing" ||
+				if !transient || saved.LastError != "server.certificate_failed" || strings.Contains(saved.LastError, transientFetchError) || saved.State != "authorizing" ||
 					len(saved.Authorizations) != 0 || saved.OrderURL != orderURL {
-					t.Fatalf("partial or terminal discovery persisted: %#v", saved)
+					t.Fatalf("partial or terminal discovery persisted: state=%s error=%q authorizations=%d order=%q",
+						saved.State, saved.LastError, len(saved.Authorizations), saved.OrderURL)
 				}
 			}
 			if !discovered || failures != map[bool]int{false: 0, true: 1}[transient] ||

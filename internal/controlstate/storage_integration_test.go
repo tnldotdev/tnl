@@ -53,6 +53,22 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	visitorLease, err := database.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "ingress_original_key", IngressRunID: "run_original_key", ProtocolVersion: 1, ConnectionCapacity: 10,
+	}, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visitorCiphertext []byte
+	var visitorKeyID string
+	if err := database.pool.QueryRow(ctx, `SELECT visitor_network_hash_master_key_ciphertext,
+		visitor_network_hash_master_key_storage_key_id FROM control.public_url_usage_configuration`).Scan(&visitorCiphertext, &visitorKeyID); err != nil {
+		t.Fatal(err)
+	}
+	visitorKey, _, err := database.openSecret(visitorKeyID, visitorNetworkHashMasterKeyContext(), visitorCiphertext)
+	if err != nil || len(visitorKey) != 32 {
+		t.Fatalf("invalid visitor network hash key before rotation: %v", err)
+	}
 	stores := []struct {
 		table, ciphertextColumn, keyColumn string
 		plaintext                          []byte
@@ -63,6 +79,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
 		{"runtime_secret", "external_retry_master_key_ciphertext", "external_retry_master_key_storage_key_id", masterKey[:]},
+		{"public_url_usage_configuration", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()
@@ -98,7 +115,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("bounded batch left %d old-key rows, want %d: %v", count, remaining-1, err)
 		}
 	}
-	// Complete must drain the other four kinds. the earlier size-limited calls
+	// Complete must drain the other five kinds. the earlier size-limited calls
 	// must not have already done all the work.
 	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
 		t.Fatal(err)
@@ -156,5 +173,11 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	recoveredMaster, err := reopened.EnsureExternalAuthorityPrincipal(ctx, "identity_rotation", now)
 	if err != nil || recoveredMaster != masterKey {
 		t.Fatalf("recover external retry master key: %v", err)
+	}
+	recoveredVisitorLease, err := reopened.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "ingress_rotated_key", IngressRunID: "run_rotated_key", ProtocolVersion: 1, ConnectionCapacity: 10,
+	}, now, time.Minute)
+	if err != nil || recoveredVisitorLease.VisitorNetworkHashKeys != visitorLease.VisitorNetworkHashKeys {
+		t.Fatalf("recover visitor network hash keys after rotation: %v", err)
 	}
 }

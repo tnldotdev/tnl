@@ -12,6 +12,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -265,7 +266,7 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.IncCapacityRejection("publisher_connections")
 			}
 		},
-		Report: func(err error) { log.Printf("relay publisher: %v", err) },
+		Report: func(err error) { logOperationalError("serve relay publisher", failure.ServerConnectionFailed, err) },
 	})
 	if err != nil {
 		return nil, err
@@ -294,7 +295,7 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.ObserveRelayStreamRejection(reason)
 			}
 		},
-		Report: func(err error) { log.Printf("relay forwarding: %v", err) },
+		Report: func(err error) { logOperationalError("forward through relay", failure.ServerRelayFailed, err) },
 	})
 	if err != nil {
 		return nil, err
@@ -360,7 +361,7 @@ func serveTLSYamuxSessions(
 				err = accept(ctx, transport)
 			}
 			if err != nil && ctx.Err() == nil {
-				log.Printf("relay TLS/TCP session: %v", err)
+				logOperationalError("serve relay TLS/TCP session", failure.ServerConnectionFailed, err)
 			}
 		})
 	}
@@ -383,7 +384,7 @@ func serveQUICSessions(
 		}
 		active.Go(func() {
 			if err := accept(ctx, transport); err != nil && ctx.Err() == nil {
-				log.Printf("relay QUIC session: %v", err)
+				logOperationalError("serve relay QUIC session", failure.ServerConnectionFailed, err)
 			}
 		})
 	}

@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
@@ -139,7 +139,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		Process:          w.processOne,
 		OnError: func(err error) {
 			if ctx.Err() == nil {
-				w.config.Logger.Error("DNS controller iteration failed", "error", err)
+				reason := dnsFailureReason(err)
+				definition, _ := failure.DefinitionFor(reason)
+				w.config.Logger.Error("DNS controller iteration failed", "reason", reason, "action", definition.Action)
 			}
 		},
 	})
@@ -179,21 +181,31 @@ func (w *Worker) retryAvailableAt(attempts uint64, now time.Time) time.Time {
 	return now.Add(delay)
 }
 
-type terminalError struct{ message string }
+type terminalError struct {
+	message string
+	reason  failure.Reason
+}
 
 func (e *terminalError) Error() string { return e.message }
 
-func (e *terminalError) Terminal() bool { return true }
+func (e *terminalError) Terminal() bool                { return true }
+func (e *terminalError) FailureReason() failure.Reason { return e.reason }
 
 func terminalf(format string, arguments ...any) error {
-	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...)}
+	return terminalReasonf(failure.ServerDNSConflict, format, arguments...)
 }
 
-func truncateError(err error) string {
-	value := err.Error()
-	limit := min(len(value), 1024)
-	for !utf8.ValidString(value[:limit]) {
-		limit--
+func terminalReasonf(reason failure.Reason, format string, arguments ...any) error {
+	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...), reason: reason}
+}
+
+func storedFailureReason(err error) string {
+	return string(dnsFailureReason(err))
+}
+
+func dnsFailureReason(err error) failure.Reason {
+	if reason, ok := failure.ReasonOf(err); ok {
+		return reason
 	}
-	return value[:limit]
+	return failure.ServerDNSFailed
 }

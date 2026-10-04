@@ -97,7 +97,7 @@ func (d *Database) RegisterIngress(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage configuration: %w", err)
 	}
@@ -154,7 +154,7 @@ func (d *Database) RenewIngress(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage configuration: %w", err)
 	}
@@ -202,7 +202,7 @@ func (d *Database) BeginIngressDrain(
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage run: %w", err)
 	}
-	visitorNetworkHashMasterKey, err := ensurePublicURLUsageConfiguration(ctx, queries, now)
+	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage configuration: %w", err)
 	}
@@ -212,7 +212,7 @@ func (d *Database) BeginIngressDrain(
 	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
 }
 
-func ensurePublicURLUsageConfiguration(
+func (d *Database) ensurePublicURLUsageConfiguration(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	createdAt time.Time,
@@ -221,16 +221,25 @@ func ensurePublicURLUsageConfiguration(
 	if _, err := rand.Read(candidate[:]); err != nil {
 		return [32]byte{}, err
 	}
+	ciphertext, err := d.sealSecret(visitorNetworkHashMasterKeyContext(), candidate[:])
+	if err != nil {
+		return [32]byte{}, err
+	}
 	configuration, err := queries.EnsurePublicURLUsageConfiguration(ctx, controlstatedb.EnsurePublicURLUsageConfigurationParams{
-		VisitorNetworkHashMasterKey: candidate[:], CreatedAt: timestamptz(createdAt),
+		VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: d.storageKey.CurrentID(),
+		CreatedAt: timestamptz(createdAt),
 	})
 	if err != nil {
 		return [32]byte{}, err
 	}
-	if len(configuration.VisitorNetworkHashMasterKey) != len(candidate) {
+	key, _, err := d.openSecret(
+		configuration.VisitorNetworkHashMasterKeyStorageKeyID,
+		visitorNetworkHashMasterKeyContext(), configuration.VisitorNetworkHashMasterKeyCiphertext,
+	)
+	if err != nil || len(key) != len(candidate) {
 		return [32]byte{}, errors.New("controlstate: invalid visitor network hash key")
 	}
-	return [32]byte(configuration.VisitorNetworkHashMasterKey), nil
+	return [32]byte(key), nil
 }
 
 func visitorNetworkHashKeys(masterKey [32]byte, now time.Time) [2]VisitorNetworkHashKey {

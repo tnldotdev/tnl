@@ -3,12 +3,12 @@ package authorityapi
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -30,7 +30,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, authorityv1.Conflict, "authority state conflict")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		log.Printf("%s request_id=%s: %v", operation, requestID, err)
+		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 
@@ -49,21 +49,7 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) string {
-	requestID := newRequestID()
-	details := map[string]any{}
-	httpjson.WriteProblem(response, status, authorityv1.Problem{
-		Type: problemtype.URL(string(code)), Title: title,
-		Status: status, Code: code, RequestId: requestID, Details: &details,
-	})
-	return requestID
-}
-
-func newRequestID() string {
-	requestID, err := opaqueid.New(opaqueid.RequestPrefix)
-	if err != nil {
-		return "request_unavailable"
-	}
-	return requestID
+	return problemtype.Write(response, status, string(code), title, title)
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

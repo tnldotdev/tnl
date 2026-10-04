@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/workerloop"
@@ -128,7 +129,8 @@ func (w *Worker) Run(ctx context.Context) error {
 		Process:          w.process,
 		OnError: func(err error) {
 			if ctx.Err() == nil {
-				w.config.Logger.Error("public URL usage worker iteration failed", "error", err)
+				definition, _ := failure.DefinitionFor(failure.ServerUsageDeliveryFailed)
+				w.config.Logger.Error("public URL usage worker iteration failed", "reason", failure.ServerUsageDeliveryFailed, "action", definition.Action)
 			}
 		},
 	})
@@ -170,7 +172,7 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 			middle := len(work) / 2
 			return errors.Join(w.deliver(ctx, work[:middle]), w.deliver(ctx, work[middle:]))
 		}
-		rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, work[0], err.Error(), completedAt)
+		rejectErr := w.store.RejectPublicURLUsageDelivery(ctx, work[0], string(failure.ServerUsageDeliveryFailed), completedAt)
 		w.observeWork("reject", rejectErr)
 		if rejectErr == nil {
 			w.addItems("rejected", 1)
@@ -179,7 +181,7 @@ func (w *Worker) deliver(ctx context.Context, work []controlstate.PublicURLUsage
 	}
 	if err != nil {
 		// a transport or response failure leaves every item eligible for retry.
-		return errors.Join(err, w.retry(ctx, work, completedAt, err.Error()))
+		return errors.Join(err, w.retry(ctx, work, completedAt, string(failure.ServerUsageDeliveryFailed)))
 	}
 	var result error
 	for index, item := range work {
