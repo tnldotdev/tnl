@@ -186,14 +186,23 @@ func (c Config) Validate() (retErr error) {
 	if c.Role != RoleRelay && c.Role != RoleStandalone && (c.RelayTLSCertificateFile != "" || c.RelayTLSPrivateKeyFile != "") {
 		return errors.New("relay TLS overrides are valid only for relay and standalone roles")
 	}
-	for _, listener := range []struct{ name, address string }{
-		{"metrics", c.MetricsListen}, {"control", c.ControlListen}, {"private control", c.PrivateControlListen},
-		{"ingress", c.IngressListen}, {"relay TCP", c.RelayTCPListen},
-		{"relay UDP", c.RelayUDPListen}, {"internal relay", c.InternalRelayListen},
-		{"DNS server", c.DNSServer},
+	for _, listener := range []struct {
+		name    string
+		setting failure.Setting
+		address string
+	}{
+		{"metrics", failure.SettingMetricsListen, c.MetricsListen},
+		{"control", failure.SettingControlListen, c.ControlListen},
+		{"private control", failure.SettingPrivateControlListen, c.PrivateControlListen},
+		{"ingress", failure.SettingIngressListen, c.IngressListen},
+		{"relay TCP", failure.SettingRelayTCPListen, c.RelayTCPListen},
+		{"relay UDP", failure.SettingRelayUDPListen, c.RelayUDPListen},
+		{"internal relay", failure.SettingInternalRelayListen, c.InternalRelayListen},
+		{"DNS server", failure.SettingDNSServer, c.DNSServer},
 	} {
 		if err := validateListenAddress(listener.address); err != nil {
-			return fmt.Errorf("%s listen address: %w", listener.name, err)
+			return failure.WrapSetting(failure.Operation("validate "+listener.name+" listen address"),
+				failure.ServerListenAddressInvalid, listener.setting, err)
 		}
 	}
 	if c.ClientHelloConnectionLimit <= 0 || c.ChallengeConnectionLimit <= 0 || c.ChallengeHostnameConnectionLimit <= 0 ||
@@ -219,10 +228,15 @@ func (c Config) Validate() (retErr error) {
 
 func (c Config) validateControl() error {
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
-		return failure.Wrap("validate pooled database URL", failure.ServerDatabaseURLInvalid, err)
+		return failure.WrapSetting("validate pooled database URL", failure.ServerDatabaseURLInvalid, failure.SettingDatabaseURL, err)
 	}
-	if c.ControlListen == "" || c.PrivateControlListen == "" {
-		return errors.New("control and private control listen addresses are required")
+	if c.ControlListen == "" {
+		return failure.WrapSetting("validate control listen address", failure.ServerListenAddressInvalid,
+			failure.SettingControlListen, errors.New("control listen address is required"))
+	}
+	if c.PrivateControlListen == "" {
+		return failure.WrapSetting("validate private control listen address", failure.ServerListenAddressInvalid,
+			failure.SettingPrivateControlListen, errors.New("private control listen address is required"))
 	}
 	if err := validateCanonicalHostname(c.ServerDomain, "server domain"); err != nil {
 		return err
@@ -243,11 +257,11 @@ func (c Config) validateControl() error {
 	}
 	if c.AuthorityEndpoint == "" {
 		if c.LoginToken == "" {
-			return failure.Wrap("validate built-in authority login token", failure.ServerLoginTokenInvalid,
+			return failure.WrapSetting("validate built-in authority login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken,
 				errors.New("login token is required for the built-in authority"))
 		}
 		if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
-			return failure.Wrap("validate built-in authority login token", failure.ServerLoginTokenInvalid, err)
+			return failure.WrapSetting("validate built-in authority login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken, err)
 		}
 	} else if c.LoginToken != "" {
 		return errors.New("login token cannot be configured with an external authority")
@@ -259,7 +273,7 @@ func (c Config) validateControl() error {
 		return err
 	}
 	if _, err := storagekey.New(c.StorageKey, c.StorageKeyPrevious); err != nil {
-		return failure.Wrap("validate storage key", failure.ServerStorageKeyInvalid, err)
+		return failure.WrapSetting("validate storage key", failure.ServerStorageKeyInvalid, failure.SettingStorageKey, err)
 	}
 	if err := c.validateACME(); err != nil {
 		return err

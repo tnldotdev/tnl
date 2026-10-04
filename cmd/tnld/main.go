@@ -37,9 +37,13 @@ func writeTerminalError(output io.Writer, err error) {
 		typed, _ = failure.Of(err)
 	}
 	_, definition, _ := failure.Describe(err)
+	operation := string(typed.Operation())
+	if setting := typed.Setting(); setting != "" {
+		operation += " " + string(setting)
+	}
 	var text strings.Builder
 	lineBreak := false
-	for _, character := range fmt.Sprintf("%s: %s; %s", typed.Operation(), definition.Message, definition.Action) {
+	for _, character := range fmt.Sprintf("%s: %s; %s", operation, definition.Message, definition.Action) {
 		if character == '\r' || character == '\n' {
 			lineBreak = true
 			continue
@@ -84,7 +88,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 		reason = failure.ServerMigrationFailed
 		directURL := os.Getenv("TNLD_DATABASE_DIRECT_URL")
 		if directURL == "" {
-			return failure.Wrap(operation, failure.DirectDatabaseURLMissing, errors.New("TNLD_DATABASE_DIRECT_URL is required"))
+			return failure.WrapSetting(operation, failure.DirectDatabaseURLMissing, failure.SettingDatabaseDirectURL,
+				errors.New("TNLD_DATABASE_DIRECT_URL is required"))
 		}
 		return controlstate.Migrate(ctx, directURL)
 	case "login-token":
