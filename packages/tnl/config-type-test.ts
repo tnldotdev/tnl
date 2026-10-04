@@ -27,6 +27,18 @@ services.arbitraryService.directory satisfies string | undefined;
 const service = services.arbitraryService;
 if (service) service.directory satisfies string | undefined;
 
+const projectScopedSettings = {
+  server: "https://control.example",
+  team: "studio",
+  services: {
+    web: { dev: { port: 4173 } },
+  },
+} satisfies TnlConfig;
+// @ts-expect-error server belongs to the project, not a service.
+({ server: "https://control.example" }) satisfies NonNullable<TnlConfig["services"]>[string];
+// @ts-expect-error team belongs to the project, not a service.
+({ team: "studio" }) satisfies NonNullable<TnlConfig["services"]>[string];
+
 const literalConfig = defineConfig({
   dev: { port: 4173 },
   tunnel: { name: "api" },
@@ -43,4 +55,4 @@ defineConfig({ version: 1 });
 // @ts-expect-error server configuration is static-only.
 defineConfig({ tnld: { role: "relay" } });
 
-export { dynamicConfig, exactConfig, literalConfig, staticConfig };
+export { dynamicConfig, exactConfig, literalConfig, projectScopedSettings, staticConfig };

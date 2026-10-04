@@ -28,7 +28,6 @@ tnl:
     startup_timeout: 30s
   services:
     web:
-      team: Web Team
       tunnel:
         name: web
         allow_all_ips: true
@@ -50,7 +49,7 @@ tnl:
 		t.Fatal(err)
 	}
 	if effective.Server == nil || *effective.Server != "https://root.example" ||
-		effective.Team == nil || *effective.Team != "Web Team" ||
+		effective.Team == nil || *effective.Team != "Root Team" ||
 		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "web" ||
 		effective.Tunnel.Domain == nil || *effective.Tunnel.Domain != "routes.example.test" ||
 		effective.Tunnel.Open == nil || !*effective.Tunnel.Open ||

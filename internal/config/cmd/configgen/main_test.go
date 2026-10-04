@@ -8,7 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestSchemaSourceIncludesServicesTeamAndEphemeral(t *testing.T) {
+func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	reflector := &jsonschema.Reflector{
 		Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true,
 		Mapper: schemaForType,
@@ -18,7 +18,7 @@ func TestSchemaSourceIncludesServicesTeamAndEphemeral(t *testing.T) {
 	if tnl == nil {
 		t.Fatal("TNL definition is missing")
 	}
-	for _, property := range []string{"team", "services"} {
+	for _, property := range []string{"server", "team", "services"} {
 		if _, found := tnl.Properties.Get(property); !found {
 			t.Fatalf("TNL property %q is missing", property)
 		}
@@ -31,6 +31,11 @@ func TestSchemaSourceIncludesServicesTeamAndEphemeral(t *testing.T) {
 	serviceSchema := services.AdditionalProperties
 	if _, found := serviceSchema.Properties.Get("directory"); !found {
 		t.Fatal("service directory property is missing")
+	}
+	for _, property := range []string{"server", "team"} {
+		if _, found := serviceSchema.Properties.Get(property); found {
+			t.Fatalf("service %s property must be project-wide", property)
+		}
 	}
 	tunnel := schemaForType(reflect.TypeOf(config.Tunnel{}))
 	if _, found := tunnel.Properties.Get("ephemeral"); !found {
