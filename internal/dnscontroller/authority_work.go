@@ -103,7 +103,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 }
 
 func (w *Worker) applyAuthorityFailure(work *controlstate.DNSAuthorityWork, operationErr error, now time.Time) {
-	work.LastError = truncateError(operationErr)
+	work.LastError = storedFailureReason(operationErr)
 	work.AvailableAt = w.retryAvailableAt(work.Attempts, now)
 	var terminal *terminalError
 	if errors.As(operationErr, &terminal) {

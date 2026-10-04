@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"errors"
-	"log"
 	"math"
 	"net/http"
 	"slices"
@@ -15,6 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -319,7 +320,7 @@ func (h *handler) authorizeMutation(
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		log.Printf("authorize public URL mutation request_id=%s: %v", requestID, err)
+		operatorlog.Report("authorize public URL mutation", failure.ServerAPIInternal, requestID, err)
 	default:
 		return decision, true
 	}
@@ -360,7 +361,7 @@ func (h *handler) authorizeRouteReads(
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 	case err != nil:
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		log.Printf("authorize public URL reads request_id=%s: %v", requestID, err)
+		operatorlog.Report("authorize public URL reads", failure.ServerAPIInternal, requestID, err)
 	default:
 		return principal, true
 	}

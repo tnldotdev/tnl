@@ -662,10 +662,28 @@ components:
           type: number
           format: double
           minimum: 0
+    ProblemCode:
+      type: string
+      enum:
+        - invalid_request
+        - invalid_json
+        - unsupported_media_type
+        - unauthenticated
+        - not_found
+        - internal
+        - ingress_already_running
+        - ingress_lease_stale
+        - recovery_episode_stale
+        - invalid_usage_report
+        - usage_route_not_found
+        - stale_usage_report
+        - usage_report_conflict
+        - usage_bucket_finalized
+        - routing_table_resnapshot_required
     Problem:
       type: object
       additionalProperties: false
-      required: [type, title, status, detail]
+      required: [type, title, status, code, detail, request_id]
       properties:
         type:
           type: string
@@ -676,5 +694,17 @@ components:
           type: integer
           minimum: 400
           maximum: 599
+        code:
+          $ref: "#/components/schemas/ProblemCode"
         detail:
           type: string
+          minLength: 1
+        request_id:
+          type: string
+          minLength: 1
+        retry_at:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true

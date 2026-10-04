@@ -2,9 +2,9 @@ package tnldruntime
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -20,7 +20,7 @@ func runExpiredPublishRunCleanup(ctx context.Context, store expiredPublishRunSto
 	return runBatchCleanup(ctx, expiredPublishRunCleanupInterval, store.ExpireSavedPublishRuns, func(closed int, err error) {
 		metrics.ObserveCleanup("expired_publish_runs", closed, false, err)
 		if err != nil && ctx.Err() == nil {
-			log.Printf("expired publish run cleanup: %v", err)
+			logOperationalError("expire publish runs", failure.ServerWorkerFailed, err)
 		}
 	})
 }

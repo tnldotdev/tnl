@@ -2,11 +2,12 @@ package controlapi
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -29,8 +30,8 @@ func (h *handler) RevokeHostedPolicy(response http.ResponseWriter, request *http
 		return
 	}
 	if err != nil {
-		log.Printf("apply hosted policy revocation: %v", err)
-		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+		operatorlog.Report("apply hosted policy revocation", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

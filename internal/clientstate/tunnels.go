@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -234,9 +235,9 @@ func (t *Tunnel) Finish(ctx context.Context, runErr error) error {
 		<-t.done
 		state, message := TunnelStateStopped, ""
 		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			state, message = TunnelStateFailed, runErr.Error()
-			if len(message) > 1024 {
-				message = message[:1024]
+			state, message = TunnelStateFailed, string(failure.Unexpected)
+			if reason, _, ok := failure.Describe(runErr); ok {
+				message = string(reason)
 			}
 		}
 		now := t.database.now().UTC().UnixNano()

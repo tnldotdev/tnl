@@ -41,6 +41,63 @@ func (e ClaimedPublisherConnectionState) Valid() bool {
 	}
 }
 
+// Defines values for ProblemCode.
+const (
+	CertificateUnavailable               ProblemCode = "certificate_unavailable"
+	Internal                             ProblemCode = "internal"
+	InvalidJson                          ProblemCode = "invalid_json"
+	InvalidPublisherConnectionCredential ProblemCode = "invalid_publisher_connection_credential"
+	InvalidRequest                       ProblemCode = "invalid_request"
+	NotFound                             ProblemCode = "not_found"
+	PublisherConnectionAlreadyClaimed    ProblemCode = "publisher_connection_already_claimed"
+	PublisherConnectionUnavailable       ProblemCode = "publisher_connection_unavailable"
+	RelayConnectionCapacityExhausted     ProblemCode = "relay_connection_capacity_exhausted"
+	RelayDraining                        ProblemCode = "relay_draining"
+	RelayLeaseStale                      ProblemCode = "relay_lease_stale"
+	RelayRegistrationConflict            ProblemCode = "relay_registration_conflict"
+	StaleConnectionAssignment            ProblemCode = "stale_connection_assignment"
+	Unauthenticated                      ProblemCode = "unauthenticated"
+	UnsupportedMediaType                 ProblemCode = "unsupported_media_type"
+)
+
+// Valid indicates whether the value is a known member of the ProblemCode enum.
+func (e ProblemCode) Valid() bool {
+	switch e {
+	case CertificateUnavailable:
+		return true
+	case Internal:
+		return true
+	case InvalidJson:
+		return true
+	case InvalidPublisherConnectionCredential:
+		return true
+	case InvalidRequest:
+		return true
+	case NotFound:
+		return true
+	case PublisherConnectionAlreadyClaimed:
+		return true
+	case PublisherConnectionUnavailable:
+		return true
+	case RelayConnectionCapacityExhausted:
+		return true
+	case RelayDraining:
+		return true
+	case RelayLeaseStale:
+		return true
+	case RelayRegistrationConflict:
+		return true
+	case StaleConnectionAssignment:
+		return true
+	case Unauthenticated:
+		return true
+	case UnsupportedMediaType:
+		return true
+	default:
+		return false
+	}
+}
+
 // ClaimedPublisherConnection defines model for ClaimedPublisherConnection.
 type ClaimedPublisherConnection struct {
 	ClaimId                                Identifier                      `json:"claim_id"`
@@ -70,11 +127,18 @@ type Identifier = string
 
 // Problem defines model for Problem.
 type Problem struct {
-	Detail string `json:"detail"`
-	Status int    `json:"status"`
-	Title  string `json:"title"`
-	Type   string `json:"type"`
+	Code      ProblemCode             `json:"code"`
+	Detail    string                  `json:"detail"`
+	Details   *map[string]interface{} `json:"details,omitempty"`
+	RequestId string                  `json:"request_id"`
+	RetryAt   *time.Time              `json:"retry_at,omitempty"`
+	Status    int                     `json:"status"`
+	Title     string                  `json:"title"`
+	Type      string                  `json:"type"`
 }
+
+// ProblemCode defines model for ProblemCode.
+type ProblemCode string
 
 // PublisherConnectionClaim defines model for PublisherConnectionClaim.
 type PublisherConnectionClaim struct {

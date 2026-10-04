@@ -3,11 +3,12 @@ package ingressapi
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -31,7 +32,7 @@ func newService(config DirectConfig) (*service, error) {
 		config.Now = time.Now
 	}
 	if config.Report == nil {
-		config.Report = func(err error) { log.Printf("ingress service: %v", err) }
+		config.Report = func(err error) { operatorlog.Report("serve ingress API", failure.ServerAPIInternal, "", err) }
 	}
 	return &service{
 		store: config.Store, leaseDuration: config.LeaseDuration,

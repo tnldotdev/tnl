@@ -11,6 +11,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/ingressapi"
 	"github.com/tnldotdev/tnl/internal/muxsession"
@@ -149,7 +150,9 @@ func (d *daemon) startStandalone(
 		ReadyConnectionsDelta: func(delta int) { metrics.AddReadyPublisherConnections(delta) },
 		ConnectionExited:      func(unexpected bool) { metrics.ObservePublisherExit(unexpected) },
 		CapacityRejected:      func() { metrics.IncCapacityRejection("publisher_connections") },
-		Report:                func(err error) { log.Printf("relay publisher: %v", err) },
+		Report: func(err error) {
+			logOperationalError("serve standalone relay publisher", failure.ServerConnectionFailed, err)
+		},
 	})
 	if err != nil {
 		return err
