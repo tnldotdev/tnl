@@ -124,6 +124,7 @@ type handler struct {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
+		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
 		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
 		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 	}
@@ -148,6 +149,7 @@ func NewHandler(
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
+		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
 		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
 		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 	}); ok {

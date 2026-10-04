@@ -26,6 +26,7 @@ const (
 	ProjectConfigMissing        Reason = "client.project_config_missing"
 	ClientStateLocked           Reason = "client.state_locked"
 	ClientStateUnavailable      Reason = "client.state_unavailable"
+	GuestSessionInvalid         Reason = "client.guest_session_invalid"
 	CurrentDirectoryUnavailable Reason = "client.current_directory_unavailable"
 	TeamNotFound                Reason = "client.team_not_found"
 	TeamSelectionAmbiguous      Reason = "client.team_selection_ambiguous"
@@ -50,6 +51,7 @@ const (
 	GuestTrialExhausted         Reason = "client.guest_trial_exhausted"
 	GuestDemoOnly               Reason = "client.guest_demo_only"
 	GuestIssuanceLimited        Reason = "client.guest_issuance_limited"
+	GuestIPChanged              Reason = "client.guest_ip_changed"
 	ServerResponseInvalid       Reason = "client.server_response_invalid"
 	ServerRequestInvalid        Reason = "client.server_request_invalid"
 	DNSPending                  Reason = "client.dns_pending"
@@ -182,6 +184,10 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "tnl could not use the client state",
 		Action: "check the state directory and its permissions, then retry", Retry: RetryAfterChange,
 	},
+	GuestSessionInvalid: {
+		Class: Invalid, Message: "the saved guest demo state is invalid",
+		Action: "run tnl login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
+	},
 	CurrentDirectoryUnavailable: {
 		Class: Unavailable, Message: "tnl could not read the working directory",
 		Action: "move to an accessible project directory and retry", Retry: RetryAfterChange,
@@ -277,6 +283,10 @@ var definitions = map[Reason]Definition{
 	GuestIssuanceLimited: {
 		Class: RateLimited, Message: "guest demo creation is limited on this network",
 		Action: "wait an hour or run tnl login to continue", Retry: RetryLater,
+	},
+	GuestIPChanged: {
+		Class: Forbidden, Message: "your IP changed since this guest demo started",
+		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
 	},
 	ServerResponseInvalid: {
 		Class: Internal, Message: "the server sent a response tnl could not use",

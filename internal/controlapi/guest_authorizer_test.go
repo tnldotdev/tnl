@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -28,6 +27,10 @@ func (s guestStoreStub) GuestOwnsPublicURL(context.Context, string, string) (boo
 	return s.owned, nil
 }
 
+func (s guestStoreStub) GuestSourceMatches(_ controlstate.GuestTrial, prefix string) (bool, error) {
+	return prefix == "192.0.2.7/32", nil
+}
+
 func (s guestStoreStub) EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error) {
 	return [32]byte{1}, nil
 }
@@ -44,9 +47,9 @@ func (guestFallback) Authorize(context.Context, authorization.Request) (authoriz
 
 func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	guest := controlstate.GuestTrial{
-		ID: "guest_1", TeamID: "tm_1", MembershipID: "mem_1", DomainID: "dom_1",
+		ID: "gst_1", TeamID: "tm_1", MembershipID: "mem_1", DomainID: "dom_1",
 		NamespaceLabel: "guest-01234567", DNSAuthorityReference: "da_1",
-		SourceIP: netip.MustParseAddr("192.0.2.7"), LastDemoNumber: 1,
+		LastDemoNumber: 1,
 	}
 	authorizer := guestAuthorizer{
 		fallback: guestFallback{}, store: guestStoreStub{guest: guest, owned: true},
@@ -62,6 +65,11 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	decision, err := authorizer.Authorize(t.Context(), create)
 	if err != nil || decision.GuestID != guest.ID || decision.PublicURLMembershipID != guest.MembershipID {
 		t.Fatalf("guest create decision = %+v, error = %v", decision, err)
+	}
+	changedIP := create
+	changedIP.AllowedIPPrefixes = []string{"192.0.2.8/32"}
+	if _, err := authorizer.Authorize(t.Context(), changedIP); !errors.Is(err, authorization.ErrGuestIPChanged) {
+		t.Fatalf("guest changed visitor IP: %v", err)
 	}
 	for _, invalid := range []authorization.Request{
 		func() authorization.Request { r := create; r.AllowedIPPrefixes = []string{}; return r }(),
