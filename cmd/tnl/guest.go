@@ -46,7 +46,7 @@ func guestForDemoWithControl(
 		return nil, err
 	}
 	discovery, err := control.Discovery(ctx)
-	if err != nil || !discovery.GuestDemoEnabled {
+	if err != nil || !discovery.GuestDemo {
 		return nil, err
 	}
 	if flags.Team != "" || flags.Domain != "" || flags.AllowAllIPs || len(flags.AllowIP) != 0 ||

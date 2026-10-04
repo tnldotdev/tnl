@@ -17,7 +17,7 @@ type guestDemoControlStub struct {
 }
 
 func (c *guestDemoControlStub) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
-	return controlv1.ControlDiscovery{GuestDemoEnabled: true}, nil
+	return controlv1.ControlDiscovery{GuestDemo: true}, nil
 }
 
 func (c *guestDemoControlStub) CreateGuestDemo(context.Context) (controlv1.GuestDemoSession, error) {
