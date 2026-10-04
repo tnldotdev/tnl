@@ -1,7 +1,7 @@
 {
   "name": "@tnldotdev/tnl",
   "version": "0.0.0-development",
-  "description": "public urls for every worktree.",
+  "description": "public urls for collaborative dev.",
   "keywords": [
     "git-worktree",
     "local-development",
