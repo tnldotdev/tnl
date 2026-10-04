@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
@@ -183,9 +184,9 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failure := errors.New("publisher failed")
-	result := output.finish(t.Context(), failure)
-	if !errors.Is(result, failure) {
+	cause := errors.New("publisher failed")
+	result := output.finish(t.Context(), failure.Wrap("connect publisher", failure.TransportUnavailable, cause))
+	if !errors.Is(result, cause) {
 		t.Fatalf("finish error = %v", result)
 	}
 	if code, render := terminalResult(result); code != 1 || render != nil {
@@ -196,7 +197,7 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	if err := decoder.Decode(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Type != "error" || event.Message != failure.Error() {
+	if event.Type != "error" || event.Message != "a publisher connection could not be established" || event.Reason != string(failure.TransportUnavailable) {
 		t.Fatalf("event = %#v", event)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -226,6 +227,27 @@ func TestRunPublishNDJSONFailureHasSingleOwner(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestNDJSONErrorMessageUsesTypedFailure(t *testing.T) {
+	var stdout bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("clientstate: saved state is unavailable")
+	if err := output.failed(failure.Wrap("open client state", failure.ClientStateUnavailable, cause)); err != nil {
+		t.Fatal(err)
+	}
+	var event publishEvent
+	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Message != "tnl could not use the client state" || event.Reason != string(failure.ClientStateUnavailable) ||
+		cause.Error() != "clientstate: saved state is unavailable" ||
+		event.SchemaVersion != 1 || event.Type != publishEventError {
+		t.Fatalf("event = %+v; original cause = %v", event, cause)
 	}
 }
 
@@ -432,7 +454,7 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 		t.Fatalf("open count = %d", openCount)
 	}
 	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- browser not opened ") ||
-		!strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
+		!strings.Contains(got, "open the printed public URL manually") || strings.Contains(got, "browser") && strings.Contains(got, "unavailable") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 	var first, second publishEvent
@@ -466,7 +488,7 @@ func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
 	if strings.Count(got, "+--[ tnl dev ]-- ") != 2 ||
 		!strings.Contains(got, "]-- ready ") || !strings.Contains(got, "]-- browser not opened ") ||
 		!strings.Contains(got, "+\n\n+--[ tnl dev ]-- browser not opened ") ||
-		!strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
+		!strings.Contains(got, "open the printed public URL manually") || strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -480,7 +502,7 @@ func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
 	output.logf("connection %s", "lost")
 	got := stderr.String()
 	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
-		!strings.Contains(got, "connection lost") || !strings.Contains(got, "+-- reconnecting ") {
+		!strings.Contains(got, "a publisher connection could not be established") || !strings.Contains(got, "+-- reconnecting ") {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -494,7 +516,7 @@ func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
 	output.logf("connection %s", "lost\x1b")
 	got := stderr.String()
 	if !strings.HasPrefix(got, "+--[ tnl dev ]-- publisher connection disrupted ") ||
-		!strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
+		!strings.Contains(got, "a publisher connection could not be established") || strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -566,7 +588,7 @@ func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 	for index, fields := range []map[string]any{
 		{"type": "starting", "target": "http://127.0.0.1:3000"},
 		{"type": "ready", "url": "https://demo.example", "publish_run_number": float64(7)},
-		{"type": "error", "message": diagnostic.Summary(diagnostic.TargetUnavailable), "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
+		{"type": "error", "message": diagnostic.Summary(diagnostic.TargetUnavailable), "reason": string(diagnostic.TargetUnavailable), "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
 		{"type": "stopped", "reason": "canceled"},
 	} {
 		var wire map[string]any
@@ -591,8 +613,8 @@ func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 
 func TestBoundedOutputError(t *testing.T) {
 	message := boundedOutputError(errors.New(strings.Repeat("x", 2048)))
-	if len(message) != 1024 {
-		t.Fatalf("message length = %d", len(message))
+	if message != "the operation failed unexpectedly" {
+		t.Fatalf("raw cause reached machine output: %q", message)
 	}
 }
 

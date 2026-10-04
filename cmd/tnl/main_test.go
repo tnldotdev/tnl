@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -276,6 +277,11 @@ func TestParseLoginInput(t *testing.T) {
 	if err != nil || parsed != token {
 		t.Fatalf("token = %q, error = %v", parsed, err)
 	}
+	if _, err := parseLoginInput([]byte("invalid-token")); err == nil {
+		t.Fatal("invalid login token was accepted")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.LoginTokenInvalid {
+		t.Fatalf("invalid login token reason = %q, %v", reason, err)
+	}
 }
 
 func TestAuthenticationBrowserOpenerRequiresTTY(t *testing.T) {
@@ -311,11 +317,12 @@ func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
 
 func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 	for _, test := range []struct {
-		command string
-		wantErr string
+		command    string
+		wantErr    string
+		wantReason failure.Reason
 	}{
-		{command: "dev", wantErr: "clientstate: server must be an HTTPS origin"},
-		{command: "publish", wantErr: "local target is required as an argument or publish.target in project configuration"},
+		{command: "dev", wantErr: "validate control URL", wantReason: failure.InvalidControlURL},
+		{command: "publish", wantErr: "local target is required as an argument or publish.target in project configuration", wantReason: failure.MissingTarget},
 	} {
 		t.Run(test.command, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -324,6 +331,9 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 			err := run(t.Context(), args, &stdout, &stderr)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("run error = %v, want %q", err, test.wantErr)
+			}
+			if reason, _, ok := failure.Describe(err); !ok || reason != test.wantReason {
+				t.Fatalf("run failure reason = %q, %t, want %q", reason, ok, test.wantReason)
 			}
 			var parseError *kong.ParseError
 			if errors.As(err, &parseError) {
@@ -337,7 +347,25 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 			if got := stderr.String(); !strings.HasPrefix(got, "+--[ "+wantCommand+" ]-- command failed ") {
 				t.Fatalf("error output = %q", got)
 			}
+			if strings.Contains(stderr.String(), "clientstate: ") ||
+				(test.command == "dev" && !strings.Contains(stderr.String(), "server must be an HTTPS origin")) {
+				t.Fatalf("CLI exposed an internal error prefix: %q", stderr.String())
+			}
 		})
+	}
+}
+
+func TestCLIErrorPresentationUsesTypedCopyWithoutChangingCause(t *testing.T) {
+	cause := errors.New("clientstate: saved state is unavailable")
+	state := failure.Wrap("open client state", failure.ClientStateUnavailable, cause)
+	classified := diagnostic.WrapMessage(diagnostic.TargetInvalid, "check the target port", state)
+	for _, err := range []error{state, classified} {
+		var output bytes.Buffer
+		writeCommandError(&output, clioutput.WrapCommand("tnl publish", err))
+		if strings.Contains(output.String(), "clientstate: ") ||
+			!errors.Is(err, cause) {
+			t.Fatalf("CLI error = %q, cause = %v", output.String(), err)
+		}
 	}
 }
 
@@ -404,7 +432,7 @@ func TestDevRejectsExplicitZeroPortAndStartupTimeout(t *testing.T) {
 
 func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	var output bytes.Buffer
-	writeCommandError(&output, clioutput.WrapCommand("tnl team use", errors.New("team not found")))
+	writeCommandError(&output, clioutput.WrapCommand("tnl team use", failure.Wrap("select team", failure.TeamNotFound, errors.New("team not found"))))
 	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
 		!strings.Contains(got, "team not found") || !strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("error output = %q", got)

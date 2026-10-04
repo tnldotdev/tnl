@@ -78,7 +78,7 @@ func (b *devBootstrap) handleConfiguration(response http.ResponseWriter, request
 		configurationErr := b.configurationErr
 		b.mu.Unlock()
 		if configurationErr != nil {
-			http.Error(response, configurationErr.Error(), http.StatusInternalServerError)
+			http.Error(response, presentFailure(configurationErr).message, http.StatusInternalServerError)
 			return
 		}
 		response.Header().Set("Content-Type", "application/json")

@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -116,7 +117,8 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 	retryable := true
 	return o.emitLocked(publishEvent{
 		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
-		Code: string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
+		Reason: string(diagnostic.ProvisioningStalled),
+		Code:   string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
 		Retryable: &retryable, PublishRunNumber: publishRunNumber,
 	})
 }
@@ -130,7 +132,8 @@ func (o *publishOutput) targetUnavailable() error {
 	retryable := false
 	return o.emitLocked(publishEvent{
 		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.TargetUnavailable),
-		Code: string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
+		Reason: string(diagnostic.TargetUnavailable),
+		Code:   string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
 		Retryable: &retryable,
 	})
 }
@@ -150,8 +153,10 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 		)
 	}
 	retryable := false
+	definition, _ := failure.DefinitionFor(failure.TransportFallback)
 	return o.emitLocked(publishEvent{
-		Type: publishEventWarning, Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP.",
+		Type: publishEventWarning, Message: definition.Message,
+		Reason:    string(failure.TransportFallback),
 		Retryable: &retryable, PublishRunNumber: publishRunNumber, Transport: transport,
 	})
 }
@@ -240,10 +245,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				return err
 			}
 			if openErr != nil {
+				presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, openErr))
 				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 					clioutput.Fields(
 						clioutput.Field{Label: "URL", Value: url},
-						clioutput.Field{Label: "reason", Value: openErr.Error()},
+						clioutput.Field{Label: "reason", Value: presented.message},
+						clioutput.Field{Label: "next step", Value: presented.action},
 					),
 				)
 			}
@@ -254,10 +261,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	if o.mode != publishOutputHuman && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openPublicURL(url); err != nil {
+			presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, err))
 			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 				clioutput.Fields(
 					clioutput.Field{Label: "URL", Value: url},
-					clioutput.Field{Label: "reason", Value: err.Error()},
+					clioutput.Field{Label: "reason", Value: presented.message},
+					clioutput.Field{Label: "next step", Value: presented.action},
 				),
 			)
 		}
@@ -302,8 +311,9 @@ func (o *publishOutput) setFramework(framework string) {
 func (o *publishOutput) logf(format string, arguments ...any) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	message := fmt.Sprintf(format, arguments...)
-	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(message))
+	cause := fmt.Errorf(format, arguments...)
+	presented := presentFailure(failure.Wrap("maintain publisher connection", failure.TransportUnavailable, cause))
+	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(presented.message))
 }
 
 func (o *publishOutput) failed(err error) error {
@@ -312,7 +322,8 @@ func (o *publishOutput) failed(err error) error {
 	}
 	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) ||
 		errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited)
-	event := publishEvent{Type: publishEventError, Message: boundedOutputError(err), Retryable: &retryable}
+	presented := presentFailure(err)
+	event := publishEvent{Type: publishEventError, Message: boundedOutputError(err), Reason: string(presented.reason), Retryable: &retryable}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		event.Code = string(code)
 		event.HelpURL = diagnostic.HelpURL(code)
@@ -341,6 +352,11 @@ func (o *publishOutput) finish(ctx context.Context, result error) error {
 	result = classifyCommandError(result)
 	if result == nil {
 		return nil
+	}
+	if _, typed := failure.Of(result); !typed {
+		if _, classified := diagnostic.CodeOf(result); !classified {
+			result = failure.Wrap(failure.Operation(o.command), commandFailureReason(o.command), result)
+		}
 	}
 	if code, render := terminalResult(result); code == 0 && render == nil {
 		return errors.Join(result, o.stopped())
@@ -377,10 +393,7 @@ func (o *publishOutput) emitLocked(event publishEvent) error {
 }
 
 func boundedOutputError(err error) string {
-	message := err.Error()
-	if code, ok := diagnostic.CodeOf(err); ok {
-		message = diagnostic.Summary(code)
-	}
+	message := presentFailure(err).message
 	if len(message) > 1024 {
 		return message[:1024]
 	}

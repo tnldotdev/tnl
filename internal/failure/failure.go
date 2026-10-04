@@ -27,6 +27,7 @@ const (
 	Stale           Class = "stale"
 	Unavailable     Class = "unavailable"
 	RateLimited     Class = "rate_limited"
+	Degraded        Class = "degraded"
 	Internal        Class = "internal"
 )
 

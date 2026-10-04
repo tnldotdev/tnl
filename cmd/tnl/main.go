@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 type cli struct {
@@ -205,10 +206,15 @@ func writeCommandError(output io.Writer, err error) {
 		_, _ = io.WriteString(output, text+"\n")
 		return
 	}
+	presented := presentFailure(err)
+	blocks := []clioutput.Block{clioutput.Text(presented.message)}
+	if presented.action != "" {
+		blocks = append(blocks, clioutput.Text(presented.action))
+	}
 	_ = clioutput.Write(output, clioutput.Frame{
 		Command: command,
 		State:   "command failed",
-		Blocks:  []clioutput.Block{clioutput.Text(err.Error())},
+		Blocks:  blocks,
 	})
 }
 
@@ -241,6 +247,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	command := ""
 	defer func() {
 		result = classifyCommandError(result)
+		if result != nil {
+			if _, typed := failure.Of(result); !typed {
+				if _, classified := diagnostic.CodeOf(result); !classified {
+					result = failure.Wrap(failure.Operation(commandFailureOperation(command)), commandFailureReason(command), result)
+				}
+			}
+		}
 		if result != nil && command != "" {
 			result = clioutput.WrapCommand(command, result)
 		}
@@ -421,6 +434,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Block, false, stdout, stderr)
 	default:
 		return errors.New("command is required")
+	}
+}
+
+func commandFailureOperation(command string) string {
+	if command == "" {
+		return "parse command"
+	}
+	return command
+}
+
+func commandFailureReason(command string) failure.Reason {
+	switch {
+	case command == "tnl init":
+		return failure.InitFailed
+	case strings.HasPrefix(command, "tnl config "):
+		return failure.ProjectConfigInvalid
+	case strings.HasPrefix(command, "tnl telemetry "), command == "tnl status":
+		return failure.ClientStateUnavailable
+	case command == "tnl login", command == "tnl logout":
+		return failure.Authentication
+	case strings.HasPrefix(command, "tnl publish"), strings.HasPrefix(command, "tnl dev"):
+		return failure.TunnelUnavailable
+	case strings.HasPrefix(command, "tnl team "):
+		return failure.TeamUnavailable
+	case strings.HasPrefix(command, "tnl domain "):
+		return failure.DomainUnavailable
+	case strings.HasPrefix(command, "tnl url "):
+		return failure.ServerConflict
+	case strings.HasPrefix(command, "tnl admin "):
+		return failure.AdminUnavailable
+	case command == "tnl version":
+		return failure.OutputUnavailable
+	default:
+		return failure.InvalidCommand
 	}
 }
 
