@@ -39,14 +39,9 @@ SELECT telemetry_enabled
 FROM client_setting
 WHERE id = 1;
 
--- name: GetDemoTelemetryEnabled :one
-SELECT demo_telemetry_enabled
-FROM client_setting
-WHERE id = 1;
-
 -- name: SetTelemetryEnabled :exec
 UPDATE client_setting
-SET telemetry_enabled = sqlc.arg(enabled), demo_telemetry_enabled = sqlc.arg(enabled)
+SET telemetry_enabled = sqlc.arg(enabled)
 WHERE id = 1;
 
 -- name: GetWorktreeHashSalt :one

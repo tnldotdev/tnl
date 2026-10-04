@@ -72,10 +72,8 @@ const (
 type telemetryPublishMode string
 
 const (
-	telemetryPublishApp        telemetryPublishMode = "app"
-	telemetryPublishDemo       telemetryPublishMode = "demo"
-	telemetryPublishDemoGuest  telemetryPublishMode = "demo_guest"
-	telemetryPublishDemoSigned telemetryPublishMode = "demo_signed_in"
+	telemetryPublishApp  telemetryPublishMode = "app"
+	telemetryPublishDemo telemetryPublishMode = "demo"
 )
 
 type telemetryPayload struct {

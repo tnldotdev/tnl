@@ -162,19 +162,6 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 	return i, err
 }
 
-const getDemoTelemetryEnabled = `-- name: GetDemoTelemetryEnabled :one
-SELECT demo_telemetry_enabled
-FROM client_setting
-WHERE id = 1
-`
-
-func (q *Queries) GetDemoTelemetryEnabled(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getDemoTelemetryEnabled)
-	var demo_telemetry_enabled int64
-	err := row.Scan(&demo_telemetry_enabled)
-	return demo_telemetry_enabled, err
-}
-
 const getInstallationID = `-- name: GetInstallationID :one
 SELECT installation_id
 FROM client_setting
@@ -467,7 +454,7 @@ func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams
 
 const setTelemetryEnabled = `-- name: SetTelemetryEnabled :exec
 UPDATE client_setting
-SET telemetry_enabled = ?1, demo_telemetry_enabled = ?1
+SET telemetry_enabled = ?1
 WHERE id = 1
 `
 
