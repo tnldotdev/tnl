@@ -31,7 +31,7 @@ func TestGuestDemoIsDisabledInControlDiscoveryAndCreationByDefault(t *testing.T)
 	discovery := httptest.NewRecorder()
 	handler.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))
 	var facts controlv1.ControlDiscovery
-	if err := json.Unmarshal(discovery.Body.Bytes(), &facts); err != nil || facts.GuestDemoEnabled {
+	if err := json.Unmarshal(discovery.Body.Bytes(), &facts); err != nil || facts.GuestDemo {
 		t.Fatalf("guest discovery = %+v, error = %v", facts, err)
 	}
 	created := httptest.NewRecorder()

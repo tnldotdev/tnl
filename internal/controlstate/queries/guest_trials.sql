@@ -1,11 +1,11 @@
 -- name: InsertGuestTrial :one
 INSERT INTO control.guest_trials (
     id, credential_id, credential_hash, namespace_label, team_id,
-    membership_id, domain_id, dns_authority_reference, source_ip, created_at, updated_at
+    membership_id, domain_id, dns_authority_reference, source_ip, expires_at, created_at, updated_at
 ) VALUES (
     sqlc.arg(id), sqlc.arg(credential_id), sqlc.arg(credential_hash),
     sqlc.arg(namespace_label), sqlc.arg(team_id), sqlc.arg(membership_id),
-    sqlc.arg(domain_id), sqlc.arg(dns_authority_reference), sqlc.arg(source_ip), sqlc.arg(created_at), sqlc.arg(created_at)
+    sqlc.arg(domain_id), sqlc.arg(dns_authority_reference), sqlc.arg(source_ip), sqlc.arg(expires_at), sqlc.arg(created_at), sqlc.arg(created_at)
 )
 RETURNING *;
 
@@ -60,6 +60,7 @@ WHERE guest.id = (
     WHERE public_url_id = sqlc.arg(public_url_id)
 )
   AND guest.active_publish_run_id IS NULL
+  AND guest.expires_at > sqlc.arg(started_at)
   AND guest.used_ready_ns < 900000000000
   AND guest.used_bytes < 5242880;
 
@@ -67,7 +68,8 @@ WHERE guest.id = (
 UPDATE control.guest_trials
 SET active_ready_at = sqlc.arg(ready_at), updated_at = sqlc.arg(ready_at)
 WHERE active_publish_run_id = sqlc.arg(publish_run_id)
-  AND active_ready_at IS NULL;
+  AND active_ready_at IS NULL
+  AND expires_at > sqlc.arg(ready_at);
 
 -- name: FinishGuestPublishRun :execrows
 UPDATE control.guest_trials
@@ -95,7 +97,7 @@ WHERE guest.id = (
 );
 
 -- name: GuestRunAllowanceSpent :one
-SELECT used_bytes >= 5242880
+SELECT expires_at <= sqlc.arg(now)::timestamptz OR used_bytes >= 5242880
     OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
         ELSE GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - active_ready_at)) * 1000000000)::bigint)
     END >= 900000000000 AS spent

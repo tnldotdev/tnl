@@ -54,7 +54,8 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		if !domain.NamespaceAvailable {
 			continue
 		}
-		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, time.Now()); err != nil {
+		issuedAt := time.Now()
+		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, issuedAt); err != nil {
 			var conflict *pgconn.PgError
 			if errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
 				continue
@@ -66,7 +67,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			AccessToken: string(guest.Token), GuestId: guest.ID, TeamId: guest.TeamID,
 			MembershipId: guest.MembershipID, DomainId: domain.DomainId,
 			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDeploymentDomain,
-			SourceIp:  guest.SourceIP.String(),
+			SourceIp:  guest.SourceIP.String(), ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
 		})
 		return
 	}
@@ -90,6 +91,10 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 	}
 	if err != nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest trial")
+		return
+	}
+	if !guest.ExpiresAt.After(time.Now()) {
+		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl login to continue")
 		return
 	}
 	number, err := h.guests.AllocateGuestDemoNumber(request.Context(), guest.ID, time.Now())

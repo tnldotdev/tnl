@@ -611,8 +611,8 @@ type ControlDiscovery struct {
 	AuthorityEndpoint string              `json:"authority_endpoint"`
 	DnsAutomation     bool                `json:"dns_automation"`
 
-	// GuestDemoEnabled Whether this server accepts limited anonymous demo publishers.
-	GuestDemoEnabled        bool              `json:"guest_demo_enabled"`
+	// GuestDemo Whether this server accepts limited anonymous demo publishers.
+	GuestDemo               bool              `json:"guest_demo"`
 	ManagedDeploymentDomain CanonicalHostname `json:"managed_deployment_domain"`
 }
 
@@ -679,6 +679,7 @@ type GuestDemoNumber struct {
 type GuestDemoSession struct {
 	AccessToken  string            `json:"access_token"`
 	DomainId     DomainID          `json:"domain_id"`
+	ExpiresAt    time.Time         `json:"expires_at"`
 	GuestId      ResourceID        `json:"guest_id"`
 	MembershipId MembershipID      `json:"membership_id"`
 	Namespace    CanonicalHostname `json:"namespace"`

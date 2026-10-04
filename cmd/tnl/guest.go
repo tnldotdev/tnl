@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -45,7 +46,7 @@ func guestForDemoWithControl(
 		return nil, err
 	}
 	discovery, err := control.Discovery(ctx)
-	if err != nil || !discovery.GuestDemoEnabled {
+	if err != nil || !discovery.GuestDemo {
 		return nil, err
 	}
 	if flags.Team != "" || flags.Domain != "" || flags.AllowAllIPs || len(flags.AllowIP) != 0 ||
@@ -56,6 +57,12 @@ func guestForDemoWithControl(
 	if err != nil {
 		return nil, err
 	}
+	if found && !guest.ExpiresAt.After(time.Now()) {
+		if err := store.RemoveGuestSession(ctx); err != nil {
+			return nil, err
+		}
+		found = false
+	}
 	if !found {
 		issued, err := control.CreateGuestDemo(ctx)
 		if err != nil {
@@ -64,7 +71,7 @@ func guestForDemoWithControl(
 		guest = clientstate.GuestSession{
 			GuestID: issued.GuestId, AccessToken: issued.AccessToken, TeamID: issued.TeamId,
 			MembershipID: issued.MembershipId, DomainID: issued.DomainId,
-			Namespace: issued.Namespace, SourceIP: issued.SourceIp,
+			Namespace: issued.Namespace, SourceIP: issued.SourceIp, ExpiresAt: issued.ExpiresAt,
 		}
 		if err := store.SaveGuestSession(ctx, guest); err != nil {
 			return nil, err

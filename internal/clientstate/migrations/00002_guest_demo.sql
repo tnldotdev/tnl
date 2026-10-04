@@ -8,6 +8,7 @@ CREATE TABLE guest_sessions (
     domain_id TEXT NOT NULL,
     namespace TEXT NOT NULL,
     source_ip TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 ) STRICT;
 

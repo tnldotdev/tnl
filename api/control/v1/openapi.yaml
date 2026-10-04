@@ -711,19 +711,13 @@ components:
       type: object
       additionalProperties: false
       required:
-        [
-          managed_deployment_domain,
-          dns_automation,
-          guest_demo_enabled,
-          authority_endpoint,
-          authentication,
-        ]
+        [managed_deployment_domain, dns_automation, guest_demo, authority_endpoint, authentication]
       properties:
         managed_deployment_domain:
           $ref: "#/components/schemas/CanonicalHostname"
         dns_automation:
           type: boolean
-        guest_demo_enabled:
+        guest_demo:
           type: boolean
           description: Whether this server accepts limited anonymous demo publishers.
         authority_endpoint:
@@ -735,7 +729,17 @@ components:
     GuestDemoSession:
       type: object
       additionalProperties: false
-      required: [access_token, guest_id, team_id, membership_id, domain_id, namespace, source_ip]
+      required:
+        [
+          access_token,
+          guest_id,
+          team_id,
+          membership_id,
+          domain_id,
+          namespace,
+          source_ip,
+          expires_at,
+        ]
       properties:
         access_token:
           type: string
@@ -754,6 +758,9 @@ components:
           type: string
           minLength: 2
           maxLength: 45
+        expires_at:
+          type: string
+          format: date-time
     GuestDemoNumber:
       type: object
       additionalProperties: false

@@ -9,6 +9,7 @@ CREATE TABLE control.guest_trials (
     domain_id text NOT NULL CHECK (domain_id <> ''),
     dns_authority_reference text NOT NULL CHECK (dns_authority_reference <> ''),
     source_ip text NOT NULL CHECK (source_ip <> ''),
+    expires_at timestamptz NOT NULL,
     used_ready_ns bigint NOT NULL DEFAULT 0 CHECK (used_ready_ns >= 0),
     used_bytes bigint NOT NULL DEFAULT 0 CHECK (used_bytes >= 0),
     last_demo_number bigint NOT NULL DEFAULT 0 CHECK (last_demo_number >= 0),
@@ -17,7 +18,8 @@ CREATE TABLE control.guest_trials (
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     CHECK (active_ready_at IS NULL OR active_publish_run_id IS NOT NULL),
-    CHECK (updated_at >= created_at)
+    CHECK (updated_at >= created_at),
+    CHECK (expires_at > created_at)
 );
 CREATE INDEX guest_trials_source_created ON control.guest_trials (source_ip, created_at DESC);
 

@@ -202,6 +202,7 @@ type ControlGuestTrial struct {
 	DomainID              string
 	DnsAuthorityReference string
 	SourceIp              string
+	ExpiresAt             pgtype.Timestamptz
 	UsedReadyNs           int64
 	UsedBytes             int64
 	LastDemoNumber        int64

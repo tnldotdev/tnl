@@ -23,7 +23,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 		t.Fatalf("first demo number = %d, %v", number, err)
 	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
-	if err != nil || stored.ID != guest.ID || stored.NamespaceLabel != guest.NamespaceLabel {
+	if err != nil || stored.ID != guest.ID || stored.NamespaceLabel != guest.NamespaceLabel || !stored.ExpiresAt.Equal(now.Add(GuestLifetime)) {
 		t.Fatalf("guest = %+v, error = %v", stored, err)
 	}
 	if _, err := database.EnsureExternalAuthorityPrincipal(t.Context(), guest.ID, now); err != nil {
@@ -82,6 +82,23 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(4*time.Second)); !errors.Is(err, ErrGuestTrialSpent) {
 		t.Fatalf("spent guest trial allocated another number: %v", err)
+	}
+}
+
+func TestIntegrationGuestCredentialStopsAllocatingAtExpiry(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "guest_expiry")
+	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+		t.Fatal(err)
+	}
+	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(GuestLifetime-time.Second)); err != nil || number != 1 {
+		t.Fatalf("number before expiry = %d, %v", number, err)
+	}
+	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(GuestLifetime)); !errors.Is(err, ErrGuestTrialSpent) {
+		t.Fatalf("expired guest allocated a number: %v", err)
 	}
 }
 

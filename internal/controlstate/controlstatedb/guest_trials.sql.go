@@ -38,6 +38,7 @@ WHERE guest.id = (
     WHERE public_url_id = $3
 )
   AND guest.active_publish_run_id IS NULL
+  AND guest.expires_at > $2
   AND guest.used_ready_ns < 900000000000
   AND guest.used_bytes < 5242880
 `
@@ -114,7 +115,7 @@ func (q *Queries) FinishGuestPublishRun(ctx context.Context, arg FinishGuestPubl
 }
 
 const getGuestTrialByCredentialID = `-- name: GetGuestTrialByCredentialID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, expires_at, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE credential_id = $1
 `
 
@@ -131,6 +132,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 		&i.DomainID,
 		&i.DnsAuthorityReference,
 		&i.SourceIp,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
 		&i.LastDemoNumber,
@@ -143,7 +145,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 }
 
 const getGuestTrialByID = `-- name: GetGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, expires_at, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE id = $1
 `
 
@@ -160,6 +162,7 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 		&i.DomainID,
 		&i.DnsAuthorityReference,
 		&i.SourceIp,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
 		&i.LastDemoNumber,
@@ -204,7 +207,7 @@ func (q *Queries) GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURL
 }
 
 const guestRunAllowanceSpent = `-- name: GuestRunAllowanceSpent :one
-SELECT used_bytes >= 5242880
+SELECT expires_at <= $1::timestamptz OR used_bytes >= 5242880
     OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
         ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
     END >= 900000000000 AS spent
@@ -243,13 +246,13 @@ func (q *Queries) InsertGuestPublicURL(ctx context.Context, arg InsertGuestPubli
 const insertGuestTrial = `-- name: InsertGuestTrial :one
 INSERT INTO control.guest_trials (
     id, credential_id, credential_hash, namespace_label, team_id,
-    membership_id, domain_id, dns_authority_reference, source_ip, created_at, updated_at
+    membership_id, domain_id, dns_authority_reference, source_ip, expires_at, created_at, updated_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, $8, $9, $10, $10
+    $7, $8, $9, $10, $11, $11
 )
-RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
+RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, expires_at, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
 `
 
 type InsertGuestTrialParams struct {
@@ -262,6 +265,7 @@ type InsertGuestTrialParams struct {
 	DomainID              string
 	DnsAuthorityReference string
 	SourceIp              string
+	ExpiresAt             pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 }
 
@@ -276,6 +280,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		arg.DomainID,
 		arg.DnsAuthorityReference,
 		arg.SourceIp,
+		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
 	var i ControlGuestTrial
@@ -289,6 +294,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		&i.DomainID,
 		&i.DnsAuthorityReference,
 		&i.SourceIp,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
 		&i.LastDemoNumber,
@@ -301,7 +307,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 }
 
 const lockGuestTrialByID = `-- name: LockGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip, expires_at, used_ready_ns, used_bytes, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error) {
@@ -317,6 +323,7 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 		&i.DomainID,
 		&i.DnsAuthorityReference,
 		&i.SourceIp,
+		&i.ExpiresAt,
 		&i.UsedReadyNs,
 		&i.UsedBytes,
 		&i.LastDemoNumber,
@@ -333,6 +340,7 @@ UPDATE control.guest_trials
 SET active_ready_at = $1, updated_at = $1
 WHERE active_publish_run_id = $2
   AND active_ready_at IS NULL
+  AND expires_at > $1
 `
 
 type MarkGuestRunReadyParams struct {
