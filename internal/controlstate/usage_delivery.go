@@ -44,6 +44,14 @@ func (d *Database) FinalizePublicURLUsageBuckets(
 		return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: update buckets: %w", err)
 	}
 	for _, bucket := range buckets {
+		if _, err := queries.GuestForPublicURL(ctx, bucket.PublicURLID); err == nil {
+			// guest buckets are still finalized and counted in control's trial
+			// ledger. only external hosted delivery needs an authenticated team
+			// and identity that a guest does not have.
+			continue
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("controlstate: check guest usage ownership: %w", err)
+		}
 		deliveryKey, err := opaqueid.New(opaqueid.UsageReportPrefix)
 		if err != nil {
 			return 0, fmt.Errorf("controlstate: finalize public URL usage buckets: create delivery key: %w", err)

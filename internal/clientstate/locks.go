@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 )
 
@@ -36,6 +37,22 @@ func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error)
 		return nil, errors.New("clientstate: state store is required")
 	}
 	return openLockContext(ctx, filepath.Join(store.locksDir, "control-session.lock"), "control session")
+}
+
+// LockGuestSessionContext serializes guest credential issuance for one selected server.
+func LockGuestSessionContext(ctx context.Context, store *Store) (*Lock, error) {
+	if store == nil {
+		return nil, failure.Wrap("lock guest demo state", failure.ClientStateUnavailable,
+			errors.New("clientstate: state store is required"))
+	}
+	lock, err := openLockContext(ctx, filepath.Join(store.locksDir, "guest-session.lock"), "guest session")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	if errors.Is(err, ErrLocked) {
+		return nil, failure.Wrap("lock guest demo state", failure.ClientStateLocked, err)
+	}
+	return lock, failure.Wrap("lock guest demo state", failure.ClientStateUnavailable, err)
 }
 
 func prepareRoot(root string) (string, error) {

@@ -43,6 +43,17 @@ type ControlSession struct {
 	UpdatedAt          int64
 }
 
+type GuestSession struct {
+	ServerOrigin      string
+	GuestID           string
+	StoredAccessToken []byte
+	TeamID            string
+	MembershipID      string
+	DomainID          string
+	Namespace         string
+	CreatedAt         int64
+}
+
 type LocalTunnel struct {
 	ID               string
 	Command          string
