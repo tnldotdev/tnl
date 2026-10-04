@@ -1,19 +1,27 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tnldotdev/tnl/internal/failure"
+)
 
 func prepareDemoPublish(flags *publishCommand, configPath string, interactive bool) error {
 	if flags.Target != "" {
-		return errors.New("--demo does not take a service or target")
+		return failure.Wrap("validate demo target", failure.DemoTargetNotAllowed,
+			errors.New("--demo does not take a service or target"))
 	}
 	if configPath != "" {
-		return errors.New("--demo does not use project configuration; remove --config")
+		return failure.Wrap("validate demo configuration", failure.DemoConfigNotUsed,
+			errors.New("--demo does not use project configuration"))
 	}
 	if flags.demoNameFromCLI || flags.PublicURL != "" {
-		return errors.New("--demo chooses its own public URL; remove --name or --public-url")
+		return failure.Wrap("validate demo public URL", failure.DemoURLManaged,
+			errors.New("--demo chooses its own public URL"))
 	}
 	if flags.ephemeralFromCLI && !flags.Ephemeral {
-		return errors.New("--demo requires an ephemeral public URL; remove --ephemeral=false")
+		return failure.Wrap("validate demo public URL lifetime", failure.DemoMustBeEphemeral,
+			errors.New("--demo requires an ephemeral public URL"))
 	}
 	// ignore project hostname environment defaults for a fresh demo URL.
 	flags.Name = ""
@@ -22,5 +30,8 @@ func prepareDemoPublish(flags *publishCommand, configPath string, interactive bo
 	if !flags.openFromCLI && interactive && flags.Output == publishOutputHuman {
 		flags.Open = true
 	}
-	return validateTunnelFlags(flags.tunnelFlags)
+	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
+		return failure.Wrap("validate demo options", failure.InvalidTunnelFlags, err)
+	}
+	return nil
 }
