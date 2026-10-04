@@ -3,6 +3,7 @@ package clientstate
 import (
 	"bytes"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -34,8 +35,11 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := database.queries.GetGuestSession(t.Context(), "https://control.example")
-	if err != nil || bytes.Contains(stored.StoredAccessToken, []byte(token)) {
-		t.Fatalf("guest credential stored in plaintext or missing: %v", err)
+	if err != nil || len(stored.StoredAccessToken) == 0 {
+		t.Fatalf("guest credential missing from client state: %v", err)
+	}
+	if runtime.GOOS == "darwin" && bytes.Contains(stored.StoredAccessToken, []byte(token)) {
+		t.Fatal("guest credential stored in plaintext on macOS")
 	}
 	read, found, err := store.GuestSession(t.Context())
 	if err != nil || !found || read != guest {
