@@ -2,10 +2,15 @@
 package operatorlog
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -30,8 +35,35 @@ func Report(operation failure.Operation, reason failure.Reason, requestID string
 		if specific, ok := failure.ReasonOf(cause); ok {
 			reason = specific
 		}
-		log.Print(Format(operation, reason, requestID))
+		log.Print(Format(operation, reason, requestID) + safeCauseFields(cause))
 	}
+}
+
+func safeCauseFields(cause error) string {
+	var postgres *pgconn.PgError
+	if errors.As(cause, &postgres) && validSQLState(postgres.Code) {
+		return " sqlstate=" + postgres.Code
+	}
+	if errors.Is(cause, os.ErrPermission) {
+		return " permission_denied=true"
+	}
+	var network net.Error
+	if errors.Is(cause, context.DeadlineExceeded) || errors.As(cause, &network) && network.Timeout() {
+		return " timeout=true"
+	}
+	return ""
+}
+
+func validSQLState(value string) bool {
+	if len(value) != 5 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'A' || character > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func safeLine(value string) string {
