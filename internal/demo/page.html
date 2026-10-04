@@ -71,25 +71,31 @@
         justify-content: space-between;
         min-height: 44px;
       }
-      header strong {
-        font-size: 18px;
-        letter-spacing: -0.05em;
-      }
       header a {
         padding: 8px;
         text-decoration: none;
+      }
+      header .brand {
+        display: inline-flex;
+        width: 44px;
+        height: 44px;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      header .brand svg {
+        display: block;
+        width: 26px;
+        height: 18px;
       }
       main {
         padding: 64px 0 80px;
       }
       h1 {
-        margin: 0 0 16px;
-        font-size: clamp(25px, 5vw, 36px);
-        line-height: 1.3;
-        letter-spacing: -0.04em;
-      }
-      p {
         margin: 0;
+        font-size: clamp(30px, 5vw, 48px);
+        font-weight: 600;
+        line-height: 1.2;
       }
       .muted {
         color: var(--muted);
@@ -148,28 +154,6 @@
       .values dd {
         margin: 0;
       }
-      .return {
-        margin-top: 14px;
-        color: var(--muted);
-      }
-      .browser-response {
-        position: relative;
-        width: fit-content;
-        max-width: 100%;
-        margin-top: 24px;
-        padding: 22px 16px 14px;
-        border: 1px solid var(--rule);
-      }
-      .response-label {
-        position: absolute;
-        top: -0.85em;
-        left: 10px;
-        padding: 0 6px;
-        background: var(--paper);
-      }
-      .browser-response pre {
-        font-weight: 500;
-      }
       button {
         min-height: 44px;
         padding: 8px 18px;
@@ -182,10 +166,6 @@
       button:disabled {
         color: var(--muted);
         cursor: wait;
-      }
-      .result {
-        min-height: 3em;
-        margin-top: 16px;
       }
       footer {
         margin-top: auto;
@@ -204,11 +184,11 @@
         .diagram {
           padding: 30px 16px 20px;
         }
-        .browser-response .values {
+        .computer .values {
           grid-template-columns: 1fr;
           gap: 0;
         }
-        .browser-response .values dd {
+        .computer .values dd {
           margin-bottom: 8px;
         }
       }
@@ -216,39 +196,53 @@
   </head>
   <body>
     <div class="site">
-      <header><strong>tnl.dev</strong><a href="https://tnl.dev/docs">[ docs ]</a></header>
+      <header>
+        <a class="brand" href="https://tnl.dev/" aria-label="tnl home">
+          <svg viewBox="0 0 3569 2508" aria-hidden="true" focusable="false">
+            <g fill="currentColor">
+              <path
+                transform="translate(0 1980) scale(1 -1)"
+                d="M1075 59Q1016 20 932-5Q848-30 750-30Q556-30 458 70.5Q360 171 360 338V872H130V1059H360V1292L624 1324V1059H974L947 872H624V339Q624 257 664 219Q704 181 793 181Q850 181 897.5 194.5Q945 208 984 229Z"
+              />
+              <path
+                transform="translate(1200 1980) scale(1 -1)"
+                d="M161 0V1059H391L410 928Q478 1008 563 1048.5Q648 1089 746 1089Q889 1089 964 1006.5Q1039 924 1039 775V0H775V672Q775 752 765 800.5Q755 849 727 870.5Q699 892 646 892Q603 892 563.5 873Q524 854 489.5 822Q455 790 425 751V0Z"
+              />
+              <path
+                transform="translate(2400 1980) scale(1 -1)"
+                d="M665 1482V308Q665 239 705.5 210Q746 181 815 181Q858 181 898 190.5Q938 200 974 214L1039 34Q989 9 917.5-10.5Q846-30 752-30Q579-30 490 69Q401 168 401 336V1295H84V1482Z"
+              />
+            </g>
+          </svg>
+        </a>
+        <a href="https://tnl.dev/docs">[ docs ]</a>
+      </header>
       <main>
-        <h1>this page is running on your computer.</h1>
-        <p class="muted">ping it and check the terminal running tnl.</p>
+        <h1>a public url for your local demo.</h1>
         <figure
           class="diagram"
           aria-label="a browser reaches this local demo through a public URL and the tnl server"
         >
           <figcaption>[ ping / pong ]</figcaption>
           <pre>
-browser
+ browser
   | ping over HTTPS
-  v</pre>
-          <a id="public-url" class="url" href="#">waiting for public URL</a>
+  ↓</pre>
+          <a id="public-url" class="url" href="#">tnl.dev</a>
           <pre>
   |
-  v
-tnl server
+  ↓
+ tnl server
   | encrypted traffic
-  v</pre>
+  ↓</pre>
           <div class="computer">
             <div class="computer-label">[ your computer ]</div>
             <pre>tnl -> local demo</pre>
             <dl class="values">
               <dt>count</dt>
               <dd id="request-count">0</dd>
-            </dl>
-          </div>
-          <p class="return">pong returns along the same path.</p>
-          <div class="browser-response">
-            <div class="response-label">[ browser ]</div>
-            <pre id="pong">waiting for ping</pre>
-            <dl class="values">
+              <dt>browser pong</dt>
+              <dd id="pong" role="status" aria-live="polite">waiting for ping</dd>
               <dt>round trip</dt>
               <dd id="round-trip">-- ms</dd>
               <dt>generated at</dt>
@@ -257,7 +251,6 @@ tnl server
           </div>
         </figure>
         <button id="ping" type="button" disabled>[ ping ]</button>
-        <p id="result" class="result muted" role="status" aria-live="polite"></p>
         <p id="sign-in" class="muted" hidden>
           to publish your own app, run <code>tnl login</code> in your terminal.
         </p>
@@ -268,7 +261,7 @@ tnl server
     </div>
     <script>
       const button = document.getElementById("ping");
-      const result = document.getElementById("result");
+      const pong = document.getElementById("pong");
       function show(state) {
         const url = document.getElementById("public-url");
         url.textContent = state.public_url;
@@ -287,24 +280,22 @@ tnl server
           button.disabled = !state.public_url;
         })
         .catch(() => {
-          result.textContent = "could not reach the local demo. try refreshing.";
+          pong.textContent = "could not reach the local demo. try refreshing.";
         });
       button.addEventListener("click", async () => {
         button.disabled = true;
-        document.getElementById("pong").textContent = "sending ping...";
+        pong.textContent = "sending ping...";
         try {
           const started = performance.now();
           const state = await request("/ping", { method: "POST" });
           const elapsed = Math.round(performance.now() - started);
           show(state);
-          document.getElementById("pong").textContent = "pong";
+          pong.textContent = "pong";
           document.getElementById("round-trip").textContent = elapsed + " ms";
           document.getElementById("generated-at").textContent =
             new Date(state.generated_at).toISOString().slice(11, 23) + " UTC";
-          result.textContent = "find the same count in the terminal running tnl.";
         } catch {
-          document.getElementById("pong").textContent = "ping failed";
-          result.textContent = "ping failed. try again.";
+          pong.textContent = "ping failed. try again.";
         } finally {
           button.disabled = false;
         }
