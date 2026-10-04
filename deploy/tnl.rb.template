@@ -1,5 +1,5 @@
 class Tnl < Formula
-  desc "public urls for every worktree."
+  desc "public urls for collaborative dev."
   homepage "https://github.com/tnldotdev/tnl"
   version "{{VERSION}}"
   license "MIT"
