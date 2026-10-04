@@ -52,11 +52,23 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	page := get("/")
 	data, err := io.ReadAll(page.Body)
 	page.Body.Close()
-	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), "Fira+Code") ||
+	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), "fira-code-latin-wght-normal.woff2") ||
 		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "round trip") ||
 		!strings.Contains(string(data), "generated at") ||
-		page.Header.Get("Cache-Control") != "no-store" {
+		page.Header.Get("Cache-Control") != "no-store" ||
+		strings.Contains(string(data), "fonts.googleapis.com") ||
+		strings.Contains(page.Header.Get("Content-Security-Policy"), "fonts.gstatic.com") ||
+		!strings.Contains(page.Header.Get("Content-Security-Policy"), "font-src 'self'") {
 		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
+	}
+	for _, name := range []string{"fira-code-latin-wght-normal.woff2", "fira-code-symbols2-wght-normal.woff2"} {
+		font := get("/fonts/" + name)
+		data, err := io.ReadAll(font.Body)
+		font.Body.Close()
+		if err != nil || font.StatusCode != http.StatusOK || font.Header.Get("Content-Type") != "font/woff2" ||
+			len(data) < 4 || string(data[:4]) != "wOF2" {
+			t.Fatalf("demo font %s = %d, %v", name, font.StatusCode, err)
+		}
 	}
 
 	response, err := client.Post(demo.Target()+"/ping", "", nil)
