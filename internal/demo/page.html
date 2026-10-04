@@ -100,6 +100,12 @@
       .muted {
         color: var(--muted);
       }
+      .intro {
+        margin: 16px 0 0;
+      }
+      .intro code {
+        font: inherit;
+      }
       .diagram {
         position: relative;
         margin: 48px 0 32px;
@@ -219,6 +225,7 @@
       </header>
       <main>
         <h1>tnl demo</h1>
+        <p class="intro muted">a small local app started by <code>tnl publish --demo</code>.</p>
         <figure
           class="diagram"
           aria-label="a browser reaches this local demo through a public URL and the tnl server"
