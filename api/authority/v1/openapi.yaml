@@ -371,6 +371,28 @@ paths:
                 $ref: "#/components/schemas/ServiceAuthorizationDecision"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/service/guest-domain:
+    get:
+      operationId: getGuestDomain
+      summary: Read the managed domain and check a guest label
+      security:
+        - hostedServiceAuth: []
+      parameters:
+        - name: namespace_label
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^guest-[0-9a-z]{8}$"
+      responses:
+        "200":
+          description: Managed domain facts and label availability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestDomain"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -434,6 +456,21 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    GuestDomain:
+      type: object
+      additionalProperties: false
+      required: [domain_id, managed_domain, dns_authority_reference, namespace_available]
+      properties:
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        managed_domain:
+          type: string
+          minLength: 1
+        dns_authority_reference:
+          type: string
+          minLength: 1
+        namespace_available:
+          type: boolean
     ResourceID:
       type: string
       minLength: 1

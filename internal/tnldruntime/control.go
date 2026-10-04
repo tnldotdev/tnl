@@ -43,6 +43,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		HostedSecretPrevious:    cfg.HostedSecretPrevious,
 		HTTPClient:              httpClient,
 		DNSAutomation:           cfg.DNSAutomationEnabled(),
+		GuestDemoEnabled:        cfg.GuestDemoEnabled,
 	}
 }
 

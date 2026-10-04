@@ -109,12 +109,13 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		dnsAuthorityReference = decision.DNSAuthorityReference
 	}
 	route, err := h.store.CreatePublicURL(request.Context(), controlstate.CreatePublicURLRequest{
-		TeamID: decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
+		GuestID: decision.GuestID,
+		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
 		PublicURLScope: controlstate.PublicURLScope(decision.PublicURLScope), AllowedIPPrefixes: allowedIPPrefixes,
 		DNSState: dnsState, DNSAuthorityReference: dnsAuthorityReference,
-		AuthorityIssuer: h.externalAuthorityIssuer(),
+		AuthorityIssuer: h.authorityIssuerFor(decision),
 		PolicyRevision:  decision.PolicyRevision,
 		Ephemeral:       ephemeral,
 	}, time.Now())
@@ -169,7 +170,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLUpdateRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
-		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
+		AuthorityIssuer: h.authorityIssuerFor(decision), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())
 	if err != nil {
@@ -226,7 +227,7 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 	}
 	if err := h.store.DeleteAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLDeleteRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
-		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
+		AuthorityIssuer: h.authorityIssuerFor(decision), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now()); err != nil {
 		writeControlStateProblem(response, "delete public URL", err)
@@ -291,13 +292,13 @@ func (h *handler) CreatePublishRun(
 	}
 	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
-		ActingIdentityID: decision.IdentityID, RequireLocalAuthority: h.externalAuthorityIssuer() == "",
+		ActingIdentityID: decision.IdentityID, RequireLocalAuthority: h.authorityIssuerFor(decision) == "",
 		RetrySecret:    decision.RetrySecret[:],
 		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
 		PolicyRevision: decision.PolicyRevision, CertificateCacheKey: plan.CacheKey,
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
 		CertificateChallenge:     plan.ChallengeMethod,
-		AuthorityIssuer:          h.externalAuthorityIssuer(),
+		AuthorityIssuer:          h.authorityIssuerFor(decision),
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
@@ -320,6 +321,13 @@ func (h *handler) externalAuthorityIssuer() string {
 		return ""
 	}
 	return h.config.AuthorityEndpoint
+}
+
+func (h *handler) authorityIssuerFor(decision authorization.Decision) string {
+	if decision.GuestID != "" {
+		return "guest"
+	}
+	return h.externalAuthorityIssuer()
 }
 
 func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *http.Request, publishRunID controlv1.PublishRunID) {

@@ -26,6 +26,21 @@ func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestGuestDemoIsDisabledInControlDiscoveryAndCreationByDefault(t *testing.T) {
+	handler := testHandler(t, Config{ManagedDeploymentDomain: "example.test"}, nil, nil, func(context.Context) error { return nil })
+	discovery := httptest.NewRecorder()
+	handler.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))
+	var facts controlv1.ControlDiscovery
+	if err := json.Unmarshal(discovery.Body.Bytes(), &facts); err != nil || facts.GuestDemoEnabled {
+		t.Fatalf("guest discovery = %+v, error = %v", facts, err)
+	}
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, httptest.NewRequest(http.MethodPost, "/v1/guest-demo", nil))
+	if created.Code != http.StatusNotFound {
+		t.Fatalf("guest creation without opt-in = %d, %s", created.Code, created.Body.String())
+	}
+}
+
 func TestHealthAndReadiness(t *testing.T) {
 	cfg := Config{
 		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",

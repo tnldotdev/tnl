@@ -48,6 +48,10 @@ const (
 	ServerDenied                Reason = "client.server_denied"
 	ServerUnavailable           Reason = "client.server_unavailable"
 	ServerRateLimited           Reason = "client.server_rate_limited"
+	GuestTrialExhausted         Reason = "client.guest_trial_exhausted"
+	GuestDemoOnly               Reason = "client.guest_demo_only"
+	GuestIssuanceLimited        Reason = "client.guest_issuance_limited"
+	GuestIPChanged              Reason = "client.guest_ip_changed"
 	ServerResponseInvalid       Reason = "client.server_response_invalid"
 	ServerRequestInvalid        Reason = "client.server_request_invalid"
 	DNSPending                  Reason = "client.dns_pending"
@@ -267,6 +271,22 @@ var definitions = map[Reason]Definition{
 	ServerRateLimited: {
 		Class: RateLimited, Message: "the server is limiting requests",
 		Action: "wait for the retry interval before sending another request", Retry: RetryLater,
+	},
+	GuestTrialExhausted: {
+		Class: Forbidden, Message: "this guest demo trial has ended",
+		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
+	},
+	GuestDemoOnly: {
+		Class: Forbidden, Message: "guest access only publishes the built-in demo",
+		Action: "run tnl login to publish your own app or change settings", Retry: RetryAfterChange,
+	},
+	GuestIssuanceLimited: {
+		Class: RateLimited, Message: "guest demo creation is limited on this network",
+		Action: "wait an hour or run tnl login to continue", Retry: RetryLater,
+	},
+	GuestIPChanged: {
+		Class: Forbidden, Message: "your IP changed since this guest demo started",
+		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
 	},
 	ServerResponseInvalid: {
 		Class: Internal, Message: "the server sent a response tnl could not use",

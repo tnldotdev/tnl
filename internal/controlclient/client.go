@@ -34,15 +34,19 @@ const (
 )
 
 var (
-	ErrUnauthenticated   = failure.Wrap("authenticate control request", failure.Authentication, errors.New("controlclient: unauthenticated"))
-	ErrNotFound          = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
-	ErrNameUnavailable   = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
-	ErrStatusConflict    = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
-	ErrCertificateStatus = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
-	ErrDNSProofPending   = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
-	ErrRateLimited       = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
-	ErrUnavailable       = failure.Wrap("request control API", failure.ServerUnavailable, errors.New("controlclient: temporarily unavailable"))
-	ErrUnsupported       = failure.Wrap("request control API", failure.ServerResponseInvalid, errors.New("controlclient: unsupported"))
+	ErrUnauthenticated      = failure.Wrap("authenticate control request", failure.Authentication, errors.New("controlclient: unauthenticated"))
+	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
+	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
+	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
+	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
+	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
+	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
+	ErrUnavailable          = failure.Wrap("request control API", failure.ServerUnavailable, errors.New("controlclient: temporarily unavailable"))
+	ErrUnsupported          = failure.Wrap("request control API", failure.ServerResponseInvalid, errors.New("controlclient: unsupported"))
+	ErrGuestTrialExhausted  = failure.Wrap("publish guest demo", failure.GuestTrialExhausted, errors.New("controlclient: guest demo trial exhausted"))
+	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
+	ErrGuestIPChanged       = failure.Wrap("publish guest demo", failure.GuestIPChanged, errors.New("controlclient: guest demo source IP changed"))
+	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
 )
 
 type Client struct {
@@ -88,6 +92,14 @@ func (c *Client) Discovery(ctx context.Context) (controlv1.ControlDiscovery, err
 
 func (c *Client) ClientIP(ctx context.Context) (controlv1.ClientIPResponse, error) {
 	return request[controlv1.ClientIPResponse](ctx, c, "", c.api.GetClientIP)
+}
+
+func (c *Client) CreateGuestDemo(ctx context.Context) (controlv1.GuestDemoSession, error) {
+	return request[controlv1.GuestDemoSession](ctx, c, "", c.api.CreateGuestDemo)
+}
+
+func (c *Client) AllocateGuestDemoNumber(ctx context.Context) (controlv1.GuestDemoNumber, error) {
+	return requestWithAccess[controlv1.GuestDemoNumber](ctx, c, c.api.AllocateGuestDemoNumber)
 }
 
 func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
@@ -318,6 +330,14 @@ func responseError(status int, header http.Header, payload []byte) error {
 	switch problem.Code {
 	case controlv1.Unauthenticated:
 		return ErrUnauthenticated
+	case controlv1.GuestTrialExhausted:
+		return ErrGuestTrialExhausted
+	case controlv1.GuestDemoOnly:
+		return ErrGuestDemoOnly
+	case controlv1.GuestIpChanged:
+		return ErrGuestIPChanged
+	case controlv1.GuestIssuanceLimited:
+		return ErrGuestIssuanceLimited
 	case controlv1.NotFound:
 		return ErrNotFound
 	case controlv1.NameUnavailable:
