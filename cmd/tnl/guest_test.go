@@ -54,3 +54,32 @@ func TestGuestDemoReusesOneCredentialAndRejectsAccessOverrides(t *testing.T) {
 		t.Fatal("guest changed the visitor IP policy")
 	}
 }
+
+func TestGuestDemoReplacesExpiredLocalCredential(t *testing.T) {
+	database, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	store, err := database.Server(t.Context(), "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveGuestSession(t.Context(), clientstate.GuestSession{
+		GuestID: "guest_0123456789abcdefghijkl", AccessToken: token.String(),
+		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
+		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	control := &guestDemoControlStub{token: token.String()}
+	guest, err := guestForDemoWithControl(t.Context(), database, "https://control.example", publishCommand{Demo: true}, control)
+	if err != nil || guest == nil || control.created != 1 || !guest.ExpiresAt.After(time.Now()) {
+		t.Fatalf("replacement guest = %+v; created = %d; error = %v", guest, control.created, err)
+	}
+}

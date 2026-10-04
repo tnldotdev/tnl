@@ -144,6 +144,15 @@ func (d *Database) MarkPublishRunReady(
 	}
 	var publishedEvent *publishedIngressRoutingTableEvent
 	if !session.ReadyAt.Valid {
+		reason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
+			PublishRunID: text(session.ID), Now: timestamptz(now),
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return PublishRunLifecycle{}, fmt.Errorf("controlstate: check guest trial expiry: %w", err)
+		}
+		if reason != "" {
+			return PublishRunLifecycle{}, ErrGuestTrialSpent
+		}
 		if !session.CertificateInstalledAt.Valid || len(connections) != publishRunConnectionCount {
 			return PublishRunLifecycle{}, &PublishRunNotReadyError{
 				CertificateInstalled:          session.CertificateInstalledAt.Valid,
