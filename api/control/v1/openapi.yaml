@@ -729,17 +729,7 @@ components:
     GuestDemoSession:
       type: object
       additionalProperties: false
-      required:
-        [
-          access_token,
-          guest_id,
-          team_id,
-          membership_id,
-          domain_id,
-          namespace,
-          source_ip,
-          expires_at,
-        ]
+      required: [access_token, guest_id, team_id, membership_id, domain_id, namespace, expires_at]
       properties:
         access_token:
           type: string
@@ -754,10 +744,6 @@ components:
           $ref: "#/components/schemas/DomainID"
         namespace:
           $ref: "#/components/schemas/CanonicalHostname"
-        source_ip:
-          type: string
-          minLength: 2
-          maxLength: 45
         expires_at:
           type: string
           format: date-time
@@ -1484,6 +1470,7 @@ components:
           unauthenticated,
           forbidden,
           guest_demo_only,
+          guest_ip_changed,
           guest_issuance_limited,
           guest_trial_exhausted,
           not_found,

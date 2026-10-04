@@ -127,9 +127,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	if guest != nil && policy.current != guest.SourceIP {
-		return errors.New("your IP changed since the guest demo started; run tnl login to keep publishing")
-	}
 	if guest != nil {
 		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)
 		if err != nil {

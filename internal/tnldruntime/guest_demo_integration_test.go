@@ -66,7 +66,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	if err := json.Unmarshal(guestResponse.Body.Bytes(), &guest); err != nil {
 		t.Fatal(err)
 	}
-	if guest.SourceIp != "192.0.2.7" || !strings.HasPrefix(guest.Namespace, "guest-") {
+	if strings.Contains(guestResponse.Body.String(), "192.0.2.7") || !strings.HasPrefix(guest.Namespace, "guest-") {
 		t.Fatalf("guest metadata = %+v", guest)
 	}
 	create := func(hostname string, ip string) *httptest.ResponseRecorder {
@@ -90,6 +90,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		return response
 	}
 	allocate := httptest.NewRequest(http.MethodPost, "/v1/guest-demo/number", nil)
+	allocate.RemoteAddr = "192.0.2.7:5432"
 	allocate.Header.Set("Authorization", "Bearer "+guest.AccessToken)
 	allocated := httptest.NewRecorder()
 	h.ServeHTTP(allocated, allocate)
@@ -97,6 +98,9 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		t.Fatalf("first demo number = %d, %s", allocated.Code, allocated.Body.String())
 	}
 	hostname := "demo-1." + guest.Namespace
+	if changed := create(hostname, "192.0.2.8/32"); changed.Code != http.StatusForbidden || !strings.Contains(changed.Body.String(), `"guest_ip_changed"`) {
+		t.Fatalf("changed guest visitor IP = %d, %s", changed.Code, changed.Body.String())
+	}
 	allowed := create(hostname, "192.0.2.7/32")
 	if allowed.Code != http.StatusCreated {
 		t.Fatalf("guest demo URL = %d, %s", allowed.Code, allowed.Body.String())
@@ -228,7 +232,11 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		}
 	})
 	localDemo.SetGuest()
-	address, err := netip.ParseAddr(issued.SourceIp)
+	currentIP, err := authenticated.Control.ClientIP(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, err := netip.ParseAddr(currentIP.Ip)
 	if err != nil {
 		t.Fatal(err)
 	}

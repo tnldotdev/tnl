@@ -23,10 +23,10 @@ func (c *guestDemoControlStub) Discovery(context.Context) (controlv1.ControlDisc
 func (c *guestDemoControlStub) CreateGuestDemo(context.Context) (controlv1.GuestDemoSession, error) {
 	c.created++
 	return controlv1.GuestDemoSession{
-		AccessToken: c.token, GuestId: "guest_0123456789abcdefghijkl",
+		AccessToken: c.token, GuestId: "gst_0123456789abcdefghijkl",
 		TeamId: "tm_0123456789abcdefghijkl", MembershipId: "mem_0123456789abcdefghijkl",
 		DomainId: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
-		SourceIp: "192.0.2.7", ExpiresAt: time.Now().Add(time.Hour),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}, nil
 }
 
@@ -70,10 +70,10 @@ func TestGuestDemoReplacesExpiredLocalCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.SaveGuestSession(t.Context(), clientstate.GuestSession{
-		GuestID: "guest_0123456789abcdefghijkl", AccessToken: token.String(),
+		GuestID: "gst_0123456789abcdefghijkl", AccessToken: token.String(),
 		TeamID: "tm_0123456789abcdefghijkl", MembershipID: "mem_0123456789abcdefghijkl",
 		DomainID: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
-		SourceIP: "192.0.2.7", ExpiresAt: time.Now().Add(-time.Hour),
+		ExpiresAt: time.Now().Add(-time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}

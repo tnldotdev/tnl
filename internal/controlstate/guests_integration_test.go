@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,11 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
 		t.Fatal(err)
+	}
+	var storedTrial string
+	if err := database.pool.QueryRow(t.Context(), `SELECT row_to_json(trial)::text FROM control.guest_trials AS trial WHERE id=$1`, guest.ID).Scan(&storedTrial); err != nil ||
+		strings.Contains(storedTrial, guest.SourceIP.String()) {
+		t.Fatalf("guest trial stored plaintext source IP: %v", err)
 	}
 	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now); err != nil || number != 1 {
 		t.Fatalf("first demo number = %d, %v", number, err)

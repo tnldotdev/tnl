@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -22,13 +23,8 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
 		return
 	}
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	address, err := guestRequestAddress(request)
 	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
-		return
-	}
-	address, err := netip.ParseAddr(host)
-	if err != nil || address.Zone() != "" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
 		return
 	}
@@ -67,7 +63,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			AccessToken: string(guest.Token), GuestId: guest.ID, TeamId: guest.TeamID,
 			MembershipId: guest.MembershipID, DomainId: domain.DomainId,
 			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDeploymentDomain,
-			SourceIp:  guest.SourceIP.String(), ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
+			ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
 		})
 		return
 	}
@@ -111,4 +107,16 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.GuestDemoNumber{Number: number})
+}
+
+func guestRequestAddress(request *http.Request) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("read client address: %w", err)
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil || address.Zone() != "" {
+		return netip.Addr{}, errors.New("invalid client address")
+	}
+	return address.Unmap(), nil
 }
