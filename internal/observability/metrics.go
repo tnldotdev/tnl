@@ -64,6 +64,7 @@ type Metrics struct {
 	cleanupRuns             *prometheus.CounterVec
 	cleanupItems            *prometheus.CounterVec
 	cleanupLastSuccess      *prometheus.GaugeVec
+	guestTrialStats         *prometheus.GaugeVec
 	placementDecisions      *prometheus.CounterVec
 	assignmentReplacements  *prometheus.CounterVec
 	routingHistoryFloor     atomic.Uint64
@@ -167,6 +168,7 @@ func New(role string) *Metrics {
 		cleanupRuns:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_runs_total", Help: "Cleanup calls by fixed kind and outcome."}, []string{"kind", "outcome"}),
 		cleanupItems:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_items_total", Help: "Committed items removed by cleanup kind."}, []string{"kind"}),
 		cleanupLastSuccess:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_cleanup_last_success_timestamp_seconds", Help: "Unix time of last successful cleanup by kind; zero before success."}, []string{"kind"}),
+		guestTrialStats:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_guest_trials_last_24h", Help: "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas."}, []string{"stage"}),
 		placementDecisions:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_placement_decisions_total", Help: "Publish run placement decisions by action and bounded result."}, []string{"action", "outcome"}),
 		assignmentReplacements:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_connection_assignments_replaced_total", Help: "Committed replacement of connection assignments by fixed reason."}, []string{"reason"}),
 	}
@@ -182,6 +184,10 @@ func New(role string) *Metrics {
 			metrics.certificateClaims, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
 			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration, metrics.usageLastSuccess,
 			metrics.cleanupRuns, metrics.cleanupItems, metrics.cleanupLastSuccess, metrics.placementDecisions, metrics.assignmentReplacements)
+		registered = append(registered, metrics.guestTrialStats)
+		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit", "transfer_limit"} {
+			metrics.guestTrialStats.WithLabelValues(stage).Set(0)
+		}
 		for _, surface := range []string{"control", "authority", "private_ingress", "private_relay"} {
 			metrics.apiInFlight.WithLabelValues(surface).Set(0)
 		}
@@ -268,6 +274,18 @@ func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
 	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "tnl_control_tls_certificate_expiration_timestamp_seconds", Help: "Earliest locally loaded public control certificate expiry; zero when any configured hostname is not yet loaded.",
 	}, func() float64 { return routingTimestamp(source()) }))
+}
+
+// SetGuestTrialStats observes committed service-wide counts without identity labels.
+func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLimit, transferLimit int64) {
+	for stage, count := range map[string]int64{
+		"issued": issued, "allocated": allocated, "ready": ready,
+		"expired": expired, "ready_limit": readyLimit, "transfer_limit": transferLimit,
+	} {
+		if count >= 0 {
+			m.guestTrialStats.WithLabelValues(stage).Set(float64(count))
+		}
+	}
 }
 
 func (m *Metrics) Handler() http.Handler {

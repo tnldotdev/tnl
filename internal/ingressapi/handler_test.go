@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
@@ -92,14 +93,18 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 
 func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 	now := time.Now().UTC()
+	hashed, err := ippolicy.Hash([32]byte{1}, netip.MustParsePrefix("192.0.2.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	event := controlstate.IngressRoutingTableEvent{
 		RoutingTableRevision: 12, Kind: "public_url_upsert", PublicURLID: "route-1", PublishRunNumber: 3,
 		CanonicalHostname: "example.test", EntryRevision: 4, PublicUrlExpiresAt: timePointer(now.Add(time.Minute)),
 		CreatedAt: now,
 		Projection: controlstate.IngressRoutingTableProjection{
 			PublishRunID: "session-1", PublicURLID: "route-1", PublishRunNumber: 3,
-			CanonicalHostname: "example.test", PolicyRevision: 4, IPPolicy: "allowlist",
-			AllowedIPPrefixes:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+			CanonicalHostname: "example.test", PolicyRevision: 4, IPPolicy: controlstate.IPPolicyHashedAllowlist,
+			AllowedIPHashes: []ippolicy.Entry{hashed}, IPPolicyKey: [32]byte{1},
 			PublicUrlExpiresAt: now.Add(time.Minute),
 			PublisherConnections: []controlstate.IngressRoutingTablePublisherConnection{{
 				ConnectionSlot: 0, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 2,
@@ -153,7 +158,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		len(page.Events[0].Entry.PublisherConnections) != 1 {
 		t.Fatalf("routing page after %d calls = %#v", calls, page)
 	}
-	if page.Events[0].Entry.AllowedIpPrefixes[0] != "192.0.2.0/24" ||
+	if page.Events[0].Entry.AllowedIpHashes[0].Digest != hashed.Digest ||
 		page.Events[0].Entry.PublisherConnections[0].RelayId != "relay-1" {
 		t.Fatalf("routing entry = %#v", page.Events[0].Entry)
 	}

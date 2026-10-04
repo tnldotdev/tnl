@@ -75,6 +75,7 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control.ObserveCertificateMilestone("challenge_token_secret", time.Second)
 	control.ObserveCertificateMilestone("ready", 30*time.Second)
 	control.ObserveCertificateMilestone("cleanup", 45*time.Second)
+	control.SetGuestTrialStats(2, 1, 1, 0, 0, 1)
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
 	ingress.IncInspectionFailure("challenge_token_secret")
@@ -87,6 +88,7 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 			t.Fatalf("unbounded diagnostic labels: status=%d body=%s", response.Code, body)
 		}
 		if metrics == control && (!strings.Contains(body, `tnl_control_publish_run_readiness_duration_seconds_count{outcome="error"} 1`) ||
+			!strings.Contains(body, `tnl_control_guest_trials_last_24h{stage="issued"} 2`) ||
 			!strings.Contains(body, `tnl_control_certificate_work_duration_seconds_count{kind="public_url",outcome="retry",stage="other"} 1`) ||
 			!strings.Contains(body, `tnl_control_public_url_certificate_milestone_age_seconds_count{milestone="ready"} 1`) ||
 			!strings.Contains(body, `tnl_control_public_url_certificate_milestone_age_seconds_count{milestone="cleanup"} 1`)) {

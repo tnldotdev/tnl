@@ -82,7 +82,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
 	}
-	denied := !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes)
+	denied := !challenge && !route.allowsIP(source.Addr())
 	if denied {
 		visitorOutcome = "policy_denied"
 		if usage != nil {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -184,25 +186,53 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 	material := newForwardingTestMaterial(t)
 	forwarder := newTestForwarder(t, material)
 	entry := forwardingTestEntry(time.Now(), "relay.internal:9445")
-	entry.IpPolicy = ingressv1.Allowlist
-	entry.AllowedIpPrefixes = []string{"192.0.2.0/24"}
+	hashedRoutingPolicyForTest(t, &entry, "192.0.2.0/24")
 
 	route, err := forwarder.PublicURL(entry)
 	if err != nil {
 		t.Fatalf("PublicURL: %v", err)
 	}
 	if route.ID != entry.PublicUrlId || route.PublishRunNumber != uint64(entry.PublishRunNumber) ||
-		len(route.Backends) != 1 || len(route.AllowedIPPrefixes) != 1 || route.AllowedIPPrefixes[0].String() != "192.0.2.0/24" {
+		len(route.Backends) != 1 || !route.allowsIP(netip.MustParseAddr("192.0.2.7")) ||
+		route.allowsIP(netip.MustParseAddr("192.0.3.7")) {
 		t.Fatalf("route = %#v", route)
 	}
-	entry.AllowedIpPrefixes[0] = "198.51.100.0/24"
-	if route.AllowedIPPrefixes[0].String() != "192.0.2.0/24" {
+	entry.AllowedIpHashes[0].Digest = "changed"
+	if !route.allowsIP(netip.MustParseAddr("192.0.2.7")) {
 		t.Fatal("route retained mutable routing-table state")
 	}
 
 	entry.IpPolicy = ingressv1.AllowAll
 	if _, err := forwarder.PublicURL(entry); err == nil {
-		t.Fatal("allow-all route with allowlist prefixes was accepted")
+		t.Fatal("allow-all route with hashed prefixes was accepted")
+	}
+}
+
+func TestForwarderEnforcesHashedCIDRsAndFailsClosedWithoutVerifier(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	forwarder := newTestForwarder(t, material)
+	entry := forwardingTestEntry(time.Now(), "relay.internal:9445")
+	key := make([]byte, 32)
+	key[0] = 7
+	var verifier [32]byte
+	copy(verifier[:], key)
+	hashed, err := ippolicy.Hash(verifier, netip.MustParsePrefix("203.0.113.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.IpPolicy = ingressv1.HashedAllowlist
+	entry.IpPolicyKey = &key
+	entry.AllowedIpHashes = []ingressv1.HashedIPPrefix{{
+		Family: ingressv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
+	}}
+	route, err := forwarder.PublicURL(entry)
+	if err != nil || !route.allowsIP(netip.MustParseAddr("203.0.113.42")) ||
+		route.allowsIP(netip.MustParseAddr("203.0.114.42")) {
+		t.Fatalf("hashed policy allowed wrong visitor: %+v, %v", route, err)
+	}
+	entry.IpPolicyKey = nil
+	if _, err := forwarder.PublicURL(entry); err == nil {
+		t.Fatal("hashed policy without its verifier was accepted")
 	}
 }
 

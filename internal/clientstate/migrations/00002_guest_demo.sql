@@ -1,4 +1,7 @@
 -- +goose Up
+ALTER TABLE client_setting ADD COLUMN demo_telemetry_enabled INTEGER NOT NULL DEFAULT 0
+    CHECK (demo_telemetry_enabled IN (0, 1));
+
 CREATE TABLE guest_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,
     guest_id TEXT NOT NULL,
@@ -13,3 +16,4 @@ CREATE TABLE guest_sessions (
 
 -- +goose Down
 DROP TABLE guest_sessions;
+ALTER TABLE client_setting DROP COLUMN demo_telemetry_enabled;

@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	schemaVersion        int64 = 4
-	minimumSchemaVersion int64 = 4
+	schemaVersion        int64 = 5
+	minimumSchemaVersion int64 = 5
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )
@@ -152,7 +152,18 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 		pool.Close()
 		return nil, err
 	}
-	return &Database{pool: pool, storageKey: keyring, activity: activity, connections: connections}, nil
+	database := &Database{pool: pool, storageKey: keyring, activity: activity, connections: connections}
+	var missingGuestKey bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.guest_trials
+		WHERE expires_at > now() AND source_ip_key_id <> $1 AND source_ip_key_id <> $2)`,
+		keyring.CurrentID(), keyring.PreviousID()).Scan(&missingGuestKey); err != nil || missingGuestKey {
+		pool.Close()
+		if err != nil {
+			return nil, fmt.Errorf("controlstate: check guest verifier keys: %w", err)
+		}
+		return nil, errors.New("controlstate: previous storage key is still needed by active guest trials")
+	}
+	return database, nil
 }
 
 // Close closes all runtime database connections. it is safe to call more than

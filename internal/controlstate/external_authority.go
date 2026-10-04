@@ -113,9 +113,12 @@ func (d *Database) getPublicURLForAuthorization(ctx context.Context, publicURLID
 	}
 	result := publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
+		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
+	if err := d.restorePublicURLPolicy(&result, row.AllowedIpPolicyStorageKeyID, row.AllowedIpPolicyCiphertext, row.AllowedIpHashes); err != nil {
+		return PublicURL{}, err
+	}
 	result.AuthorizationPublishRunNumber = uint64(row.AuthorizationPublishRunNumber)
 	return result, nil
 }

@@ -58,7 +58,7 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	var opened atomic.Bool
 	config := Config{
 		Lookup: func(string) (PublicURL, string) {
-			return PublicURL{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, ""
+			return PublicURL{HashedIPPolicy: hashedPolicyForTest(t, "192.0.2.0/24")}, ""
 		},
 		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
 			if host != "route.example" {
@@ -122,7 +122,7 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
@@ -186,7 +186,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 				return PublicURL{}, "not_found"
 			}
 			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend},
-				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, ""
+				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 		},
 	}
 	_, address := startIngress(t, config)

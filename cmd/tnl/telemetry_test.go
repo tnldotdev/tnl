@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
@@ -54,6 +56,41 @@ func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
 	})
 	if err := observer(publisher.Event{Type: publisher.EventReady}); err != nil || !observed {
 		t.Fatalf("ready event was not forwarded: observed=%t, err=%v", observed, err)
+	}
+}
+
+func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
+	var events []telemetryPayload
+	invocation, err := newTelemetryInvocation(telemetryReporterFunc(func(event telemetryPayload) {
+		events = append(events, event)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation.SetPublishMode(telemetryPublishDemo)
+	invocation.Report(newTelemetryStarted(telemetryPublish))
+	invocation.SetPublishMode(telemetryPublishDemoGuest)
+	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, ""))
+	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping := demoPingHandler(output, invocation)
+	for count := uint64(1); count <= 2; count++ {
+		if err := ping(demo.State{PublicURL: "https://private.example", RequestCount: count, GeneratedAt: "secret time"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(events) != 3 || events[0].PublishMode != telemetryPublishDemo ||
+		events[1].PublishMode != telemetryPublishDemoGuest ||
+		events[2].Event != telemetryDemoPingReceived || events[2].PublishMode != telemetryPublishDemoGuest {
+		t.Fatalf("demo telemetry = %+v", events)
+	}
+	for _, event := range events {
+		wire, err := json.Marshal(event)
+		if err != nil || bytes.Contains(wire, []byte("private.example")) || bytes.Contains(wire, []byte("secret time")) {
+			t.Fatalf("demo telemetry leaked page data: %q, %v", wire, err)
+		}
 	}
 }
 

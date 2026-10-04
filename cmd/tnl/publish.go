@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
@@ -45,7 +46,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-		localDemo, err = demo.Start(output.demoPing)
+		localDemo, err = demo.Start(demoPingHandler(output, telemetry))
 		if err != nil {
 			return failure.Wrap("start local demo", failure.DemoLocalServiceUnavailable, err)
 		}
@@ -99,6 +100,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if guest != nil {
 			output.setGuestDemo()
 			localDemo.SetGuest()
+		}
+		if invocation, ok := telemetry.(*telemetryInvocation); ok {
+			mode := telemetryPublishDemoSigned
+			if guest != nil {
+				mode = telemetryPublishDemoGuest
+			}
+			invocation.SetPublishMode(mode)
 		}
 		if guest == nil {
 			label := make([]byte, 4)
@@ -161,4 +169,17 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	return output.stopped()
+}
+
+func demoPingHandler(output *publishOutput, telemetry telemetryReporter) func(demo.State) error {
+	var reportedPing sync.Once
+	return func(state demo.State) error {
+		if err := output.demoPing(state); err != nil {
+			return err
+		}
+		if telemetry != nil {
+			reportedPing.Do(func() { telemetry.Report(newTelemetryDemoPing()) })
+		}
+		return nil
+	}
 }

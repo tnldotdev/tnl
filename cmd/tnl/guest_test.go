@@ -26,7 +26,7 @@ func (c *guestDemoControlStub) CreateGuestDemo(context.Context) (controlv1.Guest
 		AccessToken: c.token, GuestId: "gst_0123456789abcdefghijkl",
 		TeamId: "tm_0123456789abcdefghijkl", MembershipId: "mem_0123456789abcdefghijkl",
 		DomainId: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
-		ExpiresAt: time.Now().Add(time.Hour),
+		ExpiresAt: time.Now().UTC().Add(72 * time.Hour),
 	}, nil
 }
 

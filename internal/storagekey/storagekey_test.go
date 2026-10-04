@@ -82,11 +82,11 @@ func TestIPPolicyKeysArePurposeBoundAcrossStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := first.IPPolicyKey(first.CurrentID(), "guest:one")
+	before, err := first.IPPolicyKey(first.CurrentID(), "url:one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := first.IPPolicyKey(first.CurrentID(), "issuance")
+	second, err := first.IPPolicyKey(first.CurrentID(), "url:two")
 	if err != nil || before == second || before == [32]byte{} {
 		t.Fatalf("purpose keys overlap: %x %x, %v", before, second, err)
 	}
@@ -94,15 +94,15 @@ func TestIPPolicyKeysArePurposeBoundAcrossStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous, err := rotated.IPPolicyKey(rotated.PreviousID(), "guest:one")
+	previous, err := rotated.IPPolicyKey(rotated.PreviousID(), "url:one")
 	if err != nil || previous != before {
 		t.Fatalf("previous verifier changed: %x, %v", previous, err)
 	}
-	current, err := rotated.IPPolicyKey(rotated.CurrentID(), "guest:one")
+	current, err := rotated.IPPolicyKey(rotated.CurrentID(), "url:one")
 	if err != nil || current == before {
 		t.Fatalf("rotation retained the old verifier: %x, %v", current, err)
 	}
-	if _, err := rotated.IPPolicyKey("unavailable", "guest:one"); err == nil {
+	if _, err := rotated.IPPolicyKey("unavailable", "url:one"); err == nil {
 		t.Fatal("unknown key version accepted")
 	}
 }

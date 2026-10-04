@@ -387,7 +387,7 @@ components:
         - canonical_hostname
         - policy_revision
         - ip_policy
-        - allowed_ip_prefixes
+        - allowed_ip_hashes
         - public_url_expires_at
         - publisher_connections
       properties:
@@ -409,12 +409,16 @@ components:
           minimum: 1
         ip_policy:
           type: string
-          enum: [allow_all, allowlist]
-        allowed_ip_prefixes:
+          enum: [allow_all, hashed_allowlist]
+        allowed_ip_hashes:
           type: array
           uniqueItems: true
           items:
-            type: string
+            $ref: "#/components/schemas/HashedIPPrefix"
+        ip_policy_key:
+          type: string
+          format: byte
+          description: Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
         public_url_expires_at:
           type: string
           format: date-time
@@ -427,6 +431,21 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/IngressRoutingPublisherConnection"
+    HashedIPPrefix:
+      type: object
+      additionalProperties: false
+      required: [family, prefix_length, digest]
+      properties:
+        family:
+          type: string
+          enum: [ipv4, ipv6]
+        prefix_length:
+          type: integer
+          minimum: 0
+          maximum: 128
+        digest:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
     IngressRoutingTableEvent:
       type: object
       additionalProperties: false

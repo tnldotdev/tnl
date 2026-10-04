@@ -31,6 +31,9 @@ func TestHashedPrefixesMatchTheirNetworksWithoutTheOriginalAddress(t *testing.T)
 			t.Errorf("allow %s = %t, want %t", test.address, got, test.allowed)
 		}
 	}
+	if _, err := New([32]byte{2}, entries); err != nil {
+		t.Fatal(err)
+	}
 	other, _ := New([32]byte{2}, entries)
 	if other.Allows(netip.MustParseAddr("192.0.2.41")) {
 		t.Fatal("policy accepted an address with the wrong verifier key")

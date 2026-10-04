@@ -72,7 +72,8 @@ func guestForDemoWithControl(
 		guest = clientstate.GuestSession{
 			GuestID: issued.GuestId, AccessToken: issued.AccessToken, TeamID: issued.TeamId,
 			MembershipID: issued.MembershipId, DomainID: issued.DomainId,
-			Namespace: issued.Namespace, ExpiresAt: issued.ExpiresAt,
+			Namespace: issued.Namespace,
+			ExpiresAt: issued.ExpiresAt,
 		}
 		if err := store.SaveGuestSession(ctx, guest); err != nil {
 			return nil, err

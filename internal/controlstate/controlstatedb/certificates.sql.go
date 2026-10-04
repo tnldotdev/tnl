@@ -515,7 +515,7 @@ func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLS
 }
 
 const getPublishRunByTokenID = `-- name: GetPublishRunByTokenID :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id
 FROM control.publish_runs
 WHERE publish_run_token_id = $1
 `
@@ -531,7 +531,6 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
-		&i.RequestDigest,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -551,6 +550,8 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 	)
 	return i, err
 }

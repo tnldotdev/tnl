@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -202,16 +202,23 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 	} else if event.PublicUrlExpiresAt != nil || len(entry.PublisherConnections) != 0 {
 		return ErrRoutingTableEvent
 	}
-	seenPrefixes := make(map[netip.Prefix]struct{}, len(entry.AllowedIpPrefixes))
-	for _, value := range entry.AllowedIpPrefixes {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || prefix != prefix.Masked() {
+	if entry.IpPolicy == ingressv1.HashedAllowlist {
+		if entry.IpPolicyKey == nil || len(*entry.IpPolicyKey) != 32 || len(entry.AllowedIpHashes) == 0 {
 			return ErrRoutingTableEvent
 		}
-		if _, exists := seenPrefixes[prefix]; exists {
+		var key [32]byte
+		copy(key[:], *entry.IpPolicyKey)
+		hashes := make([]ippolicy.Entry, len(entry.AllowedIpHashes))
+		for index, hashed := range entry.AllowedIpHashes {
+			hashes[index] = ippolicy.Entry{
+				Family: string(hashed.Family), Bits: hashed.PrefixLength, Digest: hashed.Digest,
+			}
+		}
+		if _, err := ippolicy.New(key, hashes); err != nil {
 			return ErrRoutingTableEvent
 		}
-		seenPrefixes[prefix] = struct{}{}
+	} else if entry.IpPolicy != ingressv1.AllowAll || len(entry.AllowedIpHashes) != 0 || entry.IpPolicyKey != nil {
+		return ErrRoutingTableEvent
 	}
 	seenSlots := make(map[int]struct{}, len(entry.PublisherConnections))
 	seenConnections := make(map[string]struct{}, len(entry.PublisherConnections))
@@ -254,7 +261,11 @@ func isChallengeEvent(kind ingressv1.IngressRoutingTableEventKind) bool {
 
 func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1.IngressRoutingTableEntry {
 	result := source
-	result.AllowedIpPrefixes = append([]string(nil), source.AllowedIpPrefixes...)
+	result.AllowedIpHashes = append([]ingressv1.HashedIPPrefix(nil), source.AllowedIpHashes...)
+	if source.IpPolicyKey != nil {
+		key := append([]byte(nil), (*source.IpPolicyKey)...)
+		result.IpPolicyKey = &key
+	}
 	result.PublisherConnections = append(
 		[]ingressv1.IngressRoutingPublisherConnection(nil), source.PublisherConnections...,
 	)

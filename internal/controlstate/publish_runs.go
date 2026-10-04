@@ -172,6 +172,9 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
+	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
+		return PublishRunSetup{}, ErrPublicURLNotEnabled
+	}
 	if request.RequireLocalAuthority {
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
@@ -197,7 +200,12 @@ func (d *Database) createPublishRun(
 		PublicURLID: request.PublicURLID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
+		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
+			publishRunRequestDigestContext(existing.ID), existing.RequestDigestCiphertext)
+		if digestErr != nil {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: read private publish run digest: %w", digestErr)
+		}
+		if subtle.ConstantTimeCompare(storedDigest, request.RequestDigest[:]) != 1 {
 			return PublishRunSetup{}, ErrPublishRunIdempotency
 		}
 		setup, err := loadPublishRunSetup(ctx, queries, request.RetrySecret, request.PublicURLID+"\x00"+request.IdempotencyKey, existing)
@@ -257,10 +265,15 @@ func (d *Database) createPublishRun(
 	if request.MembershipID != "" {
 		membershipID = text(request.MembershipID)
 	}
+	digestCiphertext, err := d.sealSecret(publishRunRequestDigestContext(publishRunID), request.RequestDigest[:])
+	if err != nil {
+		return PublishRunSetup{}, fmt.Errorf("controlstate: protect publish run digest: %w", err)
+	}
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
-		IdempotencyKey: request.IdempotencyKey, RequestDigest: request.RequestDigest[:],
+		IdempotencyKey:          request.IdempotencyKey,
+		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
 		PolicyRevision: positive(request.PolicyRevision), CertificateCacheKey: request.CertificateCacheKey,
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,

@@ -27,7 +27,17 @@ SELECT routes.*
 FROM control.publish_runs AS sessions
 JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
 WHERE sessions.closed_at IS NULL
-  AND sessions.publisher_expires_at <= sqlc.arg(now)
+  AND (sessions.publisher_expires_at <= sqlc.arg(now) OR EXISTS (
+      SELECT 1 FROM control.guest_public_urls AS guest_url
+      JOIN control.guest_trials AS guest ON guest.id = guest_url.guest_id
+      WHERE guest_url.public_url_id = routes.id AND (
+          guest.expires_at <= sqlc.arg(now)
+          OR guest.used_bytes >= 5242880
+          OR guest.used_ready_ns >= 900000000000
+          OR guest.active_ready_at IS NOT NULL AND guest.used_ready_ns +
+              GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - guest.active_ready_at)) * 1000000000)::bigint) >= 900000000000
+      )
+  ))
 ORDER BY sessions.publisher_expires_at, sessions.id
 LIMIT sqlc.arg(batch_size)
 FOR NO KEY UPDATE OF routes SKIP LOCKED;
@@ -76,7 +86,8 @@ INSERT INTO control.publish_runs (
     acting_identity_id,
     publish_run_number,
     idempotency_key,
-    request_digest,
+    request_digest_ciphertext,
+    request_digest_storage_key_id,
     publish_run_token_id,
     publish_run_token_digest,
     policy_revision,
@@ -96,7 +107,8 @@ INSERT INTO control.publish_runs (
     sqlc.arg(acting_identity_id),
     version.publish_run_number,
     sqlc.arg(idempotency_key),
-    sqlc.arg(request_digest),
+    sqlc.arg(request_digest_ciphertext),
+    sqlc.arg(request_digest_storage_key_id),
     sqlc.arg(publish_run_token_id),
     sqlc.arg(publish_run_token_digest),
     sqlc.arg(policy_revision),

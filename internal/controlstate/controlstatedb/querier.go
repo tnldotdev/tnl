@@ -88,6 +88,10 @@ type Querier interface {
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
 	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
 	FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error)
+	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)
+	ForgetExpiredGuestRoutingHashes(ctx context.Context, arg ForgetExpiredGuestRoutingHashesParams) (int64, error)
+	ForgetExpiredGuestRunDigests(ctx context.Context, arg ForgetExpiredGuestRunDigestsParams) (int64, error)
+	ForgetOldGuestIssuanceDigests(ctx context.Context, arg ForgetOldGuestIssuanceDigestsParams) (int64, error)
 	GetACMEAccountByDirectory(ctx context.Context, directoryUrl string) (ControlAcmeAccount, error)
 	GetACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrderByIdempotencyParams) (ControlAcmeOrder, error)
@@ -103,7 +107,7 @@ type Querier interface {
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetExternalAuthorityPublicURL(ctx context.Context, arg GetExternalAuthorityPublicURLParams) (GetExternalAuthorityPublicURLRow, error)
-	GetGuestTrialByCredentialID(ctx context.Context, credentialID string) (ControlGuestTrial, error)
+	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityPublicURL(ctx context.Context, arg GetIdentityPublicURLParams) (GetIdentityPublicURLRow, error)
@@ -138,7 +142,7 @@ type Querier interface {
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
 	GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURLParams) (bool, error)
-	GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (pgtype.Bool, error)
+	GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error)
 	HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishRunParams) (ControlPublishRun, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
@@ -270,6 +274,7 @@ type Querier interface {
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
+	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)
 	// blocking relay-service operations take the transaction advisory guard before
 	// service and lease rows. row readers can bypass a waiting writer without this

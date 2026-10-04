@@ -69,15 +69,8 @@ func TestIntegrationVisitorNetworkHashKeyMigrationDropsOldUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	database := &Database{pool: pool}
 	now := time.Now().UTC().Truncate(time.Second)
-	seedControlPublicURL(t, database, now, "usage_reset")
-	insertTestPublishRun(t, database, testPublishRun{
-		ID: "publish_run_usage_reset", PublicURLID: "public_url_usage_reset", TeamID: "team_usage_reset",
-		ActingIdentityID: "identity_usage_reset", CertificateCacheKey: "usage-reset", CertificateScope: "usage-reset",
-		CertificateIdentifiers: []string{"route-usage_reset.example.test"}, ChallengeMethod: "tls-alpn-01",
-		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	})
+	seedLegacyUsagePublicURL(t, pool, now)
 	legacyKey := [32]byte{1}
 	if _, err := pool.Exec(ctx, `INSERT INTO control.public_url_usage_configuration
 		(visitor_network_hash_master_key, created_at) VALUES ($1, $2)`, legacyKey[:], now); err != nil {
@@ -110,7 +103,7 @@ func TestIntegrationVisitorNetworkHashKeyMigrationDropsOldUsage(t *testing.T) {
 		VALUES ($1, 1, 'old-usage-delivery', 'pending', $2, $2)`, bucketID, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(ctx, databaseURL); err != nil {
+	if _, err := provider.UpTo(ctx, 3); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{
@@ -124,7 +117,13 @@ func TestIntegrationVisitorNetworkHashKeyMigrationDropsOldUsage(t *testing.T) {
 	}
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control.public_urls WHERE id = 'public_url_usage_reset'`).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("migration removed saved public URL: %d, %v", count, err)
+		t.Fatalf("visitor-network migration removed saved public URL: %d, %v", count, err)
+	}
+	if err := Migrate(ctx, databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control.public_urls WHERE id = 'public_url_usage_reset'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("prelaunch IP-policy migration retained old public URL: %d, %v", count, err)
 	}
 	current, err := Open(ctx, databaseURL, testStorageKey, "")
 	if err != nil {
@@ -135,5 +134,43 @@ func TestIntegrationVisitorNetworkHashKeyMigrationDropsOldUsage(t *testing.T) {
 		IngressID: "ingress_new", IngressRunID: "run_new", ProtocolVersion: 1, ConnectionCapacity: 10,
 	}, now, time.Minute); err != nil {
 		t.Fatalf("register ingress after discarding old usage: %v", err)
+	}
+}
+
+func seedLegacyUsagePublicURL(t *testing.T, pool *pgxpool.Pool, now time.Time) {
+	t.Helper()
+	for _, statement := range []string{
+		`INSERT INTO control.identities (id, kind, display_name, administrator, created_at, updated_at)
+			VALUES ('identity_usage_reset', 'authority', 'Test identity', true, $1, $1)`,
+		`INSERT INTO control.managed_label_reservations (label, created_at)
+			VALUES ('team-usage-reset', $1), ('member-usage-reset', $1)`,
+		`INSERT INTO control.teams (id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at)
+			VALUES ('team_usage_reset', 'personal', 'Team', 'team-usage-reset', 'identity_usage_reset', $1, $1)`,
+		`INSERT INTO control.member_slug_reservations (id, team_id, member_slug, state, reserved_by_identity_id, created_at, activated_at)
+			VALUES ('reservation_usage_reset', 'team_usage_reset', 'member-usage-reset', 'active', 'identity_usage_reset', $1, $1)`,
+		`INSERT INTO control.team_memberships (id, team_id, identity_id, slug_reservation_id, managed_label, role, authority_revision, created_at, updated_at)
+			VALUES ('membership_usage_reset', 'team_usage_reset', 'identity_usage_reset', 'reservation_usage_reset', 'member-usage-reset', 'owner', 1, $1, $1)`,
+		`INSERT INTO control.domains (id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id, created_at, verified_at, updated_at)
+			VALUES ('domain_usage_reset', 'claimed', 'team_usage_reset', 'usage_reset.example.test', 'ready', 1, 'identity_usage_reset', $1, $1, $1)`,
+		`INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
+			request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state,
+			dns_state, created_at, updated_at)
+			VALUES ('public_url_usage_reset', 'team_usage_reset', 'domain_usage_reset', 'identity_usage_reset', 'seed',
+			decode(repeat('00', 32), 'hex'), 'route-usage_reset.example.test', 'http://127.0.0.1:3000', 'shared', 1,
+			'allow_all', 'enabled', 'published', $1, $1)`,
+	} {
+		if _, err := pool.Exec(t.Context(), statement, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO control.publish_runs
+		(id, public_url_id, team_id, acting_identity_id, publish_run_number, idempotency_key, request_digest,
+		publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope,
+		certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at)
+		VALUES ('publish_run_usage_reset', 'public_url_usage_reset', 'team_usage_reset', 'identity_usage_reset', 1,
+		'publish_run_usage_reset', decode(repeat('00', 32), 'hex'), 'token_publish_run_usage_reset',
+		decode(repeat('00', 32), 'hex'), 1, 'usage-reset', 'usage-reset', ARRAY['route-usage_reset.example.test'],
+		'tls-alpn-01', 'starting', $1, $1, $2)`, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
 	}
 }

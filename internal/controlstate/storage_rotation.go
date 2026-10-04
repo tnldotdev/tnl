@@ -54,7 +54,11 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.runtime_secret WHERE external_retry_master_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.public_url_usage_configuration WHERE visitor_network_hash_master_key_storage_key_id = $1)
+			(SELECT count(*) FROM control.public_url_usage_configuration WHERE visitor_network_hash_master_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.public_urls WHERE allowed_ip_policy_storage_key_id = $1) +
+			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
+			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
+			(SELECT count(*) FROM control.ingress_routing_table_events WHERE policy_storage_key_id = $1)
 	`, previousKeyID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("controlstate: count previous-key secrets: %w", err)
@@ -287,6 +291,37 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return err
 	}); err != nil {
 		return 0, fmt.Errorf("controlstate: rotate visitor network hash key: %w", err)
+	}
+
+	for _, source := range []struct {
+		query, column, keyIDColumn, table string
+		context                           func(string) string
+	}{
+		{`SELECT ctid::text, id, allowed_ip_policy_ciphertext FROM control.public_urls
+		  WHERE allowed_ip_policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"allowed_ip_policy_ciphertext", "allowed_ip_policy_storage_key_id", "control.public_urls", publicURLIPPolicyContext},
+		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.public_urls
+		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"request_digest_ciphertext", "request_digest_storage_key_id", "control.public_urls", publicURLRequestDigestContext},
+		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.publish_runs
+		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"request_digest_ciphertext", "request_digest_storage_key_id", "control.publish_runs", publishRunRequestDigestContext},
+		{`SELECT ctid::text, public_url_id, policy_ciphertext FROM control.ingress_routing_table_events
+		  WHERE policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"policy_ciphertext", "policy_storage_key_id", "control.ingress_routing_table_events", publicURLIPPolicyContext},
+	} {
+		if err := rotate(source.query, func(rows pgx.Rows) (string, string, []byte, error) {
+			var rowID, id string
+			var ciphertext []byte
+			err := rows.Scan(&rowID, &id, &ciphertext)
+			return rowID, source.context(id), ciphertext, err
+		}, func(rowID, keyID string, ciphertext []byte) error {
+			_, err := tx.Exec(ctx, `UPDATE `+source.table+` SET `+source.column+`=$1, `+source.keyIDColumn+`=$2
+				WHERE ctid=$3::tid AND `+source.keyIDColumn+`=$4`, ciphertext, keyID, rowID, previousKeyID)
+			return err
+		}); err != nil {
+			return 0, fmt.Errorf("controlstate: rotate private IP policy: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

@@ -115,10 +115,10 @@ func (d *Database) CreateGuestTrial(ctx context.Context, guest NewGuestTrial, do
 		return err
 	}
 	if _, err := controlstatedb.New(tx).InsertGuestTrial(ctx, controlstatedb.InsertGuestTrialParams{
-		ID: guest.ID, CredentialID: string(guest.CredentialID), CredentialHash: guest.Hash[:],
+		ID: guest.ID, CredentialID: text(string(guest.CredentialID)), CredentialHash: guest.Hash[:],
 		NamespaceLabel: guest.NamespaceLabel, TeamID: guest.TeamID, MembershipID: guest.MembershipID,
 		DomainID: domainID, DnsAuthorityReference: dnsAuthorityReference,
-		SourceIpDigest: sourceDigest, SourceIpKeyID: keyID, IssuanceIpDigest: issuanceDigest,
+		SourceIpDigest: text(sourceDigest), SourceIpKeyID: text(keyID), IssuanceIpDigest: text(issuanceDigest),
 		ExpiresAt: timestamptz(now.Add(GuestLifetime)), CreatedAt: timestamptz(now),
 	}); err != nil {
 		return err
@@ -144,7 +144,7 @@ func (d *Database) guestIssuanceAllowed(ctx context.Context, queries *controlsta
 			return err
 		}
 		matched, err := queries.CountRecentGuestTrialsByIP(ctx, controlstatedb.CountRecentGuestTrialsByIPParams{
-			SourceIpKeyID: keyID, IssuanceIpDigest: digest, Since: timestamptz(now.Add(-time.Hour)),
+			SourceIpKeyID: text(keyID), IssuanceIpDigest: text(digest), Since: timestamptz(now.Add(-time.Hour)),
 		})
 		if err != nil {
 			return fmt.Errorf("count recent guest demos: %w", err)
@@ -162,7 +162,7 @@ func (d *Database) GuestTrialByAccessToken(ctx context.Context, token credential
 	if err != nil {
 		return GuestTrial{}, ErrGuestUnknown
 	}
-	row, err := controlstatedb.New(d.pool).GetGuestTrialByCredentialID(ctx, string(credentialID))
+	row, err := controlstatedb.New(d.pool).GetGuestTrialByCredentialID(ctx, text(string(credentialID)))
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && subtle.ConstantTimeCompare(row.CredentialHash, hash[:]) != 1 {
 		return GuestTrial{}, ErrGuestUnknown
 	}
@@ -173,7 +173,7 @@ func (d *Database) GuestTrialByAccessToken(ctx context.Context, token credential
 		ID: row.ID, NamespaceLabel: row.NamespaceLabel, TeamID: row.TeamID,
 		MembershipID: row.MembershipID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference,
 		UsedReady: time.Duration(row.UsedReadyNs), UsedBytes: row.UsedBytes, LastDemoNumber: row.LastDemoNumber,
-		ExpiresAt: row.ExpiresAt.Time, SourceIPDigest: row.SourceIpDigest, SourceIPKeyID: row.SourceIpKeyID,
+		ExpiresAt: row.ExpiresAt.Time, SourceIPDigest: row.SourceIpDigest.String, SourceIPKeyID: row.SourceIpKeyID.String,
 	}
 	return guest, nil
 }

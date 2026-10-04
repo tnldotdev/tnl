@@ -194,19 +194,23 @@ type ControlGuestPublicUrl struct {
 
 type ControlGuestTrial struct {
 	ID                    string
-	CredentialID          string
+	CredentialID          pgtype.Text
 	CredentialHash        []byte
 	NamespaceLabel        string
 	TeamID                string
 	MembershipID          string
 	DomainID              string
 	DnsAuthorityReference string
-	SourceIpDigest        string
-	SourceIpKeyID         string
-	IssuanceIpDigest      string
+	SourceIpDigest        pgtype.Text
+	SourceIpKeyID         pgtype.Text
+	IssuanceIpDigest      pgtype.Text
 	ExpiresAt             pgtype.Timestamptz
 	UsedReadyNs           int64
 	UsedBytes             int64
+	FirstDemoAllocatedAt  pgtype.Timestamptz
+	FirstReadyAt          pgtype.Timestamptz
+	EndReason             pgtype.Text
+	EndedAt               pgtype.Timestamptz
 	LastDemoNumber        int64
 	ActivePublishRunID    pgtype.Text
 	ActiveReadyAt         pgtype.Timestamptz
@@ -261,6 +265,8 @@ type ControlIngressRoutingTableEvent struct {
 	Projection         []byte
 	PublicUrlExpiresAt pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
+	PolicyCiphertext   []byte
+	PolicyStorageKeyID pgtype.Text
 }
 
 type ControlIngressUsageReport struct {
@@ -337,39 +343,43 @@ type ControlOidcAssertionExchange struct {
 }
 
 type ControlPublicUrl struct {
-	ID                    string
-	TeamID                string
-	DomainID              string
-	MembershipID          pgtype.Text
-	CreatedByIdentityID   string
-	IdempotencyKey        string
-	RequestDigest         []byte
-	CanonicalHostname     string
-	Target                string
-	PublicURLScope        string
-	PolicyRevision        int64
-	IpPolicy              string
-	AllowedIpPrefixes     []netip.Prefix
-	LifecycleState        string
-	DnsAuthorityReference pgtype.Text
-	DnsState              string
-	DnsRevision           int64
-	DnsWorkOwner          pgtype.Text
-	DnsWorkEpoch          int64
-	DnsWorkExpiresAt      pgtype.Timestamptz
-	DnsAttempts           int64
-	DnsAvailableAt        pgtype.Timestamptz
-	DnsLastError          pgtype.Text
-	NextPublishRunNumber  int64
-	MutationRevision      int64
-	Ephemeral             bool
-	ExpiresAt             pgtype.Timestamptz
-	SuspensionRevision    int64
-	SuspensionReason      pgtype.Text
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	SuspendedAt           pgtype.Timestamptz
-	DeletedAt             pgtype.Timestamptz
+	ID                          string
+	TeamID                      string
+	DomainID                    string
+	MembershipID                pgtype.Text
+	CreatedByIdentityID         string
+	IdempotencyKey              string
+	CanonicalHostname           string
+	Target                      string
+	PublicURLScope              string
+	PolicyRevision              int64
+	IpPolicy                    string
+	LifecycleState              string
+	DnsAuthorityReference       pgtype.Text
+	DnsState                    string
+	DnsRevision                 int64
+	DnsWorkOwner                pgtype.Text
+	DnsWorkEpoch                int64
+	DnsWorkExpiresAt            pgtype.Timestamptz
+	DnsAttempts                 int64
+	DnsAvailableAt              pgtype.Timestamptz
+	DnsLastError                pgtype.Text
+	NextPublishRunNumber        int64
+	MutationRevision            int64
+	Ephemeral                   bool
+	ExpiresAt                   pgtype.Timestamptz
+	SuspensionRevision          int64
+	SuspensionReason            pgtype.Text
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	SuspendedAt                 pgtype.Timestamptz
+	DeletedAt                   pgtype.Timestamptz
+	AllowedIpPolicyCiphertext   []byte
+	AllowedIpPolicyStorageKeyID pgtype.Text
+	AllowedIpHashes             []byte
+	AllowedIpHashKeyID          pgtype.Text
+	RequestDigestCiphertext     []byte
+	RequestDigestStorageKeyID   pgtype.Text
 }
 
 type ControlPublicUrlRecoveryEpisode struct {
@@ -458,7 +468,6 @@ type ControlPublishRun struct {
 	ActingIdentityID           string
 	PublishRunNumber           int64
 	IdempotencyKey             string
-	RequestDigest              []byte
 	PublishRunTokenID          string
 	PublishRunTokenDigest      []byte
 	PolicyRevision             int64
@@ -478,6 +487,8 @@ type ControlPublishRun struct {
 	ClosedAt                   pgtype.Timestamptz
 	CloseReason                pgtype.Text
 	AssignmentsOpen            pgtype.Bool
+	RequestDigestCiphertext    []byte
+	RequestDigestStorageKeyID  pgtype.Text
 }
 
 type ControlPublishRunConnectionSlot struct {

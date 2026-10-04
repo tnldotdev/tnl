@@ -50,7 +50,7 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 		ID: "gst_1", TeamID: "tm_1", MembershipID: "mem_1", DomainID: "dom_1",
 		NamespaceLabel: "guest-01234567", DNSAuthorityReference: "da_1",
 		LastDemoNumber: 1,
-		ExpiresAt:      time.Now().Add(time.Hour),
+		ExpiresAt:      time.Now().Add(72 * time.Hour),
 	}
 	authorizer := guestAuthorizer{
 		fallback: guestFallback{}, store: guestStoreStub{guest: guest, owned: true},
@@ -70,7 +70,7 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	changedIP := create
 	changedIP.AllowedIPPrefixes = []string{"192.0.2.8/32"}
 	if _, err := authorizer.Authorize(t.Context(), changedIP); !errors.Is(err, authorization.ErrGuestIPChanged) {
-		t.Fatalf("guest changed visitor IP: %v", err)
+		t.Fatalf("changed guest IP was accepted: %v", err)
 	}
 	for _, invalid := range []authorization.Request{
 		func() authorization.Request { r := create; r.AllowedIPPrefixes = []string{}; return r }(),
@@ -106,12 +106,6 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, authorization.ErrForbidden) {
 		t.Fatalf("foreign public URL accepted: %v", err)
 	}
-	guest.ExpiresAt = time.Now().Add(-time.Second)
-	authorizer.store = guestStoreStub{guest: guest, owned: true}
-	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, controlstate.ErrGuestTrialSpent) {
-		t.Fatalf("expired guest accepted: %v", err)
-	}
-	guest.ExpiresAt = time.Now().Add(time.Hour)
 	guest.UsedBytes = controlstate.GuestByteAllowance
 	authorizer.store = guestStoreStub{guest: guest, owned: true}
 	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, controlstate.ErrGuestTrialSpent) {

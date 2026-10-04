@@ -52,6 +52,11 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		}
 		issuedAt := time.Now()
 		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, issuedAt); err != nil {
+			if errors.Is(err, controlstate.ErrGuestIssuance) {
+				response.Header().Set("Retry-After", "3600")
+				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
+				return
+			}
 			var conflict *pgconn.PgError
 			if errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
 				continue
@@ -91,6 +96,21 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 	}
 	if !guest.ExpiresAt.After(time.Now()) {
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl login to continue")
+		return
+	}
+	address, err := guestRequestAddress(request)
+	if err != nil {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
+		return
+	}
+	prefix := netip.PrefixFrom(address, address.BitLen()).String()
+	matched, err := h.guests.GuestSourceMatches(guest, prefix)
+	if err != nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest IP")
+		return
+	}
+	if !matched {
+		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl login to continue")
 		return
 	}
 	number, err := h.guests.AllocateGuestDemoNumber(request.Context(), guest.ID, time.Now())

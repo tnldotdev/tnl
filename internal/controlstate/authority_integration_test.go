@@ -147,13 +147,19 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 	database, now, owner, team := newAuthorityTeam(t)
 	admin := addAuthorityMember(t, database, now, owner, team.ID, "admin", "admin")
 	member := addAuthorityMember(t, database, now, admin.IdentityID, team.ID, "second", "member")
+	sealedDigest, err := database.sealSecret(publicURLRequestDigestContext("public_url_member"), bytes.Repeat([]byte{'1'}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key,
-		request_digest, canonical_hostname, target, public_url_scope, policy_revision, ip_policy,
+		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target,
+		public_url_scope, policy_revision, ip_policy,
 		lifecycle_state, dns_state, created_at, updated_at
-	) VALUES ('public_url_member', $1, $2, $3, $4, 'member-route', decode(repeat('31', 32), 'hex'),
-		'second.example.test', 'http://127.0.0.1:3000', 'member', $5, 'allow_all', 'enabled', 'unmanaged', $6, $6)`,
-		team.ID, team.DefaultDomainID, member.ID, member.IdentityID, member.PolicyRevision, now); err != nil {
+	) VALUES ('public_url_member', $1, $2, $3, $4, 'member-route', $5, $6,
+		'second.example.test', 'http://127.0.0.1:3000', 'member', $7, 'allow_all', 'enabled', 'unmanaged', $8, $8)`,
+		team.ID, team.DefaultDomainID, member.ID, member.IdentityID,
+		sealedDigest, database.storageKey.CurrentID(), member.PolicyRevision, now); err != nil {
 		t.Fatal(err)
 	}
 	insertTestPublishRun(t, database, testPublishRun{

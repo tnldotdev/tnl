@@ -40,6 +40,9 @@ func (d *daemon) startControlWorkers(
 	d.start("clean up ephemeral public URLs", func() error {
 		return runEphemeralPublicURLCleanup(lifetime, database, metrics)
 	})
+	d.start("forget expired guest credentials", func() error {
+		return runGuestPrivateStateCleanup(lifetime, database, metrics)
+	})
 	d.start("clean up routing history", func() error {
 		return runRoutingHistoryCleanup(lifetime, database, metrics)
 	})

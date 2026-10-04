@@ -822,7 +822,7 @@ WITH public_url_guard AS MATERIALIZED (
     WHERE routes.id = $2
     FOR KEY SHARE
 )
-SELECT sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.request_digest, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge_method, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
+SELECT sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge_method, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open, sessions.request_digest_ciphertext, sessions.request_digest_storage_key_id
 FROM control.publish_runs AS sessions
 JOIN public_url_guard ON public_url_guard.id = sessions.public_url_id
 WHERE sessions.publish_run_number = $1
@@ -848,7 +848,6 @@ func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRun
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
-		&i.RequestDigest,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -868,6 +867,8 @@ func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRun
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 	)
 	return i, err
 }
