@@ -22,10 +22,9 @@ func (c *guestDemoControlStub) Discovery(context.Context) (controlv1.ControlDisc
 func (c *guestDemoControlStub) CreateGuestDemo(context.Context) (controlv1.GuestDemoSession, error) {
 	c.created++
 	return controlv1.GuestDemoSession{
-		AccessToken: c.token, GuestId: "guest_0123456789abcdefghijkl",
+		AccessToken: c.token, GuestId: "gst_0123456789abcdefghijkl",
 		TeamId: "tm_0123456789abcdefghijkl", MembershipId: "mem_0123456789abcdefghijkl",
 		DomainId: "dom_0123456789abcdefghijkl", Namespace: "guest-01234567.example",
-		SourceIp: "192.0.2.7",
 	}, nil
 }
 

@@ -45,6 +45,7 @@ var (
 	ErrUnsupported          = failure.Wrap("request control API", failure.ServerResponseInvalid, errors.New("controlclient: unsupported"))
 	ErrGuestTrialExhausted  = failure.Wrap("publish guest demo", failure.GuestTrialExhausted, errors.New("controlclient: guest demo trial exhausted"))
 	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
+	ErrGuestIPChanged       = failure.Wrap("publish guest demo", failure.GuestIPChanged, errors.New("controlclient: guest demo source IP changed"))
 	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
 )
 
@@ -333,6 +334,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrGuestTrialExhausted
 	case controlv1.GuestDemoOnly:
 		return ErrGuestDemoOnly
+	case controlv1.GuestIpChanged:
+		return ErrGuestIPChanged
 	case controlv1.GuestIssuanceLimited:
 		return ErrGuestIssuanceLimited
 	case controlv1.NotFound:

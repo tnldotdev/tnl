@@ -45,8 +45,9 @@ func (d *Database) FinalizePublicURLUsageBuckets(
 	}
 	for _, bucket := range buckets {
 		if _, err := queries.GuestForPublicURL(ctx, bucket.PublicURLID); err == nil {
-			// guest usage stays in control for its trial ledger; hosted reports require
-			// an authenticated team and identity that a guest does not have.
+			// guest buckets are still finalized and counted in control's trial
+			// ledger. only external hosted delivery needs an authenticated team
+			// and identity that a guest does not have.
 			continue
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return 0, fmt.Errorf("controlstate: check guest usage ownership: %w", err)

@@ -103,6 +103,7 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 		wantReason failure.Reason
 	}{
 		{"guest_demo_only", ErrGuestDemoOnly, failure.GuestDemoOnly},
+		{"guest_ip_changed", ErrGuestIPChanged, failure.GuestIPChanged},
 		{"guest_trial_exhausted", ErrGuestTrialExhausted, failure.GuestTrialExhausted},
 		{"guest_issuance_limited", ErrGuestIssuanceLimited, failure.GuestIssuanceLimited},
 	} {

@@ -34,6 +34,9 @@ func (s *guestCreationStoreStub) GuestTrialByAccessToken(context.Context, creden
 func (s *guestCreationStoreStub) GuestOwnsPublicURL(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+func (s *guestCreationStoreStub) GuestSourceMatches(_ controlstate.GuestTrial, prefix string) (bool, error) {
+	return prefix == netip.PrefixFrom(s.created.SourceIP, s.created.SourceIP.BitLen()).String(), nil
+}
 func (s *guestCreationStoreStub) AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error) {
 	return 1, nil
 }
@@ -74,7 +77,8 @@ func TestGuestCreationUsesTrustedClientIPAndManagedDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := credentials.ParseAccessToken(credentials.AccessToken(created.AccessToken)); err != nil ||
-		created.SourceIp != "192.0.2.7" || created.Namespace != store.created.NamespaceLabel+".tnl.wtf" ||
+		store.created.SourceIP.String() != "192.0.2.7" || strings.Contains(response.Body.String(), "192.0.2.7") ||
+		created.Namespace != store.created.NamespaceLabel+".tnl.wtf" ||
 		created.TeamId != store.created.TeamID || store.domain != "dom_guest" {
 		t.Fatalf("created guest = %+v, stored = %+v, error = %v", created, store.created, err)
 	}

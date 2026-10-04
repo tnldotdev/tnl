@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/netip"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,11 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
 		t.Fatal(err)
+	}
+	var storedTrial string
+	if err := database.pool.QueryRow(t.Context(), `SELECT row_to_json(trial)::text FROM control.guest_trials AS trial WHERE id=$1`, guest.ID).Scan(&storedTrial); err != nil ||
+		strings.Contains(storedTrial, guest.SourceIP.String()) {
+		t.Fatalf("guest trial stored plaintext source IP: %v", err)
 	}
 	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now); err != nil || number != 1 {
 		t.Fatalf("first demo number = %d, %v", number, err)
@@ -82,6 +89,49 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(4*time.Second)); !errors.Is(err, ErrGuestTrialSpent) {
 		t.Fatalf("spent guest trial allocated another number: %v", err)
+	}
+}
+
+func TestIntegrationGuestIssuanceSerializesOneNetwork(t *testing.T) {
+	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "guest_issuance")
+	other, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(other.Close)
+	const callers = 40
+	results := make(chan error, callers)
+	var workers sync.WaitGroup
+	for index := range callers {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+			if err == nil {
+				owner := database
+				if index%2 == 1 {
+					owner = other
+				}
+				err = owner.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now)
+			}
+			results <- err
+		}()
+	}
+	workers.Wait()
+	close(results)
+	allowed, limited := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			allowed++
+		case errors.Is(err, ErrGuestIssuance):
+			limited++
+		default:
+			t.Fatalf("guest issuance = %v", err)
+		}
+	}
+	if allowed != 32 || limited != callers-32 {
+		t.Fatalf("guest issuance allowed=%d limited=%d", allowed, limited)
 	}
 }
 

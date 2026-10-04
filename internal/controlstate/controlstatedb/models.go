@@ -201,7 +201,9 @@ type ControlGuestTrial struct {
 	MembershipID          string
 	DomainID              string
 	DnsAuthorityReference string
-	SourceIp              string
+	SourceIpDigest        string
+	SourceIpKeyID         string
+	IssuanceIpDigest      string
 	UsedReadyNs           int64
 	UsedBytes             int64
 	LastDemoNumber        int64

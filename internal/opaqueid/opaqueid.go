@@ -22,7 +22,7 @@ const (
 	DNSWorkerPrefix                  = "dw_"
 	DomainPrefix                     = "dom_"
 	DrainPrefix                      = "dr_"
-	GuestPrefix                      = "guest_"
+	GuestPrefix                      = "gst_"
 	IdempotencyPrefix                = "ik_"
 	IdentityPrefix                   = "ident_"
 	IngressRunPrefix                 = "ir_"
