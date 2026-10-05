@@ -4,12 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
-	"net"
-	"net/http"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,9 +31,9 @@ type feedbackCommand struct {
 	Inspect feedbackInspectCommand `cmd:"" help:"Read a report, events, and local checkout comparison."`
 	Watch   feedbackWatchCommand   `cmd:"" help:"Follow ordered feedback events; resume after a cursor."`
 	Reply   feedbackReplyCommand   `cmd:"" help:"Reply to a feedback thread."`
-	Ready   feedbackReadyCommand   `cmd:"" help:"Mark a fix ready for recheck."`
-	Resolve feedbackResolveCommand `cmd:"" help:"Resolve a feedback thread after recheck."`
-	Open    feedbackOpenCommand    `cmd:"" help:"Open developer controls for an active local development service."`
+	Update  feedbackUpdateCommand  `cmd:"" help:"Post an update with the current checkout marker."`
+	Resolve feedbackResolveCommand `cmd:"" help:"Resolve an open feedback thread."`
+	Reopen  feedbackReopenCommand  `cmd:"" help:"Reopen a resolved feedback thread."`
 }
 
 type feedbackListCommand struct {
@@ -60,23 +56,22 @@ type feedbackWatchCommand struct {
 type feedbackMutationCommand struct {
 	scopedTeamFlags `embed:""`
 	FeedbackID      string             `arg:"" name:"feedback-id" required:"" help:"Feedback thread ID."`
-	Message         string             `name:"message" help:"Reply or fix description."`
+	Message         string             `name:"message" help:"Reply, update, or optional status-change note."`
 	Output          feedbackOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type feedbackReplyCommand struct {
 	feedbackMutationCommand `embed:""`
 }
-type feedbackReadyCommand struct {
+type feedbackUpdateCommand struct {
 	feedbackMutationCommand `embed:""`
 }
 type feedbackResolveCommand struct {
 	feedbackMutationCommand `embed:""`
 }
 
-type feedbackOpenCommand struct {
-	Service  string `arg:"" name:"service" optional:"" help:"Active project service. Required when the project has multiple services."`
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+type feedbackReopenCommand struct {
+	feedbackMutationCommand `embed:""`
 }
 
 type feedbackListResult struct {
@@ -365,14 +360,11 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 		return err
 	}
 	message := strings.TrimSpace(flags.Message)
-	if (kind == "reply" || kind == "fix.ready_for_recheck") && message == "" {
+	if (kind == "reply" || kind == "update") && message == "" {
 		return errors.New("provide a message for this feedback event")
 	}
 	if len(message) > 4000 {
 		return errors.New("feedback message must be at most 4000 bytes")
-	}
-	if kind == "thread.resolved" && message != "" {
-		return errors.New("resolve does not take a message")
 	}
 	session, _, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback "+feedbackMutationName(kind), diagnostics)
 	if err != nil {
@@ -383,13 +375,13 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	if message != "" {
 		body.Text = &message
 	}
-	if kind == "fix.ready_for_recheck" {
+	if kind == "update" {
 		thread, err := session.authenticated.Control.GetFeedbackThread(ctx, flags.FeedbackID)
 		if err != nil {
 			return err
 		}
 		if project.Root == "" || previewID == "" || thread.Scope.PreviewId != previewID {
-			return errors.New("open the checkout that owns this preview before marking the fix ready")
+			return errors.New("run the update from the checkout that owns this preview")
 		}
 		marker, err := checkoutmarker.Capture(ctx, project.Root)
 		if err != nil {
@@ -416,68 +408,13 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 
 func feedbackMutationName(kind string) string {
 	switch kind {
-	case "fix.ready_for_recheck":
-		return "ready"
+	case "update":
+		return "update"
 	case "thread.resolved":
 		return "resolve"
+	case "thread.reopened":
+		return "reopen"
 	default:
 		return "reply"
 	}
-}
-
-func runFeedbackOpen(ctx context.Context, flags feedbackOpenCommand, project projectConfiguration, output io.Writer) error {
-	if !project.Found() || len(project.Config.Services) == 0 || project.Config.Feedback == nil || !*project.Config.Feedback {
-		return errors.New("enable feedback in project configuration and start tnl dev")
-	}
-	service := flags.Service
-	if service == "" {
-		var err error
-		service, err = project.defaultService()
-		if err != nil {
-			return err
-		}
-	}
-	if _, found := project.Config.Services[service]; !found {
-		return fmt.Errorf("project service %q is not configured", service)
-	}
-	link, err := requestFeedbackOwnerLink(ctx, project.Root, service)
-	if err != nil {
-		return err
-	}
-	if err := openBrowser(link); err != nil {
-		return fmt.Errorf("open developer feedback in a browser: %w", err)
-	}
-	return writeHumanFrame(output, "tnl feedback open", "opening", "", clioutput.Text("developer feedback controls are opening in your browser"))
-}
-
-func requestFeedbackOwnerLink(ctx context.Context, root, service string) (string, error) {
-	directory, err := devRuntimeDirectory()
-	if err != nil {
-		return "", err
-	}
-	socket := filepath.Join(directory, "dev-"+devSocketDigest(root, service)+".sock")
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/feedback/owner", nil)
-	if err != nil {
-		return "", err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return "", errors.New("development service is not running; start tnl dev before opening feedback")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return "", errors.New("developer controls are not ready; check the active tnl dev session")
-	}
-	var body struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1024)).Decode(&body); err != nil || !strings.HasPrefix(body.URL, "https://") || !strings.Contains(body.URL, "/__tnl/feedback/owner/handoff/") {
-		return "", errors.New("development service returned an invalid owner link")
-	}
-	return body.URL, nil
 }

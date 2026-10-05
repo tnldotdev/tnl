@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -99,7 +97,7 @@ func TestFeedbackWatchResumesAfterInvisibleEventsAndPagination(t *testing.T) {
 
 func TestFeedbackInspectKeepsReportAndAddsLocalComparison(t *testing.T) {
 	thread := controlv1.FeedbackThread{
-		Id: "fb_example", State: "ready_for_recheck",
+		Id: "fb_example", State: "open",
 		Report: controlv1.FeedbackReport{Text: "original report"},
 		Scope:  controlv1.FeedbackScope{PreviewId: "pv_mine"},
 	}
@@ -113,20 +111,5 @@ func TestFeedbackInspectKeepsReportAndAddsLocalComparison(t *testing.T) {
 	if err := json.Unmarshal(encoded, &fields); err != nil || string(fields["id"]) != `"fb_example"` ||
 		!bytes.Contains(fields["report"], []byte("original report")) || !bytes.Contains(fields["local_worktree"], []byte(`"matches_preview":false`)) || len(fields["events"]) == 0 {
 		t.Fatalf("inspect projection = %s, %v", encoded, err)
-	}
-}
-
-func TestFeedbackOwnerLinkIsIssuedOnlyByTheActiveDevelopmentSocket(t *testing.T) {
-	ctx := devBootstrapTestContext(t)
-	root := t.TempDir()
-	bootstrap := startDevBootstrapTest(t, ctx, "", root, "web")
-	bootstrap.owner = publisher.NewOwnerHandoff()
-	bootstrap.Resolve(devConfigurationResponse{PublicURL: "https://web.example.test"}, nil)
-	link, err := requestFeedbackOwnerLink(ctx, root, "web")
-	if err != nil || !strings.HasPrefix(link, "https://web.example.test/__tnl/feedback/owner/handoff/") {
-		t.Fatalf("developer owner link = %q, %v", link, err)
-	}
-	if _, err := requestFeedbackOwnerLink(ctx, root, "other"); err == nil {
-		t.Fatal("another project service reached this development socket")
 	}
 }

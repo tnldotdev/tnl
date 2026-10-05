@@ -455,12 +455,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runFeedbackWatch(ctx, flags.Feedback.Watch, project, stdout, stderr)
 	case "feedback reply <feedback-id>":
 		return runFeedbackMutation(ctx, flags.Feedback.Reply.feedbackMutationCommand, project, "reply", stdout, stderr)
-	case "feedback ready <feedback-id>":
-		return runFeedbackMutation(ctx, flags.Feedback.Ready.feedbackMutationCommand, project, "fix.ready_for_recheck", stdout, stderr)
+	case "feedback update <feedback-id>":
+		return runFeedbackMutation(ctx, flags.Feedback.Update.feedbackMutationCommand, project, "update", stdout, stderr)
 	case "feedback resolve <feedback-id>":
 		return runFeedbackMutation(ctx, flags.Feedback.Resolve.feedbackMutationCommand, project, "thread.resolved", stdout, stderr)
-	case "feedback open <service>":
-		return runFeedbackOpen(ctx, flags.Feedback.Open, project, stdout)
+	case "feedback reopen <feedback-id>":
+		return runFeedbackMutation(ctx, flags.Feedback.Reopen.feedbackMutationCommand, project, "thread.reopened", stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":
@@ -524,8 +524,6 @@ func canonicalParsedCommand(command string) string {
 		return "share link create <url>"
 	case "share list":
 		return "share list <url>"
-	case "feedback open":
-		return "feedback open <service>"
 	default:
 		return command
 	}
