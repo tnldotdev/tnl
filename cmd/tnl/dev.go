@@ -286,6 +286,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishDone := make(chan error, 1)
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.PreviewID = previewID
 		publisherConfig.Mounts = mounts
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {

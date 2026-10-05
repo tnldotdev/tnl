@@ -22,6 +22,7 @@ var (
 	ErrShareInvalid     = errors.New("controlstate: share is invalid")
 	ErrShareIdempotency = errors.New("controlstate: share idempotency conflict")
 	ErrShareStale       = errors.New("controlstate: share public URL state changed")
+	ErrShareLimit       = errors.New("controlstate: public URL has too many active shares or share cookies")
 )
 
 const maximumShareLifetime = 30 * 24 * time.Hour
@@ -167,6 +168,15 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner") {
 			return Share{}, ErrPreviewAccess
 		}
+		count, err := queries.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{
+			PublicURLID: route.ID, Now: timestamptz(now),
+		})
+		if err != nil {
+			return Share{}, fmt.Errorf("controlstate: count active shares: %w", err)
+		}
+		if count >= 256 {
+			return Share{}, ErrShareLimit
+		}
 	}
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
@@ -229,6 +239,27 @@ func (d *Database) ListShares(ctx context.Context, previewID, cursor string) (Sh
 	if err != nil {
 		return SharePage{}, fmt.Errorf("controlstate: list shares: %w", err)
 	}
+	return sharePageFromRows(ctx, queries, rows)
+}
+
+func (d *Database) ListTeamShares(ctx context.Context, teamID, identityID, cursor string) (SharePage, error) {
+	if teamID == "" || identityID == "" || cursor != "" && !opaqueid.Valid(cursor, opaqueid.SharePrefix) {
+		return SharePage{}, ErrShareInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return SharePage{}, err
+	}
+	queries := controlstatedb.New(d.pool)
+	rows, err := queries.ListTeamShares(ctx, controlstatedb.ListTeamSharesParams{
+		TeamID: teamID, IdentityID: identityID, AfterID: cursor,
+	})
+	if err != nil {
+		return SharePage{}, fmt.Errorf("controlstate: list team shares: %w", err)
+	}
+	return sharePageFromRows(ctx, queries, rows)
+}
+
+func sharePageFromRows(ctx context.Context, queries *controlstatedb.Queries, rows []controlstatedb.ControlShare) (SharePage, error) {
 	page := SharePage{Shares: make([]Share, 0, min(len(rows), 100))}
 	for index, row := range rows {
 		if index == 100 {

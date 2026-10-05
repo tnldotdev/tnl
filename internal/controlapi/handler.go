@@ -116,7 +116,14 @@ type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
+	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)
 	RevokeShare(context.Context, string, string, time.Time) (controlstate.Share, error)
+}
+
+type ShareAccessStore interface {
+	EnableShareAccess(context.Context, controlstate.PublishRunAuthentication, string) error
+	PublishRunShareState(context.Context, controlstate.PublishRunAuthentication, time.Time) ([]controlstate.PublisherShare, error)
+	RedeemShare(context.Context, controlstate.PublishRunAuthentication, string, []byte, []byte, time.Time) (controlstate.ShareRedemption, error)
 }
 
 // BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
@@ -135,6 +142,7 @@ type handler struct {
 	admin          AdminStore
 	previews       PreviewStore
 	shares         ShareStore
+	shareAccess    ShareAccessStore
 	guests         interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
@@ -165,6 +173,9 @@ func NewHandler(
 	}
 	if shares, ok := store.(ShareStore); ok {
 		h.shares = shares
+	}
+	if shareAccess, ok := store.(ShareAccessStore); ok {
+		h.shareAccess = shareAccess
 	}
 	if guestStore, ok := store.(interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
