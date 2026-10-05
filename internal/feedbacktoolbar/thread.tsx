@@ -27,25 +27,77 @@ export function ThreadView({
   const [events, setEvents] = useState<FeedbackEvent[]>([]);
   const [cursor, setCursor] = useState<number>();
   const [text, setText] = useState("");
+  const [pollError, setPollError] = useState("");
+  const latestCursor = useRef(0);
+  const ready = useRef(false);
+  const mutationEpoch = useRef(0);
   const keys = useRef(mutationKey());
   const request = useRequest();
   async function load(): Promise<void> {
     await request.run(async (signal) => {
-      const [value, history] = await Promise.all([
-        api.inspect(id, signal),
-        api.events(id, undefined, signal),
-      ]);
+      const history = await api.events(id, undefined, signal);
+      const value = await api.inspect(id, signal);
       if (signal.aborted) return;
       setThread(value);
       setEvents(history.events);
       setCursor(history.next_cursor);
+      latestCursor.current = history.event_cursor;
+      ready.current = true;
     });
   }
   useEffect(() => {
     void load();
   }, [id]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let polling = false;
+    const timer = setInterval(() => {
+      if (polling) return;
+      polling = true;
+      if (!ready.current) {
+        void load().finally(() => {
+          polling = false;
+        });
+        return;
+      }
+      const epoch = mutationEpoch.current;
+      void (async () => {
+        try {
+          const page = await api.events(id, latestCursor.current, controller.signal);
+          const current = await api.inspect(id, controller.signal);
+          if (controller.signal.aborted) return;
+          setEvents((previous) =>
+            [
+              ...previous,
+              ...page.events.filter(
+                (event) => !previous.some((entry) => entry.cursor === event.cursor),
+              ),
+            ].sort((left, right) => left.cursor - right.cursor),
+          );
+          latestCursor.current =
+            page.next_cursor ??
+            Math.max(page.event_cursor, ...page.events.map((event) => event.cursor));
+          // a poll started before an action must not undo its optimistic state.
+          if (epoch === mutationEpoch.current) setThread(current);
+          setPollError("");
+        } catch (reason) {
+          if (!controller.signal.aborted)
+            setPollError(
+              reason instanceof Error ? reason.message : "could not load new replies; retrying",
+            );
+        } finally {
+          polling = false;
+        }
+      })();
+    }, 2000);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [api, id]);
   async function append(type: BrowserEvent): Promise<void> {
     await request.run(async (signal) => {
+      mutationEpoch.current++;
       const event = await api.append(
         id,
         type,
@@ -54,6 +106,7 @@ export function ThreadView({
         signal,
       );
       if (signal.aborted) return;
+      mutationEpoch.current++;
       setText("");
       keys.current = mutationKey();
       setEvents((previous) =>
@@ -83,15 +136,7 @@ export function ThreadView({
         Back to feedback
       </button>
       {request.error && <p role="alert">{request.error}</p>}
-      <button
-        type="button"
-        disabled={request.pending}
-        onClick={() => {
-          void load();
-        }}
-      >
-        Refresh thread
-      </button>
+      {pollError && <p role="status">{pollError}; retrying automatically</p>}
       {!thread ? (
         <p role="status">{request.pending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (

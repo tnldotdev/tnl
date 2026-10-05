@@ -251,3 +251,25 @@ test("navigation cancels the old page load and cannot display its late response"
   await screen.findByText("No feedback on this page yet.");
   expect(screen.queryByRole("button", { name: report.report.text })).toBeNull();
 });
+
+test("thread polling picks up remote replies and status without losing draft or focus", async () => {
+  const { api, user } = mount(fixture([report]));
+  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
+  await user.click(await screen.findByRole("button", { name: report.report.text }));
+  const textarea = await screen.findByRole("textbox", { name: "Reply", exact: true });
+  await user.type(textarea, "My draft");
+  expect(screen.queryByRole("button", { name: "Refresh thread" })).toBeNull();
+  vi.mocked(api.events).mockResolvedValueOnce({
+    schema_version: 1,
+    events: [{ ...created, cursor: 2, type: "reply", text: "A remote reply" }],
+    event_cursor: 2,
+  });
+  vi.mocked(api.inspect).mockResolvedValueOnce({ ...report, state: "resolved" });
+  await waitFor(() => expect(screen.getByText("A remote reply")).toBeTruthy(), { timeout: 4000 });
+  await screen.findByRole("button", { name: "Reopen", exact: true });
+  expect((textarea as HTMLTextAreaElement).value).toBe("My draft");
+  expect(document.activeElement).toBe(textarea);
+  const pollSignal = vi.mocked(api.events).mock.calls.at(-1)?.[2];
+  await user.click(screen.getByRole("button", { name: "Back to feedback" }));
+  expect(pollSignal?.aborted).toBe(true);
+});
