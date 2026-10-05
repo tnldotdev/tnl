@@ -892,7 +892,15 @@ components:
           $ref: "#/components/schemas/CertificateChallengeMethod"
     AuthorizationOperation:
       type: string
-      enum: [public_url.create, public_url.update, publish_run.create, public_url.delete]
+      enum:
+        [
+          public_url.create,
+          public_url.update,
+          publish_run.create,
+          public_url.delete,
+          share.create,
+          feedback.manage,
+        ]
     ServiceAuthorizationRequest:
       type: object
       additionalProperties: false

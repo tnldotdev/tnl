@@ -268,6 +268,12 @@ share, or feedback mutations. Ingress receives the information it needs to
 admit sharing-enabled visitors; the publisher receives share state through
 authenticated publish-run operations.
 
+Add `share.create` and `feedback.manage` to the authority contract before
+control sends either operation to an external authority. Deploy the hosted
+authority with both operations before switching hosted control from its
+existing `public_url.update` check; both decisions retain the public URL's
+ownership and mutation-revision binding.
+
 The publisher owns visitor HTTP access checks, local path dispatch, browser
 redemption and feedback endpoints, HTML injection, and the bounded per-browser
 failed-request trail. The feedback toolbar sends submitted feedback through the
