@@ -221,6 +221,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return devBootstrapError(err, flags.projectRoot, flags.Service, configuredCommand)
 	}
 	defer func() { result = errors.Join(result, bootstrap.Close()) }()
+	var owner *publisher.OwnerHandoff
+	if flags.project.Config.Feedback != nil && *flags.project.Config.Feedback {
+		owner = publisher.NewOwnerHandoff()
+		bootstrap.owner = owner
+	}
 
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
@@ -287,6 +292,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 		publisherConfig.PreviewID = previewID
+		publisherConfig.ProjectRoot = flags.project.Root
+		publisherConfig.Service = flags.Service
+		publisherConfig.Feedback = flags.project.Config.Feedback != nil && *flags.project.Config.Feedback
+		publisherConfig.OwnerHandoff = owner
 		publisherConfig.Mounts = mounts
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {

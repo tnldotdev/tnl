@@ -19,9 +19,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 type devBootstrap struct {
+	owner          *publisher.OwnerHandoff
 	socket         string
 	lock           *filelock.Lock
 	forcedPort     string

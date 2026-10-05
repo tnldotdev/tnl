@@ -1,4 +1,7 @@
 packages:
   - packages/tnl
 
+allowBuilds:
+  esbuild: false
+
 autoInstallPeers: false

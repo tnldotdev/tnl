@@ -428,6 +428,7 @@ func initConfigSourceWithPort(service string, command []string, port int) []byte
 	return []byte(fmt.Sprintf(`import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
+  feedback: true,
   services: {
     %s: {
       directory: ".",

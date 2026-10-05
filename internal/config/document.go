@@ -34,6 +34,7 @@ type Document struct {
 type TNL struct {
 	Server   *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
 	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Feedback *bool    `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on eligible tnl dev HTML responses."`
 	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`

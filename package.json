@@ -5,15 +5,15 @@
   "scripts": {
     "build": "pnpm --filter @tnldotdev/tnl build",
     "clean": "pnpm --recursive --if-present run clean",
-    "format": "oxfmt --write '**/*'",
-    "format:check": "oxfmt --check '**/*'",
-    "lint": "oxlint --deny-warnings --report-unused-disable-directives internal/projectconfig/loader.ts packages scripts vitest.config.ts",
+    "format": "oxfmt --write '**/*' '!internal/feedbacktoolbar/toolbar.js'",
+    "format:check": "oxfmt --check '**/*' '!internal/feedbacktoolbar/toolbar.js'",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives internal/projectconfig/loader.ts internal/feedbacktoolbar/toolbar.tsx packages scripts vitest.config.ts",
     "pack": "node scripts/verify-packages.ts",
     "test": "pnpm build && pnpm test:run",
     "test:run": "vitest run",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.json"
+    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project internal/feedbacktoolbar/tsconfig.json && tsc --project tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "22.20.3",
@@ -21,6 +21,7 @@
     "@types/react-dom": "19.3.0",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "5.0.1",
+    "esbuild": "0.28.2",
     "json-schema-to-typescript": "16.0.0",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",

@@ -17,6 +17,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	path := filepath.Join(directory, "tnl.config.ts")
 	source := `export default async ({cwd, env, worktree}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
+  feedback: true,
   tunnel: {domain: "routes.example.test", requestLimit: 750, allowProviders: ["stripe", "github"]},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
@@ -34,7 +35,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Domain == nil ||
+	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Tunnel == nil || value.Tunnel.Domain == nil ||
 		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
 		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label ||
 		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||

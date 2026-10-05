@@ -33,6 +33,7 @@ type PublicURLServerConfig struct {
 	Target          string
 	Mounts          []localproxy.Mount
 	ShareAccess     *shareAccess
+	Feedback        *feedbackRuntime
 	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
 	Certificate     tls.Certificate
@@ -79,7 +80,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			return nil, errors.New("publisher: certificate plan does not cover public URL")
 		}
 	}
-	handler, err := localproxy.NewWithMounts(config.Target, hostname, config.RequestLimit, config.Mounts, config.OnTargetFailure)
+	var modifyResponse func(*http.Response) error
+	var observe func(*http.Request, int)
+	if config.Feedback != nil {
+		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
+	}
+	handler, err := localproxy.NewWithMountsOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
+		modifyResponse, observe, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +103,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if code := localproxy.ValidateRequest(request, hostname); code != "" {
+					diagnostic.WriteHTTP(response, request, code)
+					return
+				}
 				denied := request.Context().Value(denialContextKey{}) == true
 				if sharePath(request.URL.EscapedPath()) {
 					response.Header().Set("Cache-Control", "no-store")
@@ -135,8 +146,14 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						_ = connection.SetDeadline(time.Time{})
 					}
 				}
-				if config.ShareAccess != nil {
-					request = stripShareCookie(request)
+				if config.Feedback != nil {
+					if config.Feedback.handle(response, request, denied) {
+						return
+					}
+					request = config.Feedback.prepareBrowser(response, request)
+				}
+				if config.ShareAccess != nil || config.Feedback != nil {
+					request = stripTnlCookies(request)
 				}
 				handler.ServeHTTP(response, request)
 			}),

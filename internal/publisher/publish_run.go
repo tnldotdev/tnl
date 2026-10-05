@@ -143,10 +143,15 @@ func runSession(
 		defer func() { cancelSession(nil); <-refreshDone }()
 	}
 	var material clientstate.Material
+	feedback, err := newFeedbackRuntime(config, setup, publishRunToken)
+	if err != nil {
+		return err
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
 		Mounts:       config.Mounts,
 		ShareAccess:  shareRuntime,
+		Feedback:     feedback,
 		RequestLimit: config.RequestLimit,
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
