@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "types": []
+  },
+  "include": ["toolbar.tsx", "model.ts", "jsx.d.ts"]
+}

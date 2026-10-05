@@ -48,6 +48,7 @@ export default defineConfig(({ mode }) => ({
       "scripts/release-version.test.ts",
       "packages/tnl/test-helper.test.ts",
       "packages/tnl/bun.test.ts",
+      "packages/tnl/feedback-toolbar-model.test.ts",
       "packages/tnl/internal-dev.test.ts",
       "packages/tnl/launcher.test.ts",
       "packages/tnl/next.test.ts",

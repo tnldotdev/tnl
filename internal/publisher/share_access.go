@@ -152,7 +152,7 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 	return result, nil
 }
 
-func stripShareCookie(request *http.Request) *http.Request {
+func stripTnlCookies(request *http.Request) *http.Request {
 	if len(request.Header.Values("Cookie")) == 0 {
 		return request
 	}
@@ -161,7 +161,7 @@ func stripShareCookie(request *http.Request) *http.Request {
 		for _, pair := range strings.Split(header, ";") {
 			pair = strings.TrimSpace(pair)
 			name, _, found := strings.Cut(pair, "=")
-			if found && name != shareCookieName && pair != "" {
+			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != feedbackOwnerCookieName && pair != "" {
 				clean = append(clean, pair)
 			}
 		}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
@@ -84,6 +85,31 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{Protocol: 1, Framework: "vite", Target: "http://192.0.2.1:5173"})
 	if result.err != nil || result.status != http.StatusBadRequest {
 		t.Fatalf("remote target result = %#v", result)
+	}
+}
+
+func TestDevBootstrapOwnerHandoffUsesPrivateSocket(t *testing.T) {
+	ctx := devBootstrapTestContext(t)
+	bootstrap := startDevBootstrapTest(t, ctx, "", t.TempDir(), "web")
+	bootstrap.owner = publisher.NewOwnerHandoff()
+	bootstrap.Resolve(devConfigurationResponse{PublicURL: "https://web.example.test"}, nil)
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", bootstrap.socket)
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	response, err := client.Get("http://unix/v1/feedback/owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil || response.StatusCode != http.StatusOK ||
+		!strings.HasPrefix(result.URL, "https://web.example.test/__tnl/feedback/owner/handoff/") ||
+		response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("private handoff = %+v, %d, %v", result, response.StatusCode, err)
 	}
 }
 

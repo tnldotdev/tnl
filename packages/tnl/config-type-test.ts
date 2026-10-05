@@ -30,6 +30,7 @@ if (service) service.directory satisfies string | undefined;
 const projectScopedSettings = {
   server: "https://control.example",
   team: "studio",
+  feedback: true,
   services: {
     web: { dev: { port: 4173 } },
   },

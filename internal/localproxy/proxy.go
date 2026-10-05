@@ -77,6 +77,14 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 // NewWithMounts shares one hostname check and request limit across the base
 // service and all mounted local services.
 func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
+	return NewWithMountsOptions(target, hostname, requestLimit, mounts, nil, nil, onTargetFailure...)
+}
+
+// NewWithMountsOptions adds publisher-owned HTML response handling and
+// request observations without changing the visitor policy or shared limit.
+func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mount,
+	modifyResponse func(*http.Response) error, observe func(*http.Request, int), onTargetFailure ...func(),
+) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -87,7 +95,7 @@ func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, on
 	if err != nil || canonical != hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(target, requestLimit, onTargetFailure)
+	base, err := newReverseProxy(target, requestLimit, modifyResponse, observe, onTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +110,7 @@ func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, on
 			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
 		}
 		seen[mount.Prefix] = true
-		proxy, err := newReverseProxy(mount.Target, requestLimit, onTargetFailure)
+		proxy, err := newReverseProxy(mount.Target, requestLimit, modifyResponse, observe, onTargetFailure)
 		if err != nil {
 			return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 		}
@@ -116,7 +124,7 @@ func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, on
 	})
 	requests := make(chan struct{}, requestLimit)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if code := validateRequest(request, hostname); code != "" {
+		if code := ValidateRequest(request, hostname); code != "" {
 			diagnostic.WriteHTTP(response, request, code)
 			return
 		}
@@ -162,7 +170,7 @@ func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, on
 	}), nil
 }
 
-func newReverseProxy(target string, requestLimit int, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
+func newReverseProxy(target string, requestLimit int, modifyResponse func(*http.Response) error, observe func(*http.Request, int), onTargetFailure []func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -191,6 +199,9 @@ func newReverseProxy(target string, requestLimit int, onTargetFailure []func()) 
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			host := request.In.Host
+			if modifyResponse != nil {
+				request.Out.Header.Del("Accept-Encoding")
+			}
 			// remove client forwarding identity before deriving trusted headers.
 			removeForwardingHeaders(request.Out.Header)
 			request.SetURL(targetURL)
@@ -198,13 +209,22 @@ func newReverseProxy(target string, requestLimit int, onTargetFailure []func()) 
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, _ error) {
+			if observe != nil {
+				observe(request, 0)
+			}
 			if failing.CompareAndSwap(false, true) && len(onTargetFailure) != 0 && onTargetFailure[0] != nil {
 				onTargetFailure[0]()
 			}
 			diagnostic.WriteHTTP(response, request, diagnostic.TargetUnavailable)
 		},
-		ModifyResponse: func(*http.Response) error {
+		ModifyResponse: func(response *http.Response) error {
 			failing.Store(false)
+			if observe != nil && response.StatusCode >= 400 {
+				observe(response.Request, response.StatusCode)
+			}
+			if modifyResponse != nil {
+				return modifyResponse(response)
+			}
 			return nil
 		},
 	}
@@ -252,7 +272,8 @@ func NormalizeTarget(target string) (string, error) {
 	return "http://" + targetAddress, nil
 }
 
-func validateRequest(request *http.Request, hostname string) diagnostic.Code {
+// ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.
+func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
 	// bind origin-form authority and TLS SNI to this public URL's hostname.
 	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
 		return diagnostic.RequestRejected
