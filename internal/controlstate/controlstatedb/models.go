@@ -186,6 +186,47 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ControlFeedbackEvent struct {
+	Cursor         int64
+	FeedbackID     string
+	TeamID         string
+	EventType      string
+	ActorKind      string
+	ActorReference string
+	IdempotencyKey string
+	RequestDigest  []byte
+	Text           pgtype.Text
+	Evidence       []byte
+	CheckoutMarker []byte
+	OccurredAt     pgtype.Timestamptz
+}
+
+type ControlFeedbackEventClock struct {
+	ID         int16
+	NextCursor int64
+}
+
+type ControlFeedbackThread struct {
+	ID                string
+	PreviewID         string
+	TeamID            string
+	PublicURLID       string
+	PublishRunID      string
+	PublishRunNumber  int64
+	Service           string
+	PagePath          string
+	ReportText        string
+	AuthorDisplayName pgtype.Text
+	Element           []byte
+	Evidence          []byte
+	CheckoutAtReport  []byte
+	State             string
+	CreatedAt         pgtype.Timestamptz
+	StateUpdatedAt    pgtype.Timestamptz
+	IdempotencyKey    string
+	RequestDigest     []byte
+}
+
 type ControlGuestPublicUrl struct {
 	PublicURLID string
 	GuestID     string

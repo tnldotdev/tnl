@@ -110,6 +110,33 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for CheckoutMarkerChangedFilesStatus.
+const (
+	Added     CheckoutMarkerChangedFilesStatus = "added"
+	Deleted   CheckoutMarkerChangedFilesStatus = "deleted"
+	Modified  CheckoutMarkerChangedFilesStatus = "modified"
+	Renamed   CheckoutMarkerChangedFilesStatus = "renamed"
+	Untracked CheckoutMarkerChangedFilesStatus = "untracked"
+)
+
+// Valid indicates whether the value is a known member of the CheckoutMarkerChangedFilesStatus enum.
+func (e CheckoutMarkerChangedFilesStatus) Valid() bool {
+	switch e {
+	case Added:
+		return true
+	case Deleted:
+		return true
+	case Modified:
+		return true
+	case Renamed:
+		return true
+	case Untracked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DNSAuthorityState.
 const (
 	DNSAuthorityStateFailed    DNSAuthorityState = "failed"
@@ -158,6 +185,150 @@ func (e DNSRecordType) Valid() bool {
 	case SOA:
 		return true
 	case TXT:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackElementKind.
+const (
+	FeedbackElementKindElement FeedbackElementKind = "element"
+	FeedbackElementKindPage    FeedbackElementKind = "page"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackElementKind enum.
+func (e FeedbackElementKind) Valid() bool {
+	switch e {
+	case FeedbackElementKindElement:
+		return true
+	case FeedbackElementKindPage:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackElementSummaryKind.
+const (
+	FeedbackElementSummaryKindElement FeedbackElementSummaryKind = "element"
+	FeedbackElementSummaryKindPage    FeedbackElementSummaryKind = "page"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackElementSummaryKind enum.
+func (e FeedbackElementSummaryKind) Valid() bool {
+	switch e {
+	case FeedbackElementSummaryKindElement:
+		return true
+	case FeedbackElementSummaryKindPage:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackEventActor.
+const (
+	Developer FeedbackEventActor = "developer"
+	Reviewer  FeedbackEventActor = "reviewer"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackEventActor enum.
+func (e FeedbackEventActor) Valid() bool {
+	switch e {
+	case Developer:
+		return true
+	case Reviewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackEventType.
+const (
+	ContextRequested   FeedbackEventType = "context.requested"
+	EvidenceAdded      FeedbackEventType = "evidence.added"
+	FixReadyForRecheck FeedbackEventType = "fix.ready_for_recheck"
+	RecheckStillBroken FeedbackEventType = "recheck.still_broken"
+	Reply              FeedbackEventType = "reply"
+	ThreadCreated      FeedbackEventType = "thread.created"
+	ThreadResolved     FeedbackEventType = "thread.resolved"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackEventType enum.
+func (e FeedbackEventType) Valid() bool {
+	switch e {
+	case ContextRequested:
+		return true
+	case EvidenceAdded:
+		return true
+	case FixReadyForRecheck:
+		return true
+	case RecheckStillBroken:
+		return true
+	case Reply:
+		return true
+	case ThreadCreated:
+		return true
+	case ThreadResolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackEvidenceActionsType.
+const (
+	Click      FeedbackEvidenceActionsType = "click"
+	Navigation FeedbackEvidenceActionsType = "navigation"
+	Submit     FeedbackEvidenceActionsType = "submit"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackEvidenceActionsType enum.
+func (e FeedbackEvidenceActionsType) Valid() bool {
+	switch e {
+	case Click:
+		return true
+	case Navigation:
+		return true
+	case Submit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackThreadSchemaVersion.
+const (
+	N1 FeedbackThreadSchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the FeedbackThreadSchemaVersion enum.
+func (e FeedbackThreadSchemaVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackThreadState.
+const (
+	Open            FeedbackThreadState = "open"
+	ReadyForRecheck FeedbackThreadState = "ready_for_recheck"
+	Resolved        FeedbackThreadState = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackThreadState enum.
+func (e FeedbackThreadState) Valid() bool {
+	switch e {
+	case Open:
+		return true
+	case ReadyForRecheck:
+		return true
+	case Resolved:
 		return true
 	default:
 		return false
@@ -536,6 +707,24 @@ type AdminServerStatus struct {
 // AdminServerStatusRole defines model for AdminServerStatus.Role.
 type AdminServerStatusRole string
 
+// AppendFeedbackEventRequest defines model for AppendFeedbackEventRequest.
+type AppendFeedbackEventRequest struct {
+	CheckoutMarker *CheckoutMarker   `json:"checkout_marker,omitempty"`
+	Evidence       *FeedbackEvidence `json:"evidence,omitempty"`
+	Text           *string           `json:"text,omitempty"`
+	Type           FeedbackEventType `json:"type"`
+}
+
+// AppendReviewerFeedbackEventRequest defines model for AppendReviewerFeedbackEventRequest.
+type AppendReviewerFeedbackEventRequest struct {
+	Access           FeedbackReviewerAccess `json:"access"`
+	CheckoutMarker   *CheckoutMarker        `json:"checkout_marker,omitempty"`
+	Evidence         *FeedbackEvidence      `json:"evidence,omitempty"`
+	PublishRunNumber int64                  `json:"publish_run_number"`
+	Text             *string                `json:"text,omitempty"`
+	Type             FeedbackEventType      `json:"type"`
+}
+
 // AuthenticationFacts defines model for AuthenticationFacts.
 type AuthenticationFacts struct {
 	Methods []AuthenticationFactsMethods `json:"methods"`
@@ -595,6 +784,22 @@ type CertificatePlan struct {
 	Scope           string                     `json:"scope"`
 }
 
+// CheckoutMarker defines model for CheckoutMarker.
+type CheckoutMarker struct {
+	Branch       string `json:"branch"`
+	ChangedFiles []struct {
+		ContentSha256 *string                          `json:"content_sha256,omitempty"`
+		Path          string                           `json:"path"`
+		Status        CheckoutMarkerChangedFilesStatus `json:"status"`
+	} `json:"changed_files"`
+	Complete    bool   `json:"complete"`
+	Fingerprint string `json:"fingerprint"`
+	HeadCommit  string `json:"head_commit"`
+}
+
+// CheckoutMarkerChangedFilesStatus defines model for CheckoutMarker.ChangedFiles.Status.
+type CheckoutMarkerChangedFilesStatus string
+
 // ClientIPResponse defines model for ClientIPResponse.
 type ClientIPResponse struct {
 	Ip string `json:"ip"`
@@ -635,6 +840,22 @@ type CreateDNSAuthorityRequest struct {
 	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
 	DomainId        DomainID          `json:"domain_id"`
 	TeamId          TeamID            `json:"team_id"`
+}
+
+// CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
+type CreateFeedbackReportRequest struct {
+	Access           FeedbackReviewerAccess `json:"access"`
+	CheckoutAtReport CheckoutMarker         `json:"checkout_at_report"`
+	Element          FeedbackElement        `json:"element"`
+	Evidence         FeedbackEvidence       `json:"evidence"`
+	PagePath         string                 `json:"page_path"`
+	PreviewId        PreviewID              `json:"preview_id"`
+	PublishRunNumber int64                  `json:"publish_run_number"`
+	Report           struct {
+		DisplayName *string `json:"display_name,omitempty"`
+		Text        string  `json:"text"`
+	} `json:"report"`
+	Service string `json:"service"`
 }
 
 // CreatePreviewRequest defines model for CreatePreviewRequest.
@@ -694,6 +915,137 @@ type DomainID = ResourceID
 type EnableShareAccessRequest struct {
 	PreviewId        PreviewID `json:"preview_id"`
 	PublishRunNumber int64     `json:"publish_run_number"`
+}
+
+// FeedbackElement defines model for FeedbackElement.
+type FeedbackElement struct {
+	Html   *string             `json:"html,omitempty"`
+	Kind   FeedbackElementKind `json:"kind"`
+	Label  *string             `json:"label,omitempty"`
+	Role   *string             `json:"role,omitempty"`
+	TestId *string             `json:"test_id,omitempty"`
+}
+
+// FeedbackElementKind defines model for FeedbackElement.Kind.
+type FeedbackElementKind string
+
+// FeedbackElementSummary defines model for FeedbackElementSummary.
+type FeedbackElementSummary struct {
+	Kind   FeedbackElementSummaryKind `json:"kind"`
+	Label  *string                    `json:"label,omitempty"`
+	Role   *string                    `json:"role,omitempty"`
+	TestId *string                    `json:"test_id,omitempty"`
+}
+
+// FeedbackElementSummaryKind defines model for FeedbackElementSummary.Kind.
+type FeedbackElementSummaryKind string
+
+// FeedbackEvent defines model for FeedbackEvent.
+type FeedbackEvent struct {
+	Actor          FeedbackEventActor `json:"actor"`
+	At             time.Time          `json:"at"`
+	CheckoutMarker *CheckoutMarker    `json:"checkout_marker,omitempty"`
+	Cursor         int64              `json:"cursor"`
+	Evidence       *FeedbackEvidence  `json:"evidence,omitempty"`
+	FeedbackId     FeedbackID         `json:"feedback_id"`
+	Text           *string            `json:"text,omitempty"`
+	Type           FeedbackEventType  `json:"type"`
+}
+
+// FeedbackEventActor defines model for FeedbackEvent.Actor.
+type FeedbackEventActor string
+
+// FeedbackEventPage defines model for FeedbackEventPage.
+type FeedbackEventPage struct {
+	EventCursor int64           `json:"event_cursor"`
+	Events      []FeedbackEvent `json:"events"`
+	NextCursor  *int64          `json:"next_cursor,omitempty"`
+}
+
+// FeedbackEventType defines model for FeedbackEventType.
+type FeedbackEventType string
+
+// FeedbackEvidence defines model for FeedbackEvidence.
+type FeedbackEvidence struct {
+	Actions []struct {
+		Label  *string                     `json:"label,omitempty"`
+		Path   *string                     `json:"path,omitempty"`
+		TestId *string                     `json:"test_id,omitempty"`
+		Type   FeedbackEvidenceActionsType `json:"type"`
+	} `json:"actions"`
+	FailedRequests []struct {
+		DurationMs int    `json:"duration_ms"`
+		Method     string `json:"method"`
+		Path       string `json:"path"`
+		Status     int    `json:"status"`
+	} `json:"failed_requests"`
+}
+
+// FeedbackEvidenceActionsType defines model for FeedbackEvidence.Actions.Type.
+type FeedbackEvidenceActionsType string
+
+// FeedbackID defines model for FeedbackID.
+type FeedbackID = ResourceID
+
+// FeedbackReport defines model for FeedbackReport.
+type FeedbackReport struct {
+	Author *struct {
+		DisplayName string `json:"display_name"`
+		Verified    bool   `json:"verified"`
+	} `json:"author,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Text      string    `json:"text"`
+}
+
+// FeedbackReviewerAccess defines model for FeedbackReviewerAccess.
+type FeedbackReviewerAccess struct {
+	AllowedIp    bool     `json:"allowed_ip"`
+	CookieSecret *string  `json:"cookie_secret,omitempty"`
+	ShareId      *ShareID `json:"share_id,omitempty"`
+}
+
+// FeedbackScope defines model for FeedbackScope.
+type FeedbackScope struct {
+	PagePath         string       `json:"page_path"`
+	PreviewId        PreviewID    `json:"preview_id"`
+	PublicUrlId      PublicURLID  `json:"public_url_id"`
+	PublishRunId     PublishRunID `json:"publish_run_id"`
+	PublishRunNumber int64        `json:"publish_run_number"`
+	Service          string       `json:"service"`
+}
+
+// FeedbackThread defines model for FeedbackThread.
+type FeedbackThread struct {
+	CheckoutAtReport CheckoutMarker              `json:"checkout_at_report"`
+	Element          FeedbackElement             `json:"element"`
+	Evidence         FeedbackEvidence            `json:"evidence"`
+	Id               FeedbackID                  `json:"id"`
+	Report           FeedbackReport              `json:"report"`
+	SchemaVersion    FeedbackThreadSchemaVersion `json:"schema_version"`
+	Scope            FeedbackScope               `json:"scope"`
+	State            FeedbackThreadState         `json:"state"`
+}
+
+// FeedbackThreadSchemaVersion defines model for FeedbackThread.SchemaVersion.
+type FeedbackThreadSchemaVersion int
+
+// FeedbackThreadPage defines model for FeedbackThreadPage.
+type FeedbackThreadPage struct {
+	EventCursor int64                   `json:"event_cursor"`
+	NextCursor  *FeedbackID             `json:"next_cursor,omitempty"`
+	Threads     []FeedbackThreadSummary `json:"threads"`
+}
+
+// FeedbackThreadState defines model for FeedbackThreadState.
+type FeedbackThreadState string
+
+// FeedbackThreadSummary defines model for FeedbackThreadSummary.
+type FeedbackThreadSummary struct {
+	Element FeedbackElementSummary `json:"element"`
+	Id      FeedbackID             `json:"id"`
+	Report  FeedbackReport         `json:"report"`
+	Scope   FeedbackScope          `json:"scope"`
+	State   FeedbackThreadState    `json:"state"`
 }
 
 // GuestDemoNumber defines model for GuestDemoNumber.
@@ -777,6 +1129,15 @@ type Preview struct {
 
 // PreviewID defines model for PreviewID.
 type PreviewID = ResourceID
+
+// PreviewPageFeedbackRequest defines model for PreviewPageFeedbackRequest.
+type PreviewPageFeedbackRequest struct {
+	Access           FeedbackReviewerAccess `json:"access"`
+	Cursor           *FeedbackID            `json:"cursor,omitempty"`
+	PagePath         string                 `json:"page_path"`
+	PreviewId        PreviewID              `json:"preview_id"`
+	PublishRunNumber int64                  `json:"publish_run_number"`
+}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -953,6 +1314,14 @@ type ResourceID = string
 // ReviewSchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 type ReviewSchemaVersion = int
 
+// ReviewerFeedbackReadRequest defines model for ReviewerFeedbackReadRequest.
+type ReviewerFeedbackReadRequest struct {
+	Access           FeedbackReviewerAccess `json:"access"`
+	AfterCursor      *int64                 `json:"after_cursor,omitempty"`
+	PreviewId        PreviewID              `json:"preview_id"`
+	PublishRunNumber int64                  `json:"publish_run_number"`
+}
+
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
@@ -1015,12 +1384,37 @@ type Cursor = ResourceID
 // DNSAuthorityReference defines model for DNSAuthorityReference.
 type DNSAuthorityReference = string
 
+// FeedbackAfterCursor defines model for FeedbackAfterCursor.
+type FeedbackAfterCursor = int64
+
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
 
 // ListAdminRelaysParams defines parameters for ListAdminRelays.
 type ListAdminRelaysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListFeedbackThreadsParams defines parameters for ListFeedbackThreads.
+type ListFeedbackThreadsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListFeedbackEventsParams defines parameters for ListFeedbackEvents.
+type ListFeedbackEventsParams struct {
+	TeamId      TeamIDQuery          `form:"team_id" json:"team_id"`
+	AfterCursor *FeedbackAfterCursor `form:"after_cursor,omitempty" json:"after_cursor,omitempty"`
+}
+
+// ListFeedbackThreadEventsParams defines parameters for ListFeedbackThreadEvents.
+type ListFeedbackThreadEventsParams struct {
+	AfterCursor *FeedbackAfterCursor `form:"after_cursor,omitempty" json:"after_cursor,omitempty"`
+}
+
+// AppendFeedbackEventParams defines parameters for AppendFeedbackEvent.
+type AppendFeedbackEventParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // CreatePreviewParams defines parameters for CreatePreview.
@@ -1062,6 +1456,16 @@ type CreateCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// CreateFeedbackReportParams defines parameters for CreateFeedbackReport.
+type CreateFeedbackReportParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// AppendReviewerFeedbackEventParams defines parameters for AppendReviewerFeedbackEvent.
+type AppendReviewerFeedbackEventParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // CreateDNSAuthorityParams defines parameters for CreateDNSAuthority.
 type CreateDNSAuthorityParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -1084,6 +1488,9 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
+type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
+
 // CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
 type CreatePreviewJSONRequestBody = CreatePreviewRequest
 
@@ -1104,6 +1511,21 @@ type MarkPublishRunCertificateInstalledJSONRequestBody = CertificateInstalledReq
 
 // CreateCertificateIssuanceJSONRequestBody defines body for CreateCertificateIssuance for application/json ContentType.
 type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
+
+// CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
+type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
+
+// ListPreviewPageFeedbackJSONRequestBody defines body for ListPreviewPageFeedback for application/json ContentType.
+type ListPreviewPageFeedbackJSONRequestBody = PreviewPageFeedbackRequest
+
+// AppendReviewerFeedbackEventJSONRequestBody defines body for AppendReviewerFeedbackEvent for application/json ContentType.
+type AppendReviewerFeedbackEventJSONRequestBody = AppendReviewerFeedbackEventRequest
+
+// ListReviewerFeedbackEventsJSONRequestBody defines body for ListReviewerFeedbackEvents for application/json ContentType.
+type ListReviewerFeedbackEventsJSONRequestBody = ReviewerFeedbackReadRequest
+
+// GetReviewerFeedbackThreadJSONRequestBody defines body for GetReviewerFeedbackThread for application/json ContentType.
+type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
 
 // HeartbeatPublishRunJSONRequestBody defines body for HeartbeatPublishRun for application/json ContentType.
 type HeartbeatPublishRunJSONRequestBody = PublishRunVersionRequest
@@ -1268,6 +1690,40 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListFeedbackThreads List feedback threads manageable in one team
+	//
+	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
+	ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListFeedbackEvents Resume ordered feedback events for one team
+	//
+	// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
+	ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetFeedbackThread Read one immutable report and current feedback state
+	//
+	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
+	GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
+	//
+	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
+	ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendFeedbackEventWithBody Reply, request context, record a fix, or resolve feedback
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+	AppendFeedbackEventWithBody(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+	AppendFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	//
 	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
@@ -1415,6 +1871,76 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateFeedbackReport Store a reviewer's first report for a preview page
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPreviewPageFeedback List feedback on one page for a reviewer
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendReviewerFeedbackEventWithBody Add a reviewer reply, evidence, or failed recheck
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEvent(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEvents(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
 	//
@@ -1723,6 +2249,100 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 // Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetControlDiscoveryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListFeedbackThreads List feedback threads manageable in one team
+//
+// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
+func (c *Client) ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListFeedbackThreadsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListFeedbackEvents Resume ordered feedback events for one team
+//
+// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
+func (c *Client) ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListFeedbackEventsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetFeedbackThread Read one immutable report and current feedback state
+//
+// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
+func (c *Client) GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetFeedbackThreadRequest(c.Server, feedbackId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
+//
+// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
+func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListFeedbackThreadEventsRequest(c.Server, feedbackId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendFeedbackEventWithBody Reply, request context, record a fix, or resolve feedback
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendFeedbackEventRequestWithBody(c.Server, feedbackId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+func (c *Client) AppendFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendFeedbackEventRequest(c.Server, feedbackId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2111,6 +2731,176 @@ func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishR
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCertificateIssuanceRequest(c.Server, publishRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateFeedbackReportRequestWithBody(c.Server, publishRunId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateFeedbackReport Store a reviewer's first report for a preview page
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *Client) CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateFeedbackReportRequest(c.Server, publishRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPreviewPageFeedbackRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPreviewPageFeedback List feedback on one page for a reviewer
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *Client) ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPreviewPageFeedbackRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendReviewerFeedbackEventWithBody Add a reviewer reply, evidence, or failed recheck
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendReviewerFeedbackEventRequestWithBody(c.Server, publishRunId, feedbackId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendReviewerFeedbackEventRequest(c.Server, publishRunId, feedbackId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *Client) ListReviewerFeedbackEventsWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListReviewerFeedbackEventsRequestWithBody(c.Server, publishRunId, feedbackId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListReviewerFeedbackEventsRequest(c.Server, publishRunId, feedbackId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *Client) GetReviewerFeedbackThreadWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewerFeedbackThreadRequestWithBody(c.Server, publishRunId, feedbackId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *Client) GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewerFeedbackThreadRequest(c.Server, publishRunId, feedbackId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2802,6 +3592,285 @@ func NewGetControlDiscoveryRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListFeedbackThreadsRequest constructs an http.Request for the ListFeedbackThreads method
+func NewListFeedbackThreadsRequest(server string, params *ListFeedbackThreadsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/feedback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListFeedbackEventsRequest constructs an http.Request for the ListFeedbackEvents method
+func NewListFeedbackEventsRequest(server string, params *ListFeedbackEventsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/feedback/events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.AfterCursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetFeedbackThreadRequest constructs an http.Request for the GetFeedbackThread method
+func NewGetFeedbackThreadRequest(server string, feedbackId FeedbackID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/feedback/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListFeedbackThreadEventsRequest constructs an http.Request for the ListFeedbackThreadEvents method
+func NewListFeedbackThreadEventsRequest(server string, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/feedback/%s/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.AfterCursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAppendFeedbackEventRequest calls the generic AppendFeedbackEvent builder with application/json body
+func NewAppendFeedbackEventRequest(server string, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAppendFeedbackEventRequestWithBody(server, feedbackId, params, "application/json", bodyReader)
+}
+
+// NewAppendFeedbackEventRequestWithBody constructs an http.Request for the AppendFeedbackEvent method, with any body, and a specified content type
+func NewAppendFeedbackEventRequestWithBody(server string, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/feedback/%s/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
 	}
 
 	return req, nil
@@ -3573,6 +4642,288 @@ func NewCreateCertificateIssuanceRequestWithBody(server string, publishRunId Pub
 	return req, nil
 }
 
+// NewCreateFeedbackReportRequest calls the generic CreateFeedbackReport builder with application/json body
+func NewCreateFeedbackReportRequest(server string, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateFeedbackReportRequestWithBody(server, publishRunId, params, "application/json", bodyReader)
+}
+
+// NewCreateFeedbackReportRequestWithBody constructs an http.Request for the CreateFeedbackReport method, with any body, and a specified content type
+func NewCreateFeedbackReportRequestWithBody(server string, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListPreviewPageFeedbackRequest calls the generic ListPreviewPageFeedback builder with application/json body
+func NewListPreviewPageFeedbackRequest(server string, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewListPreviewPageFeedbackRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewListPreviewPageFeedbackRequestWithBody constructs an http.Request for the ListPreviewPageFeedback method, with any body, and a specified content type
+func NewListPreviewPageFeedbackRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAppendReviewerFeedbackEventRequest calls the generic AppendReviewerFeedbackEvent builder with application/json body
+func NewAppendReviewerFeedbackEventRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAppendReviewerFeedbackEventRequestWithBody(server, publishRunId, feedbackId, params, "application/json", bodyReader)
+}
+
+// NewAppendReviewerFeedbackEventRequestWithBody constructs an http.Request for the AppendReviewerFeedbackEvent method, with any body, and a specified content type
+func NewAppendReviewerFeedbackEventRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListReviewerFeedbackEventsRequest calls the generic ListReviewerFeedbackEvents builder with application/json body
+func NewListReviewerFeedbackEventsRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewListReviewerFeedbackEventsRequestWithBody(server, publishRunId, feedbackId, "application/json", bodyReader)
+}
+
+// NewListReviewerFeedbackEventsRequestWithBody constructs an http.Request for the ListReviewerFeedbackEvents method, with any body, and a specified content type
+func NewListReviewerFeedbackEventsRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/events/query", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetReviewerFeedbackThreadRequest calls the generic GetReviewerFeedbackThread builder with application/json body
+func NewGetReviewerFeedbackThreadRequest(server string, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetReviewerFeedbackThreadRequestWithBody(server, publishRunId, feedbackId, "application/json", bodyReader)
+}
+
+// NewGetReviewerFeedbackThreadRequestWithBody constructs an http.Request for the GetReviewerFeedbackThread method, with any body, and a specified content type
+func NewGetReviewerFeedbackThreadRequestWithBody(server string, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/%s/query", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewHeartbeatPublishRunRequest calls the generic HeartbeatPublishRun builder with application/json body
 func NewHeartbeatPublishRunRequest(server string, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4267,6 +5618,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
+	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
+	ListFeedbackThreadsWithResponse(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadsResponse, error)
+
+	// ListFeedbackEventsWithResponse Resume ordered feedback events for one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
+	ListFeedbackEventsWithResponse(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackEventsResponse, error)
+
+	// GetFeedbackThreadWithResponse Read one immutable report and current feedback state
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
+	GetFeedbackThreadWithResponse(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*GetFeedbackThreadResponse, error)
+
+	// ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
+	ListFeedbackThreadEventsWithResponse(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadEventsResponse, error)
+
+	// AppendFeedbackEventWithBodyWithResponse Reply, request context, record a fix, or resolve feedback
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+	AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
+
+	// AppendFeedbackEventWithResponse Reply, request context, record a fix, or resolve feedback
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+	AppendFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
+
 	// CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -4434,6 +5827,76 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
+
+	// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+	CreateFeedbackReportWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
+
+	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
+
+	// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+	ListPreviewPageFeedbackWithResponse(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
+
+	// AppendReviewerFeedbackEventWithBodyWithResponse Add a reviewer reply, evidence, or failed recheck
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
+
+	// AppendReviewerFeedbackEventWithResponse Add a reviewer reply, evidence, or failed recheck
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+	AppendReviewerFeedbackEventWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
+
+	// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
+
+	// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+	ListReviewerFeedbackEventsWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
+
+	// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
+
+	// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+	GetReviewerFeedbackThreadWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
 
 	// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
 	//
@@ -5050,6 +6513,246 @@ func (r GetControlDiscoveryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetControlDiscoveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListFeedbackThreadsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThreadPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListFeedbackThreadsResponse) GetJSON200() *FeedbackThreadPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListFeedbackThreadsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListFeedbackThreadsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListFeedbackThreadsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListFeedbackThreadsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListFeedbackThreadsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListFeedbackEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackEventPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListFeedbackEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListFeedbackEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListFeedbackEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListFeedbackEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetFeedbackThreadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThread
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetFeedbackThreadResponse) GetJSON200() *FeedbackThread {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetFeedbackThreadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetFeedbackThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetFeedbackThreadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetFeedbackThreadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListFeedbackThreadEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackEventPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListFeedbackThreadEventsResponse) GetJSON200() *FeedbackEventPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListFeedbackThreadEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListFeedbackThreadEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListFeedbackThreadEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListFeedbackThreadEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListFeedbackThreadEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AppendFeedbackEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *FeedbackEvent
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AppendFeedbackEventResponse) GetJSON201() *FeedbackEvent {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AppendFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AppendFeedbackEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AppendFeedbackEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AppendFeedbackEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AppendFeedbackEventResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5858,6 +7561,246 @@ func (r CreateCertificateIssuanceResponse) ContentType() string {
 	return ""
 }
 
+type CreateFeedbackReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *FeedbackThread
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateFeedbackReportResponse) GetJSON201() *FeedbackThread {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateFeedbackReportResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateFeedbackReportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateFeedbackReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateFeedbackReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateFeedbackReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPreviewPageFeedbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThreadPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPreviewPageFeedbackResponse) GetJSON200() *FeedbackThreadPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPreviewPageFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPreviewPageFeedbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPreviewPageFeedbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPreviewPageFeedbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPreviewPageFeedbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AppendReviewerFeedbackEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *FeedbackEvent
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AppendReviewerFeedbackEventResponse) GetJSON201() *FeedbackEvent {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AppendReviewerFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AppendReviewerFeedbackEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AppendReviewerFeedbackEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AppendReviewerFeedbackEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AppendReviewerFeedbackEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListReviewerFeedbackEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackEventPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListReviewerFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListReviewerFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListReviewerFeedbackEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListReviewerFeedbackEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListReviewerFeedbackEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListReviewerFeedbackEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetReviewerFeedbackThreadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackThread
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetReviewerFeedbackThreadResponse) GetJSON200() *FeedbackThread {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetReviewerFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetReviewerFeedbackThreadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReviewerFeedbackThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReviewerFeedbackThreadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetReviewerFeedbackThreadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type HeartbeatPublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6631,6 +8574,84 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
+// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
+func (c *ClientWithResponses) ListFeedbackThreadsWithResponse(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadsResponse, error) {
+	rsp, err := c.ListFeedbackThreads(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListFeedbackThreadsResponse(rsp)
+}
+
+// ListFeedbackEventsWithResponse Resume ordered feedback events for one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
+func (c *ClientWithResponses) ListFeedbackEventsWithResponse(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackEventsResponse, error) {
+	rsp, err := c.ListFeedbackEvents(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListFeedbackEventsResponse(rsp)
+}
+
+// GetFeedbackThreadWithResponse Read one immutable report and current feedback state
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
+func (c *ClientWithResponses) GetFeedbackThreadWithResponse(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*GetFeedbackThreadResponse, error) {
+	rsp, err := c.GetFeedbackThread(ctx, feedbackId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetFeedbackThreadResponse(rsp)
+}
+
+// ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
+func (c *ClientWithResponses) ListFeedbackThreadEventsWithResponse(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadEventsResponse, error) {
+	rsp, err := c.ListFeedbackThreadEvents(ctx, feedbackId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListFeedbackThreadEventsResponse(rsp)
+}
+
+// AppendFeedbackEventWithBodyWithResponse Reply, request context, record a fix, or resolve feedback
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error) {
+	rsp, err := c.AppendFeedbackEventWithBody(ctx, feedbackId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendFeedbackEventResponse(rsp)
+}
+
+// AppendFeedbackEventWithResponse Reply, request context, record a fix, or resolve feedback
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error) {
+	rsp, err := c.AppendFeedbackEvent(ctx, feedbackId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendFeedbackEventResponse(rsp)
+}
+
 // CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
 //
 // Returns a wrapper object for the known response body format(s).
@@ -6941,6 +8962,136 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *ClientWithResponses) CreateFeedbackReportWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
+	rsp, err := c.CreateFeedbackReportWithBody(ctx, publishRunId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateFeedbackReportResponse(rsp)
+}
+
+// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
+func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
+	rsp, err := c.CreateFeedbackReport(ctx, publishRunId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateFeedbackReportResponse(rsp)
+}
+
+// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *ClientWithResponses) ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
+	rsp, err := c.ListPreviewPageFeedbackWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPreviewPageFeedbackResponse(rsp)
+}
+
+// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
+func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
+	rsp, err := c.ListPreviewPageFeedback(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPreviewPageFeedbackResponse(rsp)
+}
+
+// AppendReviewerFeedbackEventWithBodyWithResponse Add a reviewer reply, evidence, or failed recheck
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
+	rsp, err := c.AppendReviewerFeedbackEventWithBody(ctx, publishRunId, feedbackId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendReviewerFeedbackEventResponse(rsp)
+}
+
+// AppendReviewerFeedbackEventWithResponse Add a reviewer reply, evidence, or failed recheck
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
+func (c *ClientWithResponses) AppendReviewerFeedbackEventWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
+	rsp, err := c.AppendReviewerFeedbackEvent(ctx, publishRunId, feedbackId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendReviewerFeedbackEventResponse(rsp)
+}
+
+// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *ClientWithResponses) ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
+	rsp, err := c.ListReviewerFeedbackEventsWithBody(ctx, publishRunId, feedbackId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListReviewerFeedbackEventsResponse(rsp)
+}
+
+// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
+func (c *ClientWithResponses) ListReviewerFeedbackEventsWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
+	rsp, err := c.ListReviewerFeedbackEvents(ctx, publishRunId, feedbackId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListReviewerFeedbackEventsResponse(rsp)
+}
+
+// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *ClientWithResponses) GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
+	rsp, err := c.GetReviewerFeedbackThreadWithBody(ctx, publishRunId, feedbackId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewerFeedbackThreadResponse(rsp)
+}
+
+// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
+func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
+	rsp, err := c.GetReviewerFeedbackThread(ctx, publishRunId, feedbackId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewerFeedbackThreadResponse(rsp)
 }
 
 // HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
@@ -7533,6 +9684,171 @@ func ParseGetControlDiscoveryResponse(rsp *http.Response) (*GetControlDiscoveryR
 	return response, nil
 }
 
+// ParseListFeedbackThreadsResponse parses an HTTP response from a ListFeedbackThreadsWithResponse call
+func ParseListFeedbackThreadsResponse(rsp *http.Response) (*ListFeedbackThreadsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListFeedbackThreadsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThreadPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListFeedbackEventsResponse parses an HTTP response from a ListFeedbackEventsWithResponse call
+func ParseListFeedbackEventsResponse(rsp *http.Response) (*ListFeedbackEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListFeedbackEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackEventPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetFeedbackThreadResponse parses an HTTP response from a GetFeedbackThreadWithResponse call
+func ParseGetFeedbackThreadResponse(rsp *http.Response) (*GetFeedbackThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetFeedbackThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListFeedbackThreadEventsResponse parses an HTTP response from a ListFeedbackThreadEventsWithResponse call
+func ParseListFeedbackThreadEventsResponse(rsp *http.Response) (*ListFeedbackThreadEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListFeedbackThreadEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackEventPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAppendFeedbackEventResponse parses an HTTP response from a AppendFeedbackEventWithResponse call
+func ParseAppendFeedbackEventResponse(rsp *http.Response) (*AppendFeedbackEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AppendFeedbackEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest FeedbackEvent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateGuestDemoResponse parses an HTTP response from a CreateGuestDemoWithResponse call
 func ParseCreateGuestDemoResponse(rsp *http.Response) (*CreateGuestDemoResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -8086,6 +10402,171 @@ func ParseCreateCertificateIssuanceResponse(rsp *http.Response) (*CreateCertific
 	return response, nil
 }
 
+// ParseCreateFeedbackReportResponse parses an HTTP response from a CreateFeedbackReportWithResponse call
+func ParseCreateFeedbackReportResponse(rsp *http.Response) (*CreateFeedbackReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateFeedbackReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPreviewPageFeedbackResponse parses an HTTP response from a ListPreviewPageFeedbackWithResponse call
+func ParseListPreviewPageFeedbackResponse(rsp *http.Response) (*ListPreviewPageFeedbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPreviewPageFeedbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThreadPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAppendReviewerFeedbackEventResponse parses an HTTP response from a AppendReviewerFeedbackEventWithResponse call
+func ParseAppendReviewerFeedbackEventResponse(rsp *http.Response) (*AppendReviewerFeedbackEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AppendReviewerFeedbackEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest FeedbackEvent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListReviewerFeedbackEventsResponse parses an HTTP response from a ListReviewerFeedbackEventsWithResponse call
+func ParseListReviewerFeedbackEventsResponse(rsp *http.Response) (*ListReviewerFeedbackEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListReviewerFeedbackEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackEventPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReviewerFeedbackThreadResponse parses an HTTP response from a GetReviewerFeedbackThreadWithResponse call
+func ParseGetReviewerFeedbackThreadResponse(rsp *http.Response) (*GetReviewerFeedbackThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReviewerFeedbackThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseHeartbeatPublishRunResponse parses an HTTP response from a HeartbeatPublishRunWithResponse call
 func ParseHeartbeatPublishRunResponse(rsp *http.Response) (*HeartbeatPublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -8546,6 +11027,21 @@ type ServerInterface interface {
 	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
+	// ListFeedbackThreads List feedback threads manageable in one team
+	// (GET /v1/feedback)
+	ListFeedbackThreads(w http.ResponseWriter, r *http.Request, params ListFeedbackThreadsParams)
+	// ListFeedbackEvents Resume ordered feedback events for one team
+	// (GET /v1/feedback/events)
+	ListFeedbackEvents(w http.ResponseWriter, r *http.Request, params ListFeedbackEventsParams)
+	// GetFeedbackThread Read one immutable report and current feedback state
+	// (GET /v1/feedback/{feedback_id})
+	GetFeedbackThread(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID)
+	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
+	// (GET /v1/feedback/{feedback_id}/events)
+	ListFeedbackThreadEvents(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params ListFeedbackThreadEventsParams)
+	// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+	// (POST /v1/feedback/{feedback_id}/events)
+	AppendFeedbackEvent(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params AppendFeedbackEventParams)
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	// (POST /v1/guest-demo)
 	CreateGuestDemo(w http.ResponseWriter, r *http.Request)
@@ -8597,6 +11093,21 @@ type ServerInterface interface {
 	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
 	// (POST /v1/publish-runs/{publish_run_id}/certificate-issuances)
 	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateCertificateIssuanceParams)
+	// CreateFeedbackReport Store a reviewer's first report for a preview page
+	// (POST /v1/publish-runs/{publish_run_id}/feedback)
+	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateFeedbackReportParams)
+	// ListPreviewPageFeedback List feedback on one page for a reviewer
+	// (POST /v1/publish-runs/{publish_run_id}/feedback/query)
+	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events)
+	AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID, params AppendReviewerFeedbackEventParams)
+	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
+	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query)
+	ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID)
+	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
+	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query)
+	GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID)
 	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
 	// (POST /v1/publish-runs/{publish_run_id}/heartbeat)
 	HeartbeatPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -8857,6 +11368,220 @@ func (siw *ServerInterfaceWrapper) GetControlDiscovery(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetControlDiscovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListFeedbackThreads operation middleware
+func (siw *ServerInterfaceWrapper) ListFeedbackThreads(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListFeedbackThreadsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListFeedbackThreads(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListFeedbackEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListFeedbackEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListFeedbackEventsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "after_cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after_cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after_cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListFeedbackEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetFeedbackThread operation middleware
+func (siw *ServerInterfaceWrapper) GetFeedbackThread(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetFeedbackThread(w, r, feedbackId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListFeedbackThreadEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListFeedbackThreadEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListFeedbackThreadEventsParams
+
+	// ------------- Optional query parameter "after_cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after_cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after_cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListFeedbackThreadEvents(w, r, feedbackId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppendFeedbackEvent operation middleware
+func (siw *ServerInterfaceWrapper) AppendFeedbackEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AppendFeedbackEventParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppendFeedbackEvent(w, r, feedbackId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -9443,6 +12168,219 @@ func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
+// CreateFeedbackReport operation middleware
+func (siw *ServerInterfaceWrapper) CreateFeedbackReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateFeedbackReportParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateFeedbackReport(w, r, publishRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPreviewPageFeedback operation middleware
+func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPreviewPageFeedback(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppendReviewerFeedbackEvent operation middleware
+func (siw *ServerInterfaceWrapper) AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AppendReviewerFeedbackEventParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppendReviewerFeedbackEvent(w, r, publishRunId, feedbackId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListReviewerFeedbackEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListReviewerFeedbackEvents(w, r, publishRunId, feedbackId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReviewerFeedbackThread operation middleware
+func (siw *ServerInterfaceWrapper) GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "feedback_id" -------------
+	var feedbackId FeedbackID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReviewerFeedbackThread(w, r, publishRunId, feedbackId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // HeartbeatPublishRun operation middleware
 func (siw *ServerInterfaceWrapper) HeartbeatPublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -9958,6 +12896,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/events", wrapper.ListFeedbackEvents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}", wrapper.GetFeedbackThread)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.ListFeedbackThreadEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.AppendFeedbackEvent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)
@@ -9968,6 +12911,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-access", wrapper.EnableShareAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-state", wrapper.GetPublishRunShareState)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-redemptions", wrapper.RedeemPublishRunShare)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback", wrapper.CreateFeedbackReport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/query", wrapper.ListPreviewPageFeedback)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events", wrapper.AppendReviewerFeedbackEvent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query", wrapper.GetReviewerFeedbackThread)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query", wrapper.ListReviewerFeedbackEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ready", wrapper.MarkPublishRunReady)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-installed", wrapper.MarkPublishRunCertificateInstalled)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}", wrapper.ClosePublishRun)
