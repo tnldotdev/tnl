@@ -6,6 +6,7 @@ import {
   type TextBoundary,
 } from "./model.ts";
 import { captureElement } from "./evidence.ts";
+import { finder } from "@medv/finder";
 
 export type AnchorTarget = { anchor: Anchor; element: ElementSnapshot };
 
@@ -22,27 +23,23 @@ export function selectorAlternatives(element: Element): string[] {
   const testID = element.getAttribute("data-testid");
   if (testID) add(`[data-testid="${CSS.escape(testID)}"]`);
   if (element.id) add("#" + CSS.escape(element.id));
-  for (const classes of [false, true]) {
-    for (const stopAtID of [true, false]) {
-      const parts: string[] = [];
-      let node: Element | null = element;
-      for (let depth = 0; node && depth < 32; depth++, node = node.parentElement) {
-        const parent: Element | null = node.parentElement;
-        let part = node.id ? "#" + CSS.escape(node.id) : node.localName;
-        if (classes && node.classList.length)
-          part += "." + CSS.escape(node.classList.item(0) ?? "");
-        if (parent) {
-          const peers = Array.from(parent.children).filter(
-            (sibling) => sibling.localName === node?.localName,
-          );
-          if (peers.length > 1) part += ":nth-of-type(" + (peers.indexOf(node) + 1) + ")";
-        }
-        parts.unshift(part);
-        if ((stopAtID && node.id) || node.localName === "body") break;
+  for (const classes of [false, true])
+    for (const ids of [true, false]) {
+      try {
+        add(
+          finder(element, {
+            root: element.ownerDocument.body,
+            idName: () => ids,
+            className: () => classes,
+            attr: (name) => name === "data-testid",
+            timeoutMs: 50,
+            maxNumberOfPathChecks: 1000,
+          }),
+        );
+      } catch {
+        /* a disappeared element can still be described in the report */
       }
-      add(parts.join(">"));
     }
-  }
   return selectors.slice(0, 6);
 }
 

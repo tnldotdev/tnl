@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
-import { mutationKey, useRequest } from "./async.ts";
+import { mutationKey } from "./async.ts";
+import { useMutation } from "@tanstack/react-query";
+import { useViewSignal } from "./queries.ts";
 import { beginPicking, captureSelection, type AnchorTarget } from "./anchors.ts";
 import type { Action, Evidence, ReportInput } from "./model.ts";
 
@@ -26,7 +28,7 @@ export function ReportForm({
   const [includeEvidence, setIncludeEvidence] = useState(true);
   const [preview, setPreview] = useState<ReportInput>();
   const key = useRef(mutationKey());
-  const request = useRequest();
+  const signal = useViewSignal();
   useEffect(
     () =>
       picking
@@ -43,8 +45,8 @@ export function ReportForm({
     [picking, document, host],
   );
 
-  async function review(): Promise<void> {
-    await request.run(async (signal) => {
+  const review = useMutation({
+    mutationFn: async () => {
       if (new TextEncoder().encode(text.trim()).length > 4000)
         throw new Error("feedback must be at most 4000 bytes");
       if (new TextEncoder().encode(name.trim()).length > 64)
@@ -57,33 +59,35 @@ export function ReportForm({
           }
         : { schema_version: 1, actions: [], failed_requests: [] };
       if (target?.element) evidence.element = target.element;
-      if (signal.aborted) return;
-      setPreview({
+      if (signal.aborted) throw new DOMException("view closed", "AbortError");
+      return {
         schema_version: 1,
         text: text.trim(),
         display_name: name.trim(),
         page_path: path,
         ...(target ? { anchor: target.anchor } : {}),
         evidence,
-      });
-    });
-  }
-  async function submit(): Promise<void> {
-    if (!preview) return;
-    await request.run(async (signal) => {
-      const thread = await api.report(preview, key.current(preview), signal);
+      } satisfies ReportInput;
+    },
+    onSuccess: setPreview,
+  });
+  const send = useMutation({
+    mutationFn: (input: ReportInput) => api.report(input, key.current(input), signal),
+    onSuccess: (thread) => {
       if (signal.aborted) return;
       setText("");
       setTarget(undefined);
       setPreview(undefined);
       key.current = mutationKey();
       saved(thread.id);
-    });
-  }
+    },
+  });
+  const pending = review.isPending || send.isPending;
+  const error = send.error ?? review.error;
   return (
     <section aria-label="New feedback">
       <h2>Leave feedback</h2>
-      {request.error && <p role="alert">{request.error}</p>}
+      {error && <p role="alert">{error.message}</p>}
       {preview ? (
         <>
           <p>{preview.text}</p>
@@ -93,27 +97,34 @@ export function ReportForm({
               {JSON.stringify({ anchor: preview.anchor, evidence: preview.evidence }, null, 2)}
             </pre>
           </details>
-          <button type="button" disabled={request.pending} onClick={() => setPreview(undefined)}>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              setPreview(undefined);
+              send.reset();
+            }}
+          >
             Edit feedback
           </button>
           <button
             type="button"
-            disabled={request.pending}
+            disabled={pending}
             onClick={() => {
-              void submit();
+              send.mutate(preview);
             }}
           >
-            {request.pending ? "Sending…" : "Send feedback"}
+            {pending ? "Sending…" : "Send feedback"}
           </button>
         </>
       ) : (
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void review();
+            review.mutate();
           }}
         >
-          <fieldset disabled={request.pending}>
+          <fieldset disabled={pending}>
             <label>
               Feedback
               <textarea

@@ -119,11 +119,17 @@ test("reply, resolve, and reopen are available in the same toolbar and retain hi
       expect.any(AbortSignal),
     ),
   );
-  vi.mocked(api.append).mockResolvedValueOnce({ ...created, cursor: 3, type: "thread.resolved" });
+  vi.mocked(api.append).mockImplementationOnce(async () => {
+    vi.mocked(api.inspect).mockResolvedValue({ ...report, state: "resolved" });
+    return { ...created, cursor: 3, type: "thread.resolved" };
+  });
   await user.click(screen.getByRole("button", { name: "Resolve", exact: true }));
   await screen.findByRole("button", { name: "Reopen", exact: true });
   expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
-  vi.mocked(api.append).mockResolvedValueOnce({ ...created, cursor: 4, type: "thread.reopened" });
+  vi.mocked(api.append).mockImplementationOnce(async () => {
+    vi.mocked(api.inspect).mockResolvedValue(report);
+    return { ...created, cursor: 4, type: "thread.reopened" };
+  });
   await user.click(screen.getByRole("button", { name: "Reopen", exact: true }));
   await screen.findByRole("button", { name: "Send reply" });
   const history = within(screen.getByRole("list", { name: "History" }));
@@ -166,7 +172,7 @@ test("list and history pagination append records instead of replacing them", asy
   await user.click(screen.getByRole("button", { name: report.report.text }));
   await user.click(await screen.findByRole("button", { name: "Load more history" }));
   await screen.findByText("Following up");
-  expect(screen.getByText("Reported", { exact: true })).toBeTruthy();
+  expect(screen.getByText("reported", { exact: true })).toBeTruthy();
 });
 
 test("refreshing or scrolling preserves the form node, focus, and draft", async () => {
@@ -269,7 +275,8 @@ test("thread polling picks up remote replies and status without losing draft or 
   await screen.findByRole("button", { name: "Reopen", exact: true });
   expect((textarea as HTMLTextAreaElement).value).toBe("My draft");
   expect(document.activeElement).toBe(textarea);
-  const pollSignal = vi.mocked(api.events).mock.calls.at(-1)?.[2];
+  const calls = vi.mocked(api.events).mock.calls.length;
   await user.click(screen.getByRole("button", { name: "Back to feedback" }));
-  expect(pollSignal?.aborted).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  expect(vi.mocked(api.events).mock.calls).toHaveLength(calls);
 });

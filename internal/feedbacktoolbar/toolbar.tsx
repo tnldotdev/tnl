@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
-import { useRequest } from "./async.ts";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { usePageFeedback } from "./queries.ts";
 import { observeActions } from "./evidence.ts";
-import type { Action, Summary } from "./model.ts";
+import type { Action } from "./model.ts";
 import { Pins } from "./pins.tsx";
 import { ReportForm } from "./report.tsx";
 import { ThreadView } from "./thread.tsx";
@@ -21,30 +22,14 @@ function FeedbackPage({
   host: Element;
   actions: () => Action[];
 }) {
-  const [threads, setThreads] = useState<Summary[]>([]);
-  const [cursor, setCursor] = useState<string>();
   const [selected, setSelected] = useState<string>();
-  const request = useRequest();
-  async function load(next?: string): Promise<void> {
-    await request.run(async (signal) => {
-      const page = await api.list(path, next, signal);
-      if (signal.aborted) return;
-      if (next && page.next_cursor === next)
-        throw new Error("the server repeated a feedback page; refresh the list");
-      setThreads((previous) =>
-        next
-          ? [
-              ...previous,
-              ...page.threads.filter((thread) => !previous.some((entry) => entry.id === thread.id)),
-            ]
-          : page.threads,
-      );
-      setCursor(page.next_cursor);
-    });
-  }
-  useEffect(() => {
-    void load();
-  }, [path]);
+  const client = useQueryClient();
+  const page = usePageFeedback(api, path);
+  const threads = [
+    ...new Map(
+      (page.data?.pages.flatMap((page) => page.threads) ?? []).map((thread) => [thread.id, thread]),
+    ).values(),
+  ];
   return (
     <>
       <Pins document={document} threads={threads} select={setSelected} />
@@ -53,12 +38,9 @@ function FeedbackPage({
           key={selected}
           api={api}
           id={selected}
-          changed={() => {
-            void load();
-          }}
           back={() => {
             setSelected(undefined);
-            void load();
+            void page.refetch();
           }}
         />
       ) : (
@@ -71,23 +53,23 @@ function FeedbackPage({
             actions={actions}
             saved={(id) => {
               setSelected(id);
-              void load();
+              void client.invalidateQueries({ queryKey: ["feedback-page", path] });
             }}
           />
           <section aria-label="Feedback list">
             <h2>Feedback list</h2>
-            {request.error && <p role="alert">{request.error}</p>}
+            {page.error && <p role="alert">{page.error.message}</p>}
             <button
               type="button"
-              disabled={request.pending}
+              disabled={page.isFetching}
               onClick={() => {
-                void load();
+                void page.refetch();
               }}
             >
               Refresh feedback
             </button>
-            {request.pending && <p role="status">Loading feedback…</p>}
-            {!request.pending && !threads.length && !request.error && (
+            {page.isPending && <p role="status">Loading feedback…</p>}
+            {!page.isPending && !threads.length && !page.error && (
               <p>No feedback on this page yet.</p>
             )}
             <ul>
@@ -104,12 +86,12 @@ function FeedbackPage({
                 </li>
               ))}
             </ul>
-            {cursor && (
+            {page.hasNextPage && (
               <button
                 type="button"
-                disabled={request.pending}
+                disabled={page.isFetchingNextPage}
                 onClick={() => {
-                  void load(cursor);
+                  void page.fetchNextPage();
                 }}
               >
                 Load more feedback
@@ -132,6 +114,12 @@ export function Toolbar({
   host: Element;
 }) {
   const [open, setOpen] = useState(false);
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+      }),
+  );
   const [path, setPath] = useState(document.location.pathname + document.location.search);
   const actions = useRef<Action[]>([{ type: "navigation", path: document.location.pathname }]);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -170,7 +158,7 @@ export function Toolbar({
     return () => host.removeEventListener("keydown", key);
   }, [open, host]);
   return (
-    <>
+    <QueryClientProvider client={client}>
       <button
         ref={toggle}
         type="button"
@@ -204,6 +192,6 @@ export function Toolbar({
           <AsciiBar />
         </aside>
       )}
-    </>
+    </QueryClientProvider>
   );
 }
