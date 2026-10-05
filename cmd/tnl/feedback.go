@@ -75,8 +75,9 @@ type feedbackReopenCommand struct {
 }
 
 type feedbackListResult struct {
-	Threads     []controlv1.FeedbackThreadSummary `json:"threads"`
-	EventCursor uint64                            `json:"event_cursor"`
+	SchemaVersion int                               `json:"schema_version"`
+	Threads       []controlv1.FeedbackThreadSummary `json:"threads"`
+	EventCursor   uint64                            `json:"event_cursor"`
 }
 
 type feedbackLocalWorktree struct {
@@ -139,7 +140,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	}
 	threads = filterFeedbackPreview(threads, previewID)
 	if flags.Output == feedbackJSON {
-		return json.NewEncoder(output).Encode(feedbackListResult{Threads: threads, EventCursor: cursor})
+		return json.NewEncoder(output).Encode(feedbackListResult{SchemaVersion: 1, Threads: threads, EventCursor: cursor})
 	}
 	blocks := make([]clioutput.Block, 0, len(threads)+1)
 	for _, thread := range threads {
@@ -175,10 +176,16 @@ func readFeedbackHistory(ctx context.Context, client feedbackThreadReader, id st
 		if err != nil {
 			return nil, 0, err
 		}
+		if page.SchemaVersion != 1 {
+			return nil, 0, errors.New("feedback history format is not supported by this client")
+		}
 		if watermark == 0 {
 			watermark = uint64(page.EventCursor)
 		}
 		for _, event := range page.Events {
+			if event.SchemaVersion != 1 {
+				return nil, 0, errors.New("feedback event format is not supported by this client")
+			}
 			if uint64(event.Cursor) > watermark {
 				return events, watermark, nil
 			}
@@ -211,7 +218,7 @@ func compareFeedbackCheckout(ctx context.Context, project projectConfiguration, 
 		return result
 	}
 	current, err := checkoutmarker.Capture(ctx, project.Root)
-	if err != nil || !current.Complete || !thread.CheckoutAtReport.Complete {
+	if err != nil || current.SchemaVersion != 1 || thread.CheckoutAtReport.SchemaVersion != 1 || !current.Complete || !thread.CheckoutAtReport.Complete {
 		result.Comparison = "inconclusive"
 		return result
 	}
@@ -236,6 +243,9 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 	if err != nil {
 		return err
 	}
+	if thread.SchemaVersion != 1 {
+		return errors.New("feedback format is not supported by this client")
+	}
 	events, cursor, err := readFeedbackHistory(ctx, session.authenticated.Control, flags.FeedbackID)
 	if err != nil {
 		return err
@@ -251,7 +261,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "service", Value: thread.Scope.Service},
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
 			clioutput.Field{Label: "report", Value: thread.Report.Text},
-			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Element)},
+			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Evidence.Element)},
 			clioutput.Field{Label: "checkout", Value: result.LocalWorktree.Comparison},
 			clioutput.Field{Label: "event cursor", Value: strconv.FormatUint(cursor, 10)},
 		),
@@ -266,8 +276,8 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 	return writeHumanFrame(output, "tnl feedback inspect", string(thread.State), "", blocks...)
 }
 
-func feedbackElementLabel(element controlv1.FeedbackElement) string {
-	if element.Label != nil {
+func feedbackElementLabel(element *controlv1.FeedbackElement) string {
+	if element != nil && element.Label != nil {
 		return *element.Label
 	}
 	return "page"
@@ -283,8 +293,14 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 	if err != nil {
 		return cursor, false, err
 	}
+	if page.SchemaVersion != 1 {
+		return cursor, false, errors.New("feedback stream format is not supported by this client")
+	}
 	encoder := json.NewEncoder(output)
 	for _, event := range page.Events {
+		if event.SchemaVersion != 1 {
+			return cursor, false, errors.New("feedback event format is not supported by this client")
+		}
 		if event.Cursor <= 0 || uint64(event.Cursor) <= cursor {
 			return cursor, false, errors.New("server returned repeated feedback events")
 		}

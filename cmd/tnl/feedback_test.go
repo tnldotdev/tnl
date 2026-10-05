@@ -22,6 +22,11 @@ func (f feedbackReadFixture) ListFeedbackThreadEvents(_ context.Context, _ strin
 	if !found {
 		return controlv1.FeedbackEventPage{}, errors.New("unexpected history cursor")
 	}
+	page.SchemaVersion = 1
+	page.Events = append([]controlv1.FeedbackEvent(nil), page.Events...)
+	for index := range page.Events {
+		page.Events[index].SchemaVersion = 1
+	}
 	return page, nil
 }
 
@@ -29,6 +34,11 @@ func (f feedbackReadFixture) ListFeedbackEvents(_ context.Context, _ string, aft
 	page, found := f.teamPages[after]
 	if !found {
 		return controlv1.FeedbackEventPage{}, errors.New("unexpected watch cursor")
+	}
+	page.SchemaVersion = 1
+	page.Events = append([]controlv1.FeedbackEvent(nil), page.Events...)
+	for index := range page.Events {
+		page.Events[index].SchemaVersion = 1
 	}
 	return page, nil
 }
@@ -97,7 +107,8 @@ func TestFeedbackWatchResumesAfterInvisibleEventsAndPagination(t *testing.T) {
 
 func TestFeedbackInspectKeepsReportAndAddsLocalComparison(t *testing.T) {
 	thread := controlv1.FeedbackThread{
-		Id: "fb_example", State: "open",
+		SchemaVersion: 1,
+		Id:            "fb_example", State: "open",
 		Report: controlv1.FeedbackReport{Text: "original report"},
 		Scope:  controlv1.FeedbackScope{PreviewId: "pv_mine"},
 	}
