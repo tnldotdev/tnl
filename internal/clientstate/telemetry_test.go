@@ -15,15 +15,7 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 			t.Fatalf("telemetry enabled = %t, error = %v; want %t", enabled, err, want)
 		}
 	}
-	readDemo := func(want bool) {
-		t.Helper()
-		enabled, err := DemoTelemetryEnabledAt(t.Context(), root)
-		if err != nil || enabled != want {
-			t.Fatalf("demo telemetry enabled = %t, error = %v; want %t", enabled, err, want)
-		}
-	}
 	read(true)
-	readDemo(false)
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("read of absent client state created files: %v", err)
 	}
@@ -35,7 +27,6 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(true)
-	readDemo(false)
 	if _, err := os.Stat(DatabasePath(root)); !os.IsNotExist(err) {
 		t.Fatalf("telemetry read created versioned state: %v", err)
 	}
@@ -47,7 +38,6 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(false)
-	readDemo(false)
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,5 +54,4 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(true)
-	readDemo(true)
 }

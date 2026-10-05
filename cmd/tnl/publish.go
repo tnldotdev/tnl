@@ -101,13 +101,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			output.setGuestDemo()
 			localDemo.SetGuest()
 		}
-		if invocation, ok := telemetry.(*telemetryInvocation); ok {
-			mode := telemetryPublishDemoSigned
-			if guest != nil {
-				mode = telemetryPublishDemoGuest
-			}
-			invocation.SetPublishMode(mode)
-		}
 		if guest == nil {
 			label := make([]byte, 4)
 			if _, err := rand.Read(label); err != nil {

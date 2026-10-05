@@ -69,7 +69,6 @@ func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 	}
 	invocation.SetPublishMode(telemetryPublishDemo)
 	invocation.Report(newTelemetryStarted(telemetryPublish))
-	invocation.SetPublishMode(telemetryPublishDemoGuest)
 	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, ""))
 	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, io.Discard, nil)
 	if err != nil {
@@ -82,8 +81,8 @@ func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 		}
 	}
 	if len(events) != 3 || events[0].PublishMode != telemetryPublishDemo ||
-		events[1].PublishMode != telemetryPublishDemoGuest ||
-		events[2].Event != telemetryDemoPingReceived || events[2].PublishMode != telemetryPublishDemoGuest {
+		events[1].PublishMode != telemetryPublishDemo ||
+		events[2].Event != telemetryDemoPingReceived || events[2].PublishMode != telemetryPublishDemo {
 		t.Fatalf("demo telemetry = %+v", events)
 	}
 	for _, event := range events {

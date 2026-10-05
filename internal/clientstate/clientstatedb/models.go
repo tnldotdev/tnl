@@ -29,7 +29,6 @@ type ClientSetting struct {
 	InstallationID       string
 	WorktreeHashSalt     []byte
 	TelemetryEnabled     int64
-	DemoTelemetryEnabled int64
 }
 
 type ControlSession struct {
