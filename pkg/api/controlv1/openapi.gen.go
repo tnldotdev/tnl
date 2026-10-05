@@ -756,7 +756,10 @@ type Preview struct {
 	CreatedAt    time.Time     `json:"created_at"`
 	Id           PreviewID     `json:"id"`
 	PublicUrlIds []PublicURLID `json:"public_url_ids"`
-	TeamId       TeamID        `json:"team_id"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	TeamId        TeamID              `json:"team_id"`
 }
 
 // PreviewID defines model for PreviewID.
@@ -907,6 +910,9 @@ type RelayServiceID = ResourceID
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
+
+// ReviewSchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+type ReviewSchemaVersion = int
 
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {

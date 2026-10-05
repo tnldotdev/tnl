@@ -344,6 +344,7 @@ type ControlOidcAssertionExchange struct {
 
 type ControlPreview struct {
 	ID                  string
+	SchemaVersion       int16
 	TeamID              string
 	CreatedByIdentityID string
 	IdempotencyKey      string

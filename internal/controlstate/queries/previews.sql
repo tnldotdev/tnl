@@ -4,10 +4,10 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, team_id, created_by_identity_id, created_at;
+RETURNING id, schema_version, team_id, created_by_identity_id, created_at;
 
 -- name: GetPreview :one
-SELECT id, team_id, created_by_identity_id, created_at
+SELECT id, schema_version, team_id, created_by_identity_id, created_at
 FROM control.previews WHERE id = $1;
 
 -- name: ListPreviewPublicURLs :many

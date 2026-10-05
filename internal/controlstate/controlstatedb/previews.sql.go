@@ -54,7 +54,7 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, team_id, created_by_identity_id, created_at
+RETURNING id, schema_version, team_id, created_by_identity_id, created_at
 `
 
 type CreatePreviewParams struct {
@@ -67,6 +67,7 @@ type CreatePreviewParams struct {
 
 type CreatePreviewRow struct {
 	ID                  string
+	SchemaVersion       int16
 	TeamID              string
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
@@ -83,6 +84,7 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 	var i CreatePreviewRow
 	err := row.Scan(
 		&i.ID,
+		&i.SchemaVersion,
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
@@ -91,12 +93,13 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 }
 
 const getPreview = `-- name: GetPreview :one
-SELECT id, team_id, created_by_identity_id, created_at
+SELECT id, schema_version, team_id, created_by_identity_id, created_at
 FROM control.previews WHERE id = $1
 `
 
 type GetPreviewRow struct {
 	ID                  string
+	SchemaVersion       int16
 	TeamID              string
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
@@ -107,6 +110,7 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 	var i GetPreviewRow
 	err := row.Scan(
 		&i.ID,
+		&i.SchemaVersion,
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,

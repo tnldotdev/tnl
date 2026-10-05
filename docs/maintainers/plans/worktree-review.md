@@ -54,6 +54,12 @@ ownership. `.tnl/project.json` continues to describe worktree-specific
 service hostnames and URLs and expands to describe path mounts. `tnl init`
 writes project-level `feedback: true` into new configurations.
 
+Review records and independently stored JSON context carry `schema_version`.
+The first published format is version 1. Keep versions with stored records,
+preserve optional additions, and increment the version when meaning or structure
+changes. An unsupported anchor must leave its comment readable. This version is
+separate from database migrations, publish run numbers, and mutation revisions.
+
 ## share a preview
 
 ```text

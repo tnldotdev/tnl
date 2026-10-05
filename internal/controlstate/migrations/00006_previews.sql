@@ -1,6 +1,7 @@
 -- +goose Up
 CREATE TABLE control.previews (
     id text PRIMARY KEY CHECK (id <> ''),
+    schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
     team_id text NOT NULL CHECK (team_id <> ''),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),

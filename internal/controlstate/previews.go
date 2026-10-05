@@ -19,6 +19,7 @@ var (
 )
 
 type Preview struct {
+	SchemaVersion       int
 	ID                  string
 	TeamID              string
 	CreatedByIdentityID string
@@ -79,7 +80,8 @@ func (d *Database) GetPreview(ctx context.Context, id string) (Preview, error) {
 		ids = []string{}
 	}
 	return Preview{
-		ID: row.ID, TeamID: row.TeamID, CreatedByIdentityID: row.CreatedByIdentityID,
+		SchemaVersion: int(row.SchemaVersion),
+		ID:            row.ID, TeamID: row.TeamID, CreatedByIdentityID: row.CreatedByIdentityID,
 		PublicURLIDs: ids, CreatedAt: row.CreatedAt.Time,
 	}, nil
 }
