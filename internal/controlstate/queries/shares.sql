@@ -31,6 +31,13 @@ WHERE preview_id = sqlc.arg(preview_id)
   AND id > sqlc.arg(after_id)
 ORDER BY id LIMIT 101;
 
+-- name: ListTeamShares :many
+SELECT * FROM control.shares
+WHERE team_id = sqlc.arg(team_id)
+  AND created_by_identity_id = sqlc.arg(identity_id)
+  AND id > sqlc.arg(after_id)
+ORDER BY id LIMIT 101;
+
 -- name: RevokeShare :one
 UPDATE control.shares
 SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at)::timestamptz),

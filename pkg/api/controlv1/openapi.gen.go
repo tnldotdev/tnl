@@ -690,6 +690,12 @@ type DNSRecordType string
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
 
+// EnableShareAccessRequest defines model for EnableShareAccessRequest.
+type EnableShareAccessRequest struct {
+	PreviewId        PreviewID `json:"preview_id"`
+	PublishRunNumber int64     `json:"publish_run_number"`
+}
+
 // GuestDemoNumber defines model for GuestDemoNumber.
 type GuestDemoNumber struct {
 	Number int64 `json:"number"`
@@ -855,6 +861,11 @@ type PublishRunSetup struct {
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 }
 
+// PublishRunShareState defines model for PublishRunShareState.
+type PublishRunShareState struct {
+	Shares []PublisherShare `json:"shares"`
+}
+
 // PublishRunState defines model for PublishRunState.
 type PublishRunState string
 
@@ -868,6 +879,14 @@ type PublisherConnectionID = ResourceID
 
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
+
+// PublisherShare defines model for PublisherShare.
+type PublisherShare struct {
+	CookieHashes      []string  `json:"cookie_hashes"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	SecretFingerprint string    `json:"secret_fingerprint"`
+	ShareId           ShareID   `json:"share_id"`
+}
 
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
@@ -906,6 +925,14 @@ type ReadinessResponseChecksRoute53Credentials string
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string
 
+// RedeemShareRequest defines model for RedeemShareRequest.
+type RedeemShareRequest struct {
+	HandoffToken     *string  `json:"handoff_token,omitempty"`
+	PublishRunNumber int64    `json:"publish_run_number"`
+	Secret           *string  `json:"secret,omitempty"`
+	ShareId          *ShareID `json:"share_id,omitempty"`
+}
+
 // RelayID defines model for RelayID.
 type RelayID = ResourceID
 
@@ -939,6 +966,15 @@ type ShareID = ResourceID
 type SharePage struct {
 	NextCursor *ShareID `json:"next_cursor,omitempty"`
 	Shares     []Share  `json:"shares"`
+}
+
+// ShareRedemption defines model for ShareRedemption.
+type ShareRedemption struct {
+	Bridge       bool      `json:"bridge"`
+	CookieSecret string    `json:"cookie_secret"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	NextUrl      string    `json:"next_url"`
+	ShareId      ShareID   `json:"share_id"`
 }
 
 // TeamID defines model for TeamID.
@@ -1016,6 +1052,12 @@ type ReleaseDNSAuthorityParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListTeamSharesParams defines parameters for ListTeamShares.
+type ListTeamSharesParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
@@ -1048,6 +1090,15 @@ type HeartbeatPublishRunJSONRequestBody = PublishRunVersionRequest
 
 // MarkPublishRunReadyJSONRequestBody defines body for MarkPublishRunReady for application/json ContentType.
 type MarkPublishRunReadyJSONRequestBody = PublishRunVersionRequest
+
+// EnableShareAccessJSONRequestBody defines body for EnableShareAccess for application/json ContentType.
+type EnableShareAccessJSONRequestBody = EnableShareAccessRequest
+
+// RedeemPublishRunShareJSONRequestBody defines body for RedeemPublishRunShare for application/json ContentType.
+type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
+
+// GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
+type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
 
 // CreateDNSAuthorityJSONRequestBody defines body for CreateDNSAuthority for application/json ContentType.
 type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
@@ -1373,6 +1424,48 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// EnableShareAccessWithBody Enable share-aware HTTP handling for this preview publish run
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+	EnableShareAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnableShareAccess Enable share-aware HTTP handling for this preview publish run
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+	EnableShareAccess(ctx context.Context, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublishRunShareWithBody Redeem a share link or one short-lived cross-host handoff
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+	RedeemPublishRunShareWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+	RedeemPublishRunShare(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublishRunShareStateWithBody Read short-lived share access state for this publisher
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+	GetPublishRunShareStateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublishRunShareState Read short-lived share access state for this publisher
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReadiness Confirm that the tnld role is ready to serve
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
@@ -1415,6 +1508,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTeamShares List manageable shares for one team
+	//
+	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
+	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetShare Read one share
 	//
@@ -2071,6 +2169,108 @@ func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRu
 	return c.Client.Do(req)
 }
 
+// EnableShareAccessWithBody Enable share-aware HTTP handling for this preview publish run
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+func (c *Client) EnableShareAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnableShareAccessRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EnableShareAccess Enable share-aware HTTP handling for this preview publish run
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+func (c *Client) EnableShareAccess(ctx context.Context, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnableShareAccessRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublishRunShareWithBody Redeem a share link or one short-lived cross-host handoff
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+func (c *Client) RedeemPublishRunShareWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublishRunShareRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+func (c *Client) RedeemPublishRunShare(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublishRunShareRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublishRunShareStateWithBody Read short-lived share access state for this publisher
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+func (c *Client) GetPublishRunShareStateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublishRunShareStateRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublishRunShareState Read short-lived share access state for this publisher
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublishRunShareStateRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetReadiness Confirm that the tnld role is ready to serve
 //
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
@@ -2174,6 +2374,21 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 // Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListTeamShares List manageable shares for one team
+//
+// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
+func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTeamSharesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3432,6 +3647,147 @@ func NewMarkPublishRunReadyRequestWithBody(server string, publishRunId PublishRu
 	return req, nil
 }
 
+// NewEnableShareAccessRequest calls the generic EnableShareAccess builder with application/json body
+func NewEnableShareAccessRequest(server string, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewEnableShareAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewEnableShareAccessRequestWithBody constructs an http.Request for the EnableShareAccess method, with any body, and a specified content type
+func NewEnableShareAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/share-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemPublishRunShareRequest calls the generic RedeemPublishRunShare builder with application/json body
+func NewRedeemPublishRunShareRequest(server string, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemPublishRunShareRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewRedeemPublishRunShareRequestWithBody constructs an http.Request for the RedeemPublishRunShare method, with any body, and a specified content type
+func NewRedeemPublishRunShareRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/share-redemptions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPublishRunShareStateRequest calls the generic GetPublishRunShareState builder with application/json body
+func NewGetPublishRunShareStateRequest(server string, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetPublishRunShareStateRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewGetPublishRunShareStateRequestWithBody constructs an http.Request for the GetPublishRunShareState method, with any body, and a specified content type
+func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/share-state", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReadinessRequest constructs an http.Request for the GetReadiness method
 func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
@@ -3629,6 +3985,68 @@ func NewRevokeHostedPolicyRequestWithBody(server string, contentType string, bod
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListTeamSharesRequest constructs an http.Request for the ListTeamShares method
+func NewListTeamSharesRequest(server string, params *ListTeamSharesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -4025,6 +4443,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
 
+	// EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+	EnableShareAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnableShareAccessResponse, error)
+
+	// EnableShareAccessWithResponse Enable share-aware HTTP handling for this preview publish run
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+	EnableShareAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*EnableShareAccessResponse, error)
+
+	// RedeemPublishRunShareWithBodyWithResponse Redeem a share link or one short-lived cross-host handoff
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+	RedeemPublishRunShareWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublishRunShareResponse, error)
+
+	// RedeemPublishRunShareWithResponse Redeem a share link or one short-lived cross-host handoff
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+	RedeemPublishRunShareWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublishRunShareResponse, error)
+
+	// GetPublishRunShareStateWithBodyWithResponse Read short-lived share access state for this publisher
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+	GetPublishRunShareStateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
+
+	// GetPublishRunShareStateWithResponse Read short-lived share access state for this publisher
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
+
 	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -4073,6 +4533,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
+
+	// ListTeamSharesWithResponse List manageable shares for one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
+	ListTeamSharesWithResponse(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*ListTeamSharesResponse, error)
 
 	// GetShareWithResponse Read one share
 	//
@@ -5467,6 +5934,143 @@ func (r MarkPublishRunReadyResponse) ContentType() string {
 	return ""
 }
 
+type EnableShareAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableShareAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r EnableShareAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EnableShareAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnableShareAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EnableShareAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemPublishRunShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ShareRedemption
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemPublishRunShareResponse) GetJSON200() *ShareRedemption {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemPublishRunShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemPublishRunShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemPublishRunShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemPublishRunShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemPublishRunShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPublishRunShareStateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublishRunShareState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPublishRunShareStateResponse) GetJSON200() *PublishRunShareState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPublishRunShareStateResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPublishRunShareStateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPublishRunShareStateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPublishRunShareStateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPublishRunShareStateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetReadinessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5701,6 +6305,54 @@ func (r RevokeHostedPolicyResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeHostedPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListTeamSharesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SharePage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListTeamSharesResponse) GetJSON200() *SharePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListTeamSharesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListTeamSharesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTeamSharesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTeamSharesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTeamSharesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6323,6 +6975,84 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Contex
 	return ParseMarkPublishRunReadyResponse(rsp)
 }
 
+// EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+func (c *ClientWithResponses) EnableShareAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnableShareAccessResponse, error) {
+	rsp, err := c.EnableShareAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnableShareAccessResponse(rsp)
+}
+
+// EnableShareAccessWithResponse Enable share-aware HTTP handling for this preview publish run
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
+func (c *ClientWithResponses) EnableShareAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*EnableShareAccessResponse, error) {
+	rsp, err := c.EnableShareAccess(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnableShareAccessResponse(rsp)
+}
+
+// RedeemPublishRunShareWithBodyWithResponse Redeem a share link or one short-lived cross-host handoff
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+func (c *ClientWithResponses) RedeemPublishRunShareWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublishRunShareResponse, error) {
+	rsp, err := c.RedeemPublishRunShareWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublishRunShareResponse(rsp)
+}
+
+// RedeemPublishRunShareWithResponse Redeem a share link or one short-lived cross-host handoff
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
+func (c *ClientWithResponses) RedeemPublishRunShareWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublishRunShareResponse, error) {
+	rsp, err := c.RedeemPublishRunShare(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublishRunShareResponse(rsp)
+}
+
+// GetPublishRunShareStateWithBodyWithResponse Read short-lived share access state for this publisher
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+func (c *ClientWithResponses) GetPublishRunShareStateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error) {
+	rsp, err := c.GetPublishRunShareStateWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublishRunShareStateResponse(rsp)
+}
+
+// GetPublishRunShareStateWithResponse Read short-lived share access state for this publisher
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
+func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error) {
+	rsp, err := c.GetPublishRunShareState(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublishRunShareStateResponse(rsp)
+}
+
 // GetReadinessWithResponse Confirm that the tnld role is ready to serve
 //
 // Returns a wrapper object for the known response body format(s).
@@ -6412,6 +7142,19 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseRevokeHostedPolicyResponse(rsp)
+}
+
+// ListTeamSharesWithResponse List manageable shares for one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
+func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*ListTeamSharesResponse, error) {
+	rsp, err := c.ListTeamShares(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTeamSharesResponse(rsp)
 }
 
 // GetShareWithResponse Read one share
@@ -7389,6 +8132,101 @@ func ParseMarkPublishRunReadyResponse(rsp *http.Response) (*MarkPublishRunReadyR
 	return response, nil
 }
 
+// ParseEnableShareAccessResponse parses an HTTP response from a EnableShareAccessWithResponse call
+func ParseEnableShareAccessResponse(rsp *http.Response) (*EnableShareAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnableShareAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemPublishRunShareResponse parses an HTTP response from a RedeemPublishRunShareWithResponse call
+func ParseRedeemPublishRunShareResponse(rsp *http.Response) (*RedeemPublishRunShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemPublishRunShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ShareRedemption
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPublishRunShareStateResponse parses an HTTP response from a GetPublishRunShareStateWithResponse call
+func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunShareStateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPublishRunShareStateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublishRunShareState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
 func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7557,6 +8395,39 @@ func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyRes
 	return response, nil
 }
 
+// ParseListTeamSharesResponse parses an HTTP response from a ListTeamSharesWithResponse call
+func ParseListTeamSharesResponse(rsp *http.Response) (*ListTeamSharesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTeamSharesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SharePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetShareResponse parses an HTTP response from a GetShareWithResponse call
 func ParseGetShareResponse(rsp *http.Response) (*GetShareResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7712,6 +8583,15 @@ type ServerInterface interface {
 	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 	// (POST /v1/publish-runs/{publish_run_id}/ready)
 	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// EnableShareAccess Enable share-aware HTTP handling for this preview publish run
+	// (POST /v1/publish-runs/{publish_run_id}/share-access)
+	EnableShareAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
+	// (POST /v1/publish-runs/{publish_run_id}/share-redemptions)
+	RedeemPublishRunShare(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// GetPublishRunShareState Read short-lived share access state for this publisher
+	// (POST /v1/publish-runs/{publish_run_id}/share-state)
+	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
@@ -7727,6 +8607,9 @@ type ServerInterface interface {
 	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
+	// ListTeamShares List manageable shares for one team
+	// (GET /v1/shares)
+	ListTeamShares(w http.ResponseWriter, r *http.Request, params ListTeamSharesParams)
 	// GetShare Read one share
 	// (GET /v1/shares/{share_id})
 	GetShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
@@ -8592,6 +9475,84 @@ func (siw *ServerInterfaceWrapper) MarkPublishRunReady(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// EnableShareAccess operation middleware
+func (siw *ServerInterfaceWrapper) EnableShareAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EnableShareAccess(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemPublishRunShare operation middleware
+func (siw *ServerInterfaceWrapper) RedeemPublishRunShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemPublishRunShare(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublishRunShareState operation middleware
+func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublishRunShareState(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReadiness operation middleware
 func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
 
@@ -8736,6 +9697,52 @@ func (siw *ServerInterfaceWrapper) RevokeHostedPolicy(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeHostedPolicy(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTeamShares operation middleware
+func (siw *ServerInterfaceWrapper) ListTeamShares(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListTeamSharesParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTeamShares(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8928,6 +9935,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
@@ -8937,6 +9945,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-runs", wrapper.CreatePublishRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-access", wrapper.EnableShareAccess)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-state", wrapper.GetPublishRunShareState)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-redemptions", wrapper.RedeemPublishRunShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ready", wrapper.MarkPublishRunReady)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/certificate-installed", wrapper.MarkPublishRunCertificateInstalled)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}", wrapper.ClosePublishRun)

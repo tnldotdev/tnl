@@ -52,6 +52,9 @@ type Querier interface {
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompletePublicURLUsageDelivery(ctx context.Context, arg CompletePublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
+	ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error)
+	CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error)
+	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
 	CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
@@ -76,9 +79,12 @@ type Querier interface {
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
+	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureExternalAuthorityPrincipal(ctx context.Context, arg EnsureExternalAuthorityPrincipalParams) (ControlIdentity, error)
 	EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) (EnsureExternalRetryMasterKeyRow, error)
@@ -101,6 +107,7 @@ type Querier interface {
 	GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrderByIdempotencyParams) (ControlAcmeOrder, error)
 	GetActivePublishRunChallengeExpiry(ctx context.Context, arg GetActivePublishRunChallengeExpiryParams) (pgtype.Timestamptz, error)
 	GetActivePublishRunMembership(ctx context.Context, arg GetActivePublishRunMembershipParams) (GetActivePublishRunMembershipRow, error)
+	GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
@@ -144,6 +151,7 @@ type Querier interface {
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
 	GetShare(ctx context.Context, id string) (ControlShare, error)
+	GetShareCapablePublishRun(ctx context.Context, arg GetShareCapablePublishRunParams) (string, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
@@ -170,8 +178,12 @@ type Querier interface {
 	InsertPublishRunAuditEvent(ctx context.Context, arg InsertPublishRunAuditEventParams) error
 	InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnectionSlot, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
+	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
+	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
+	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
+	ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error)
 	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
@@ -190,6 +202,7 @@ type Querier interface {
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
 	ListSharePublicURLs(ctx context.Context, shareID string) ([]string, error)
@@ -197,6 +210,7 @@ type Querier interface {
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
+	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)

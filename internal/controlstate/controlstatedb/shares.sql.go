@@ -179,6 +179,52 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 	return items, nil
 }
 
+const listTeamShares = `-- name: ListTeamShares :many
+SELECT id, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
+WHERE team_id = $1
+  AND created_by_identity_id = $2
+  AND id > $3
+ORDER BY id LIMIT 101
+`
+
+type ListTeamSharesParams struct {
+	TeamID     string
+	IdentityID string
+	AfterID    string
+}
+
+func (q *Queries) ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error) {
+	rows, err := q.db.Query(ctx, listTeamShares, arg.TeamID, arg.IdentityID, arg.AfterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlShare
+	for rows.Next() {
+		var i ControlShare
+		if err := rows.Scan(
+			&i.ID,
+			&i.PreviewID,
+			&i.TeamID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.SecretFingerprint,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.RevokedByIdentityID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeShare = `-- name: RevokeShare :one
 UPDATE control.shares
 SET revoked_at = COALESCE(revoked_at, $1::timestamptz),

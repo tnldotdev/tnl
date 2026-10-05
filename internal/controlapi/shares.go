@@ -120,6 +120,32 @@ func (h *handler) ListShares(response http.ResponseWriter, request *http.Request
 		writeControlStateProblem(response, "list shares", err)
 		return
 	}
+	writeSharePage(response, page)
+}
+
+func (h *handler) ListTeamShares(response http.ResponseWriter, request *http.Request, _ controlv1.ListTeamSharesParams) {
+	principal, ok := h.authorizeRouteReads(response, request)
+	if !ok {
+		return
+	}
+	teamID := request.URL.Query().Get("team_id")
+	if _, member := principal.teamIDs[teamID]; !member {
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		return
+	}
+	if h.shares == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
+		return
+	}
+	page, err := h.shares.ListTeamShares(request.Context(), teamID, principal.identityID, request.URL.Query().Get("cursor"))
+	if err != nil {
+		writeControlStateProblem(response, "list team shares", err)
+		return
+	}
+	writeSharePage(response, page)
+}
+
+func writeSharePage(response http.ResponseWriter, page controlstate.SharePage) {
 	body := controlv1.SharePage{Shares: make([]controlv1.Share, len(page.Shares))}
 	for index, share := range page.Shares {
 		body.Shares[index] = shareResponse(share)

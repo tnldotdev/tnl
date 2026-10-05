@@ -135,15 +135,27 @@ func (c *Client) GetShare(ctx context.Context, id string) (controlv1.Share, erro
 }
 
 func (c *Client) ListShares(ctx context.Context, previewID string) ([]controlv1.Share, error) {
+	return c.listShares(ctx, func(requestCtx context.Context, cursor *string, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListShares(requestCtx, previewID, &controlv1.ListSharesParams{Cursor: cursor}, editors...)
+	})
+}
+
+func (c *Client) ListTeamShares(ctx context.Context, teamID string) ([]controlv1.Share, error) {
+	return c.listShares(ctx, func(requestCtx context.Context, cursor *string, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListTeamShares(requestCtx, &controlv1.ListTeamSharesParams{TeamId: teamID, Cursor: cursor}, editors...)
+	})
+}
+
+func (c *Client) listShares(ctx context.Context, call func(context.Context, *string, ...controlv1.RequestEditorFn) (*http.Response, error)) ([]controlv1.Share, error) {
 	var shares []controlv1.Share
 	cursor := ""
 	for {
-		params := &controlv1.ListSharesParams{}
+		var next *string
 		if cursor != "" {
-			params.Cursor = &cursor
+			next = &cursor
 		}
 		page, err := requestWithAccess[controlv1.SharePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.ListShares(ctx, previewID, params, editors...)
+			return call(ctx, next, editors...)
 		})
 		if err != nil {
 			return nil, err
@@ -162,6 +174,27 @@ func (c *Client) ListShares(ctx context.Context, previewID string) ([]controlv1.
 func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, error) {
 	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RevokeShare(ctx, id, editors...)
+	})
+}
+
+func (c *Client) EnableShareAccess(ctx context.Context, runID string, version uint64, previewID string, token credentials.PublishRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{
+			PublishRunNumber: int64(version), PreviewId: previewID,
+		}, editors...)
+	})
+	return err
+}
+
+func (c *Client) GetPublishRunShareState(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
+	return request[controlv1.PublishRunShareState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetPublishRunShareState(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)
+	})
+}
+
+func (c *Client) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+	return request[controlv1.ShareRedemption](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RedeemPublishRunShare(ctx, runID, body, editors...)
 	})
 }
 

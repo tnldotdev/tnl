@@ -46,6 +46,7 @@ type Config struct {
 	PolicyRevision           uint64
 	PublicURLScope           controlv1.PublicURLScope
 	Hostname                 string
+	PreviewID                string
 	Target                   string
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.

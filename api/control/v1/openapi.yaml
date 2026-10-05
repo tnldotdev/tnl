@@ -204,6 +204,24 @@ paths:
                 $ref: "#/components/schemas/SharePage"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/shares:
+    get:
+      operationId: listTeamShares
+      summary: List manageable shares for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Share page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharePage"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/shares/{share_id}:
     get:
       operationId: getShare
@@ -369,6 +387,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublishRunHeartbeat"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-access:
+    post:
+      operationId: enableShareAccess
+      summary: Enable share-aware HTTP handling for this preview publish run
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnableShareAccessRequest"
+      responses:
+        "204":
+          description: Publisher can check shares for this publish run
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-state:
+    post:
+      operationId: getPublishRunShareState
+      summary: Read short-lived share access state for this publisher
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Current share fingerprints and cookie hashes for this public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishRunShareState"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-redemptions:
+    post:
+      operationId: redeemPublishRunShare
+      summary: Redeem a share link or one short-lived cross-host handoff
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemShareRequest"
+      responses:
+        "200":
+          description: Host-only cookie secret and the next review hostname
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareRedemption"
         default:
           $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/ready:
@@ -1417,6 +1500,85 @@ components:
           type: integer
           format: int64
           minimum: 1
+    EnableShareAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, preview_id]
+      properties:
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        preview_id:
+          $ref: "#/components/schemas/PreviewID"
+    RedeemShareRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number]
+      properties:
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        share_id:
+          $ref: "#/components/schemas/ShareID"
+        secret:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: "^[A-Za-z0-9_-]+$"
+        handoff_token:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: "^[A-Za-z0-9_-]+$"
+    PublishRunShareState:
+      type: object
+      additionalProperties: false
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublisherShare"
+    PublisherShare:
+      type: object
+      additionalProperties: false
+      required: [share_id, expires_at, secret_fingerprint, cookie_hashes]
+      properties:
+        share_id:
+          $ref: "#/components/schemas/ShareID"
+        expires_at:
+          type: string
+          format: date-time
+        secret_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        cookie_hashes:
+          type: array
+          items:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+    ShareRedemption:
+      type: object
+      additionalProperties: false
+      required: [share_id, cookie_secret, expires_at, next_url, bridge]
+      properties:
+        share_id:
+          $ref: "#/components/schemas/ShareID"
+        cookie_secret:
+          type: string
+          minLength: 43
+          maxLength: 43
+        expires_at:
+          type: string
+          format: date-time
+        next_url:
+          type: string
+          format: uri
+          pattern: "^https://"
+        bridge:
+          type: boolean
     PublishRunHeartbeat:
       type: object
       additionalProperties: false

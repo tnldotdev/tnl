@@ -504,6 +504,7 @@ type ControlPublishRun struct {
 	AssignmentsOpen            pgtype.Bool
 	RequestDigestCiphertext    []byte
 	RequestDigestStorageKeyID  pgtype.Text
+	ShareCapable               bool
 }
 
 type ControlPublishRunConnectionSlot struct {
@@ -627,6 +628,27 @@ type ControlShare struct {
 	ExpiresAt           pgtype.Timestamptz
 	RevokedAt           pgtype.Timestamptz
 	RevokedByIdentityID pgtype.Text
+}
+
+type ControlShareCookie struct {
+	TokenDigest []byte
+	ShareID     string
+	PublicURLID string
+	TeamID      string
+	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+}
+
+type ControlShareHandoff struct {
+	TokenDigest []byte
+	ShareID     string
+	PublicURLID string
+	TeamID      string
+	NextUrl     string
+	Bridge      bool
+	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+	ConsumedAt  pgtype.Timestamptz
 }
 
 type ControlSharePublicUrl struct {

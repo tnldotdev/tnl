@@ -32,6 +32,7 @@ type PublicURLServerConfig struct {
 	Hostname        string
 	Target          string
 	Mounts          []localproxy.Mount
+	ShareAccess     *shareAccess
 	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
 	Certificate     tls.Certificate
@@ -64,6 +65,7 @@ type PublicURLServer struct {
 }
 
 type denialContextKey struct{}
+type shareConnectionKey struct{}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
@@ -82,6 +84,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		return nil, err
 	}
 	queue := newRouteListener()
+	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
 		hostname:        hostname,
 		certificatePlan: config.CertificatePlan,
@@ -93,9 +96,47 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if request.Context().Value(denialContextKey{}) == true {
+				denied := request.Context().Value(denialContextKey{}) == true
+				if sharePath(request.URL.EscapedPath()) {
+					response.Header().Set("Cache-Control", "no-store")
+					response.Header().Set("Referrer-Policy", "no-referrer")
+					select {
+					case shareSlots <- struct{}{}:
+						defer func() { <-shareSlots }()
+					default:
+						response.Header().Set("Retry-After", "1")
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						return
+					}
+					if config.ShareAccess == nil {
+						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						return
+					}
+					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
+						_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+					}
+					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
+					if err != nil {
+						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						return
+					}
+					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
+						_ = connection.SetDeadline(time.Time{})
+					}
+					shareRedirect(response, redemption)
+					return
+				}
+				if denied && (config.ShareAccess == nil || !config.ShareAccess.permits(request)) {
 					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
 					return
+				}
+				if denied {
+					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
+						_ = connection.SetDeadline(time.Time{})
+					}
+				}
+				if config.ShareAccess != nil {
+					request = stripShareCookie(request)
 				}
 				handler.ServeHTTP(response, request)
 			}),
@@ -103,10 +144,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if secured, ok := connection.(*tls.Conn); ok {
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
-							if metadata.denied {
-								return context.WithValue(ctx, denialContextKey{}, true)
-							}
-							return ctx
+							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
+							return context.WithValue(ctx, denialContextKey{}, metadata.denied)
 						}
 					}
 				}
