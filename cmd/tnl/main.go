@@ -37,6 +37,7 @@ type cli struct {
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
+	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
@@ -446,6 +447,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runShareList(ctx, flags.Share.List, stdout, stderr)
 	case "share link revoke <share-id>":
 		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "feedback list":
+		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
+	case "feedback inspect <feedback-id>":
+		return runFeedbackInspect(ctx, flags.Feedback.Inspect, project, stdout, stderr)
+	case "feedback watch":
+		return runFeedbackWatch(ctx, flags.Feedback.Watch, project, stdout, stderr)
+	case "feedback reply <feedback-id>":
+		return runFeedbackMutation(ctx, flags.Feedback.Reply.feedbackMutationCommand, project, "reply", stdout, stderr)
+	case "feedback ready <feedback-id>":
+		return runFeedbackMutation(ctx, flags.Feedback.Ready.feedbackMutationCommand, project, "fix.ready_for_recheck", stdout, stderr)
+	case "feedback resolve <feedback-id>":
+		return runFeedbackMutation(ctx, flags.Feedback.Resolve.feedbackMutationCommand, project, "thread.resolved", stdout, stderr)
+	case "feedback open <service>":
+		return runFeedbackOpen(ctx, flags.Feedback.Open, project, stdout)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":
@@ -488,7 +503,7 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.DomainUnavailable
 	case strings.HasPrefix(command, "tnl url "):
 		return failure.ServerConflict
-	case strings.HasPrefix(command, "tnl share "):
+	case strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl admin "):
 		return failure.AdminUnavailable
@@ -509,6 +524,8 @@ func canonicalParsedCommand(command string) string {
 		return "share link create <url>"
 	case "share list":
 		return "share list <url>"
+	case "feedback open":
+		return "feedback open <service>"
 	default:
 		return command
 	}

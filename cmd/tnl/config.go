@@ -316,7 +316,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 
 func projectSensitiveCommand(command string) bool {
 	return command == "login" || command == "logout" || strings.HasPrefix(command, "admin ") ||
-		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ")
+		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -411,6 +411,18 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Share.List.remoteFlags, true)
 	case "share link revoke <share-id>":
 		apply(&flags.Share.Link.Revoke.remoteFlags, true)
+	case "feedback list":
+		apply(&flags.Feedback.List.remoteFlags, true)
+	case "feedback inspect <feedback-id>":
+		apply(&flags.Feedback.Inspect.remoteFlags, true)
+	case "feedback watch":
+		apply(&flags.Feedback.Watch.remoteFlags, true)
+	case "feedback reply <feedback-id>":
+		apply(&flags.Feedback.Reply.remoteFlags, true)
+	case "feedback ready <feedback-id>":
+		apply(&flags.Feedback.Ready.remoteFlags, true)
+	case "feedback resolve <feedback-id>":
+		apply(&flags.Feedback.Resolve.remoteFlags, true)
 	case "admin server status":
 		apply(&flags.Admin.Server.Status.remoteFlags, false)
 	case "admin relays list":
