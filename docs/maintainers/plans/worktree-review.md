@@ -120,10 +120,15 @@ their own checkout markers. The current state is projected from the event
 history:
 
 ```text
-open -> ready_for_recheck -> resolved
-             |
-             +-- still broken -> open
+reviewer reports --> open -- developer/agent records fix --> ready_for_recheck
+                      ^           (fix marker)                   |         |
+                      |                                          |         +-- developer/agent resolves --> resolved
+                      +-- reviewer says still broken ------------+
+                              (recheck marker)
 ```
+
+Replies stay in the current state. A coding agent acts as the developer through
+their authorized control session; it does not get a separate reviewer role.
 
 A reviewer with share access can reply, answer a context request, and report
 a failed recheck. An identity authorized to manage the public URL marks a

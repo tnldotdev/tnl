@@ -132,10 +132,19 @@ mutation counters; public URL counters are publish run numbers.
 | **checkout marker**   | The recorded Git HEAD, branch, changed-file identifiers, and combined fingerprint; it does not store source bytes.    |
 | **ready for recheck** | A feedback thread state after a developer records a fix and asks a reviewer to try again.                             |
 
-Feedback thread states are `open`, `ready_for_recheck`, and `resolved`.
-**Still broken** returns a thread to `open`. The developer uses
-`tnl feedback ready` to request a recheck. Use **feedback list**, not
-_inbox_, for the collection of threads.
+The developer or their local coding agent records a fix; a reviewer checks it:
+
+```text
+reviewer report --> open -- developer/agent: ready --> ready_for_recheck
+                     ^        (fix marker)                |           |
+                     |                                    |           +-- developer/agent: resolve --> resolved
+                     +-- reviewer: still broken ----------+
+                          (recheck marker)
+```
+
+A reply does not change the state. The developer uses `tnl feedback ready` to
+request a recheck. Use **feedback list**, not _inbox_, for the collection of
+threads.
 
 ## publisher connections
 
