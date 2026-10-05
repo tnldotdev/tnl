@@ -29,21 +29,18 @@ var (
 type FeedbackThreadState string
 
 const (
-	FeedbackOpen            FeedbackThreadState = "open"
-	FeedbackReadyForRecheck FeedbackThreadState = "ready_for_recheck"
-	FeedbackResolved        FeedbackThreadState = "resolved"
+	FeedbackOpen     FeedbackThreadState = "open"
+	FeedbackResolved FeedbackThreadState = "resolved"
 )
 
 type FeedbackEventType string
 
 const (
-	FeedbackCreated          FeedbackEventType = "thread.created"
-	FeedbackReply            FeedbackEventType = "reply"
-	FeedbackContextRequested FeedbackEventType = "context.requested"
-	FeedbackEvidenceAdded    FeedbackEventType = "evidence.added"
-	FeedbackFixReady         FeedbackEventType = "fix.ready_for_recheck"
-	FeedbackStillBroken      FeedbackEventType = "recheck.still_broken"
-	FeedbackThreadResolved   FeedbackEventType = "thread.resolved"
+	FeedbackCreated        FeedbackEventType = "thread.created"
+	FeedbackReply          FeedbackEventType = "reply"
+	FeedbackUpdate         FeedbackEventType = "update"
+	FeedbackThreadResolved FeedbackEventType = "thread.resolved"
+	FeedbackThreadReopened FeedbackEventType = "thread.reopened"
 )
 
 type FeedbackActor struct {
@@ -316,7 +313,7 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 	if actor.Kind == "reviewer" {
 		return reviewerReference(ctx, queries, thread.PublicURLID, actor, now)
 	}
-	if actor.Kind != "developer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
+	if actor.Kind != "implementer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
 		return "", ErrFeedbackAccess
 	}
 	revision := positive(actor.PolicyRevision)
@@ -396,26 +393,21 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 }
 
 func nextFeedbackState(state FeedbackThreadState, event FeedbackEventType, actorKind string) (FeedbackThreadState, error) {
-	if state == FeedbackResolved {
-		return "", ErrFeedbackState
-	}
 	switch event {
-	case FeedbackReply, FeedbackEvidenceAdded:
-		return state, nil
-	case FeedbackContextRequested:
-		if actorKind == "developer" {
+	case FeedbackReply:
+		if state == FeedbackOpen {
 			return state, nil
 		}
-	case FeedbackFixReady:
-		if actorKind == "developer" && state == FeedbackOpen {
-			return FeedbackReadyForRecheck, nil
+	case FeedbackUpdate:
+		if actorKind == "implementer" && state == FeedbackOpen {
+			return state, nil
 		}
-	case FeedbackStillBroken:
-		if actorKind == "reviewer" && state == FeedbackReadyForRecheck {
+	case FeedbackThreadReopened:
+		if state == FeedbackResolved {
 			return FeedbackOpen, nil
 		}
 	case FeedbackThreadResolved:
-		if actorKind == "developer" && state == FeedbackReadyForRecheck {
+		if state == FeedbackOpen {
 			return FeedbackResolved, nil
 		}
 	}
@@ -423,25 +415,22 @@ func nextFeedbackState(state FeedbackThreadState, event FeedbackEventType, actor
 }
 
 func validFeedbackEventPayload(request AppendFeedbackRequest) bool {
-	if request.Type == FeedbackCreated || request.Actor.Kind != "reviewer" && request.Actor.Kind != "developer" ||
+	if request.Type == FeedbackCreated || request.Actor.Kind != "reviewer" && request.Actor.Kind != "implementer" ||
 		request.Text != "" && !validFeedbackText(request.Text, 4000) ||
 		len(request.Evidence) > 0 && !validFeedbackJSON(request.Evidence, 16384) ||
 		len(request.CheckoutMarker) > 0 && !validFeedbackJSON(request.CheckoutMarker, 16384) {
 		return false
 	}
-	if request.Type == FeedbackReply || request.Type == FeedbackContextRequested || request.Type == FeedbackFixReady {
+	if request.Type == FeedbackReply || request.Type == FeedbackUpdate {
 		if request.Text == "" {
 			return false
 		}
 	}
-	if request.Type == FeedbackEvidenceAdded && len(request.Evidence) == 0 {
-		return false
+	if request.Type == FeedbackUpdate {
+		return request.Actor.Kind == "implementer" && len(request.CheckoutMarker) > 0
 	}
-	if request.Type == FeedbackFixReady || request.Type == FeedbackStillBroken {
-		return len(request.CheckoutMarker) > 0
-	}
-	return request.Type == FeedbackReply || request.Type == FeedbackContextRequested ||
-		request.Type == FeedbackEvidenceAdded || request.Type == FeedbackThreadResolved
+	return len(request.CheckoutMarker) == 0 && (request.Type == FeedbackReply ||
+		request.Type == FeedbackThreadResolved || request.Type == FeedbackThreadReopened)
 }
 
 func validFeedbackPath(value string) bool {

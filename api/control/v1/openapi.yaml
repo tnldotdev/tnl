@@ -329,7 +329,7 @@ paths:
           $ref: "#/components/responses/Problem"
     post:
       operationId: appendFeedbackEvent
-      summary: Reply, request context, record a fix, or resolve feedback
+      summary: Reply, record a checkout update, resolve, or reopen feedback
       security:
         - bearerAuth: []
       parameters:
@@ -598,7 +598,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events:
     post:
       operationId: appendReviewerFeedbackEvent
-      summary: Add a reviewer reply, evidence, or failed recheck
+      summary: Reply, resolve, or reopen feedback through preview access
       security:
         - publishRunAuth: []
       parameters:
@@ -1577,19 +1577,10 @@ components:
           $ref: "#/components/schemas/ShareID"
     FeedbackThreadState:
       type: string
-      enum: [open, ready_for_recheck, resolved]
+      enum: [open, resolved]
     FeedbackEventType:
       type: string
-      enum:
-        [
-          thread.created,
-          reply,
-          context.requested,
-          evidence.added,
-          fix.ready_for_recheck,
-          recheck.still_broken,
-          thread.resolved,
-        ]
+      enum: [thread.created, reply, update, thread.resolved, thread.reopened]
     FeedbackScope:
       type: object
       additionalProperties: false
@@ -1823,7 +1814,7 @@ components:
           $ref: "#/components/schemas/FeedbackEventType"
         actor:
           type: string
-          enum: [developer, reviewer]
+          enum: [implementer, reviewer]
         at:
           type: string
           format: date-time

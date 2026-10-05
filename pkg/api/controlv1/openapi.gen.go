@@ -229,14 +229,14 @@ func (e FeedbackElementSummaryKind) Valid() bool {
 
 // Defines values for FeedbackEventActor.
 const (
-	Developer FeedbackEventActor = "developer"
-	Reviewer  FeedbackEventActor = "reviewer"
+	Implementer FeedbackEventActor = "implementer"
+	Reviewer    FeedbackEventActor = "reviewer"
 )
 
 // Valid indicates whether the value is a known member of the FeedbackEventActor enum.
 func (e FeedbackEventActor) Valid() bool {
 	switch e {
-	case Developer:
+	case Implementer:
 		return true
 	case Reviewer:
 		return true
@@ -247,31 +247,25 @@ func (e FeedbackEventActor) Valid() bool {
 
 // Defines values for FeedbackEventType.
 const (
-	ContextRequested   FeedbackEventType = "context.requested"
-	EvidenceAdded      FeedbackEventType = "evidence.added"
-	FixReadyForRecheck FeedbackEventType = "fix.ready_for_recheck"
-	RecheckStillBroken FeedbackEventType = "recheck.still_broken"
-	Reply              FeedbackEventType = "reply"
-	ThreadCreated      FeedbackEventType = "thread.created"
-	ThreadResolved     FeedbackEventType = "thread.resolved"
+	Reply          FeedbackEventType = "reply"
+	ThreadCreated  FeedbackEventType = "thread.created"
+	ThreadReopened FeedbackEventType = "thread.reopened"
+	ThreadResolved FeedbackEventType = "thread.resolved"
+	Update         FeedbackEventType = "update"
 )
 
 // Valid indicates whether the value is a known member of the FeedbackEventType enum.
 func (e FeedbackEventType) Valid() bool {
 	switch e {
-	case ContextRequested:
-		return true
-	case EvidenceAdded:
-		return true
-	case FixReadyForRecheck:
-		return true
-	case RecheckStillBroken:
-		return true
 	case Reply:
 		return true
 	case ThreadCreated:
 		return true
+	case ThreadReopened:
+		return true
 	case ThreadResolved:
+		return true
+	case Update:
 		return true
 	default:
 		return false
@@ -316,17 +310,14 @@ func (e FeedbackThreadSchemaVersion) Valid() bool {
 
 // Defines values for FeedbackThreadState.
 const (
-	Open            FeedbackThreadState = "open"
-	ReadyForRecheck FeedbackThreadState = "ready_for_recheck"
-	Resolved        FeedbackThreadState = "resolved"
+	Open     FeedbackThreadState = "open"
+	Resolved FeedbackThreadState = "resolved"
 )
 
 // Valid indicates whether the value is a known member of the FeedbackThreadState enum.
 func (e FeedbackThreadState) Valid() bool {
 	switch e {
 	case Open:
-		return true
-	case ReadyForRecheck:
 		return true
 	case Resolved:
 		return true
@@ -1710,14 +1701,14 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
 	ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AppendFeedbackEventWithBody Reply, request context, record a fix, or resolve feedback
+	// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
 	AppendFeedbackEventWithBody(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1900,14 +1891,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
 	ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AppendReviewerFeedbackEventWithBody Add a reviewer reply, evidence, or failed recheck
+	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
 	AppendReviewerFeedbackEventWithBody(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2319,7 +2310,7 @@ func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId Feedba
 	return c.Client.Do(req)
 }
 
-// AppendFeedbackEventWithBody Reply, request context, record a fix, or resolve feedback
+// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
 //
 // Takes any type of body and a specified content type.
 //
@@ -2336,7 +2327,7 @@ func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId Fee
 	return c.Client.Do(req)
 }
 
-// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2809,7 +2800,7 @@ func (c *Client) ListPreviewPageFeedback(ctx context.Context, publishRunId Publi
 	return c.Client.Do(req)
 }
 
-// AppendReviewerFeedbackEventWithBody Add a reviewer reply, evidence, or failed recheck
+// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
 //
 // Takes any type of body and a specified content type.
 //
@@ -2826,7 +2817,7 @@ func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, publis
 	return c.Client.Do(req)
 }
 
-// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5646,14 +5637,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
 	ListFeedbackThreadEventsWithResponse(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadEventsResponse, error)
 
-	// AppendFeedbackEventWithBodyWithResponse Reply, request context, record a fix, or resolve feedback
+	// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
 	AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
 
-	// AppendFeedbackEventWithResponse Reply, request context, record a fix, or resolve feedback
+	// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5856,14 +5847,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
 	ListPreviewPageFeedbackWithResponse(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
 
-	// AppendReviewerFeedbackEventWithBodyWithResponse Add a reviewer reply, evidence, or failed recheck
+	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
 	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
 
-	// AppendReviewerFeedbackEventWithResponse Add a reviewer reply, evidence, or failed recheck
+	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8626,7 +8617,7 @@ func (c *ClientWithResponses) ListFeedbackThreadEventsWithResponse(ctx context.C
 	return ParseListFeedbackThreadEventsResponse(rsp)
 }
 
-// AppendFeedbackEventWithBodyWithResponse Reply, request context, record a fix, or resolve feedback
+// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -8639,7 +8630,7 @@ func (c *ClientWithResponses) AppendFeedbackEventWithBodyWithResponse(ctx contex
 	return ParseAppendFeedbackEventResponse(rsp)
 }
 
-// AppendFeedbackEventWithResponse Reply, request context, record a fix, or resolve feedback
+// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -9016,7 +9007,7 @@ func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Co
 	return ParseListPreviewPageFeedbackResponse(rsp)
 }
 
-// AppendReviewerFeedbackEventWithBodyWithResponse Add a reviewer reply, evidence, or failed recheck
+// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -9029,7 +9020,7 @@ func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ct
 	return ParseAppendReviewerFeedbackEventResponse(rsp)
 }
 
-// AppendReviewerFeedbackEventWithResponse Add a reviewer reply, evidence, or failed recheck
+// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -11039,7 +11030,7 @@ type ServerInterface interface {
 	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
 	// (GET /v1/feedback/{feedback_id}/events)
 	ListFeedbackThreadEvents(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params ListFeedbackThreadEventsParams)
-	// AppendFeedbackEvent Reply, request context, record a fix, or resolve feedback
+	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 	// (POST /v1/feedback/{feedback_id}/events)
 	AppendFeedbackEvent(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params AppendFeedbackEventParams)
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
@@ -11099,7 +11090,7 @@ type ServerInterface interface {
 	// ListPreviewPageFeedback List feedback on one page for a reviewer
 	// (POST /v1/publish-runs/{publish_run_id}/feedback/query)
 	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-	// AppendReviewerFeedbackEvent Add a reviewer reply, evidence, or failed recheck
+	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events)
 	AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID, params AppendReviewerFeedbackEventParams)
 	// ListReviewerFeedbackEvents Read thread events through a current publisher connection

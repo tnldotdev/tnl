@@ -19,7 +19,7 @@ CREATE TABLE control.feedback_threads (
     element jsonb NOT NULL,
     evidence jsonb NOT NULL,
     checkout_at_report jsonb NOT NULL,
-    state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'ready_for_recheck', 'resolved')),
+    state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'resolved')),
     created_at timestamptz NOT NULL,
     state_updated_at timestamptz NOT NULL,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
@@ -43,10 +43,9 @@ CREATE TABLE control.feedback_events (
     feedback_id text NOT NULL REFERENCES control.feedback_threads(id) ON DELETE RESTRICT,
     team_id text NOT NULL CHECK (team_id <> ''),
     event_type text NOT NULL CHECK (event_type IN (
-        'thread.created', 'reply', 'context.requested', 'evidence.added',
-        'fix.ready_for_recheck', 'recheck.still_broken', 'thread.resolved'
+        'thread.created', 'reply', 'update', 'thread.resolved', 'thread.reopened'
     )),
-    actor_kind text NOT NULL CHECK (actor_kind IN ('reviewer', 'developer')),
+    actor_kind text NOT NULL CHECK (actor_kind IN ('reviewer', 'implementer')),
     actor_reference text NOT NULL CHECK (actor_reference <> ''),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),

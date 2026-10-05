@@ -26,7 +26,7 @@ func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, princ
 		prefixes[index] = prefix.String()
 	}
 	decision, err := h.authorizer.Authorize(ctx, authorization.Request{
-		AccessToken: token, Operation: authorization.OperationPublicURLUpdate,
+		AccessToken: token, Operation: authorization.OperationFeedbackManage,
 		TeamID: route.TeamID, PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 		Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
@@ -144,7 +144,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	write.FeedbackID = thread.ID
 	write.IdempotencyKey = request.Header.Get("Idempotency-Key")
 	write.Actor = controlstate.FeedbackActor{
-		Kind: "developer", IdentityID: decision.IdentityID,
+		Kind: "implementer", IdentityID: decision.IdentityID,
 		PolicyRevision: decision.PolicyRevision, AuthorityIssuer: h.authorityIssuerFor(decision),
 		ExpectedMutationRevision: revision,
 	}

@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,34 @@ func TestFeedbackEvidenceDropsExecutableMarkupAndFormValues(t *testing.T) {
 	}
 	if _, err := normalizeFeedbackEvidence(json.RawMessage(`{"actions":[],"failed_requests":[{"method":"GET","path":"/api/users?token=secret","status":500,"duration_ms":20}]}`)); err == nil {
 		t.Fatal("failed request query carrying credentials was stored")
+	}
+}
+
+func TestFeedbackConversationTransitions(t *testing.T) {
+	for _, actor := range []string{"implementer", "reviewer"} {
+		for _, transition := range []struct {
+			state FeedbackThreadState
+			event FeedbackEventType
+			want  FeedbackThreadState
+		}{
+			{FeedbackOpen, FeedbackReply, FeedbackOpen},
+			{FeedbackOpen, FeedbackThreadResolved, FeedbackResolved},
+			{FeedbackResolved, FeedbackThreadReopened, FeedbackOpen},
+			{FeedbackResolved, FeedbackReply, ""},
+			{FeedbackOpen, FeedbackThreadReopened, ""},
+			{FeedbackResolved, FeedbackThreadResolved, ""},
+		} {
+			got, err := nextFeedbackState(transition.state, transition.event, actor)
+			if got != transition.want || (transition.want == "" && !errors.Is(err, ErrFeedbackState)) || (transition.want != "" && err != nil) {
+				t.Fatalf("%s: %s + %s = %s, %v", actor, transition.state, transition.event, got, err)
+			}
+		}
+	}
+	if got, err := nextFeedbackState(FeedbackOpen, FeedbackUpdate, "implementer"); err != nil || got != FeedbackOpen {
+		t.Fatalf("checkout update changed state: %s, %v", got, err)
+	}
+	if validFeedbackEventPayload(AppendFeedbackRequest{Type: FeedbackUpdate, Text: "forged", CheckoutMarker: feedbackTestCheckout(t), Actor: FeedbackActor{Kind: "reviewer"}}) {
+		t.Fatal("preview access can forge an implementer checkout update")
 	}
 }
 

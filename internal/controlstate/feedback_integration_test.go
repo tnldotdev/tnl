@@ -26,7 +26,7 @@ func feedbackTestCheckout(t *testing.T) json.RawMessage {
 	return marker
 }
 
-func TestIntegrationFeedbackReportEventsResumeAndRecheck(t *testing.T) {
+func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "feedback", now)
@@ -95,47 +95,58 @@ func TestIntegrationFeedbackReportEventsResumeAndRecheck(t *testing.T) {
 	if err != nil || duplicate.Cursor != answered.Cursor {
 		t.Fatalf("retried reply = %+v, %v", duplicate, err)
 	}
-	developer := FeedbackActor{Kind: "developer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}
-	wrongDeveloper := AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackFixReady, Text: "I fixed it", CheckoutMarker: marker,
-		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "developer", IdentityID: "different-identity", PolicyRevision: 1, ExpectedMutationRevision: 2},
+	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}
+	wrongImplementer := AppendFeedbackRequest{
+		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the copy", CheckoutMarker: marker,
+		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "implementer", IdentityID: "different-identity", PolicyRevision: 1, ExpectedMutationRevision: 2},
 	}
-	if _, err := database.AppendFeedback(t.Context(), wrongDeveloper, now.Add(2*time.Second)); !errors.Is(err, ErrFeedbackAccess) {
-		t.Fatalf("unrelated developer changed feedback: %v", err)
+	if _, err := database.AppendFeedback(t.Context(), wrongImplementer, now.Add(2*time.Second)); !errors.Is(err, ErrFeedbackAccess) {
+		t.Fatalf("unrelated implementer changed feedback: %v", err)
 	}
-	ready := AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackFixReady, Text: "Updated the save handler; please try again.",
-		CheckoutMarker: marker, IdempotencyKey: "first-fix", Actor: developer,
+	update := AppendFeedbackRequest{
+		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the save handler.",
+		CheckoutMarker: marker, IdempotencyKey: "update", Actor: implementer,
 	}
-	if _, err := database.AppendFeedback(t.Context(), ready, now.Add(3*time.Second)); err != nil {
+	updated, err := database.AppendFeedback(t.Context(), update, now.Add(3*time.Second))
+	if err != nil || len(updated.CheckoutMarker) == 0 {
+		t.Fatalf("checkout update = %+v, %v", updated, err)
+	}
+	resolve := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved, Text: "Looks good", IdempotencyKey: "reviewer-resolve", Actor: actor}
+	if _, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	failed := AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackStillBroken, Text: "Still broken", CheckoutMarker: marker,
-		IdempotencyKey: "recheck", Actor: actor,
+	if _, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
+		FeedbackID: thread.ID, Type: FeedbackReply, Text: "late", IdempotencyKey: "late", Actor: actor,
+	}, now.Add(5*time.Second)); !errors.Is(err, ErrFeedbackState) {
+		t.Fatalf("resolved thread received another reply: %v", err)
 	}
-	if _, err := database.AppendFeedback(t.Context(), failed, now.Add(4*time.Second)); err != nil {
+	reopen := AppendFeedbackRequest{
+		FeedbackID: thread.ID, Type: FeedbackThreadReopened, Text: "One more suggestion",
+		IdempotencyKey: "reopen", Actor: actor,
+	}
+	reopened, err := database.AppendFeedback(t.Context(), reopen, now.Add(5*time.Second))
+	if err != nil {
 		t.Fatal(err)
+	}
+	duplicate, err = database.AppendFeedback(t.Context(), reopen, now.Add(6*time.Second))
+	if err != nil || duplicate.Cursor != reopened.Cursor {
+		t.Fatalf("reopen retry appended another event: %+v, %v", duplicate, err)
 	}
 	current, err := database.GetFeedback(t.Context(), thread.ID)
 	if err != nil || current.State != FeedbackOpen || current.ReportText != thread.ReportText ||
 		string(current.CheckoutAtReport) != string(thread.CheckoutAtReport) {
-		t.Fatalf("original report changed after failed recheck: %+v, %v", current, err)
-	}
-	ready.IdempotencyKey = "second-fix"
-	if _, err := database.AppendFeedback(t.Context(), ready, now.Add(5*time.Second)); err != nil {
-		t.Fatal(err)
+		t.Fatalf("original report changed after reopening: %+v, %v", current, err)
 	}
 	resolved, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "resolve", Actor: developer,
+		FeedbackID: thread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "resolve", Actor: implementer,
 	}, now.Add(6*time.Second))
 	if err != nil || resolved.Type != FeedbackThreadResolved {
 		t.Fatalf("resolved feedback = %+v, %v", resolved, err)
 	}
 	if _, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackReply, Text: "late", IdempotencyKey: "late", Actor: actor,
-	}, now.Add(7*time.Second)); !errors.Is(err, ErrFeedbackState) {
-		t.Fatalf("resolved thread received another reply: %v", err)
+		FeedbackID: thread.ID, Type: FeedbackThreadReopened, IdempotencyKey: "implementer-reopen", Actor: implementer,
+	}, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := database.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now.Add(7*time.Second)); err != nil {
 		t.Fatal(err)
@@ -146,7 +157,7 @@ func TestIntegrationFeedbackReportEventsResumeAndRecheck(t *testing.T) {
 		t.Fatalf("revoked reviewer wrote feedback: %v", err)
 	}
 	events, err := database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, firstPage.EventCursor)
-	if err != nil || len(events.Events) != 5 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
+	if err != nil || len(events.Events) != 6 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
 		t.Fatalf("resumed events = %+v, %v", events, err)
 	}
 	for index, event := range events.Events {
@@ -155,7 +166,7 @@ func TestIntegrationFeedbackReportEventsResumeAndRecheck(t *testing.T) {
 		}
 	}
 	listed, err := database.ListFeedbackForPage(t.Context(), preview.ID, f.setup.PublicURLID, "/settings/profile", "")
-	if err != nil || len(listed.Threads) != 1 || listed.Threads[0].State != FeedbackResolved {
+	if err != nil || len(listed.Threads) != 1 || listed.Threads[0].State != FeedbackOpen {
 		t.Fatalf("page feedback = %+v, %v", listed, err)
 	}
 }

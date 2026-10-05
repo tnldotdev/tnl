@@ -70,7 +70,8 @@ func TestFeedbackOwnerReadsOnlyManageablePublicURLThreads(t *testing.T) {
 	response := httptest.NewRecorder()
 	h.GetFeedbackThread(response, request, thread.ID)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"text":"Save does nothing"`) || len(authorizer.requests) != 1 ||
-		authorizer.requests[0].PublicURLID != thread.PublicURLID {
+		authorizer.requests[0].Operation != authorization.OperationFeedbackManage ||
+		authorizer.requests[0].PublicURLID != thread.PublicURLID || authorizer.requests[0].PublicURLMutationRevision != 4 {
 		t.Fatalf("feedback read = %d %s; auth=%+v", response.Code, response.Body.String(), authorizer.requests)
 	}
 	authorizer.principal.teamIDs = map[string]struct{}{"team_other": {}}
