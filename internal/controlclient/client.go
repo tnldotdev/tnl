@@ -102,6 +102,25 @@ func (c *Client) AllocateGuestDemoNumber(ctx context.Context) (controlv1.GuestDe
 	return requestWithAccess[controlv1.GuestDemoNumber](ctx, c, c.api.AllocateGuestDemoNumber)
 }
 
+func (c *Client) CreateWorktreePreview(ctx context.Context, teamID, key string) (controlv1.WorktreePreview, error) {
+	params := &controlv1.CreateWorktreePreviewParams{IdempotencyKey: key}
+	return requestWithAccess[controlv1.WorktreePreview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateWorktreePreview(ctx, params, controlv1.CreateWorktreePreviewRequest{TeamId: teamID}, editors...)
+	})
+}
+
+func (c *Client) GetWorktreePreview(ctx context.Context, id string) (controlv1.WorktreePreview, error) {
+	return requestWithAccess[controlv1.WorktreePreview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetWorktreePreview(ctx, id, editors...)
+	})
+}
+
+func (c *Client) AddWorktreePreviewPublicURL(ctx context.Context, id, publicURLID string) (controlv1.WorktreePreview, error) {
+	return requestWithAccess[controlv1.WorktreePreview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AddWorktreePreviewPublicURL(ctx, id, controlv1.AddWorktreePreviewPublicURLRequest{PublicUrlId: publicURLID}, editors...)
+	})
+}
+
 func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
 	params := &controlv1.CreatePublicURLParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

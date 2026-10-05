@@ -648,3 +648,18 @@ type ControlTeamMembership struct {
 	RemovedAt           pgtype.Timestamptz
 	RemovedByIdentityID pgtype.Text
 }
+
+type ControlWorktreePreview struct {
+	ID                  string
+	TeamID              string
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ControlWorktreePreviewPublicUrl struct {
+	WorktreePreviewID string
+	TeamID            string
+	PublicURLID       string
+	AddedAt           pgtype.Timestamptz
+}

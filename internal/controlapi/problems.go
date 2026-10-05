@@ -23,9 +23,9 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
 	case errors.Is(err, controlstate.ErrPublicURLInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound):
+	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrWorktreePreviewNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-	case errors.Is(err, controlstate.ErrPublicURLAccess):
+	case errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrWorktreePreviewAccess):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "public URL access denied")
 	case errors.Is(err, controlstate.ErrGuestTrialSpent):
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl login to continue")
@@ -36,7 +36,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	case errors.Is(err, controlstate.ErrPublicURLNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
 	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency),
-		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale),
+		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale), errors.Is(err, controlstate.ErrWorktreePreviewStale),
 		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
 		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL state conflict")

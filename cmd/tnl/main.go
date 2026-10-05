@@ -344,7 +344,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 		if parsedCommand == "publish <service-or-target>" {
 			err = project.applyPublish(&flags.Publish)
-		} else if parsedCommand == "dev <service>" {
+		} else if parsedCommand == "dev <service>" && (flags.Dev.Service != "" || len(project.Config.Services) <= 1) {
 			err = project.applyDev(&flags.Dev)
 		}
 		if err != nil {
@@ -391,6 +391,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "dev <service>":
+		if flags.Dev.Service == "" && len(project.Config.Services) > 1 {
+			return runCoordinatedDev(ctx, project, flags.Dev, os.Stdin, stdout, stderr, telemetry)
+		}
 		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr, telemetry)
 	case "status":
 		if !flags.Status.All {
