@@ -30,6 +30,7 @@ test("browser mutations use same-origin cookies, an idempotency key, and an opti
   const id = "fb_0123456789abcdefghijkl";
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
     Response.json({
+      schema_version: 1,
       cursor: 5,
       feedback_id: id,
       type: "thread.reopened",
@@ -49,7 +50,7 @@ test("browser mutations use same-origin cookies, an idempotency key, and an opti
     expect.objectContaining({
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "Idempotency-Key": "retry-key" },
-      body: '{"type":"thread.reopened"}',
+      body: '{"schema_version":1,"type":"thread.reopened"}',
     }),
   );
 });

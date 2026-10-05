@@ -8,6 +8,19 @@ if (!document.querySelector("[data-tnl-feedback]")) {
   const host = document.createElement("div");
   host.setAttribute("data-tnl-feedback", "");
   const root = host.attachShadow({ mode: "open" });
+  if ("FontFace" in window) {
+    const font = new FontFace("tnl Fira Code", "url('/__tnl/feedback/fira-code.woff2')", {
+      weight: "300 700",
+    });
+    void font
+      .load()
+      .then((loaded) => {
+        document.fonts.add(loaded);
+      })
+      .catch(() => {
+        /* the monospace fallback also works under restrictive font-src */
+      });
+  }
   const style = document.createElement("style");
   style.nonce =
     document.querySelector<HTMLScriptElement>('script[src^="/__tnl/feedback/toolbar."]')?.nonce ??

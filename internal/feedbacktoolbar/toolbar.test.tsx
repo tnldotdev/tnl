@@ -10,14 +10,15 @@ import type { FeedbackEvent, Summary, Thread, ThreadPage } from "./model.ts";
 const id = "fb_0123456789abcdefghijkl";
 const otherID = "fb_abcdefghijkl0123456789";
 const report: Thread = {
+  schema_version: 1,
   id,
   state: "open",
   scope: { page_path: "/" },
   report: { text: "Please use a clearer label", created_at: "2026-10-05T00:00:00Z" },
-  element: { kind: "page" },
-  evidence: { actions: [], failed_requests: [] },
+  evidence: { schema_version: 1, actions: [], failed_requests: [] },
 };
 const created: FeedbackEvent = {
+  schema_version: 1,
   cursor: 1,
   feedback_id: id,
   type: "thread.created",
@@ -26,11 +27,13 @@ const created: FeedbackEvent = {
 };
 function fixture(threads: Summary[] = []): FeedbackAPI {
   return {
-    list: vi.fn<FeedbackAPI["list"]>().mockResolvedValue({ threads, event_cursor: 1 }),
+    list: vi
+      .fn<FeedbackAPI["list"]>()
+      .mockResolvedValue({ schema_version: 1, threads, event_cursor: 1 }),
     inspect: vi.fn<FeedbackAPI["inspect"]>().mockResolvedValue(report),
     events: vi
       .fn<FeedbackAPI["events"]>()
-      .mockResolvedValue({ events: [created], event_cursor: 1 }),
+      .mockResolvedValue({ schema_version: 1, events: [created], event_cursor: 1 }),
     evidence: vi
       .fn<FeedbackAPI["evidence"]>()
       .mockResolvedValue([{ method: "POST", path: "/api", status: 500, duration_ms: 25 }]),
@@ -63,7 +66,10 @@ test("reviews a frozen evidence bundle before posting, with explicit activity co
   appButton.textContent = "Save changes";
   document.body.append(appButton);
   await user.click(appButton);
-  await user.type(screen.getByLabelText("Feedback", { exact: true }), "Please improve this label");
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "Please improve this label",
+  );
   await user.click(screen.getByRole("button", { name: "Review feedback" }));
   await screen.findByText("Evidence to send");
   expect(api.report).not.toHaveBeenCalled();
@@ -84,7 +90,10 @@ test("a lost report response retries the same body and idempotency key", async (
   const { api, user } = mount();
   vi.mocked(api.report).mockRejectedValueOnce(new Error("try again"));
   await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await user.type(screen.getByLabelText("Feedback", { exact: true }), "Copy suggestion");
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "Copy suggestion",
+  );
   await user.click(screen.getByRole("button", { name: "Review feedback" }));
   await user.click(await screen.findByRole("button", { name: "Send feedback" }));
   await screen.findByRole("alert");
@@ -125,17 +134,29 @@ test("reply, resolve, and reopen are available in the same toolbar and retain hi
 test("list and history pagination append records instead of replacing them", async () => {
   const { api, user } = mount();
   vi.mocked(api.list)
-    .mockResolvedValueOnce({ threads: [report], next_cursor: id, event_cursor: 2 })
+    .mockResolvedValueOnce({
+      schema_version: 1,
+      threads: [report],
+      next_cursor: id,
+      event_cursor: 2,
+    })
     .mockResolvedValueOnce({
       threads: [
         { ...report, id: otherID, report: { ...report.report, text: "Another suggestion" } },
       ],
+      schema_version: 1,
       event_cursor: 2,
     });
   vi.mocked(api.events)
-    .mockResolvedValueOnce({ events: [created], next_cursor: 1, event_cursor: 2 })
+    .mockResolvedValueOnce({
+      schema_version: 1,
+      events: [created],
+      next_cursor: 1,
+      event_cursor: 2,
+    })
     .mockResolvedValueOnce({
       events: [{ ...created, cursor: 2, type: "reply", text: "Following up" }],
+      schema_version: 1,
       event_cursor: 2,
     });
   await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
@@ -151,14 +172,14 @@ test("list and history pagination append records instead of replacing them", asy
 test("refreshing or scrolling preserves the form node, focus, and draft", async () => {
   const { user } = mount();
   await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  const textarea = screen.getByLabelText("Feedback", { exact: true });
+  const textarea = screen.getByRole("textbox", { name: "Feedback", exact: true });
   await user.type(textarea, "Draft feedback");
   fireEvent.scroll(document);
   fireEvent.resize(window);
   expect(document.activeElement).toBe(textarea);
   await user.click(screen.getByRole("button", { name: "Refresh feedback" }));
   await screen.findByText("No feedback on this page yet.");
-  expect(screen.getByLabelText("Feedback", { exact: true })).toBe(textarea);
+  expect(screen.getByRole("textbox", { name: "Feedback", exact: true })).toBe(textarea);
   expect((textarea as HTMLTextAreaElement).value).toBe("Draft feedback");
 });
 
@@ -195,7 +216,7 @@ test("closing the toolbar cancels requests and removes listeners", async () => {
   const signal = vi.mocked(api.list).mock.calls[0]?.[2];
   await user.click(screen.getByRole("button", { name: "Close feedback" }));
   expect(signal?.aborted).toBe(true);
-  resolve?.({ threads: [report], event_cursor: 1 });
+  resolve?.({ schema_version: 1, threads: [report], event_cursor: 1 });
   expect(screen.queryByRole("button", { name: report.report.text })).toBeNull();
   unmount();
 });
@@ -204,7 +225,7 @@ test("Escape closes the panel and restores focus to its toggle", async () => {
   const { user } = mount();
   const toggle = screen.getByRole("button", { name: "Feedback", exact: true });
   await user.click(toggle);
-  await user.click(screen.getByLabelText("Feedback", { exact: true }));
+  await user.click(screen.getByRole("textbox", { name: "Feedback", exact: true }));
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("complementary", { name: "Preview feedback" })).toBeNull();
   expect(document.activeElement).toBe(toggle);
@@ -226,7 +247,7 @@ test("navigation cancels the old page load and cannot display its late response"
     expect(api.list).toHaveBeenCalledWith("/other-page", undefined, expect.any(AbortSignal)),
   );
   expect(oldSignal?.aborted).toBe(true);
-  complete?.({ threads: [report], event_cursor: 1 });
+  complete?.({ schema_version: 1, threads: [report], event_cursor: 1 });
   await screen.findByText("No feedback on this page yet.");
   expect(screen.queryByRole("button", { name: report.report.text })).toBeNull();
 });

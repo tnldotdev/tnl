@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
 import { mutationKey, useRequest } from "./async.ts";
-import { beginPicking } from "./pins.tsx";
-import type { Action, Evidence, Pin, ReportInput } from "./model.ts";
+import { beginPicking, captureSelection, type AnchorTarget } from "./anchors.ts";
+import type { Action, Evidence, ReportInput } from "./model.ts";
 
 export function ReportForm({
   api,
@@ -21,7 +21,7 @@ export function ReportForm({
 }) {
   const [text, setText] = useState("");
   const [name, setName] = useState("");
-  const [pin, setPin] = useState<Pin>({ kind: "page" });
+  const [target, setTarget] = useState<AnchorTarget>();
   const [picking, setPicking] = useState(false);
   const [includeEvidence, setIncludeEvidence] = useState(true);
   const [preview, setPreview] = useState<ReportInput>();
@@ -34,7 +34,7 @@ export function ReportForm({
             document,
             host,
             (selected) => {
-              setPin(selected);
+              setTarget(selected);
               setPicking(false);
             },
             () => setPicking(false),
@@ -50,14 +50,20 @@ export function ReportForm({
       if (new TextEncoder().encode(name.trim()).length > 64)
         throw new Error("the name must be at most 64 bytes");
       const evidence: Evidence = includeEvidence
-        ? { actions: actions().slice(-20), failed_requests: await api.evidence(signal) }
-        : { actions: [], failed_requests: [] };
+        ? {
+            schema_version: 1,
+            actions: actions().slice(-20),
+            failed_requests: await api.evidence(signal),
+          }
+        : { schema_version: 1, actions: [], failed_requests: [] };
+      if (target?.element) evidence.element = target.element;
       if (signal.aborted) return;
       setPreview({
+        schema_version: 1,
         text: text.trim(),
         display_name: name.trim(),
         page_path: path,
-        element: pin,
+        ...(target ? { anchor: target.anchor } : {}),
         evidence,
       });
     });
@@ -68,7 +74,7 @@ export function ReportForm({
       const thread = await api.report(preview, key.current(preview), signal);
       if (signal.aborted) return;
       setText("");
-      setPin({ kind: "page" });
+      setTarget(undefined);
       setPreview(undefined);
       key.current = mutationKey();
       saved(thread.id);
@@ -84,7 +90,7 @@ export function ReportForm({
           <details open>
             <summary>Evidence to send</summary>
             <pre>
-              {JSON.stringify({ element: preview.element, evidence: preview.evidence }, null, 2)}
+              {JSON.stringify({ anchor: preview.anchor, evidence: preview.evidence }, null, 2)}
             </pre>
           </details>
           <button type="button" disabled={request.pending} onClick={() => setPreview(undefined)}>
@@ -126,13 +132,25 @@ export function ReportForm({
               />
             </label>
             <p>
-              {pin.kind === "page" ? "Feedback on this page" : "Pinned: " + (pin.label || pin.role)}
+              {!target
+                ? "Feedback on this page"
+                : "Pinned: " + (target.element.label || target.element.role)}
             </p>
             <button type="button" onClick={() => setPicking(!picking)}>
               {picking ? "Cancel selection" : "Select an element"}
             </button>
-            {pin.kind === "element" && (
-              <button type="button" onClick={() => setPin({ kind: "page" })}>
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const selected = captureSelection(document);
+                if (selected) setTarget(selected);
+              }}
+            >
+              Use selected text
+            </button>
+            {target && (
+              <button type="button" onClick={() => setTarget(undefined)}>
                 Use page instead
               </button>
             )}

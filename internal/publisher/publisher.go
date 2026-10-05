@@ -48,6 +48,7 @@ type Config struct {
 	Hostname                 string
 	PreviewID                string
 	Feedback                 bool
+	Demo                     bool
 	ProjectRoot              string
 	Service                  string
 	Target                   string

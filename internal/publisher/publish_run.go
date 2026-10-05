@@ -73,12 +73,12 @@ func runSession(
 	defer cancelSession(nil)
 	provisioningCtx, cancelProvisioning := context.WithCancel(sessionCtx)
 	provisioningDone := make(chan struct{})
-	go func(provisioningSetup controlv1.PublishRunSetup) {
+	go func(provisioningConfig Config, provisioningSetup controlv1.PublishRunSetup) {
 		defer close(provisioningDone)
-		if err := observeProvisioningStall(provisioningCtx, config, provisioningSetup); err != nil {
+		if err := observeProvisioningStall(provisioningCtx, provisioningConfig, provisioningSetup); err != nil {
 			cancelSession(fmt.Errorf("publisher: observe provisioning warning: %w", err))
 		}
-	}(setup)
+	}(config, setup)
 	defer func() {
 		cancelProvisioning()
 		<-provisioningDone
@@ -111,8 +111,24 @@ func runSession(
 		}
 	}
 	ctx = sessionCtx
+	if config.Demo && config.Feedback {
+		client, ok := config.Control.(interface {
+			CreatePublishRunPreview(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.Preview, error)
+		})
+		if !ok {
+			return errors.New("publisher: demo feedback requires a preview-capable control client")
+		}
+		preview, err := client.CreatePublishRunPreview(ctx, setup.PublishRun.Id, version, publishRunToken)
+		if err != nil {
+			return fmt.Errorf("publisher: create demo feedback preview: %w", err)
+		}
+		if preview.SchemaVersion != 1 || len(preview.PublicUrlIds) != 1 || preview.PublicUrlIds[0] != setup.PublicUrl.Id {
+			return errors.New("publisher: invalid demo preview")
+		}
+		config.PreviewID = preview.Id
+	}
 	var shareRuntime *shareAccess
-	if config.PreviewID != "" {
+	if config.PreviewID != "" && !config.Demo {
 		client, ok := config.Control.(shareAccessClient)
 		if !ok {
 			return errors.New("publisher: share-capable control client is required for this preview")

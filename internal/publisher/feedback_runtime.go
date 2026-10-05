@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/browserfonts"
 	"github.com/tnldotdev/tnl/internal/checkoutmarker"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -71,6 +73,7 @@ type feedbackRuntime struct {
 	browsers    map[[32]byte]*browserTrail
 	asset       []byte
 	assetPath   string
+	demo        bool
 }
 
 func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) (*feedbackRuntime, error) {
@@ -78,11 +81,12 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 		return nil, nil
 	}
 	client, ok := config.Control.(feedbackClient)
-	if !ok || config.PreviewID == "" || config.Service == "" || config.ProjectRoot == "" {
+	if !ok || config.PreviewID == "" || config.Service == "" || !config.Demo && config.ProjectRoot == "" {
 		return nil, errors.New("publisher: feedback requires a configured preview, project service, and control client")
 	}
 	asset, assetPath := feedbacktoolbar.Script()
 	return &feedbackRuntime{
+		demo:   config.Demo,
 		client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		service: config.Service, projectRoot: config.ProjectRoot,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
@@ -189,6 +193,12 @@ func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (co
 }
 
 func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Request, denied bool) bool {
+	if request.Method == http.MethodGet && request.URL.Path == "/__tnl/feedback/fira-code.woff2" {
+		response.Header().Set("Content-Type", "font/woff2")
+		response.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = response.Write(browserfonts.Latin)
+		return true
+	}
 	if request.URL.Path == f.assetPath {
 		if request.Method != http.MethodGet {
 			response.WriteHeader(http.StatusMethodNotAllowed)
@@ -206,8 +216,9 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	if request.URL.Path == "/__tnl/feedback/evidence" && request.Method == http.MethodGet {
 		httpjson.Write(response, http.StatusOK, struct {
+			SchemaVersion  int             `json:"schema_version"`
 			FailedRequests []failedRequest `json:"failed_requests"`
-		}{FailedRequests: f.evidenceForBrowser(request)})
+		}{SchemaVersion: 1, FailedRequests: f.evidenceForBrowser(request)})
 		return true
 	}
 	access, ok := f.reviewerAccess(request, denied)
@@ -273,13 +284,14 @@ func (f *feedbackRuntime) list(response http.ResponseWriter, request *http.Reque
 
 func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Request, access controlv1.FeedbackReviewerAccess) {
 	var input struct {
-		Text        string                     `json:"text"`
-		DisplayName string                     `json:"display_name"`
-		PagePath    string                     `json:"page_path"`
-		Element     controlv1.FeedbackElement  `json:"element"`
-		Evidence    controlv1.FeedbackEvidence `json:"evidence"`
+		SchemaVersion int                        `json:"schema_version"`
+		Text          string                     `json:"text"`
+		DisplayName   string                     `json:"display_name"`
+		PagePath      string                     `json:"page_path"`
+		Anchor        *controlv1.FeedbackAnchor  `json:"anchor,omitempty"`
+		Evidence      controlv1.FeedbackEvidence `json:"evidence"`
 	}
-	if !readFeedbackInput(response, request, &input) || input.Text == "" || input.PagePath == "" {
+	if !readFeedbackInput(response, request, &input) || input.SchemaVersion != 1 || input.Text == "" || input.PagePath == "" {
 		http.Error(response, "provide feedback text and a page path", http.StatusBadRequest)
 		return
 	}
@@ -288,13 +300,13 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		http.Error(response, "provide an idempotency key", http.StatusBadRequest)
 		return
 	}
-	marker, err := checkoutmarker.Capture(request.Context(), f.projectRoot)
+	marker, err := f.checkout(request.Context())
 	if err != nil {
 		f.writeResult(response, nil, err)
 		return
 	}
 	body := controlv1.CreateFeedbackReportRequest{
-		Access: access, CheckoutAtReport: marker, Element: input.Element,
+		Access: access, CheckoutAtReport: marker, Anchor: input.Anchor,
 		Evidence: input.Evidence, PagePath: input.PagePath, PreviewId: f.previewID,
 		PublishRunNumber: int64(f.version), Service: f.service,
 	}
@@ -331,10 +343,11 @@ func (f *feedbackRuntime) events(response http.ResponseWriter, request *http.Req
 
 func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Request, id string, access controlv1.FeedbackReviewerAccess) {
 	var input struct {
-		Type controlv1.FeedbackEventType `json:"type"`
-		Text string                      `json:"text"`
+		SchemaVersion int                         `json:"schema_version"`
+		Type          controlv1.FeedbackEventType `json:"type"`
+		Text          string                      `json:"text"`
 	}
-	if !readFeedbackInput(response, request, &input) {
+	if !readFeedbackInput(response, request, &input) || input.SchemaVersion != 1 {
 		http.Error(response, "invalid feedback event", http.StatusBadRequest)
 		return
 	}
@@ -355,6 +368,23 @@ func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Requ
 	}
 	result, err := f.client.AppendReviewerFeedbackEvent(request.Context(), f.runID, id, key, body, f.token)
 	f.writeResult(response, result, err)
+}
+
+func (f *feedbackRuntime) checkout(ctx context.Context) (controlv1.CheckoutMarker, error) {
+	if !f.demo {
+		return checkoutmarker.Capture(ctx, f.projectRoot)
+	}
+	digest := sha256.Sum256([]byte("demo/" + f.runID))
+	encoded, err := json.Marshal(map[string]any{
+		"schema_version": 1, "head_commit": "", "branch": "", "changed_files": []any{},
+		"fingerprint": fmt.Sprintf("sha256:%x", digest), "complete": false,
+	})
+	if err != nil {
+		return controlv1.CheckoutMarker{}, err
+	}
+	var marker controlv1.CheckoutMarker
+	err = json.Unmarshal(encoded, &marker)
+	return marker, err
 }
 
 func readFeedbackInput(response http.ResponseWriter, request *http.Request, target any) bool {

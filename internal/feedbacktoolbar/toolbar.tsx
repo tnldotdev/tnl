@@ -6,6 +6,7 @@ import type { Action, Summary } from "./model.ts";
 import { Pins } from "./pins.tsx";
 import { ReportForm } from "./report.tsx";
 import { ThreadView } from "./thread.tsx";
+import { AsciiBar } from "./frame.tsx";
 
 function FeedbackPage({
   api,
@@ -92,7 +93,11 @@ function FeedbackPage({
             <ul>
               {threads.map((thread) => (
                 <li key={thread.id}>
-                  <button type="button" onClick={() => setSelected(thread.id)}>
+                  <button
+                    type="button"
+                    class="comment-button"
+                    onClick={() => setSelected(thread.id)}
+                  >
                     {thread.report.text}
                   </button>{" "}
                   <span>{thread.state === "open" ? "Open" : "Resolved"}</span>
@@ -172,29 +177,31 @@ export function Toolbar({
         class="toggle"
         aria-expanded={open}
         aria-controls="tnl-feedback-panel"
+        aria-label="Feedback"
         onClick={() => setOpen(!open)}
       >
-        Feedback
+        [ tnl feedback ]
       </button>
       {open && (
         <aside id="tnl-feedback-panel" class="panel" aria-label="Preview feedback">
-          <button
-            type="button"
-            onClick={() => {
+          <AsciiBar
+            title="tnl feedback"
+            close={() => {
               setOpen(false);
               toggle.current?.focus();
             }}
-          >
-            Close feedback
-          </button>
-          <FeedbackPage
-            key={path}
-            api={api}
-            path={path}
-            document={document}
-            host={host}
-            actions={() => actions.current}
           />
+          <div class="panel-body">
+            <FeedbackPage
+              key={path}
+              api={api}
+              path={path}
+              document={document}
+              host={host}
+              actions={() => actions.current}
+            />
+          </div>
+          <AsciiBar />
         </aside>
       )}
     </>

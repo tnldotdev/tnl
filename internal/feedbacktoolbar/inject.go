@@ -42,7 +42,7 @@ func Inject(response *http.Response) error {
 	nonce := base64.RawStdEncoding.EncodeToString(random)
 	_, path := Script()
 	tag := []byte(`<script type="module" nonce="` + nonce + `" src="` + path + `"></script>`)
-	addToolbarNonce(response.Header, nonce)
+	addToolbarNonce(response.Header, nonce, "https://"+response.Request.Host+path)
 	response.Header.Del("Content-Length")
 	response.Header.Del("ETag")
 	response.Header.Del("Content-MD5")
@@ -137,7 +137,19 @@ func headTagEnd(prefix []byte) int {
 	return 0
 }
 
-func addToolbarNonce(headers http.Header, nonce string) {
+func addToolbarNonce(headers http.Header, nonce, scriptURL string) {
+	allow := func(directive, sources string) string {
+		// adding a nonce to an effective unsafe-inline directive disables the
+		// app's inline code. preserve it and permit only the exact toolbar URL.
+		if strings.Contains(sources, "'unsafe-inline'") && !strings.Contains(sources, "'nonce-") &&
+			!strings.Contains(sources, "'sha256-") && !strings.Contains(sources, "'sha384-") && !strings.Contains(sources, "'sha512-") {
+			if strings.HasPrefix(directive, "script") {
+				return sources + " " + scriptURL
+			}
+			return sources
+		}
+		return sources + " 'nonce-" + nonce + "'"
+	}
 	for _, field := range []string{"Content-Security-Policy", "Content-Security-Policy-Report-Only"} {
 		values := headers.Values(field)
 		if len(values) == 0 {
@@ -168,14 +180,14 @@ func addToolbarNonce(headers http.Header, nonce string) {
 				trimmed := strings.TrimSpace(part)
 				fields := strings.Fields(trimmed)
 				if len(fields) != 0 && (fields[0] == "script-src-elem" || fields[0] == "script-src" || fields[0] == "style-src-elem" || fields[0] == "style-src") {
-					parts[index] = part + " 'nonce-" + nonce + "'"
+					parts[index] = allow(fields[0], part)
 				}
 			}
 			if !foundScript {
-				parts = append(parts, "script-src "+defaultSources+" 'nonce-"+nonce+"'")
+				parts = append(parts, allow("script-src", "script-src "+defaultSources))
 			}
 			if !foundStyle {
-				parts = append(parts, "style-src "+defaultSources+" 'nonce-"+nonce+"'")
+				parts = append(parts, allow("style-src", "style-src "+defaultSources))
 			}
 			headers.Add(field, strings.Join(parts, ";"))
 		}

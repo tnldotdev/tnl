@@ -1,9 +1,17 @@
 :host {
   all: initial;
+  --paper: #fff;
+  --ink: #111;
+  --muted: #666;
+  --rule: #b8b8b8;
+  --subtle: #f5f5f5;
   font:
-    14px/1.5 system-ui,
-    sans-serif;
-  color: #192238;
+    13px/1.7 "tnl Fira Code",
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
 }
 * {
   box-sizing: border-box;
@@ -12,52 +20,82 @@ button,
 input,
 textarea {
   font: inherit;
+  border-radius: 0;
 }
 button {
   cursor: pointer;
-  padding: 6px 10px;
+  padding: 4px 8px;
   margin: 4px 4px 4px 0;
-  border: 1px solid #788398;
-  border-radius: 6px;
-  color: #192238;
-  background: #f4f6fa;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  text-transform: lowercase;
+}
+button:hover {
+  background: var(--subtle);
 }
 button:disabled {
   cursor: default;
-  opacity: 0.6;
+  color: var(--muted);
 }
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #605ad5;
-  outline-offset: 2px;
+  outline: 1px dashed var(--ink);
+  outline-offset: 3px;
 }
 .toggle {
   position: fixed;
   bottom: 16px;
   right: 16px;
   z-index: 2147483647;
-  border-radius: 999px;
-  background: #192238;
-  color: white;
 }
 .panel {
   position: fixed;
   bottom: 64px;
   right: 16px;
   z-index: 2147483647;
-  width: min(400px, calc(100vw - 32px));
+  width: min(420px, calc(100vw - 32px));
   max-height: calc(100dvh - 96px);
   overflow-y: auto;
-  padding: 16px;
-  border: 1px solid #9099aa;
-  border-radius: 12px;
-  background: white;
-  box-shadow: 0 8px 35px #151c3166;
+  background: var(--paper);
+}
+.panel-body {
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  padding: 0 12px 12px;
+  margin: 0 3px;
+}
+.ascii-bar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  white-space: nowrap;
+  color: var(--rule);
+}
+.frame-rule {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.frame-title {
+  color: var(--ink);
+}
+.frame-close {
+  border: 0;
+  margin: 0;
+  padding: 0 4px;
 }
 h2 {
-  font-size: 17px;
+  font-size: 13px;
+  font-weight: 600;
   margin: 12px 0 8px;
+}
+section[aria-label="New feedback"] h2,
+section[aria-label="Feedback list"] h2,
+label,
+summary {
+  text-transform: lowercase;
 }
 p {
   white-space: pre-wrap;
@@ -72,10 +110,9 @@ textarea {
   width: 100%;
   display: block;
   padding: 8px;
-  border: 1px solid #788398;
-  border-radius: 6px;
-  color: #192238;
-  background: white;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
 }
 textarea {
   min-height: 72px;
@@ -87,7 +124,7 @@ fieldset {
   margin: 0;
 }
 section + section {
-  border-top: 1px solid #cbd2de;
+  border-top: 1px dashed var(--rule);
   margin-top: 16px;
 }
 ul,
@@ -97,30 +134,46 @@ ol {
 li {
   margin: 8px 0;
 }
-time {
-  font-size: 12px;
-  color: #546078;
+time,
+small {
+  font-size: 11px;
+  color: var(--muted);
 }
 pre {
-  font:
-    12px/1.5 ui-monospace,
-    monospace;
+  font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 220px;
+  max-height: 200px;
   overflow-y: auto;
 }
+blockquote {
+  margin: 8px 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--rule);
+}
 [role="alert"] {
-  color: #a01e2c;
+  color: #a33a19;
+}
+.comment-button {
+  text-transform: none;
+  text-align: left;
 }
 .pin {
   position: fixed;
   z-index: 2147483646;
-  border: 2px solid #b77b00;
-  border-radius: 999px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
+  padding: 0 2px;
   margin: 0;
-  background: #ffe4a6;
+  background: var(--paper);
+  border: 0;
+  font-size: 11px;
+}
+.highlight {
+  position: fixed;
+  z-index: 2147483645;
+  pointer-events: none;
+  background: #1111110d;
+  border-bottom: 1px solid var(--ink);
+}
+.highlight.changed {
+  border-bottom-style: dashed;
 }

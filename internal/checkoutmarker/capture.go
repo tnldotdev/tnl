@@ -32,11 +32,12 @@ type changedFile struct {
 }
 
 type checkoutState struct {
-	HeadCommit   string        `json:"head_commit"`
-	Branch       string        `json:"branch"`
-	ChangedFiles []changedFile `json:"changed_files"`
-	Fingerprint  string        `json:"fingerprint"`
-	Complete     bool          `json:"complete"`
+	SchemaVersion int           `json:"schema_version"`
+	HeadCommit    string        `json:"head_commit"`
+	Branch        string        `json:"branch"`
+	ChangedFiles  []changedFile `json:"changed_files"`
+	Fingerprint   string        `json:"fingerprint"`
+	Complete      bool          `json:"complete"`
 }
 
 // Capture records the current project checkout's Git state. a partial marker
@@ -45,7 +46,7 @@ func Capture(ctx context.Context, root string) (controlv1.CheckoutMarker, error)
 	if !filepath.IsAbs(root) {
 		return controlv1.CheckoutMarker{}, errors.New("checkout marker requires an absolute project directory")
 	}
-	state := checkoutState{ChangedFiles: []changedFile{}, Complete: true}
+	state := checkoutState{SchemaVersion: 1, ChangedFiles: []changedFile{}, Complete: true}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return controlv1.CheckoutMarker{}, fmt.Errorf("resolve project directory for checkout marker: %w", err)

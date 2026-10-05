@@ -1,4 +1,4 @@
-import type { Action, Pin } from "./model.ts";
+import type { Action, ElementSnapshot } from "./model.ts";
 
 const allowedTags = new Set([
   "a",
@@ -71,7 +71,7 @@ export function elementLabel(element: Element): string {
   return boundedText(text.trim(), 256);
 }
 
-export function capturePin(element: Element): Pin {
+export function captureElement(element: Element): ElementSnapshot {
   const container = element.ownerDocument.createElement("div");
   let nodes = 0;
   function copy(source: Node, target: Node): void {
@@ -104,7 +104,6 @@ export function capturePin(element: Element): Pin {
   }
   copy(element, container);
   return {
-    kind: "element",
     role: element.getAttribute("role") ?? element.localName,
     label: elementLabel(element),
     ...(element.getAttribute("data-testid")

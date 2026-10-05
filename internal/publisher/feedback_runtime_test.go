@@ -115,7 +115,7 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 	runtime := &feedbackRuntime{client: client, runID: "pr_run", version: 2}
 	for _, kind := range []string{"thread.resolved", "thread.reopened"} {
 		for _, allowedIP := range []bool{true, false} {
-			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"type":"`+kind+`"}`))
+			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"schema_version":1,"type":"`+kind+`"}`))
 			request.Header.Set("Idempotency-Key", kind)
 			if !allowedIP {
 				request.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl.secret"})

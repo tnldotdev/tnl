@@ -11,16 +11,12 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/browserfonts"
 )
 
 //go:embed page.html
 var page []byte
-
-//go:embed fonts/fira-code-latin-wght-normal.woff2
-var latinFont []byte
-
-//go:embed fonts/fira-code-symbols2-wght-normal.woff2
-var symbolsFont []byte
 
 type State struct {
 	PublicURL    string `json:"public_url"`
@@ -95,10 +91,10 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(page)
 	case r.URL.Path == "/fonts/fira-code-latin-wght-normal.woff2" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "font/woff2")
-		_, _ = w.Write(latinFont)
+		_, _ = w.Write(browserfonts.Latin)
 	case r.URL.Path == "/fonts/fira-code-symbols2-wght-normal.woff2" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "font/woff2")
-		_, _ = w.Write(symbolsFont)
+		_, _ = w.Write(browserfonts.Symbols)
 	case r.URL.Path == "/state" && r.Method == http.MethodGet:
 		d.mu.Lock()
 		state := d.state

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
 import { mutationKey, useRequest } from "./async.ts";
 import type { BrowserEvent, FeedbackEvent, Thread } from "./model.ts";
+import { supportedAnchor } from "./anchors.ts";
 
 const eventLabels = {
   "thread.created": "Reported",
@@ -97,10 +98,19 @@ export function ThreadView({
         <>
           <h2>{thread.report.text}</h2>
           <p>{thread.state === "open" ? "Open" : "Resolved"}</p>
+          {supportedAnchor(thread.anchor)?.selection && (
+            <blockquote>
+              <small>quoted when posted</small>
+              <p>{supportedAnchor(thread.anchor)?.selection?.text}</p>
+            </blockquote>
+          )}
+          {thread.anchor && !supportedAnchor(thread.anchor) && (
+            <p>this anchor format is not supported; the conversation is still available</p>
+          )}
           <details>
             <summary>Original evidence</summary>
             <pre>
-              {JSON.stringify({ element: thread.element, evidence: thread.evidence }, null, 2)}
+              {JSON.stringify({ anchor: thread.anchor, evidence: thread.evidence }, null, 2)}
             </pre>
           </details>
           <ol aria-label="History">

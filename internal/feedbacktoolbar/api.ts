@@ -86,7 +86,7 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
         "/" + encodeURIComponent(id) + "/events",
         eventSchema,
         signal,
-        { type, ...(text ? { text } : {}) },
+        { schema_version: 1, type, ...(text ? { text } : {}) },
         key,
       ),
   };

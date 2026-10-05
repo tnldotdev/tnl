@@ -1,47 +1,6 @@
-import { useEffect, useState } from "preact/hooks";
-import type { Pin, Summary } from "./model.ts";
-import { capturePin, elementLabel } from "./evidence.ts";
-
-export function matchPin(document: Document, pin: Pin): Element | undefined {
-  if (pin.kind !== "element" || !pin.test_id) return undefined;
-  const matches = Array.from(document.querySelectorAll("[data-testid]")).filter(
-    (element) => element.getAttribute("data-testid") === pin.test_id,
-  );
-  const element = matches[0];
-  return matches.length === 1 && element && elementLabel(element) === pin.label
-    ? element
-    : undefined;
-}
-
-export function beginPicking(
-  document: Document,
-  host: Element,
-  picked: (pin: Pin) => void,
-  canceled: () => void,
-): () => void {
-  function click(event: MouseEvent): void {
-    if (event.composedPath().includes(host) || !(event.target instanceof Element)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    stop();
-    picked(capturePin(event.target));
-  }
-  function key(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      stop();
-      canceled();
-    }
-  }
-  function stop(): void {
-    document.removeEventListener("click", click, true);
-    document.removeEventListener("keydown", key, true);
-  }
-  document.addEventListener("click", click, true);
-  document.addEventListener("keydown", key, true);
-  return stop;
-}
+import { useEffect, useRef, useState } from "preact/hooks";
+import type { Summary } from "./model.ts";
+import { restoreAnchor, supportedAnchor, type ResolvedAnchor } from "./anchors.ts";
 
 export function Pins({
   document,
@@ -52,7 +11,16 @@ export function Pins({
   threads: Summary[];
   select: (id: string) => void;
 }) {
-  const [positions, setPositions] = useState<{ id: string; top: number; left: number }[]>([]);
+  const cache = useRef(new Map<string, ResolvedAnchor>());
+  const [positions, setPositions] = useState<
+    {
+      id: string;
+      top: number;
+      left: number;
+      changed: boolean;
+      rectangles: { top: number; left: number; width: number; height: number }[];
+    }[]
+  >([]);
   useEffect(() => {
     const window = document.defaultView;
     if (!window) return;
@@ -61,13 +29,33 @@ export function Pins({
       frame = 0;
       setPositions(
         threads.flatMap((thread) => {
-          if (thread.state === "resolved") return [];
-          const element = matchPin(document, thread.element);
-          if (!element) return [];
-          const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0
-            ? [{ id: thread.id, top: Math.max(0, rect.top - 6), left: Math.max(0, rect.left - 6) }]
+          const anchor = supportedAnchor(thread.anchor);
+          if (thread.state === "resolved" || !anchor) return [];
+          const restored = restoreAnchor(document, anchor, cache.current.get(thread.id));
+          if (!restored) return [];
+          cache.current.set(thread.id, restored);
+          const rect = restored.element.getBoundingClientRect();
+          if (!rect.width || !rect.height) return [];
+          const rectangles = restored.range
+            ? Array.from(restored.range.getClientRects())
+                .slice(0, 64)
+                .map((rect) => ({
+                  top: rect.top,
+                  left: rect.left,
+                  width: rect.width,
+                  height: rect.height,
+                }))
             : [];
+          const point = rectangles[0];
+          return [
+            {
+              id: thread.id,
+              top: point?.top ?? rect.top + anchor.y * rect.height,
+              left: point?.left ?? rect.left + anchor.x * rect.width,
+              changed: restored.textChanged,
+              rectangles,
+            },
+          ];
         }),
       );
     };
@@ -93,22 +81,43 @@ export function Pins({
   }, [document, threads]);
   return (
     <>
-      {positions.map((position) => (
-        <button
-          key={position.id}
-          type="button"
-          class="pin"
-          aria-label="Show pinned feedback"
-          ref={(button) => {
-            // set individual CSS properties so the page's style-src-attr
-            // policy can stay restrictive; no inline style string is assigned.
-            if (button) {
-              button.style.top = position.top + "px";
-              button.style.left = position.left + "px";
+      {positions.map((position, index) => (
+        <div key={position.id}>
+          {position.rectangles.map((rect, index) => (
+            <span
+              key={index}
+              class={position.changed ? "highlight changed" : "highlight"}
+              aria-hidden="true"
+              ref={(node) => {
+                if (node) {
+                  node.style.top = rect.top + "px";
+                  node.style.left = rect.left + "px";
+                  node.style.width = rect.width + "px";
+                  node.style.height = rect.height + "px";
+                }
+              }}
+            />
+          ))}
+          <button
+            type="button"
+            class="pin"
+            aria-label="Show pinned feedback"
+            title={
+              position.changed
+                ? "text changed; original quote is in the conversation"
+                : "show feedback"
             }
-          }}
-          onClick={() => select(position.id)}
-        />
+            ref={(button) => {
+              if (button) {
+                button.style.top = position.top + "px";
+                button.style.left = position.left + "px";
+              }
+            }}
+            onClick={() => select(position.id)}
+          >
+            [{index + 1}]
+          </button>
+        </div>
       ))}
     </>
   );

@@ -103,3 +103,18 @@ func TestInjectSkipsCompressedAttachmentsAndNonHTML(t *testing.T) {
 		})
 	}
 }
+
+func TestInjectPreservesDemoInlineScriptAndStylePolicy(t *testing.T) {
+	response := &http.Response{StatusCode: 200, Request: &http.Request{Method: "GET", Host: "demo.example.test"}, Header: http.Header{
+		"Content-Type": {"text/html"}, "Content-Security-Policy": {"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'"},
+	}, Body: io.NopCloser(strings.NewReader("<html><head></head><body>demo</body></html>"))}
+	if err := Inject(response); err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	_, path := Script()
+	policy := response.Header.Get("Content-Security-Policy")
+	if strings.Contains(policy, "nonce-") || !strings.Contains(policy, "script-src 'unsafe-inline' https://demo.example.test"+path) || !strings.Contains(policy, "style-src 'unsafe-inline'") {
+		t.Fatalf("demo policy changed: %s", policy)
+	}
+}
