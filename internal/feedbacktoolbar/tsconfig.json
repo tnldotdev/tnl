@@ -3,10 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "jsx": "react",
-    "jsxFactory": "h",
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
-    "types": []
+    "types": ["vitest", "node"]
   },
-  "include": ["toolbar.tsx", "model.ts", "jsx.d.ts"]
+  "include": ["*.ts", "*.tsx"]
 }

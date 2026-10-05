@@ -14,10 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-type feedbackControlStub struct{}
-
-func (*feedbackControlStub) AppendFeedbackEvent(context.Context, string, string, controlv1.AppendFeedbackEventRequest) (controlv1.FeedbackEvent, error) {
-	return controlv1.FeedbackEvent{Cursor: 1}, nil
+type feedbackControlStub struct {
+	event controlv1.AppendReviewerFeedbackEventRequest
 }
 
 func (*feedbackControlStub) CreateFeedbackReport(context.Context, string, string, controlv1.CreateFeedbackReportRequest, credentials.PublishRunToken) (controlv1.FeedbackThread, error) {
@@ -36,7 +34,8 @@ func (*feedbackControlStub) ListReviewerFeedbackEvents(context.Context, string, 
 	return controlv1.FeedbackEventPage{Events: []controlv1.FeedbackEvent{}}, nil
 }
 
-func (*feedbackControlStub) AppendReviewerFeedbackEvent(context.Context, string, string, string, controlv1.AppendReviewerFeedbackEventRequest, credentials.PublishRunToken) (controlv1.FeedbackEvent, error) {
+func (s *feedbackControlStub) AppendReviewerFeedbackEvent(_ context.Context, _, _, _ string, body controlv1.AppendReviewerFeedbackEventRequest, _ credentials.PublishRunToken) (controlv1.FeedbackEvent, error) {
+	s.event = body
 	return controlv1.FeedbackEvent{}, nil
 }
 
@@ -111,59 +110,27 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 	}
 }
 
-func TestFeedbackOwnerHandoffKeepsDeveloperControlsOffReviewerRequests(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusNoContent)
-	}))
-	defer upstream.Close()
-	asset, assetPath := feedbacktoolbar.Script()
-	owner := NewOwnerHandoff()
-	runtime := &feedbackRuntime{
-		client: &feedbackControlStub{}, previewID: "pv_0123456789abcdefghijkl",
-		runID: "pr_run", service: "web", projectRoot: t.TempDir(), hostname: "route.example",
-		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath, owner: owner,
-	}
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, Feedback: runtime})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer route.Close()
-	serve := func(method, path, cookies, body string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(method, path, strings.NewReader(body))
-		request.Host, request.TLS = "route.example", &tls.ConnectionState{ServerName: "route.example"}
-		request.Header.Set("Idempotency-Key", "owner-test")
-		if cookies != "" {
-			request.Header.Set("Cookie", cookies)
+func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
+	client := &feedbackControlStub{}
+	runtime := &feedbackRuntime{client: client, runID: "pr_run", version: 2}
+	for _, kind := range []string{"thread.resolved", "thread.reopened"} {
+		for _, allowedIP := range []bool{true, false} {
+			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"type":"`+kind+`"}`))
+			request.Header.Set("Idempotency-Key", kind)
+			if !allowedIP {
+				request.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl.secret"})
+			}
+			response := httptest.NewRecorder()
+			runtime.handle(response, request, !allowedIP)
+			if response.Code != http.StatusOK || string(client.event.Type) != kind || client.event.Access.AllowedIp != allowedIP || client.event.CheckoutMarker != nil {
+				t.Fatalf("%s through preview access = %d, %+v", kind, response.Code, client.event)
+			}
 		}
-		response := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(response, request)
-		return response
 	}
-	if status := serve(http.MethodGet, "/__tnl/feedback/owner", "", ""); !strings.Contains(status.Body.String(), `"owner":false`) {
-		t.Fatalf("reviewer was given owner controls: %s", status.Body.String())
-	}
-	threadID := "fb_0123456789abcdefghijkl"
-	readyPath := "/__tnl/feedback/" + threadID + "/events"
-	if result := serve(http.MethodPost, readyPath, "", `{"type":"fix.ready_for_recheck","text":"fixed"}`); result.Code != http.StatusForbidden {
-		t.Fatalf("reviewer marked feedback ready: %d", result.Code)
-	}
-	link, err := owner.NewLink("https://route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	redirect := serve(http.MethodGet, strings.TrimPrefix(link, "https://route.example"), "", "")
-	if redirect.Code != http.StatusSeeOther || redirect.Header().Get("Location") != "https://route.example/#tnl-feedback" || len(redirect.Result().Cookies()) != 1 {
-		t.Fatalf("owner handoff = %d %#v", redirect.Code, redirect.Header())
-	}
-	cookie := redirect.Result().Cookies()[0]
-	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.Name != feedbackOwnerCookieName {
-		t.Fatalf("owner cookie is not host-only: %+v", cookie)
-	}
-	ownerCookie := cookie.Name + "=" + cookie.Value
-	if status := serve(http.MethodGet, "/__tnl/feedback/owner", ownerCookie, ""); !strings.Contains(status.Body.String(), `"owner":true`) {
-		t.Fatalf("redeemed owner cannot see controls: %s", status.Body.String())
-	}
-	if ready := serve(http.MethodPost, readyPath, ownerCookie, `{"type":"fix.ready_for_recheck","text":"fixed"}`); ready.Code != http.StatusOK {
-		t.Fatalf("developer could not mark feedback ready: %d %s", ready.Code, ready.Body.String())
+	request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"type":"thread.resolved"}`))
+	response := httptest.NewRecorder()
+	runtime.handle(response, request, true)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing preview access accepted: %d", response.Code)
 	}
 }

@@ -18,10 +18,6 @@ import (
 const maxDevRequestBytes = 16 << 10
 
 func (b *devBootstrap) handle(response http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodGet && request.URL.Path == "/v1/feedback/owner" {
-		b.handleFeedbackOwner(response, request)
-		return
-	}
 	if request.Method != http.MethodPost || (request.URL.Path != "/v1/configure" && request.URL.Path != "/v1/target") {
 		http.NotFound(response, request)
 		return
@@ -36,38 +32,6 @@ func (b *devBootstrap) handle(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	b.handleTarget(response, request)
-}
-
-func (b *devBootstrap) handleFeedbackOwner(response http.ResponseWriter, request *http.Request) {
-	if b.owner == nil {
-		http.NotFound(response, request)
-		return
-	}
-	select {
-	case <-b.resolved:
-	case <-b.closing:
-		http.Error(response, "development session is closing", http.StatusServiceUnavailable)
-		return
-	case <-request.Context().Done():
-		return
-	}
-	b.mu.Lock()
-	publicURL, configuredErr := b.assignment.PublicURL, b.configurationErr
-	b.mu.Unlock()
-	if configuredErr != nil || publicURL == "" {
-		http.Error(response, "public URL is not ready for feedback", http.StatusConflict)
-		return
-	}
-	link, err := b.owner.NewLink(publicURL)
-	if err != nil {
-		http.Error(response, "could not create owner link", http.StatusServiceUnavailable)
-		return
-	}
-	response.Header().Set("Content-Type", "application/json")
-	response.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(response).Encode(struct {
-		URL string `json:"url"`
-	}{URL: link})
 }
 
 func (b *devBootstrap) handleConfiguration(response http.ResponseWriter, request *http.Request) {

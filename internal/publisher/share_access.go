@@ -161,7 +161,7 @@ func stripTnlCookies(request *http.Request) *http.Request {
 		for _, pair := range strings.Split(header, ";") {
 			pair = strings.TrimSpace(pair)
 			name, _, found := strings.Cut(pair, "=")
-			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != feedbackOwnerCookieName && pair != "" {
+			if found && name != shareCookieName && name != feedbackBrowserCookieName && pair != "" {
 				clean = append(clean, pair)
 			}
 		}

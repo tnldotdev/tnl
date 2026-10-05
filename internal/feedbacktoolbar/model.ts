@@ -1,106 +1,76 @@
-export type Pin = {
-  kind: "page" | "element";
-  role?: string | undefined;
-  label?: string | undefined;
-  test_id?: string | undefined;
-  html?: string | undefined;
-};
+import * as z from "zod/mini";
 
-export type FeedbackSummary = {
-  id: string;
-  state: "open" | "ready_for_recheck" | "resolved";
-  report: { text: string; created_at: string };
+const text = (maximum: number) => z.string().check(z.maxLength(maximum));
+const path = () => z.string().check(z.startsWith("/"), z.maxLength(2048));
+const cursor = () => z.int().check(z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER));
+const feedbackID = z.string().check(z.regex(/^fb_[A-Za-z0-9]{22}$/));
+
+export const pinSchema = z.object({
+  kind: z.enum(["page", "element"]),
+  role: z.optional(text(128)),
+  label: z.optional(text(256)),
+  test_id: z.optional(text(128)),
+  html: z.optional(text(4096)),
+});
+export const actionSchema = z.object({
+  type: z.enum(["navigation", "click", "submit"]),
+  path: z.optional(path()),
+  label: z.optional(text(256)),
+  test_id: z.optional(text(128)),
+});
+export const failureSchema = z.object({
+  method: text(12).check(z.minLength(1)),
+  path: path().check(z.refine((value) => !value.includes("?"))),
+  status: z.int().check(z.refine((status) => status === 0 || (status >= 400 && status <= 599))),
+  duration_ms: z.int().check(z.minimum(0), z.maximum(600_000)),
+});
+export const evidenceSchema = z.object({
+  actions: z.array(actionSchema).check(z.maxLength(20)),
+  failed_requests: z.array(failureSchema).check(z.maxLength(20)),
+});
+export const summarySchema = z.object({
+  id: feedbackID,
+  state: z.enum(["open", "resolved"]),
+  report: z.object({
+    text: text(4000).check(z.minLength(1)),
+    created_at: z.iso.datetime({ offset: true }),
+  }),
+  element: pinSchema,
+  scope: z.object({ page_path: path() }),
+});
+export const threadSchema = z.extend(summarySchema, { evidence: evidenceSchema });
+export const eventSchema = z.object({
+  cursor: cursor().check(z.minimum(1)),
+  feedback_id: feedbackID,
+  type: z.enum(["thread.created", "reply", "update", "thread.resolved", "thread.reopened"]),
+  actor: z.enum(["implementer", "reviewer"]),
+  at: z.iso.datetime({ offset: true }),
+  text: z.optional(text(4000).check(z.minLength(1))),
+});
+export const threadPageSchema = z.object({
+  threads: z.array(summarySchema).check(z.maxLength(100)),
+  next_cursor: z.optional(feedbackID),
+  event_cursor: cursor(),
+});
+export const eventPageSchema = z.object({
+  events: z.array(eventSchema).check(z.maxLength(25)),
+  next_cursor: z.optional(cursor().check(z.minimum(1))),
+  event_cursor: cursor(),
+});
+
+export type Pin = z.infer<typeof pinSchema>;
+export type Action = z.infer<typeof actionSchema>;
+export type Evidence = z.infer<typeof evidenceSchema>;
+export type Summary = z.infer<typeof summarySchema>;
+export type Thread = z.infer<typeof threadSchema>;
+export type FeedbackEvent = z.infer<typeof eventSchema>;
+export type ThreadPage = z.infer<typeof threadPageSchema>;
+export type EventPage = z.infer<typeof eventPageSchema>;
+export type BrowserEvent = "reply" | "thread.resolved" | "thread.reopened";
+export type ReportInput = {
+  text: string;
+  display_name: string;
+  page_path: string;
   element: Pin;
+  evidence: Evidence;
 };
-
-export type FailedRequest = { method: string; path: string; status: number; duration_ms: number };
-export type Action = {
-  type: "navigation" | "click" | "submit";
-  path?: string | undefined;
-  label?: string | undefined;
-  test_id?: string | undefined;
-};
-export type FeedbackEvent = { cursor: number; type: string; at: string; text?: string | undefined };
-
-export function record(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
-}
-
-export function parseSummaries(value: unknown): FeedbackSummary[] {
-  const body = record(value);
-  if (!Array.isArray(body?.threads)) return [];
-  const result: FeedbackSummary[] = [];
-  for (const item of body.threads) {
-    const entry = record(item);
-    const report = record(entry?.report);
-    const element = record(entry?.element);
-    if (
-      typeof entry?.id !== "string" ||
-      typeof report?.text !== "string" ||
-      typeof report.created_at !== "string" ||
-      (entry.state !== "open" &&
-        entry.state !== "ready_for_recheck" &&
-        entry.state !== "resolved") ||
-      (element?.kind !== "page" && element?.kind !== "element")
-    )
-      continue;
-    result.push({
-      id: entry.id,
-      state: entry.state,
-      report: { text: report.text, created_at: report.created_at },
-      element: {
-        kind: element.kind,
-        role: typeof element.role === "string" ? element.role : undefined,
-        label: typeof element.label === "string" ? element.label : undefined,
-        test_id: typeof element.test_id === "string" ? element.test_id : undefined,
-      },
-    });
-  }
-  return result;
-}
-
-export function parseFailedRequests(value: unknown): FailedRequest[] {
-  const body = record(value);
-  if (!Array.isArray(body?.failed_requests)) return [];
-  const result: FailedRequest[] = [];
-  for (const item of body.failed_requests.slice(0, 20)) {
-    const entry = record(item);
-    if (
-      typeof entry?.method === "string" &&
-      typeof entry.path === "string" &&
-      typeof entry.status === "number" &&
-      typeof entry.duration_ms === "number"
-    ) {
-      result.push({
-        method: entry.method,
-        path: entry.path,
-        status: entry.status,
-        duration_ms: entry.duration_ms,
-      });
-    }
-  }
-  return result;
-}
-
-export function parseEvents(value: unknown): FeedbackEvent[] {
-  const body = record(value);
-  if (!Array.isArray(body?.events)) return [];
-  const events: FeedbackEvent[] = [];
-  for (const item of body.events) {
-    const event = record(item);
-    if (
-      typeof event?.cursor === "number" &&
-      typeof event.type === "string" &&
-      typeof event.at === "string"
-    ) {
-      events.push({
-        cursor: event.cursor,
-        type: event.type,
-        at: event.at,
-        text: typeof event.text === "string" ? event.text : undefined,
-      });
-    }
-  }
-  return events;
-}

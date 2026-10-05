@@ -89,6 +89,12 @@ jobs:
       - name: Check packages
         run: task js:check
 
+      - name: Install toolbar test browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test embedded toolbar
+        run: task js:test:browser
+
   framework-compatibility:
     name: ${{ matrix.framework }} ${{ matrix.version }}
     if: github.event_name == 'pull_request'

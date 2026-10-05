@@ -25,7 +25,6 @@ import (
 
 const (
 	feedbackBrowserCookieName = "__Host-tnl-feedback-browser"
-	feedbackOwnerCookieName   = "__Host-tnl-feedback-owner"
 	maximumFeedbackBrowsers   = 128
 	maximumFailedRequests     = 20
 )
@@ -36,7 +35,6 @@ type feedbackClient interface {
 	GetReviewerFeedbackThread(context.Context, string, string, controlv1.ReviewerFeedbackReadRequest, credentials.PublishRunToken) (controlv1.FeedbackThread, error)
 	ListReviewerFeedbackEvents(context.Context, string, string, controlv1.ReviewerFeedbackReadRequest, credentials.PublishRunToken) (controlv1.FeedbackEventPage, error)
 	AppendReviewerFeedbackEvent(context.Context, string, string, string, controlv1.AppendReviewerFeedbackEventRequest, credentials.PublishRunToken) (controlv1.FeedbackEvent, error)
-	AppendFeedbackEvent(context.Context, string, string, controlv1.AppendFeedbackEventRequest) (controlv1.FeedbackEvent, error)
 }
 
 type feedbackRequestContextKey struct{}
@@ -73,8 +71,6 @@ type feedbackRuntime struct {
 	browsers    map[[32]byte]*browserTrail
 	asset       []byte
 	assetPath   string
-	owner       *OwnerHandoff
-	hostname    string
 }
 
 func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) (*feedbackRuntime, error) {
@@ -91,7 +87,6 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 		service: config.Service, projectRoot: config.ProjectRoot,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
-		owner: config.OwnerHandoff, hostname: setup.PublicUrl.CanonicalHostname,
 	}, nil
 }
 
@@ -209,34 +204,6 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Referrer-Policy", "no-referrer")
-	if token, handoff := ownerHandoffToken(request.URL.Path); handoff && request.Method == http.MethodGet {
-		if f.owner == nil {
-			http.NotFound(response, request)
-			return true
-		}
-		secret, expires, ok := f.owner.Redeem(token)
-		if !ok {
-			http.NotFound(response, request)
-			return true
-		}
-		http.SetCookie(response, &http.Cookie{
-			Name: feedbackOwnerCookieName, Value: secret, Path: "/", Secure: true,
-			HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expires,
-		})
-		response.Header().Set("Location", "https://"+f.hostname+"/#tnl-feedback")
-		response.WriteHeader(http.StatusSeeOther)
-		return true
-	}
-	if request.URL.Path == "/__tnl/feedback/owner" && request.Method == http.MethodGet {
-		isOwner := false
-		if cookie, err := request.Cookie(feedbackOwnerCookieName); err == nil && f.owner != nil {
-			isOwner = f.owner.ValidSession(cookie.Value)
-		}
-		httpjson.Write(response, http.StatusOK, struct {
-			Owner bool `json:"owner"`
-		}{Owner: isOwner})
-		return true
-	}
 	if request.URL.Path == "/__tnl/feedback/evidence" && request.Method == http.MethodGet {
 		httpjson.Write(response, http.StatusOK, struct {
 			FailedRequests []failedRequest `json:"failed_requests"`
@@ -376,48 +343,17 @@ func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "provide an idempotency key", http.StatusBadRequest)
 		return
 	}
-	if input.Type == controlv1.FeedbackEventType("fix.ready_for_recheck") || input.Type == controlv1.FeedbackEventType("thread.resolved") {
-		f.ownerEvent(response, request, id, key, input.Type, input.Text)
-		return
-	}
-	if input.Type != controlv1.FeedbackEventType("reply") && input.Type != controlv1.FeedbackEventType("recheck.still_broken") {
-		http.Error(response, "event requires developer authorization", http.StatusForbidden)
+	if input.Type != controlv1.Reply && input.Type != controlv1.ThreadResolved && input.Type != controlv1.ThreadReopened {
+		http.Error(response, "invalid feedback event", http.StatusBadRequest)
 		return
 	}
 	body := controlv1.AppendReviewerFeedbackEventRequest{
-		Access: access, PublishRunNumber: int64(f.version), Type: input.Type, Text: &input.Text,
+		Access: access, PublishRunNumber: int64(f.version), Type: input.Type,
 	}
-	if input.Type == controlv1.FeedbackEventType("recheck.still_broken") {
-		marker, err := checkoutmarker.Capture(request.Context(), f.projectRoot)
-		if err != nil {
-			f.writeResult(response, nil, err)
-			return
-		}
-		body.CheckoutMarker = &marker
+	if input.Text != "" {
+		body.Text = &input.Text
 	}
 	result, err := f.client.AppendReviewerFeedbackEvent(request.Context(), f.runID, id, key, body, f.token)
-	f.writeResult(response, result, err)
-}
-
-func (f *feedbackRuntime) ownerEvent(response http.ResponseWriter, request *http.Request, id, key string, kind controlv1.FeedbackEventType, text string) {
-	cookie, err := request.Cookie(feedbackOwnerCookieName)
-	if err != nil || f.owner == nil || !f.owner.ValidSession(cookie.Value) {
-		http.Error(response, "developer access is required", http.StatusForbidden)
-		return
-	}
-	body := controlv1.AppendFeedbackEventRequest{Type: kind}
-	if text != "" {
-		body.Text = &text
-	}
-	if kind == controlv1.FeedbackEventType("fix.ready_for_recheck") {
-		marker, err := checkoutmarker.Capture(request.Context(), f.projectRoot)
-		if err != nil {
-			f.writeResult(response, nil, err)
-			return
-		}
-		body.CheckoutMarker = &marker
-	}
-	result, err := f.client.AppendFeedbackEvent(request.Context(), id, key, body)
 	f.writeResult(response, result, err)
 }
 

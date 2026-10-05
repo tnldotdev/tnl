@@ -364,6 +364,11 @@ tasks:
     cmds:
       - pnpm test:coverage
 
+  js:test:browser:
+    desc: Test the embedded feedback toolbar in Chromium
+    cmds:
+      - pnpm exec vitest run --config vitest.toolbar-browser.config.ts
+
   js:build:
     cmds:
       - pnpm build
