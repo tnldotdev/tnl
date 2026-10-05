@@ -114,6 +114,7 @@ func runSession(
 	var material clientstate.Material
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
+		Mounts:       config.Mounts,
 		RequestLimit: config.RequestLimit,
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,

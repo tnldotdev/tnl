@@ -31,6 +31,7 @@ type publishCommand struct {
 	projectRoot      string
 	demoNameFromCLI  bool
 	Service          string `kong:"-"`
+	project          projectConfiguration
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
@@ -147,6 +148,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service, nil)
+	if err != nil {
+		return err
+	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
 		if localDemo != nil && event.Type == publisher.EventReady {

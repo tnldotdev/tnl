@@ -33,10 +33,12 @@ func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags 
 	}
 	slices.Sort(names)
 	writer := &devMetadataWriter{}
+	targets := newDevGroupTargets(len(names))
 	return coordinateDev(ctx, names, func(runCtx context.Context, name string) error {
 		serviceFlags := flags
 		serviceFlags.Service = name
 		serviceFlags.metadataWriter = writer
+		serviceFlags.groupTargets = targets
 		serviceFlags.coordinated = true
 		if err := project.applyDev(&serviceFlags); err != nil {
 			return err

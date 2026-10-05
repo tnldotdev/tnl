@@ -32,6 +32,9 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := serviceSchema.Properties.Get("directory"); !found {
 		t.Fatal("service directory property is missing")
 	}
+	if paths, found := serviceSchema.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
+		t.Fatalf("service path mount schema = %#v", paths)
+	}
 	for _, property := range []string{"server", "team"} {
 		if _, found := serviceSchema.Properties.Get(property); found {
 			t.Fatalf("service %s property must be project-wide", property)
@@ -52,7 +55,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "allowIP" || keys["allow_providers"] != "allowProviders" || keys["startup_timeout"] != "startupTimeout" || keys["request_limit"] != "requestLimit" {
+	if keys["allow_ip"] != "allowIP" || keys["allow_providers"] != "allowProviders" || keys["startup_timeout"] != "startupTimeout" || keys["request_limit"] != "requestLimit" || keys["strip_prefix"] != "stripPrefix" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

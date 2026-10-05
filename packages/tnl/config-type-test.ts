@@ -34,6 +34,12 @@ const projectScopedSettings = {
     web: { dev: { port: 4173 } },
   },
 } satisfies TnlConfig;
+const mountedServices = {
+  services: {
+    web: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } },
+    api: {},
+  },
+} satisfies TnlConfig;
 // @ts-expect-error server belongs to the project, not a service.
 ({ server: "https://control.example" }) satisfies NonNullable<TnlConfig["services"]>[string];
 // @ts-expect-error team belongs to the project, not a service.
@@ -55,4 +61,11 @@ defineConfig({ version: 1 });
 // @ts-expect-error server configuration is static-only.
 defineConfig({ tnld: { role: "relay" } });
 
-export { dynamicConfig, exactConfig, literalConfig, projectScopedSettings, staticConfig };
+export {
+  dynamicConfig,
+  exactConfig,
+  literalConfig,
+  mountedServices,
+  projectScopedSettings,
+  staticConfig,
+};

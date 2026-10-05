@@ -4,5 +4,6 @@
   "allow_providers": "allowProviders",
   "public_url": "publicURL",
   "request_limit": "requestLimit",
-  "startup_timeout": "startupTimeout"
+  "startup_timeout": "startupTimeout",
+  "strip_prefix": "stripPrefix"
 }

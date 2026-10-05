@@ -31,6 +31,7 @@ import (
 type PublicURLServerConfig struct {
 	Hostname        string
 	Target          string
+	Mounts          []localproxy.Mount
 	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
 	Certificate     tls.Certificate
@@ -76,7 +77,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			return nil, errors.New("publisher: certificate plan does not cover public URL")
 		}
 	}
-	handler, err := localproxy.New(config.Target, hostname, config.RequestLimit, config.OnTargetFailure)
+	handler, err := localproxy.NewWithMounts(config.Target, hostname, config.RequestLimit, config.Mounts, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
