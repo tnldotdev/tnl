@@ -41,6 +41,7 @@ const (
 	RelayCertificateWorkerPrefix     = "rcw_"
 	RelayRunPrefix                   = "rr_"
 	RequestPrefix                    = "req_"
+	SharePrefix                      = "shr_"
 	SlugReservationPrefix            = "sr_"
 	TeamPrefix                       = "tm_"
 	TunnelPrefix                     = "tun_"

@@ -654,6 +654,13 @@ type CreatePublicURLRequest struct {
 	TeamId            TeamID            `json:"team_id"`
 }
 
+// CreateShareRequest defines model for CreateShareRequest.
+type CreateShareRequest struct {
+	ExpiresAt         time.Time     `json:"expires_at"`
+	PublicUrlIds      []PublicURLID `json:"public_url_ids"`
+	SecretFingerprint string        `json:"secret_fingerprint"`
+}
+
 // DNSAuthority defines model for DNSAuthority.
 type DNSAuthority struct {
 	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
@@ -913,6 +920,27 @@ type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
 }
 
+// Share defines model for Share.
+type Share struct {
+	CreatedAt           time.Time     `json:"created_at"`
+	CreatedByIdentityId IdentityID    `json:"created_by_identity_id"`
+	ExpiresAt           time.Time     `json:"expires_at"`
+	Id                  ShareID       `json:"id"`
+	PreviewId           PreviewID     `json:"preview_id"`
+	PublicUrlIds        []PublicURLID `json:"public_url_ids"`
+	RevokedAt           *time.Time    `json:"revoked_at,omitempty"`
+	TeamId              TeamID        `json:"team_id"`
+}
+
+// ShareID defines model for ShareID.
+type ShareID = ResourceID
+
+// SharePage defines model for SharePage.
+type SharePage struct {
+	NextCursor *ShareID `json:"next_cursor,omitempty"`
+	Shares     []Share  `json:"shares"`
+}
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
@@ -941,6 +969,16 @@ type ListAdminRelaysParams struct {
 
 // CreatePreviewParams defines parameters for CreatePreview.
 type CreatePreviewParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListSharesParams defines parameters for ListShares.
+type ListSharesParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateShareParams defines parameters for CreateShare.
+type CreateShareParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -989,6 +1027,9 @@ type CreatePreviewJSONRequestBody = CreatePreviewRequest
 
 // AddPreviewPublicURLJSONRequestBody defines body for AddPreviewPublicURL for application/json ContentType.
 type AddPreviewPublicURLJSONRequestBody = AddPreviewPublicURLRequest
+
+// CreateShareJSONRequestBody defines body for CreateShare for application/json ContentType.
+type CreateShareJSONRequestBody = CreateShareRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -1204,6 +1245,25 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
 	AddPreviewPublicURL(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListShares List shares for a preview
+	//
+	// Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
+	ListShares(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateShareWithBody Store one share for a snapshot of authorized public URLs
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+	CreateShareWithBody(ctx context.Context, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateShare Store one share for a snapshot of authorized public URLs
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+	CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPublicURLs List public URLs for one team
 	//
 	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -1355,6 +1415,16 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetShare Read one share
+	//
+	// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
+	GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeShare Stop new access through one share
+	//
+	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
+	RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -1663,6 +1733,55 @@ func (c *Client) AddPreviewPublicURLWithBody(ctx context.Context, previewId Prev
 // Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
 func (c *Client) AddPreviewPublicURL(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddPreviewPublicURLRequest(c.Server, previewId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListShares List shares for a preview
+//
+// Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
+func (c *Client) ListShares(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSharesRequest(c.Server, previewId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateShareWithBody Store one share for a snapshot of authorized public URLs
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+func (c *Client) CreateShareWithBody(ctx context.Context, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateShareRequestWithBody(c.Server, previewId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateShare Store one share for a snapshot of authorized public URLs
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+func (c *Client) CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateShareRequest(c.Server, previewId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2055,6 +2174,36 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 // Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetShare Read one share
+//
+// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
+func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetShareRequest(c.Server, shareId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeShare Stop new access through one share
+//
+// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
+func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeShareRequest(c.Server, shareId)
 	if err != nil {
 		return nil, err
 	}
@@ -2634,6 +2783,127 @@ func NewAddPreviewPublicURLRequestWithBody(server string, previewId PreviewID, c
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListSharesRequest constructs an http.Request for the ListShares method
+func NewListSharesRequest(server string, previewId PreviewID, params *ListSharesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s/shares", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateShareRequest calls the generic CreateShare builder with application/json body
+func NewCreateShareRequest(server string, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateShareRequestWithBody(server, previewId, params, "application/json", bodyReader)
+}
+
+// NewCreateShareRequestWithBody constructs an http.Request for the CreateShare method, with any body, and a specified content type
+func NewCreateShareRequestWithBody(server string, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s/shares", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -3363,6 +3633,74 @@ func NewRevokeHostedPolicyRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
+// NewGetShareRequest constructs an http.Request for the GetShare method
+func NewGetShareRequest(server string, shareId ShareID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "share_id", shareId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeShareRequest constructs an http.Request for the RevokeShare method
+func NewRevokeShareRequest(server string, shareId ShareID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "share_id", shareId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -3547,6 +3885,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
 	AddPreviewPublicURLWithResponse(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error)
 
+	// ListSharesWithResponse List shares for a preview
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
+	ListSharesWithResponse(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*ListSharesResponse, error)
+
+	// CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+	CreateShareWithBodyWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateShareResponse, error)
+
+	// CreateShareWithResponse Store one share for a snapshot of authorized public URLs
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+	CreateShareWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareResponse, error)
+
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3714,6 +4073,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
+
+	// GetShareWithResponse Read one share
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
+	GetShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*GetShareResponse, error)
+
+	// RevokeShareWithResponse Stop new access through one share
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
+	RevokeShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -4484,6 +4857,102 @@ func (r AddPreviewPublicURLResponse) ContentType() string {
 	return ""
 }
 
+type ListSharesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SharePage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSharesResponse) GetJSON200() *SharePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSharesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSharesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSharesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSharesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSharesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Share
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateShareResponse) GetJSON201() *Share {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPublicURLsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5238,6 +5707,102 @@ func (r RevokeHostedPolicyResponse) ContentType() string {
 	return ""
 }
 
+type GetShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Share
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetShareResponse) GetJSON200() *Share {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Share
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeShareResponse) GetJSON200() *Share {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
 // Returns a wrapper object for the known response body format(s).
@@ -5496,6 +6061,45 @@ func (c *ClientWithResponses) AddPreviewPublicURLWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseAddPreviewPublicURLResponse(rsp)
+}
+
+// ListSharesWithResponse List shares for a preview
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
+func (c *ClientWithResponses) ListSharesWithResponse(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*ListSharesResponse, error) {
+	rsp, err := c.ListShares(ctx, previewId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSharesResponse(rsp)
+}
+
+// CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+func (c *ClientWithResponses) CreateShareWithBodyWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateShareResponse, error) {
+	rsp, err := c.CreateShareWithBody(ctx, previewId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateShareResponse(rsp)
+}
+
+// CreateShareWithResponse Store one share for a snapshot of authorized public URLs
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
+func (c *ClientWithResponses) CreateShareWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareResponse, error) {
+	rsp, err := c.CreateShare(ctx, previewId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateShareResponse(rsp)
 }
 
 // ListPublicURLsWithResponse List public URLs for one team
@@ -5808,6 +6412,32 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseRevokeHostedPolicyResponse(rsp)
+}
+
+// GetShareWithResponse Read one share
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
+func (c *ClientWithResponses) GetShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*GetShareResponse, error) {
+	rsp, err := c.GetShare(ctx, shareId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetShareResponse(rsp)
+}
+
+// RevokeShareWithResponse Stop new access through one share
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
+func (c *ClientWithResponses) RevokeShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error) {
+	rsp, err := c.RevokeShare(ctx, shareId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeShareResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -6325,6 +6955,72 @@ func ParseAddPreviewPublicURLResponse(rsp *http.Response) (*AddPreviewPublicURLR
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSharesResponse parses an HTTP response from a ListSharesWithResponse call
+func ParseListSharesResponse(rsp *http.Response) (*ListSharesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSharesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SharePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateShareResponse parses an HTTP response from a CreateShareWithResponse call
+func ParseCreateShareResponse(rsp *http.Response) (*CreateShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Share
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -6861,6 +7557,72 @@ func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyRes
 	return response, nil
 }
 
+// ParseGetShareResponse parses an HTTP response from a GetShareWithResponse call
+func ParseGetShareResponse(rsp *http.Response) (*GetShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Share
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeShareResponse parses an HTTP response from a RevokeShareWithResponse call
+func ParseRevokeShareResponse(rsp *http.Response) (*RevokeShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Share
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListMaintenanceControls List maintenance controls
@@ -6911,6 +7673,12 @@ type ServerInterface interface {
 	// AddPreviewPublicURL Add an authorized public URL to a preview
 	// (POST /v1/previews/{preview_id}/public-urls)
 	AddPreviewPublicURL(w http.ResponseWriter, r *http.Request, previewId PreviewID)
+	// ListShares List shares for a preview
+	// (GET /v1/previews/{preview_id}/shares)
+	ListShares(w http.ResponseWriter, r *http.Request, previewId PreviewID, params ListSharesParams)
+	// CreateShare Store one share for a snapshot of authorized public URLs
+	// (POST /v1/previews/{preview_id}/shares)
+	CreateShare(w http.ResponseWriter, r *http.Request, previewId PreviewID, params CreateShareParams)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -6959,6 +7727,12 @@ type ServerInterface interface {
 	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
+	// GetShare Read one share
+	// (GET /v1/shares/{share_id})
+	GetShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
+	// RevokeShare Stop new access through one share
+	// (POST /v1/shares/{share_id}/revoke)
+	RevokeShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -7319,6 +8093,102 @@ func (siw *ServerInterfaceWrapper) AddPreviewPublicURL(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddPreviewPublicURL(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListShares operation middleware
+func (siw *ServerInterfaceWrapper) ListShares(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSharesParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListShares(w, r, previewId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateShare operation middleware
+func (siw *ServerInterfaceWrapper) CreateShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateShareParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateShare(w, r, previewId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7875,6 +8745,58 @@ func (siw *ServerInterfaceWrapper) RevokeHostedPolicy(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetShare operation middleware
+func (siw *ServerInterfaceWrapper) GetShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "share_id" -------------
+	var shareId ShareID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "share_id", r.PathValue("share_id"), &shareId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "share_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetShare(w, r, shareId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeShare operation middleware
+func (siw *ServerInterfaceWrapper) RevokeShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "share_id" -------------
+	var shareId ShareID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "share_id", r.PathValue("share_id"), &shareId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "share_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeShare(w, r, shareId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -8004,6 +8926,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)

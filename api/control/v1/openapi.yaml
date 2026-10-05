@@ -163,6 +163,81 @@ paths:
                 $ref: "#/components/schemas/Preview"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/previews/{preview_id}/shares:
+    post:
+      operationId: createShare
+      summary: Store one share for a snapshot of authorized public URLs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PreviewID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listShares
+      summary: List shares for a preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PreviewID"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Share page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharePage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/shares/{share_id}:
+    get:
+      operationId: getShare
+      summary: Read one share
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/shares/{share_id}/revoke:
+    post:
+      operationId: revokeShare
+      summary: Stop new access through one share
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Revoked share
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls:
     get:
       operationId: listPublicURLs
@@ -651,6 +726,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PreviewID"
+    ShareID:
+      name: share_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ShareID"
     PublishRunID:
       name: publish_run_id
       in: path
@@ -708,6 +789,8 @@ components:
     PublicURLID:
       $ref: "#/components/schemas/ResourceID"
     PreviewID:
+      $ref: "#/components/schemas/ResourceID"
+    ShareID:
       $ref: "#/components/schemas/ResourceID"
     PublishRunID:
       $ref: "#/components/schemas/ResourceID"
@@ -1100,6 +1183,66 @@ components:
         created_at:
           type: string
           format: date-time
+    CreateShareRequest:
+      type: object
+      additionalProperties: false
+      required: [public_url_ids, expires_at, secret_fingerprint]
+      properties:
+        public_url_ids:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/PublicURLID"
+        expires_at:
+          type: string
+          format: date-time
+        secret_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+    Share:
+      type: object
+      additionalProperties: false
+      required:
+        [id, preview_id, team_id, public_url_ids, created_by_identity_id, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ShareID"
+        preview_id:
+          $ref: "#/components/schemas/PreviewID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_ids:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/PublicURLID"
+        created_by_identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    SharePage:
+      type: object
+      additionalProperties: false
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Share"
+        next_cursor:
+          $ref: "#/components/schemas/ShareID"
     UpdatePublicURLRequest:
       type: object
       additionalProperties: false

@@ -21,9 +21,9 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
 	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
-	case errors.Is(err, controlstate.ErrPublicURLInvalid):
+	case errors.Is(err, controlstate.ErrPublicURLInvalid), errors.Is(err, controlstate.ErrShareInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound):
+	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound), errors.Is(err, controlstate.ErrShareNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 	case errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrPreviewAccess):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "public URL access denied")
@@ -35,7 +35,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "public URL has an open publish run")
 	case errors.Is(err, controlstate.ErrPublicURLNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
-	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency),
+	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency), errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale),
 		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale), errors.Is(err, controlstate.ErrPreviewStale),
 		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
 		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):

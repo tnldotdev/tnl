@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	schemaVersion        int64 = 6
+	schemaVersion        int64 = 7
 	minimumSchemaVersion int64 = 5
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond

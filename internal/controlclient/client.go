@@ -121,6 +121,50 @@ func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string
 	})
 }
 
+func (c *Client) CreateShare(ctx context.Context, previewID, key string, body controlv1.CreateShareRequest) (controlv1.Share, error) {
+	params := &controlv1.CreateShareParams{IdempotencyKey: key}
+	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateShare(ctx, previewID, params, body, editors...)
+	})
+}
+
+func (c *Client) GetShare(ctx context.Context, id string) (controlv1.Share, error) {
+	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetShare(ctx, id, editors...)
+	})
+}
+
+func (c *Client) ListShares(ctx context.Context, previewID string) ([]controlv1.Share, error) {
+	var shares []controlv1.Share
+	cursor := ""
+	for {
+		params := &controlv1.ListSharesParams{}
+		if cursor != "" {
+			params.Cursor = &cursor
+		}
+		page, err := requestWithAccess[controlv1.SharePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListShares(ctx, previewID, params, editors...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		shares = append(shares, page.Shares...)
+		if page.NextCursor == nil {
+			return shares, nil
+		}
+		if len(page.Shares) == 0 || *page.NextCursor == cursor {
+			return nil, failure.Wrap("list shares", failure.ServerResponseInvalid, errors.New("controlclient: invalid share cursor"))
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, error) {
+	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeShare(ctx, id, editors...)
+	})
+}
+
 func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
 	params := &controlv1.CreatePublicURLParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
