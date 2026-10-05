@@ -164,6 +164,23 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceValues(service.Tunnel, service.Publish, service.Dev); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
+		if len(service.Paths) > 32 {
+			return fmt.Errorf("services.%s.paths may contain at most 32 mounts", name)
+		}
+		prefixes := make([]string, 0, len(service.Paths))
+		for prefix := range service.Paths {
+			prefixes = append(prefixes, prefix)
+		}
+		slices.Sort(prefixes)
+		for _, prefix := range prefixes {
+			mount := service.Paths[prefix]
+			if !localproxy.ValidMountPrefix(prefix) {
+				return fmt.Errorf("services.%s.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
+			}
+			if _, found := config.Services[mount.Service]; !found || mount.Service == name {
+				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
+			}
+		}
 	}
 	return nil
 }

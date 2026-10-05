@@ -98,6 +98,17 @@ func servicesSchema() *jsonschema.Schema {
 	properties.Set("tunnel", tunnel)
 	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
 	properties.Set("dev", &jsonschema.Schema{Ref: "#/$defs/Dev"})
+	mountProperties := jsonschema.NewProperties()
+	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
+	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})
+	properties.Set("paths", &jsonschema.Schema{
+		Type: "object", MaxProperties: integerPointer(32),
+		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+			{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
+			{Type: "object", Required: []string{"service"}, Properties: mountProperties, AdditionalProperties: jsonschema.FalseSchema},
+		}},
+		Description: "Mount another configured service at a path on this service's public URL.",
+	})
 	service := &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 	}

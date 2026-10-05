@@ -103,12 +103,14 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 func TestRuntimeProjectMetadataUsesTheSelectedTunnelAssignment(t *testing.T) {
 	metadata := projectmeta.Metadata{
 		Version: projectmeta.Version, Namespace: "root.example",
-		Services:           map[string]projectmeta.Service{"api": {Namespace: "configured.example", Hostname: "api.configured.example", URL: "https://api.configured.example"}},
+		Services:           map[string]projectmeta.Service{"api": {Namespace: "configured.example", Hostname: "api.configured.example", URL: "https://api.configured.example", Paths: map[string]projectmeta.Path{"/worker": {Service: "worker", URL: "https://api.configured.example/worker"}}}},
 		ServiceDirectories: map[string]string{"api": "."},
 	}
 	project := runtimeProjectMetadata(metadata, "api", "runtime.example", "override.runtime.example")
 	if project.Namespace != "root.example" || !project.Dev || project.Services["api"].Namespace != "runtime.example" ||
 		project.Services["api"].Hostname != "override.runtime.example" || project.Services["api"].URL != "https://override.runtime.example" ||
+		project.Services["api"].Paths["/worker"].URL != "https://override.runtime.example/worker" ||
+		metadata.Services["api"].Paths["/worker"].URL != "https://api.configured.example/worker" ||
 		metadata.Services["api"].Hostname != "api.configured.example" {
 		t.Fatalf("runtime project = %#v, metadata = %#v", project, metadata)
 	}

@@ -37,17 +37,63 @@ type TNL struct {
 	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Services Services `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides."`
+	Services Services `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
 }
 
 type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Directory *string  `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
-	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
-	Publish   *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev       *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Directory *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Tunnel    *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
+	Publish   *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Dev       *Dev                 `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+}
+
+// PathMount selects a local service reached at a path on another service's public URL.
+type PathMount struct {
+	Service     string `json:"service" yaml:"service"`
+	StripPrefix bool   `json:"strip_prefix,omitempty" yaml:"strip_prefix,omitempty"`
+}
+
+func (m *PathMount) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		*m = PathMount{Service: name}
+		return nil
+	}
+	type object PathMount
+	var value object
+	if err := json.Unmarshal(data, &value, json.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("path mount must be a service name or an object: %w", err)
+	}
+	*m = PathMount(value)
+	return nil
+}
+
+func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+		*m = PathMount{Service: node.Value}
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return errors.New("path mount must be a service name or an object")
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		switch node.Content[index].Value {
+		case "service", "strip_prefix":
+		default:
+			return fmt.Errorf("unknown path mount field %q", node.Content[index].Value)
+		}
+	}
+	type object PathMount
+	var value object
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	*m = PathMount(value)
+	return nil
 }
 
 type Tunnel struct {

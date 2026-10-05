@@ -53,7 +53,7 @@ export interface TnlConfig {
   publish?: Publish;
   dev?: Dev;
   /**
-   * Named local services with optional tunnel, publish, and dev overrides.
+   * Named local services with optional tunnel, publish, and dev overrides and path mounts.
    */
   services?: {
     [k: string]:
@@ -105,6 +105,18 @@ export interface TnlConfig {
           };
           publish?: Publish;
           dev?: Dev;
+          /**
+           * Mount another configured service at a path on this service's public URL.
+           */
+          paths?: {
+            [k: string]:
+              | string
+              | {
+                  service: string;
+                  stripPrefix?: boolean;
+                }
+              | undefined;
+          };
         }
       | undefined;
   };

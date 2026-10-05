@@ -138,7 +138,7 @@ func (f *integrationViteFixture) waitRegistration(t *testing.T, requireTarget bo
 	f.publicURL = "https://" + f.hostname
 	wantService := projectmeta.Service{Namespace: f.metadata.Namespace, Hostname: f.hostname, URL: f.publicURL}
 	if !strings.HasSuffix(f.metadata.Namespace, ".routes.127.0.0.1.nip.io") || len(f.metadata.Services) != 1 ||
-		f.metadata.Services["api"] != wantService || f.metadata.ServiceDirectories["api"] != "." || !reflect.DeepEqual(*r.Runtime, f.metadata.Public(true)) || !reflect.DeepEqual(r.EnvironmentMetadata, f.metadata.Public(true)) {
+		!reflect.DeepEqual(f.metadata.Services["api"], wantService) || f.metadata.ServiceDirectories["api"] != "." || !reflect.DeepEqual(*r.Runtime, f.metadata.Public(true)) || !reflect.DeepEqual(r.EnvironmentMetadata, f.metadata.Public(true)) {
 		t.Fatalf("generated metadata = %#v, Vite runtime = %#v", f.metadata, r.Runtime)
 	}
 }

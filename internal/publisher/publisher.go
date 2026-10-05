@@ -47,6 +47,7 @@ type Config struct {
 	PublicURLScope           controlv1.PublicURLScope
 	Hostname                 string
 	Target                   string
+	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
