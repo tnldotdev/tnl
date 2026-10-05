@@ -21,11 +21,11 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
 	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
-	case errors.Is(err, controlstate.ErrPublicURLInvalid), errors.Is(err, controlstate.ErrShareInvalid):
+	case errors.Is(err, controlstate.ErrPublicURLInvalid), errors.Is(err, controlstate.ErrShareInvalid), errors.Is(err, controlstate.ErrFeedbackInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound), errors.Is(err, controlstate.ErrShareNotFound):
+	case errors.Is(err, controlstate.ErrPublicURLNotFound), errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound), errors.Is(err, controlstate.ErrShareNotFound), errors.Is(err, controlstate.ErrFeedbackNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-	case errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrPreviewAccess):
+	case errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "public URL access denied")
 	case errors.Is(err, controlstate.ErrGuestTrialSpent):
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl login to continue")
@@ -37,7 +37,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
 	case errors.Is(err, controlstate.ErrShareLimit):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "share limit reached; revoke an old share or wait for one to expire")
-	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency), errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale),
+	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency), errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale), errors.Is(err, controlstate.ErrFeedbackIdempotency), errors.Is(err, controlstate.ErrFeedbackState),
 		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale), errors.Is(err, controlstate.ErrPreviewStale),
 		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
 		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):

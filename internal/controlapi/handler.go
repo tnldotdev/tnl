@@ -126,6 +126,17 @@ type ShareAccessStore interface {
 	RedeemShare(context.Context, controlstate.PublishRunAuthentication, string, []byte, []byte, time.Time) (controlstate.ShareRedemption, error)
 }
 
+type FeedbackStore interface {
+	CreateFeedback(context.Context, controlstate.PublishRunAuthentication, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
+	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)
+	GetFeedback(context.Context, string) (controlstate.FeedbackThread, error)
+	ListFeedbackForTeam(context.Context, string, string) (controlstate.FeedbackThreadPage, error)
+	ListFeedbackForPage(context.Context, string, string, string, string) (controlstate.FeedbackThreadPage, error)
+	ListFeedbackEventsForTeam(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
+	ListFeedbackEventsForThread(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
+	ReviewerFeedbackScope(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (string, string, error)
+}
+
 // BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
 type BuiltinAuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
@@ -143,6 +154,7 @@ type handler struct {
 	previews       PreviewStore
 	shares         ShareStore
 	shareAccess    ShareAccessStore
+	feedback       FeedbackStore
 	guests         interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
@@ -176,6 +188,9 @@ func NewHandler(
 	}
 	if shareAccess, ok := store.(ShareAccessStore); ok {
 		h.shareAccess = shareAccess
+	}
+	if feedback, ok := store.(FeedbackStore); ok {
+		h.feedback = feedback
 	}
 	if guestStore, ok := store.(interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
