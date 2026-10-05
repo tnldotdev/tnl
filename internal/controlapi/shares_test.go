@@ -114,7 +114,7 @@ func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testin
 	response := create(`["url_1"]`)
 	if response.Code != http.StatusCreated || shares.created.PreviewID != "pv_preview" ||
 		shares.created.ActingIdentityID != "identity_1" || shares.created.PublicURLs[0].ExpectedMutationRevision != 3 ||
-		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationPublicURLUpdate ||
+		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationShareCreate ||
 		strings.Contains(response.Body.String(), "fingerprint") || strings.Contains(response.Body.String(), secret) {
 		t.Fatalf("share creation = %d %s, request=%+v, authorization=%v", response.Code, response.Body.String(), shares.created, authorizer.requests)
 	}

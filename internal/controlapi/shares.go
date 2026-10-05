@@ -68,7 +68,7 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 			prefixes[index] = prefix.String()
 		}
 		decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-			Operation: authorization.OperationPublicURLUpdate, TeamID: route.TeamID,
+			Operation: authorization.OperationShareCreate, TeamID: route.TeamID,
 			PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
 			CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 			Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,

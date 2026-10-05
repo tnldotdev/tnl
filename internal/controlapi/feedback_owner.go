@@ -26,7 +26,7 @@ func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, princ
 		prefixes[index] = prefix.String()
 	}
 	decision, err := h.authorizer.Authorize(ctx, authorization.Request{
-		AccessToken: token, Operation: authorization.OperationPublicURLUpdate,
+		AccessToken: token, Operation: authorization.OperationFeedbackManage,
 		TeamID: route.TeamID, PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
 		Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
