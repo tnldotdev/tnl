@@ -46,6 +46,7 @@ const (
 	TunnelPrefix                     = "tun_"
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
+	WorktreePreviewPrefix            = "wp_"
 )
 
 // New returns a type prefix followed by 22 uniformly sampled alphanumeric characters.

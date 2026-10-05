@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/pressly/goose/v3"
 	modernsqlite "modernc.org/sqlite"
@@ -37,8 +38,8 @@ func Open(ctx context.Context, path string, migrations fs.FS) (*sql.DB, error) {
 	return db, nil
 }
 
-// OpenReadOnly opens an existing database with the exact expected schema version.
-func OpenReadOnly(ctx context.Context, path string, supportedVersion int64) (*sql.DB, error) {
+// OpenReadOnly opens an existing database with one of the expected schema versions.
+func OpenReadOnly(ctx context.Context, path string, supportedVersions ...int64) (*sql.DB, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("sqlite: stat database: %w", err)
 	}
@@ -56,7 +57,7 @@ func OpenReadOnly(ctx context.Context, path string, supportedVersion int64) (*sq
 		db.Close()
 		return nil, fmt.Errorf("sqlite: read schema version: %w", err)
 	}
-	if version != supportedVersion {
+	if !slices.Contains(supportedVersions, version) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite: unsupported database schema version %d", version)
 	}

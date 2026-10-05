@@ -83,3 +83,11 @@ type ServerProfile struct {
 	CreatedAt      int64
 	LastUsedAt     int64
 }
+
+type WorktreePreview struct {
+	ServerOrigin      string
+	TeamID            string
+	ProjectRoot       string
+	WorktreePreviewID string
+	UpdatedAt         int64
+}
