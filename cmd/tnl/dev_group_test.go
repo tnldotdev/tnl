@@ -54,3 +54,17 @@ func TestCoordinateDevPropagatesCallerCancellation(t *testing.T) {
 		t.Fatalf("cancellation cause = %v", err)
 	}
 }
+
+func TestCoordinateDevSingleServiceUsesSameRunLoop(t *testing.T) {
+	called := 0
+	err := coordinateDev(t.Context(), []string{"web"}, func(_ context.Context, service string) error {
+		if service != "web" {
+			t.Errorf("started %q instead of web", service)
+		}
+		called++
+		return nil
+	})
+	if err != nil || called != 1 {
+		t.Fatalf("single configured service = %d runs, %v", called, err)
+	}
+}
