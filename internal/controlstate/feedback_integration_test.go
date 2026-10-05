@@ -16,7 +16,8 @@ func feedbackTestCheckout(t *testing.T) json.RawMessage {
 	t.Helper()
 	digest := sha256.Sum256([]byte("checkout"))
 	marker, err := json.Marshal(CheckoutMarker{
-		HeadCommit: strings.Repeat("a", 40), Branch: "perf",
+		SchemaVersion: 1,
+		HeadCommit:    strings.Repeat("a", 40), Branch: "perf",
 		ChangedFiles: []FeedbackChangedFile{{Path: "apps/web/Profile.tsx", Status: "modified", ContentSHA256: "sha256:" + hex.EncodeToString(digest[:])}},
 		Fingerprint:  "sha256:" + hex.EncodeToString(digest[:]), Complete: new(true),
 	})
@@ -64,13 +65,13 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile",
 		ReportText: "Save says it worked, but changes disappear after reload.", AuthorDisplayName: "Sam",
-		Element:          json.RawMessage(`{"kind":"element","role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"}`),
-		Evidence:         json.RawMessage(`{"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
+		Anchor:           json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
+		Evidence:         json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
 		CheckoutAtReport: marker, IdempotencyKey: "first-report", Actor: actor,
 	}
 	thread, err := database.CreateFeedback(t.Context(), f.authentication(), request, now)
-	if err != nil || thread.ID == "" || thread.State != FeedbackOpen || !strings.Contains(string(thread.Element), "data-testid") ||
-		strings.Contains(string(thread.Element), "onclick") || strings.Contains(string(thread.Element), "<script>") {
+	if err != nil || thread.ID == "" || thread.SchemaVersion != 1 || thread.State != FeedbackOpen || !strings.Contains(string(thread.Evidence), "data-testid") ||
+		strings.Contains(string(thread.Evidence), "onclick") || strings.Contains(string(thread.Evidence), "<script>") {
 		t.Fatalf("submitted report = %+v, %v", thread, err)
 	}
 	firstPage, err := database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, 0)
@@ -192,8 +193,8 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 			<-started
 			_, err := f.database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
 				PreviewID: preview.ID, Service: "web", PagePath: "/settings",
-				ReportText: "The settings save is inconsistent", Element: json.RawMessage(`{"kind":"page"}`),
-				Evidence:         json.RawMessage(`{"actions":[],"failed_requests":[]}`),
+				ReportText:       "The settings save is inconsistent",
+				Evidence:         json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 				CheckoutAtReport: marker, IdempotencyKey: key,
 				Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true},
 			}, f.now)

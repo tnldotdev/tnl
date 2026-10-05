@@ -57,6 +57,7 @@ type PublicURLStore interface {
 	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
 	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLUpdateRequest, time.Time) (controlstate.PublicURL, error)
 	GetPublicURLForAuthorization(context.Context, string) (controlstate.PublicURL, error)
+	GetPublicURLForFeedbackAuthorization(context.Context, string) (controlstate.PublicURL, error)
 	GetPublicURLForPublishRunAuthorization(context.Context, string, string) (controlstate.PublicURL, error)
 	DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLDeleteRequest, time.Time) error
 	CreatePublishRun(context.Context, controlstate.PublishRunRequest, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
@@ -127,6 +128,7 @@ type ShareAccessStore interface {
 }
 
 type FeedbackStore interface {
+	CreatePublishRunPreview(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.Preview, error)
 	CreateFeedback(context.Context, controlstate.PublishRunAuthentication, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
 	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)
 	GetFeedback(context.Context, string) (controlstate.FeedbackThread, error)

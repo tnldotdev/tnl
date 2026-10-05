@@ -188,6 +188,7 @@ type ControlDomain struct {
 
 type ControlFeedbackEvent struct {
 	Cursor         int64
+	SchemaVersion  int16
 	FeedbackID     string
 	TeamID         string
 	EventType      string
@@ -208,6 +209,7 @@ type ControlFeedbackEventClock struct {
 
 type ControlFeedbackThread struct {
 	ID                string
+	SchemaVersion     int16
 	PreviewID         string
 	TeamID            string
 	PublicURLID       string
@@ -217,7 +219,7 @@ type ControlFeedbackThread struct {
 	PagePath          string
 	ReportText        string
 	AuthorDisplayName pgtype.Text
-	Element           []byte
+	Anchor            []byte
 	Evidence          []byte
 	CheckoutAtReport  []byte
 	State             string
@@ -390,6 +392,7 @@ type ControlPreview struct {
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	CreatedAt           pgtype.Timestamptz
+	DemoPublishRunID    pgtype.Text
 }
 
 type ControlPreviewPublicUrl struct {

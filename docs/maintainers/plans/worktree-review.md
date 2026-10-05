@@ -110,7 +110,10 @@ Each feedback thread stores `preview_id`, the exact `public_url_id`, the page
 path, service, and publish run number where the report was made. Its original
 report contains the reviewer's text, creation time, and optional unverified
 display name. The selected element and submitted context belong to that
-immutable report. A page-level report uses `element.kind: "page"`.
+immutable report. A page-level report has no anchor. Anchors carry a version,
+ordered CSS selectors, and fractional x/y coordinates; a text selection adds
+start/end text-node boundaries and the original quote. Element HTML belongs in
+evidence, separate from placement. Changed text does not invalidate a pin.
 
 At submission, the local publisher records `checkout_at_report`: the Git
 `HEAD` commit, branch, changed project-relative file paths and statuses,
@@ -169,6 +172,12 @@ tnl feedback resolve FEEDBACK_ID [--message "..."]
 tnl feedback reopen FEEDBACK_ID [--message "..."]
 ```
 
+Project feedback remains available after an ephemeral public URL ends; its
+recorded ownership and current team permissions authorize CLI access. Demo
+feedback belongs to one publish run and is cleaned up when that run closes,
+including expiry after a crash. The existing demo page stays unchanged and
+automatically receives the normal toolbar as an overlay.
+
 List and inspect work after the tunnel stops. Inspect returns the durable
 thread and adds `local_worktree` from the implementer's machine: its path,
 whether it matches the preview, and whether its current checkout matches
@@ -195,14 +204,19 @@ stays in place when an update is appended:
     "author": { "display_name": "Sam", "verified": false },
     "created_at": "2026-10-04T14:32:18Z"
   },
-  "element": {
-    "kind": "element",
-    "role": "button",
-    "label": "Save changes",
-    "test_id": "save-profile",
-    "html": "<button data-testid=\"save-profile\">Save changes</button>"
+  "anchor": {
+    "schema_version": 1,
+    "selectors": ["[data-testid=\"save-profile\"]"],
+    "x": 0.5,
+    "y": 0.5
   },
   "evidence": {
+    "schema_version": 1,
+    "element": {
+      "role": "button",
+      "label": "Save changes",
+      "html": "<button data-testid=\"save-profile\">Save changes</button>"
+    },
     "actions": [
       { "type": "navigation", "path": "/settings/profile" },
       { "type": "click", "label": "Save changes", "test_id": "save-profile" }
@@ -212,6 +226,7 @@ stays in place when an update is appended:
     ]
   },
   "checkout_at_report": {
+    "schema_version": 1,
     "head_commit": "0123456789abcdef0123456789abcdef01234567",
     "branch": "perf",
     "changed_files": [
@@ -226,16 +241,19 @@ stays in place when an update is appended:
   },
   "events": [
     {
+      "schema_version": 1,
       "cursor": 40,
       "type": "thread.created",
       "at": "2026-10-04T14:32:18Z"
     },
     {
+      "schema_version": 1,
       "cursor": 41,
       "type": "update",
       "at": "2026-10-04T14:40:00Z",
       "text": "Updated the save handler; please try again.",
       "checkout_marker": {
+        "schema_version": 1,
         "head_commit": "0123456789abcdef0123456789abcdef01234567",
         "fingerprint": "sha256:..."
       }

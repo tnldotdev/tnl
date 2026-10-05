@@ -28,11 +28,13 @@ func feedbackReport(thread controlstate.FeedbackThread) controlv1.FeedbackReport
 }
 
 func feedbackThreadResponse(thread controlstate.FeedbackThread) (controlv1.FeedbackThread, error) {
-	var element controlv1.FeedbackElement
+	var anchor *controlv1.FeedbackAnchor
 	var evidence controlv1.FeedbackEvidence
 	var marker controlv1.CheckoutMarker
-	if err := json.Unmarshal(thread.Element, &element); err != nil {
-		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored feedback element: %w", err)
+	if len(thread.Anchor) != 0 {
+		if err := json.Unmarshal(thread.Anchor, &anchor); err != nil {
+			return controlv1.FeedbackThread{}, fmt.Errorf("decode stored feedback element: %w", err)
+		}
 	}
 	if err := json.Unmarshal(thread.Evidence, &evidence); err != nil {
 		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored feedback evidence: %w", err)
@@ -41,26 +43,29 @@ func feedbackThreadResponse(thread controlstate.FeedbackThread) (controlv1.Feedb
 		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored checkout marker: %w", err)
 	}
 	return controlv1.FeedbackThread{
-		SchemaVersion: 1, Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
+		SchemaVersion: controlv1.ReviewSchemaVersion(thread.SchemaVersion), Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
 		Scope: feedbackScope(thread), Report: feedbackReport(thread),
-		Element: element, Evidence: evidence, CheckoutAtReport: marker,
+		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
 	}, nil
 }
 
 func feedbackThreadSummary(thread controlstate.FeedbackThread) (controlv1.FeedbackThreadSummary, error) {
-	var element controlv1.FeedbackElementSummary
-	if err := json.Unmarshal(thread.Element, &element); err != nil {
-		return controlv1.FeedbackThreadSummary{}, fmt.Errorf("decode stored feedback element: %w", err)
+	var anchor *controlv1.FeedbackAnchor
+	if len(thread.Anchor) != 0 {
+		if err := json.Unmarshal(thread.Anchor, &anchor); err != nil {
+			return controlv1.FeedbackThreadSummary{}, fmt.Errorf("decode stored feedback element: %w", err)
+		}
 	}
 	return controlv1.FeedbackThreadSummary{
 		Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
-		Scope: feedbackScope(thread), Report: feedbackReport(thread), Element: element,
+		SchemaVersion: controlv1.ReviewSchemaVersion(thread.SchemaVersion), Scope: feedbackScope(thread), Report: feedbackReport(thread), Anchor: anchor,
 	}, nil
 }
 
 func feedbackThreadPageResponse(page controlstate.FeedbackThreadPage) (controlv1.FeedbackThreadPage, error) {
 	result := controlv1.FeedbackThreadPage{
-		Threads: make([]controlv1.FeedbackThreadSummary, 0, len(page.Threads)), EventCursor: int64(page.EventCursor),
+		SchemaVersion: controlstate.ReviewSchemaVersion,
+		Threads:       make([]controlv1.FeedbackThreadSummary, 0, len(page.Threads)), EventCursor: int64(page.EventCursor),
 	}
 	for _, thread := range page.Threads {
 		summary, err := feedbackThreadSummary(thread)
@@ -77,7 +82,8 @@ func feedbackThreadPageResponse(page controlstate.FeedbackThreadPage) (controlv1
 
 func feedbackEventResponse(event controlstate.FeedbackEvent) (controlv1.FeedbackEvent, error) {
 	result := controlv1.FeedbackEvent{
-		Cursor: int64(event.Cursor), FeedbackId: event.FeedbackID,
+		SchemaVersion: controlv1.ReviewSchemaVersion(event.SchemaVersion),
+		Cursor:        int64(event.Cursor), FeedbackId: event.FeedbackID,
 		Type: controlv1.FeedbackEventType(event.Type), Actor: controlv1.FeedbackEventActor(event.ActorKind), At: event.At,
 	}
 	if event.Text != "" {
@@ -102,7 +108,8 @@ func feedbackEventResponse(event controlstate.FeedbackEvent) (controlv1.Feedback
 
 func feedbackEventPageResponse(page controlstate.FeedbackEventPage) (controlv1.FeedbackEventPage, error) {
 	result := controlv1.FeedbackEventPage{
-		Events: make([]controlv1.FeedbackEvent, 0, len(page.Events)), EventCursor: int64(page.EventCursor),
+		SchemaVersion: controlstate.ReviewSchemaVersion,
+		Events:        make([]controlv1.FeedbackEvent, 0, len(page.Events)), EventCursor: int64(page.EventCursor),
 	}
 	for _, event := range page.Events {
 		converted, err := feedbackEventResponse(event)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestFeedbackEvidenceDropsExecutableMarkupAndFormValues(t *testing.T) {
-	element, err := normalizeFeedbackElement(json.RawMessage(`{"kind":"element","role":"button","label":"Save","html":"<div onclick='steal()'><button data-testid='save' formaction='javascript:steal()'>Save</button><input type='password' value='secret'><script>alert('secret')</script><textarea>typed secret</textarea></div>"}`))
+	element, err := normalizeFeedbackElement(json.RawMessage(`{"role":"button","label":"Save","html":"<div onclick='steal()'><button data-testid='save' formaction='javascript:steal()'>Save</button><input type='password' value='secret'><script>alert('secret')</script><textarea>typed secret</textarea></div>"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestFeedbackEvidenceDropsExecutableMarkupAndFormValues(t *testing.T) {
 	if !strings.Contains(string(element), `data-testid`) || !strings.Contains(string(element), "Save") {
 		t.Fatalf("sanitizer discarded meaningful element context: %s", element)
 	}
-	if _, err := normalizeFeedbackEvidence(json.RawMessage(`{"actions":[],"failed_requests":[{"method":"GET","path":"/api/users?token=secret","status":500,"duration_ms":20}]}`)); err == nil {
+	if _, err := normalizeFeedbackEvidence(json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[{"method":"GET","path":"/api/users?token=secret","status":500,"duration_ms":20}]}`)); err == nil {
 		t.Fatal("failed request query carrying credentials was stored")
 	}
 }
@@ -72,5 +72,34 @@ func TestFeedbackCheckoutMarkerStoresHashesAndRejectsPathsOutsideProject(t *test
 		if _, err := normalizeCheckoutMarker(encoded); err == nil {
 			t.Fatalf("checkout marker escaped project with path %q", path)
 		}
+	}
+}
+
+func TestFeedbackAnchorVersionAndBounds(t *testing.T) {
+	valid := json.RawMessage(`{"schema_version":1,"selectors":["#intro","body>p:first-of-type"],"x":0.25,"y":0.75,"selection":{"start":{"selectors":["#intro"],"text_node":0,"offset":1},"end":{"selectors":["#intro>strong"],"text_node":0,"offset":4},"text":"orl"}}`)
+	if _, err := normalizeFeedbackAnchor(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(map[string]any){
+		func(value map[string]any) { delete(value, "schema_version") },
+		func(value map[string]any) { value["schema_version"] = 2 },
+		func(value map[string]any) { value["x"] = 1.1 },
+		func(value map[string]any) { value["y"] = -0.1 },
+		func(value map[string]any) { value["selectors"] = []string{} },
+		func(value map[string]any) { value["selectors"] = []string{"#a", "#a"} },
+		func(value map[string]any) {
+			value["selection"].(map[string]any)["start"].(map[string]any)["offset"] = -1
+		},
+	} {
+		var value map[string]any
+		_ = json.Unmarshal(valid, &value)
+		change(value)
+		encoded, _ := json.Marshal(value)
+		if _, err := normalizeFeedbackAnchor(encoded); err == nil {
+			t.Fatalf("invalid anchor accepted: %s", encoded)
+		}
+	}
+	if value, err := normalizeFeedbackAnchor(nil); err != nil || value != nil {
+		t.Fatal("page feedback requires no anchor")
 	}
 }

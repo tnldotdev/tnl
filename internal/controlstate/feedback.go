@@ -28,6 +28,22 @@ var (
 
 type FeedbackThreadState string
 
+// feedback authorization includes retained public URL tombstones, without
+// exposing them through ordinary public URL reads or publishing operations.
+func (d *Database) GetPublicURLForFeedbackAuthorization(ctx context.Context, id string) (PublicURL, error) {
+	if err := d.requireOpen(); err != nil {
+		return PublicURL{}, err
+	}
+	row, err := controlstatedb.New(d.pool).GetFeedbackPublicURL(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PublicURL{}, ErrPublicURLNotFound
+	}
+	if err != nil {
+		return PublicURL{}, err
+	}
+	return publicURLFromModel(row, ""), nil
+}
+
 const (
 	FeedbackOpen     FeedbackThreadState = "open"
 	FeedbackResolved FeedbackThreadState = "resolved"
@@ -55,6 +71,7 @@ type FeedbackActor struct {
 }
 
 type FeedbackThread struct {
+	SchemaVersion     int
 	ID                string
 	PreviewID         string
 	TeamID            string
@@ -66,7 +83,7 @@ type FeedbackThread struct {
 	State             FeedbackThreadState
 	ReportText        string
 	AuthorDisplayName string
-	Element           json.RawMessage
+	Anchor            json.RawMessage
 	Evidence          json.RawMessage
 	CheckoutAtReport  json.RawMessage
 	CreatedAt         time.Time
@@ -74,6 +91,7 @@ type FeedbackThread struct {
 }
 
 type FeedbackEvent struct {
+	SchemaVersion  int
 	Cursor         uint64
 	FeedbackID     string
 	TeamID         string
@@ -104,7 +122,7 @@ type CreateFeedbackRequest struct {
 	PagePath          string
 	ReportText        string
 	AuthorDisplayName string
-	Element           json.RawMessage
+	Anchor            json.RawMessage
 	Evidence          json.RawMessage
 	CheckoutAtReport  json.RawMessage
 	IdempotencyKey    string
@@ -133,7 +151,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		return FeedbackThread{}, ErrFeedbackInvalid
 	}
 	var err error
-	request.Element, err = normalizeFeedbackElement(request.Element)
+	request.Anchor, err = normalizeFeedbackAnchor(request.Anchor)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
@@ -150,9 +168,9 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	}
 	digestInput, err := json.Marshal(struct {
 		PreviewID, Service, PagePath, ReportText, AuthorDisplayName string
-		Element, Evidence, CheckoutAtReport                         json.RawMessage
+		Anchor, Evidence, CheckoutAtReport                          json.RawMessage
 	}{request.PreviewID, request.Service, request.PagePath, request.ReportText, request.AuthorDisplayName,
-		request.Element, request.Evidence, request.CheckoutAtReport})
+		request.Anchor, request.Evidence, request.CheckoutAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
 	}
@@ -186,7 +204,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		PublicURLID: scope.PublicURLID, PublishRunID: auth.PublishRunID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath,
 		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
-		Element: request.Element, Evidence: request.Evidence, CheckoutAtReport: request.CheckoutAtReport,
+		Anchor: request.Anchor, Evidence: request.Evidence, CheckoutAtReport: request.CheckoutAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:],
 	})
@@ -328,7 +346,7 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 		return "", ErrFeedbackAccess
 	}
 	route, err := queries.LockPublicURLForRun(ctx, thread.PublicURLID)
-	if err != nil || route.TeamID != thread.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
+	if err != nil || route.TeamID != thread.TeamID ||
 		route.MutationRevision != int64(actor.ExpectedMutationRevision) || route.PolicyRevision > revision {
 		return "", ErrFeedbackAccess
 	}
@@ -459,7 +477,7 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 		PublishRunID: row.PublishRunID, PublishRunNumber: uint64(row.PublishRunNumber),
 		Service: row.Service, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
 		ReportText: row.ReportText, AuthorDisplayName: row.AuthorDisplayName.String,
-		Element: slices.Clone(row.Element), Evidence: slices.Clone(row.Evidence),
+		SchemaVersion: int(row.SchemaVersion), Anchor: slices.Clone(row.Anchor), Evidence: slices.Clone(row.Evidence),
 		CheckoutAtReport: slices.Clone(row.CheckoutAtReport),
 		CreatedAt:        row.CreatedAt.Time, StateUpdatedAt: row.StateUpdatedAt.Time,
 	}
@@ -467,7 +485,8 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 
 func feedbackEventFromRow(row controlstatedb.ControlFeedbackEvent) FeedbackEvent {
 	return FeedbackEvent{
-		Cursor: uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID,
+		SchemaVersion: int(row.SchemaVersion),
+		Cursor:        uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID,
 		Type: FeedbackEventType(row.EventType), ActorKind: row.ActorKind, ActorReference: row.ActorReference,
 		Text: row.Text.String, Evidence: slices.Clone(row.Evidence), CheckoutMarker: slices.Clone(row.CheckoutMarker),
 		At: row.OccurredAt.Time,

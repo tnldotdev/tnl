@@ -7,6 +7,7 @@ import (
 	"errors"
 	"html"
 	"io"
+	"math"
 	"path/filepath"
 	"strings"
 
@@ -15,11 +16,64 @@ import (
 )
 
 type FeedbackElement struct {
-	Kind   string `json:"kind"`
 	Role   string `json:"role,omitempty"`
 	Label  string `json:"label,omitempty"`
 	TestID string `json:"test_id,omitempty"`
 	HTML   string `json:"html,omitempty"`
+}
+
+type FeedbackTextBoundary struct {
+	Selectors []string `json:"selectors"`
+	TextNode  int      `json:"text_node"`
+	Offset    int      `json:"offset"`
+}
+
+type FeedbackAnchor struct {
+	SchemaVersion int      `json:"schema_version"`
+	Selectors     []string `json:"selectors"`
+	X             float64  `json:"x"`
+	Y             float64  `json:"y"`
+	Selection     *struct {
+		Start FeedbackTextBoundary `json:"start"`
+		End   FeedbackTextBoundary `json:"end"`
+		Text  string               `json:"text"`
+	} `json:"selection,omitempty"`
+}
+
+func validFeedbackSelectors(selectors []string) bool {
+	if len(selectors) < 1 || len(selectors) > 6 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, selector := range selectors {
+		if !validFeedbackText(selector, 512) || seen[selector] {
+			return false
+		}
+		seen[selector] = true
+	}
+	return true
+}
+
+func normalizeFeedbackAnchor(value json.RawMessage) (json.RawMessage, error) {
+	if len(value) == 0 || string(value) == "null" {
+		return nil, nil
+	}
+	anchor, err := decodeFeedbackObject[FeedbackAnchor](value, 16384)
+	if err != nil || anchor.SchemaVersion != ReviewSchemaVersion || !validFeedbackSelectors(anchor.Selectors) ||
+		math.IsNaN(anchor.X) || math.IsNaN(anchor.Y) || anchor.X < 0 || anchor.X > 1 || anchor.Y < 0 || anchor.Y > 1 {
+		return nil, ErrFeedbackInvalid
+	}
+	if anchor.Selection != nil {
+		for _, boundary := range []FeedbackTextBoundary{anchor.Selection.Start, anchor.Selection.End} {
+			if !validFeedbackSelectors(boundary.Selectors) || boundary.TextNode < 0 || boundary.TextNode > 65535 || boundary.Offset < 0 || boundary.Offset > 1048576 {
+				return nil, ErrFeedbackInvalid
+			}
+		}
+		if !validFeedbackText(anchor.Selection.Text, 2000) {
+			return nil, ErrFeedbackInvalid
+		}
+	}
+	return json.Marshal(anchor)
 }
 
 type FeedbackAction struct {
@@ -37,6 +91,8 @@ type FeedbackFailedRequest struct {
 }
 
 type FeedbackEvidence struct {
+	SchemaVersion  int                     `json:"schema_version"`
+	Element        *FeedbackElement        `json:"element,omitempty"`
 	Actions        []FeedbackAction        `json:"actions"`
 	FailedRequests []FeedbackFailedRequest `json:"failed_requests"`
 }
@@ -48,11 +104,12 @@ type FeedbackChangedFile struct {
 }
 
 type CheckoutMarker struct {
-	HeadCommit   string                `json:"head_commit"`
-	Branch       string                `json:"branch"`
-	ChangedFiles []FeedbackChangedFile `json:"changed_files"`
-	Fingerprint  string                `json:"fingerprint"`
-	Complete     *bool                 `json:"complete"`
+	SchemaVersion int                   `json:"schema_version"`
+	HeadCommit    string                `json:"head_commit"`
+	Branch        string                `json:"branch"`
+	ChangedFiles  []FeedbackChangedFile `json:"changed_files"`
+	Fingerprint   string                `json:"fingerprint"`
+	Complete      *bool                 `json:"complete"`
 }
 
 func decodeFeedbackObject[T any](value json.RawMessage, maxBytes int) (T, error) {
@@ -73,17 +130,15 @@ func decodeFeedbackObject[T any](value json.RawMessage, maxBytes int) (T, error)
 
 func normalizeFeedbackElement(value json.RawMessage) (json.RawMessage, error) {
 	element, err := decodeFeedbackObject[FeedbackElement](value, 4096)
-	if err != nil || element.Kind != "page" && element.Kind != "element" ||
+	if err != nil ||
 		len(element.Role) > 128 || len(element.Label) > 256 || len(element.TestID) > 128 {
 		return nil, ErrFeedbackInvalid
 	}
-	if element.Kind == "element" {
+	if element.HTML != "" {
 		element.HTML, err = sanitizeElementHTML(element.HTML)
 		if err != nil || element.HTML == "" {
 			return nil, ErrFeedbackInvalid
 		}
-	} else if element.HTML != "" {
-		return nil, ErrFeedbackInvalid
 	}
 	result, err := json.Marshal(element)
 	if err != nil || len(result) > 4096 {
@@ -94,8 +149,18 @@ func normalizeFeedbackElement(value json.RawMessage) (json.RawMessage, error) {
 
 func normalizeFeedbackEvidence(value json.RawMessage) (json.RawMessage, error) {
 	evidence, err := decodeFeedbackObject[FeedbackEvidence](value, 16384)
-	if err != nil || len(evidence.Actions) > 20 || len(evidence.FailedRequests) > 20 {
+	if err != nil || evidence.SchemaVersion != ReviewSchemaVersion || len(evidence.Actions) > 20 || len(evidence.FailedRequests) > 20 {
 		return nil, ErrFeedbackInvalid
+	}
+	if evidence.Element != nil {
+		encoded, _ := json.Marshal(evidence.Element)
+		normalized, err := normalizeFeedbackElement(encoded)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(normalized, evidence.Element); err != nil {
+			return nil, ErrFeedbackInvalid
+		}
 	}
 	for _, action := range evidence.Actions {
 		if action.Type != "navigation" && action.Type != "click" && action.Type != "submit" ||
@@ -120,7 +185,7 @@ func normalizeFeedbackEvidence(value json.RawMessage) (json.RawMessage, error) {
 
 func normalizeCheckoutMarker(value json.RawMessage) (json.RawMessage, error) {
 	marker, err := decodeFeedbackObject[CheckoutMarker](value, 16384)
-	if err != nil || marker.Complete == nil || len(marker.Branch) > 128 || strings.ContainsAny(marker.Branch, "\x00\r\n") || len(marker.ChangedFiles) > 64 ||
+	if err != nil || marker.SchemaVersion != ReviewSchemaVersion || marker.Complete == nil || len(marker.Branch) > 128 || strings.ContainsAny(marker.Branch, "\x00\r\n") || len(marker.ChangedFiles) > 64 ||
 		!validSHA256Text(marker.Fingerprint) || marker.HeadCommit != "" && !validGitCommit(marker.HeadCommit) ||
 		*marker.Complete && marker.HeadCommit == "" {
 		return nil, ErrFeedbackInvalid

@@ -45,7 +45,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		writeControlStateProblem(response, "verify feedback reviewer", err)
 		return
 	}
-	element, err := json.Marshal(body.Element)
+	anchor, err := json.Marshal(body.Anchor)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback element")
 		return
@@ -67,7 +67,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 	thread, err := h.feedback.CreateFeedback(request.Context(), auth, controlstate.CreateFeedbackRequest{
 		PreviewID: body.PreviewId, Service: body.Service, PagePath: body.PagePath,
 		ReportText: body.Report.Text, AuthorDisplayName: displayName,
-		Element: element, Evidence: evidence, CheckoutAtReport: marker,
+		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
 	}, time.Now())
 	if err != nil {

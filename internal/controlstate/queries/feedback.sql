@@ -12,13 +12,13 @@ FROM control.feedback_event_clock WHERE id = 1;
 INSERT INTO control.feedback_threads (
     id, preview_id, team_id, public_url_id, publish_run_id,
     publish_run_number, service, page_path, report_text, author_display_name,
-    element, evidence, checkout_at_report, created_at, state_updated_at,
+    anchor, evidence, checkout_at_report, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
     sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(public_url_id),
     sqlc.arg(publish_run_id), sqlc.arg(publish_run_number), sqlc.arg(service),
     sqlc.arg(page_path), sqlc.arg(report_text), sqlc.narg(author_display_name),
-    convert_from(sqlc.arg(element)::bytea, 'UTF8')::jsonb,
+    convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(evidence)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(checkout_at_report)::bytea, 'UTF8')::jsonb,
     sqlc.arg(created_at), sqlc.arg(state_updated_at),
@@ -30,6 +30,9 @@ RETURNING *;
 
 -- name: GetFeedbackThread :one
 SELECT * FROM control.feedback_threads WHERE id = $1;
+
+-- name: GetFeedbackPublicURL :one
+SELECT * FROM control.public_urls WHERE id = $1;
 
 -- name: LockFeedbackThread :one
 SELECT * FROM control.feedback_threads WHERE id = $1 FOR UPDATE;
@@ -100,7 +103,26 @@ WHERE run.id = sqlc.arg(publish_run_id)
   AND run.publish_run_number = sqlc.arg(publish_run_number)
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.state IN ('starting', 'ready')
-  AND url.lifecycle_state = 'enabled';
+   AND url.lifecycle_state = 'enabled'
+FOR UPDATE OF run;
+
+-- name: CreatePublishRunPreview :one
+INSERT INTO control.previews (id, team_id, created_by_identity_id, idempotency_key, created_at, demo_publish_run_id)
+SELECT sqlc.arg(id), u.team_id, u.created_by_identity_id, 'demo/' || r.id,
+    sqlc.arg(now)::timestamptz, r.id
+FROM control.publish_runs r JOIN control.public_urls u ON u.id = r.public_url_id
+WHERE r.id = sqlc.arg(publish_run_id) AND r.publish_run_number = sqlc.arg(publish_run_number)
+    AND r.closed_at IS NULL AND r.publisher_expires_at > sqlc.arg(now)
+    AND u.ephemeral AND u.lifecycle_state = 'enabled'
+ON CONFLICT (demo_publish_run_id) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+RETURNING *;
+
+-- name: AddPublishRunPreviewURL :exec
+INSERT INTO control.preview_public_urls (preview_id, team_id, public_url_id, added_at)
+SELECT p.id, p.team_id, r.public_url_id, sqlc.arg(now)::timestamptz
+FROM control.previews p JOIN control.publish_runs r ON r.id = p.demo_publish_run_id
+WHERE p.id = sqlc.arg(preview_id)
+ON CONFLICT (preview_id, public_url_id) DO NOTHING;
 
 -- name: ReviewerShareCookieValid :one
 SELECT share.id FROM control.shares AS share

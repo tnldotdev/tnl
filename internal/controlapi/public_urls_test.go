@@ -325,6 +325,10 @@ type publicURLMutationStoreStub struct {
 	updates, sessions, deletes int
 }
 
+func (s *publicURLMutationStoreStub) GetPublicURLForFeedbackAuthorization(ctx context.Context, id string) (controlstate.PublicURL, error) {
+	return s.GetPublicURLForAuthorization(ctx, id)
+}
+
 func (s *publicURLMutationStoreStub) ListAuthorizedPublicURLs(
 	_ context.Context,
 	teamID, cursor string,

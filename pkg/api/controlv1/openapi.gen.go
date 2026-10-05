@@ -191,42 +191,6 @@ func (e DNSRecordType) Valid() bool {
 	}
 }
 
-// Defines values for FeedbackElementKind.
-const (
-	FeedbackElementKindElement FeedbackElementKind = "element"
-	FeedbackElementKindPage    FeedbackElementKind = "page"
-)
-
-// Valid indicates whether the value is a known member of the FeedbackElementKind enum.
-func (e FeedbackElementKind) Valid() bool {
-	switch e {
-	case FeedbackElementKindElement:
-		return true
-	case FeedbackElementKindPage:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for FeedbackElementSummaryKind.
-const (
-	FeedbackElementSummaryKindElement FeedbackElementSummaryKind = "element"
-	FeedbackElementSummaryKindPage    FeedbackElementSummaryKind = "page"
-)
-
-// Valid indicates whether the value is a known member of the FeedbackElementSummaryKind enum.
-func (e FeedbackElementSummaryKind) Valid() bool {
-	switch e {
-	case FeedbackElementSummaryKindElement:
-		return true
-	case FeedbackElementSummaryKindPage:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -287,21 +251,6 @@ func (e FeedbackEvidenceActionsType) Valid() bool {
 	case Navigation:
 		return true
 	case Submit:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for FeedbackThreadSchemaVersion.
-const (
-	N1 FeedbackThreadSchemaVersion = 1
-)
-
-// Valid indicates whether the value is a known member of the FeedbackThreadSchemaVersion enum.
-func (e FeedbackThreadSchemaVersion) Valid() bool {
-	switch e {
-	case N1:
 		return true
 	default:
 		return false
@@ -786,6 +735,9 @@ type CheckoutMarker struct {
 	Complete    bool   `json:"complete"`
 	Fingerprint string `json:"fingerprint"`
 	HeadCommit  string `json:"head_commit"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
 // CheckoutMarkerChangedFilesStatus defines model for CheckoutMarker.ChangedFiles.Status.
@@ -836,8 +788,8 @@ type CreateDNSAuthorityRequest struct {
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
+	Anchor           *FeedbackAnchor        `json:"anchor,omitempty"`
 	CheckoutAtReport CheckoutMarker         `json:"checkout_at_report"`
-	Element          FeedbackElement        `json:"element"`
 	Evidence         FeedbackEvidence       `json:"evidence"`
 	PagePath         string                 `json:"page_path"`
 	PreviewId        PreviewID              `json:"preview_id"`
@@ -908,28 +860,27 @@ type EnableShareAccessRequest struct {
 	PublishRunNumber int64     `json:"publish_run_number"`
 }
 
+// FeedbackAnchor defines model for FeedbackAnchor.
+type FeedbackAnchor struct {
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Selection     *struct {
+		End   FeedbackTextBoundary `json:"end"`
+		Start FeedbackTextBoundary `json:"start"`
+		Text  string               `json:"text"`
+	} `json:"selection,omitempty"`
+	Selectors FeedbackSelectors `json:"selectors"`
+	X         float32           `json:"x"`
+	Y         float32           `json:"y"`
+}
+
 // FeedbackElement defines model for FeedbackElement.
 type FeedbackElement struct {
-	Html   *string             `json:"html,omitempty"`
-	Kind   FeedbackElementKind `json:"kind"`
-	Label  *string             `json:"label,omitempty"`
-	Role   *string             `json:"role,omitempty"`
-	TestId *string             `json:"test_id,omitempty"`
+	Html   *string `json:"html,omitempty"`
+	Label  *string `json:"label,omitempty"`
+	Role   *string `json:"role,omitempty"`
+	TestId *string `json:"test_id,omitempty"`
 }
-
-// FeedbackElementKind defines model for FeedbackElement.Kind.
-type FeedbackElementKind string
-
-// FeedbackElementSummary defines model for FeedbackElementSummary.
-type FeedbackElementSummary struct {
-	Kind   FeedbackElementSummaryKind `json:"kind"`
-	Label  *string                    `json:"label,omitempty"`
-	Role   *string                    `json:"role,omitempty"`
-	TestId *string                    `json:"test_id,omitempty"`
-}
-
-// FeedbackElementSummaryKind defines model for FeedbackElementSummary.Kind.
-type FeedbackElementSummaryKind string
 
 // FeedbackEvent defines model for FeedbackEvent.
 type FeedbackEvent struct {
@@ -939,8 +890,11 @@ type FeedbackEvent struct {
 	Cursor         int64              `json:"cursor"`
 	Evidence       *FeedbackEvidence  `json:"evidence,omitempty"`
 	FeedbackId     FeedbackID         `json:"feedback_id"`
-	Text           *string            `json:"text,omitempty"`
-	Type           FeedbackEventType  `json:"type"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Text          *string             `json:"text,omitempty"`
+	Type          FeedbackEventType   `json:"type"`
 }
 
 // FeedbackEventActor defines model for FeedbackEvent.Actor.
@@ -951,6 +905,9 @@ type FeedbackEventPage struct {
 	EventCursor int64           `json:"event_cursor"`
 	Events      []FeedbackEvent `json:"events"`
 	NextCursor  *int64          `json:"next_cursor,omitempty"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
 // FeedbackEventType defines model for FeedbackEventType.
@@ -964,12 +921,16 @@ type FeedbackEvidence struct {
 		TestId *string                     `json:"test_id,omitempty"`
 		Type   FeedbackEvidenceActionsType `json:"type"`
 	} `json:"actions"`
+	Element        *FeedbackElement `json:"element,omitempty"`
 	FailedRequests []struct {
 		DurationMs int    `json:"duration_ms"`
 		Method     string `json:"method"`
 		Path       string `json:"path"`
 		Status     int    `json:"status"`
 	} `json:"failed_requests"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
 // FeedbackEvidenceActionsType defines model for FeedbackEvidence.Actions.Type.
@@ -1005,26 +966,38 @@ type FeedbackScope struct {
 	Service          string       `json:"service"`
 }
 
-// FeedbackThread defines model for FeedbackThread.
-type FeedbackThread struct {
-	CheckoutAtReport CheckoutMarker              `json:"checkout_at_report"`
-	Element          FeedbackElement             `json:"element"`
-	Evidence         FeedbackEvidence            `json:"evidence"`
-	Id               FeedbackID                  `json:"id"`
-	Report           FeedbackReport              `json:"report"`
-	SchemaVersion    FeedbackThreadSchemaVersion `json:"schema_version"`
-	Scope            FeedbackScope               `json:"scope"`
-	State            FeedbackThreadState         `json:"state"`
+// FeedbackSelectors defines model for FeedbackSelectors.
+type FeedbackSelectors = []string
+
+// FeedbackTextBoundary defines model for FeedbackTextBoundary.
+type FeedbackTextBoundary struct {
+	Offset    int               `json:"offset"`
+	Selectors FeedbackSelectors `json:"selectors"`
+	TextNode  int               `json:"text_node"`
 }
 
-// FeedbackThreadSchemaVersion defines model for FeedbackThread.SchemaVersion.
-type FeedbackThreadSchemaVersion int
+// FeedbackThread defines model for FeedbackThread.
+type FeedbackThread struct {
+	Anchor           *FeedbackAnchor  `json:"anchor,omitempty"`
+	CheckoutAtReport CheckoutMarker   `json:"checkout_at_report"`
+	Evidence         FeedbackEvidence `json:"evidence"`
+	Id               FeedbackID       `json:"id"`
+	Report           FeedbackReport   `json:"report"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Scope         FeedbackScope       `json:"scope"`
+	State         FeedbackThreadState `json:"state"`
+}
 
 // FeedbackThreadPage defines model for FeedbackThreadPage.
 type FeedbackThreadPage struct {
-	EventCursor int64                   `json:"event_cursor"`
-	NextCursor  *FeedbackID             `json:"next_cursor,omitempty"`
-	Threads     []FeedbackThreadSummary `json:"threads"`
+	EventCursor int64       `json:"event_cursor"`
+	NextCursor  *FeedbackID `json:"next_cursor,omitempty"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion     `json:"schema_version"`
+	Threads       []FeedbackThreadSummary `json:"threads"`
 }
 
 // FeedbackThreadState defines model for FeedbackThreadState.
@@ -1032,11 +1005,14 @@ type FeedbackThreadState string
 
 // FeedbackThreadSummary defines model for FeedbackThreadSummary.
 type FeedbackThreadSummary struct {
-	Element FeedbackElementSummary `json:"element"`
-	Id      FeedbackID             `json:"id"`
-	Report  FeedbackReport         `json:"report"`
-	Scope   FeedbackScope          `json:"scope"`
-	State   FeedbackThreadState    `json:"state"`
+	Anchor *FeedbackAnchor `json:"anchor,omitempty"`
+	Id     FeedbackID      `json:"id"`
+	Report FeedbackReport  `json:"report"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Scope         FeedbackScope       `json:"scope"`
+	State         FeedbackThreadState `json:"state"`
 }
 
 // GuestDemoNumber defines model for GuestDemoNumber.
@@ -1521,6 +1497,9 @@ type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
 // HeartbeatPublishRunJSONRequestBody defines body for HeartbeatPublishRun for application/json ContentType.
 type HeartbeatPublishRunJSONRequestBody = PublishRunVersionRequest
 
+// CreatePublishRunPreviewJSONRequestBody defines body for CreatePublishRunPreview for application/json ContentType.
+type CreatePublishRunPreviewJSONRequestBody = PublishRunVersionRequest
+
 // MarkPublishRunReadyJSONRequestBody defines body for MarkPublishRunReady for application/json ContentType.
 type MarkPublishRunReadyJSONRequestBody = PublishRunVersionRequest
 
@@ -1946,6 +1925,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+	CreatePublishRunPreviewWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+	CreatePublishRunPreview(ctx context.Context, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
 	//
@@ -2926,6 +2919,40 @@ func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId P
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatPublishRunRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+func (c *Client) CreatePublishRunPreviewWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublishRunPreviewRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+func (c *Client) CreatePublishRunPreview(ctx context.Context, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublishRunPreviewRequest(c.Server, publishRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4962,6 +4989,53 @@ func NewHeartbeatPublishRunRequestWithBody(server string, publishRunId PublishRu
 	return req, nil
 }
 
+// NewCreatePublishRunPreviewRequest calls the generic CreatePublishRunPreview builder with application/json body
+func NewCreatePublishRunPreviewRequest(server string, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublishRunPreviewRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewCreatePublishRunPreviewRequestWithBody constructs an http.Request for the CreatePublishRunPreview method, with any body, and a specified content type
+func NewCreatePublishRunPreviewRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/preview", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewMarkPublishRunReadyRequest calls the generic MarkPublishRunReady builder with application/json body
 func NewMarkPublishRunReadyRequest(server string, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -5902,6 +5976,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
+
+	// CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+	CreatePublishRunPreviewWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunPreviewResponse, error)
+
+	// CreatePublishRunPreviewWithResponse Create feedback context for one ephemeral demo publish run
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+	CreatePublishRunPreviewWithResponse(ctx context.Context, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunPreviewResponse, error)
 
 	// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
 	//
@@ -7840,6 +7928,54 @@ func (r HeartbeatPublishRunResponse) ContentType() string {
 	return ""
 }
 
+type CreatePublishRunPreviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreatePublishRunPreviewResponse) GetJSON200() *Preview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublishRunPreviewResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublishRunPreviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublishRunPreviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublishRunPreviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublishRunPreviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type MarkPublishRunReadyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9109,6 +9245,32 @@ func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseHeartbeatPublishRunResponse(rsp)
+}
+
+// CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+func (c *ClientWithResponses) CreatePublishRunPreviewWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunPreviewResponse, error) {
+	rsp, err := c.CreatePublishRunPreviewWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublishRunPreviewResponse(rsp)
+}
+
+// CreatePublishRunPreviewWithResponse Create feedback context for one ephemeral demo publish run
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
+func (c *ClientWithResponses) CreatePublishRunPreviewWithResponse(ctx context.Context, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunPreviewResponse, error) {
+	rsp, err := c.CreatePublishRunPreview(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublishRunPreviewResponse(rsp)
 }
 
 // MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
@@ -10591,6 +10753,39 @@ func ParseHeartbeatPublishRunResponse(rsp *http.Response) (*HeartbeatPublishRunR
 	return response, nil
 }
 
+// ParseCreatePublishRunPreviewResponse parses an HTTP response from a CreatePublishRunPreviewWithResponse call
+func ParseCreatePublishRunPreviewResponse(rsp *http.Response) (*CreatePublishRunPreviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublishRunPreviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseMarkPublishRunReadyResponse parses an HTTP response from a MarkPublishRunReadyWithResponse call
 func ParseMarkPublishRunReadyResponse(rsp *http.Response) (*MarkPublishRunReadyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11102,6 +11297,9 @@ type ServerInterface interface {
 	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
 	// (POST /v1/publish-runs/{publish_run_id}/heartbeat)
 	HeartbeatPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
+	// (POST /v1/publish-runs/{publish_run_id}/preview)
+	CreatePublishRunPreview(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 	// (POST /v1/publish-runs/{publish_run_id}/ready)
 	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -12398,6 +12596,32 @@ func (siw *ServerInterfaceWrapper) HeartbeatPublishRun(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// CreatePublishRunPreview operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublishRunPreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePublishRunPreview(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // MarkPublishRunReady operation middleware
 func (siw *ServerInterfaceWrapper) MarkPublishRunReady(w http.ResponseWriter, r *http.Request) {
 
@@ -12873,6 +13097,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/preview", wrapper.CreatePublishRunPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/health", wrapper.GetHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/client-ip", wrapper.GetClientIP)

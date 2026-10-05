@@ -17,8 +17,8 @@ func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, princ
 	if _, member := principal.teamIDs[thread.TeamID]; !member {
 		return authorization.Decision{}, 0, authorization.ErrForbidden
 	}
-	route, err := h.store.GetPublicURLForAuthorization(ctx, thread.PublicURLID)
-	if err != nil || route.TeamID != thread.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+	route, err := h.store.GetPublicURLForFeedbackAuthorization(ctx, thread.PublicURLID)
+	if err != nil || route.TeamID != thread.TeamID {
 		return authorization.Decision{}, 0, authorization.ErrForbidden
 	}
 	prefixes := make([]string, len(route.AllowedIPPrefixes))

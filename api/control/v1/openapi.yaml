@@ -9,6 +9,29 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.tnl.dev
 paths:
+  /v1/publish-runs/{publish_run_id}/preview:
+    post:
+      operationId: createPublishRunPreview
+      summary: Create feedback context for one ephemeral demo publish run
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Run-scoped preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/health:
     get:
       operationId: getHealth
@@ -1628,14 +1651,64 @@ components:
         created_at:
           type: string
           format: date-time
+    FeedbackTextBoundary:
+      type: object
+      additionalProperties: false
+      required: [selectors, text_node, offset]
+      properties:
+        selectors:
+          $ref: "#/components/schemas/FeedbackSelectors"
+        text_node:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 1048576
+    FeedbackSelectors:
+      type: array
+      minItems: 1
+      maxItems: 6
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        maxLength: 512
+    FeedbackAnchor:
+      type: object
+      additionalProperties: false
+      required: [schema_version, selectors, x, y]
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
+        selectors:
+          $ref: "#/components/schemas/FeedbackSelectors"
+        x:
+          type: number
+          minimum: 0
+          maximum: 1
+        y:
+          type: number
+          minimum: 0
+          maximum: 1
+        selection:
+          type: object
+          additionalProperties: false
+          required: [start, end, text]
+          properties:
+            start:
+              $ref: "#/components/schemas/FeedbackTextBoundary"
+            end:
+              $ref: "#/components/schemas/FeedbackTextBoundary"
+            text:
+              type: string
+              minLength: 1
+              maxLength: 2000
     FeedbackElement:
       type: object
       additionalProperties: false
-      required: [kind]
       properties:
-        kind:
-          type: string
-          enum: [page, element]
         role:
           type: string
           maxLength: 128
@@ -1648,25 +1721,15 @@ components:
         html:
           type: string
           maxLength: 4096
-    FeedbackElementSummary:
-      type: object
-      additionalProperties: false
-      required: [kind]
-      properties:
-        kind:
-          type: string
-          enum: [page, element]
-        role:
-          type: string
-        label:
-          type: string
-        test_id:
-          type: string
     FeedbackEvidence:
       type: object
       additionalProperties: false
-      required: [actions, failed_requests]
+      required: [schema_version, actions, failed_requests]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
+        element:
+          $ref: "#/components/schemas/FeedbackElement"
         actions:
           type: array
           maxItems: 20
@@ -1715,8 +1778,10 @@ components:
     CheckoutMarker:
       type: object
       additionalProperties: false
-      required: [head_commit, branch, changed_files, fingerprint, complete]
+      required: [schema_version, head_commit, branch, changed_files, fingerprint, complete]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         head_commit:
           type: string
           pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})?$"
@@ -1749,11 +1814,10 @@ components:
     FeedbackThread:
       type: object
       additionalProperties: false
-      required: [schema_version, id, state, scope, report, element, evidence, checkout_at_report]
+      required: [schema_version, id, state, scope, report, evidence, checkout_at_report]
       properties:
         schema_version:
-          type: integer
-          const: 1
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         id:
           $ref: "#/components/schemas/FeedbackID"
         state:
@@ -1762,8 +1826,8 @@ components:
           $ref: "#/components/schemas/FeedbackScope"
         report:
           $ref: "#/components/schemas/FeedbackReport"
-        element:
-          $ref: "#/components/schemas/FeedbackElement"
+        anchor:
+          $ref: "#/components/schemas/FeedbackAnchor"
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
         checkout_at_report:
@@ -1771,8 +1835,10 @@ components:
     FeedbackThreadSummary:
       type: object
       additionalProperties: false
-      required: [id, state, scope, report, element]
+      required: [schema_version, id, state, scope, report]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         id:
           $ref: "#/components/schemas/FeedbackID"
         state:
@@ -1781,13 +1847,15 @@ components:
           $ref: "#/components/schemas/FeedbackScope"
         report:
           $ref: "#/components/schemas/FeedbackReport"
-        element:
-          $ref: "#/components/schemas/FeedbackElementSummary"
+        anchor:
+          $ref: "#/components/schemas/FeedbackAnchor"
     FeedbackThreadPage:
       type: object
       additionalProperties: false
-      required: [threads, event_cursor]
+      required: [schema_version, threads, event_cursor]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         threads:
           type: array
           maxItems: 100
@@ -1802,8 +1870,10 @@ components:
     FeedbackEvent:
       type: object
       additionalProperties: false
-      required: [cursor, feedback_id, type, at, actor]
+      required: [schema_version, cursor, feedback_id, type, at, actor]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         cursor:
           type: integer
           format: int64
@@ -1829,8 +1899,10 @@ components:
     FeedbackEventPage:
       type: object
       additionalProperties: false
-      required: [events, event_cursor]
+      required: [schema_version, events, event_cursor]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         events:
           type: array
           maxItems: 25
@@ -1867,7 +1939,6 @@ components:
           service,
           page_path,
           report,
-          element,
           evidence,
           checkout_at_report,
           access,
@@ -1892,8 +1963,8 @@ components:
               type: string
             display_name:
               type: string
-        element:
-          $ref: "#/components/schemas/FeedbackElement"
+        anchor:
+          $ref: "#/components/schemas/FeedbackAnchor"
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
         checkout_at_report:
