@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -49,14 +50,15 @@ func (h *handler) GetPublishRunShareState(response http.ResponseWriter, request 
 		writeControlStateProblem(response, "read publisher shares", err)
 		return
 	}
-	result := controlv1.PublishRunShareState{Shares: make([]controlv1.PublisherShare, len(shares))}
+	result := controlv1.PublishRunShareState{SchemaVersion: controlstate.ReviewSchemaVersion, Shares: make([]controlv1.PublisherShare, len(shares))}
 	for index, share := range shares {
 		cookies := make([]string, len(share.CookieHashes))
 		for cookieIndex, hash := range share.CookieHashes {
 			cookies[cookieIndex] = hex.EncodeToString(hash[:])
 		}
 		result.Shares[index] = controlv1.PublisherShare{
-			ShareId: share.ID, ExpiresAt: share.ExpiresAt,
+			SchemaVersion: controlstate.ReviewSchemaVersion,
+			ShareId:       share.ID, ExpiresAt: share.ExpiresAt,
 			SecretFingerprint: hex.EncodeToString(share.SecretFingerprint[:]), CookieHashes: cookies,
 		}
 	}
@@ -97,7 +99,8 @@ func (h *handler) RedeemPublishRunShare(response http.ResponseWriter, request *h
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.ShareRedemption{
-		ShareId: result.ShareID, CookieSecret: result.CookieSecret,
+		SchemaVersion: controlstate.ReviewSchemaVersion,
+		ShareId:       result.ShareID, CookieSecret: result.CookieSecret,
 		ExpiresAt: result.ExpiresAt, NextUrl: result.NextURL, Bridge: result.Bridge,
 	})
 }

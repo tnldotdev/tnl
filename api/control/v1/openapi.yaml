@@ -1554,8 +1554,10 @@ components:
     PublishRunShareState:
       type: object
       additionalProperties: false
-      required: [shares]
+      required: [schema_version, shares]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         shares:
           type: array
           items:
@@ -1563,8 +1565,10 @@ components:
     PublisherShare:
       type: object
       additionalProperties: false
-      required: [share_id, expires_at, secret_fingerprint, cookie_hashes]
+      required: [schema_version, share_id, expires_at, secret_fingerprint, cookie_hashes]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         share_id:
           $ref: "#/components/schemas/ShareID"
         expires_at:
@@ -1581,8 +1585,10 @@ components:
     ShareRedemption:
       type: object
       additionalProperties: false
-      required: [share_id, cookie_secret, expires_at, next_url, bridge]
+      required: [schema_version, share_id, cookie_secret, expires_at, next_url, bridge]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         share_id:
           $ref: "#/components/schemas/ShareID"
         cookie_secret:

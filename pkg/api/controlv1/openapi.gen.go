@@ -866,7 +866,9 @@ type PublishRunSetup struct {
 
 // PublishRunShareState defines model for PublishRunShareState.
 type PublishRunShareState struct {
-	Shares []PublisherShare `json:"shares"`
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Shares        []PublisherShare    `json:"shares"`
 }
 
 // PublishRunState defines model for PublishRunState.
@@ -885,10 +887,13 @@ type PublisherConnectionState string
 
 // PublisherShare defines model for PublisherShare.
 type PublisherShare struct {
-	CookieHashes      []string  `json:"cookie_hashes"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	SecretFingerprint string    `json:"secret_fingerprint"`
-	ShareId           ShareID   `json:"share_id"`
+	CookieHashes []string  `json:"cookie_hashes"`
+	ExpiresAt    time.Time `json:"expires_at"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion     ReviewSchemaVersion `json:"schema_version"`
+	SecretFingerprint string              `json:"secret_fingerprint"`
+	ShareId           ShareID             `json:"share_id"`
 }
 
 // ReadinessResponse defines model for ReadinessResponse.
@@ -986,7 +991,10 @@ type ShareRedemption struct {
 	CookieSecret string    `json:"cookie_secret"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	NextUrl      string    `json:"next_url"`
-	ShareId      ShareID   `json:"share_id"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	ShareId       ShareID             `json:"share_id"`
 }
 
 // TeamID defines model for TeamID.
