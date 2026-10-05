@@ -482,8 +482,8 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
-// AddWorktreePreviewPublicURLRequest defines model for AddWorktreePreviewPublicURLRequest.
-type AddWorktreePreviewPublicURLRequest struct {
+// AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
+type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
 }
 
@@ -637,6 +637,11 @@ type CreateDNSAuthorityRequest struct {
 	TeamId          TeamID            `json:"team_id"`
 }
 
+// CreatePreviewRequest defines model for CreatePreviewRequest.
+type CreatePreviewRequest struct {
+	TeamId TeamID `json:"team_id"`
+}
+
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
 	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
@@ -647,11 +652,6 @@ type CreatePublicURLRequest struct {
 	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
 	Target            string            `json:"target"`
 	TeamId            TeamID            `json:"team_id"`
-}
-
-// CreateWorktreePreviewRequest defines model for CreateWorktreePreviewRequest.
-type CreateWorktreePreviewRequest struct {
-	TeamId TeamID `json:"team_id"`
 }
 
 // DNSAuthority defines model for DNSAuthority.
@@ -750,6 +750,17 @@ type OIDCAuthenticationFacts struct {
 
 // OIDCAuthenticationFactsLoginFlow defines model for OIDCAuthenticationFacts.LoginFlow.
 type OIDCAuthenticationFactsLoginFlow string
+
+// Preview defines model for Preview.
+type Preview struct {
+	CreatedAt    time.Time     `json:"created_at"`
+	Id           PreviewID     `json:"id"`
+	PublicUrlIds []PublicURLID `json:"public_url_ids"`
+	TeamId       TeamID        `json:"team_id"`
+}
+
+// PreviewID defines model for PreviewID.
+type PreviewID = ResourceID
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -911,17 +922,6 @@ type UpdatePublicURLRequest struct {
 	Target            string   `json:"target"`
 }
 
-// WorktreePreview defines model for WorktreePreview.
-type WorktreePreview struct {
-	CreatedAt    time.Time         `json:"created_at"`
-	Id           WorktreePreviewID `json:"id"`
-	PublicUrlIds []PublicURLID     `json:"public_url_ids"`
-	TeamId       TeamID            `json:"team_id"`
-}
-
-// WorktreePreviewID defines model for WorktreePreviewID.
-type WorktreePreviewID = ResourceID
-
 // CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
 type CanonicalHostnameQuery = CanonicalHostname
 
@@ -937,6 +937,11 @@ type TeamIDQuery = TeamID
 // ListAdminRelaysParams defines parameters for ListAdminRelays.
 type ListAdminRelaysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreatePreviewParams defines parameters for CreatePreview.
+type CreatePreviewParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // ListPublicURLsParams defines parameters for ListPublicURLs.
@@ -973,16 +978,17 @@ type ReleaseDNSAuthorityParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// CreateWorktreePreviewParams defines parameters for CreateWorktreePreview.
-type CreateWorktreePreviewParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
+
+// CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
+type CreatePreviewJSONRequestBody = CreatePreviewRequest
+
+// AddPreviewPublicURLJSONRequestBody defines body for AddPreviewPublicURL for application/json ContentType.
+type AddPreviewPublicURLJSONRequestBody = AddPreviewPublicURLRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -1007,12 +1013,6 @@ type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
 
 // RevokeHostedPolicyJSONRequestBody defines body for RevokeHostedPolicy for application/json ContentType.
 type RevokeHostedPolicyJSONRequestBody = HostedPolicyRevocation
-
-// CreateWorktreePreviewJSONRequestBody defines body for CreateWorktreePreview for application/json ContentType.
-type CreateWorktreePreviewJSONRequestBody = CreateWorktreePreviewRequest
-
-// AddWorktreePreviewPublicURLJSONRequestBody defines body for AddWorktreePreviewPublicURL for application/json ContentType.
-type AddWorktreePreviewPublicURLJSONRequestBody = AddWorktreePreviewPublicURLRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1171,6 +1171,39 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreatePreviewWithBody Create or reuse a preview for one team
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+	CreatePreviewWithBody(ctx context.Context, params *CreatePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePreview Create or reuse a preview for one team
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+	CreatePreview(ctx context.Context, params *CreatePreviewParams, body CreatePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPreview Read a preview and its public URLs
+	//
+	// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
+	GetPreview(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddPreviewPublicURLWithBody Add an authorized public URL to a preview
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+	AddPreviewPublicURLWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddPreviewPublicURL Add an authorized public URL to a preview
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+	AddPreviewPublicURL(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPublicURLs List public URLs for one team
 	//
 	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -1322,39 +1355,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateWorktreePreviewWithBody Create or reuse a worktree preview for one team
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-	CreateWorktreePreviewWithBody(ctx context.Context, params *CreateWorktreePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateWorktreePreview Create or reuse a worktree preview for one team
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-	CreateWorktreePreview(ctx context.Context, params *CreateWorktreePreviewParams, body CreateWorktreePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetWorktreePreview Read a worktree preview and its public URLs
-	//
-	// Corresponds with GET /v1/worktree-previews/{worktree_preview_id} (the `GetWorktreePreview` operationId).
-	GetWorktreePreview(ctx context.Context, worktreePreviewId WorktreePreviewID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AddWorktreePreviewPublicURLWithBody Add an authorized public URL to a worktree preview
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-	AddWorktreePreviewPublicURLWithBody(ctx context.Context, worktreePreviewId WorktreePreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AddWorktreePreviewPublicURL Add an authorized public URL to a worktree preview
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-	AddWorktreePreviewPublicURL(ctx context.Context, worktreePreviewId WorktreePreviewID, body AddWorktreePreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -1580,6 +1580,89 @@ func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...Requ
 // Corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePreviewWithBody Create or reuse a preview for one team
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+func (c *Client) CreatePreviewWithBody(ctx context.Context, params *CreatePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePreviewRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePreview Create or reuse a preview for one team
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+func (c *Client) CreatePreview(ctx context.Context, params *CreatePreviewParams, body CreatePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePreviewRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPreview Read a preview and its public URLs
+//
+// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
+func (c *Client) GetPreview(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPreviewRequest(c.Server, previewId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddPreviewPublicURLWithBody Add an authorized public URL to a preview
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+func (c *Client) AddPreviewPublicURLWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddPreviewPublicURLRequestWithBody(c.Server, previewId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddPreviewPublicURL Add an authorized public URL to a preview
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+func (c *Client) AddPreviewPublicURL(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddPreviewPublicURLRequest(c.Server, previewId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1972,89 +2055,6 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 // Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateWorktreePreviewWithBody Create or reuse a worktree preview for one team
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-func (c *Client) CreateWorktreePreviewWithBody(ctx context.Context, params *CreateWorktreePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWorktreePreviewRequestWithBody(c.Server, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateWorktreePreview Create or reuse a worktree preview for one team
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-func (c *Client) CreateWorktreePreview(ctx context.Context, params *CreateWorktreePreviewParams, body CreateWorktreePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWorktreePreviewRequest(c.Server, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetWorktreePreview Read a worktree preview and its public URLs
-//
-// Corresponds with GET /v1/worktree-previews/{worktree_preview_id} (the `GetWorktreePreview` operationId).
-func (c *Client) GetWorktreePreview(ctx context.Context, worktreePreviewId WorktreePreviewID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetWorktreePreviewRequest(c.Server, worktreePreviewId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AddWorktreePreviewPublicURLWithBody Add an authorized public URL to a worktree preview
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-func (c *Client) AddWorktreePreviewPublicURLWithBody(ctx context.Context, worktreePreviewId WorktreePreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddWorktreePreviewPublicURLRequestWithBody(c.Server, worktreePreviewId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AddWorktreePreviewPublicURL Add an authorized public URL to a worktree preview
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-func (c *Client) AddWorktreePreviewPublicURL(ctx context.Context, worktreePreviewId WorktreePreviewID, body AddWorktreePreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddWorktreePreviewPublicURLRequest(c.Server, worktreePreviewId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2500,6 +2500,140 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreatePreviewRequest calls the generic CreatePreview builder with application/json body
+func NewCreatePreviewRequest(server string, params *CreatePreviewParams, body CreatePreviewJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePreviewRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreatePreviewRequestWithBody constructs an http.Request for the CreatePreview method, with any body, and a specified content type
+func NewCreatePreviewRequestWithBody(server string, params *CreatePreviewParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetPreviewRequest constructs an http.Request for the GetPreview method
+func NewGetPreviewRequest(server string, previewId PreviewID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddPreviewPublicURLRequest calls the generic AddPreviewPublicURL builder with application/json body
+func NewAddPreviewPublicURLRequest(server string, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddPreviewPublicURLRequestWithBody(server, previewId, "application/json", bodyReader)
+}
+
+// NewAddPreviewPublicURLRequestWithBody constructs an http.Request for the AddPreviewPublicURL method, with any body, and a specified content type
+func NewAddPreviewPublicURLRequestWithBody(server string, previewId PreviewID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s/public-urls", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3229,140 +3363,6 @@ func NewRevokeHostedPolicyRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
-// NewCreateWorktreePreviewRequest calls the generic CreateWorktreePreview builder with application/json body
-func NewCreateWorktreePreviewRequest(server string, params *CreateWorktreePreviewParams, body CreateWorktreePreviewJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateWorktreePreviewRequestWithBody(server, params, "application/json", bodyReader)
-}
-
-// NewCreateWorktreePreviewRequestWithBody constructs an http.Request for the CreateWorktreePreview method, with any body, and a specified content type
-func NewCreateWorktreePreviewRequestWithBody(server string, params *CreateWorktreePreviewParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/worktree-previews")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewGetWorktreePreviewRequest constructs an http.Request for the GetWorktreePreview method
-func NewGetWorktreePreviewRequest(server string, worktreePreviewId WorktreePreviewID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "worktree_preview_id", worktreePreviewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/worktree-previews/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAddWorktreePreviewPublicURLRequest calls the generic AddWorktreePreviewPublicURL builder with application/json body
-func NewAddWorktreePreviewPublicURLRequest(server string, worktreePreviewId WorktreePreviewID, body AddWorktreePreviewPublicURLJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAddWorktreePreviewPublicURLRequestWithBody(server, worktreePreviewId, "application/json", bodyReader)
-}
-
-// NewAddWorktreePreviewPublicURLRequestWithBody constructs an http.Request for the AddWorktreePreviewPublicURL method, with any body, and a specified content type
-func NewAddWorktreePreviewPublicURLRequestWithBody(server string, worktreePreviewId WorktreePreviewID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "worktree_preview_id", worktreePreviewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/worktree-previews/%s/public-urls", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -3511,6 +3511,41 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+
+	// CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+	CreatePreviewWithBodyWithResponse(ctx context.Context, params *CreatePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePreviewResponse, error)
+
+	// CreatePreviewWithResponse Create or reuse a preview for one team
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+	CreatePreviewWithResponse(ctx context.Context, params *CreatePreviewParams, body CreatePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePreviewResponse, error)
+
+	// GetPreviewWithResponse Read a preview and its public URLs
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
+	GetPreviewWithResponse(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*GetPreviewResponse, error)
+
+	// AddPreviewPublicURLWithBodyWithResponse Add an authorized public URL to a preview
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+	AddPreviewPublicURLWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error)
+
+	// AddPreviewPublicURLWithResponse Add an authorized public URL to a preview
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+	AddPreviewPublicURLWithResponse(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error)
 
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
@@ -3679,41 +3714,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
-
-	// CreateWorktreePreviewWithBodyWithResponse Create or reuse a worktree preview for one team
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-	CreateWorktreePreviewWithBodyWithResponse(ctx context.Context, params *CreateWorktreePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorktreePreviewResponse, error)
-
-	// CreateWorktreePreviewWithResponse Create or reuse a worktree preview for one team
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-	CreateWorktreePreviewWithResponse(ctx context.Context, params *CreateWorktreePreviewParams, body CreateWorktreePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorktreePreviewResponse, error)
-
-	// GetWorktreePreviewWithResponse Read a worktree preview and its public URLs
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/worktree-previews/{worktree_preview_id} (the `GetWorktreePreview` operationId).
-	GetWorktreePreviewWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, reqEditors ...RequestEditorFn) (*GetWorktreePreviewResponse, error)
-
-	// AddWorktreePreviewPublicURLWithBodyWithResponse Add an authorized public URL to a worktree preview
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-	AddWorktreePreviewPublicURLWithBodyWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddWorktreePreviewPublicURLResponse, error)
-
-	// AddWorktreePreviewPublicURLWithResponse Add an authorized public URL to a worktree preview
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-	AddWorktreePreviewPublicURLWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, body AddWorktreePreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddWorktreePreviewPublicURLResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -4334,6 +4334,150 @@ func (r GetHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePreviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePreviewResponse) GetJSON201() *Preview {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePreviewResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePreviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePreviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePreviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePreviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPreviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPreviewResponse) GetJSON200() *Preview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPreviewResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPreviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPreviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPreviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPreviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddPreviewPublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AddPreviewPublicURLResponse) GetJSON200() *Preview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AddPreviewPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AddPreviewPublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddPreviewPublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddPreviewPublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddPreviewPublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5094,150 +5238,6 @@ func (r RevokeHostedPolicyResponse) ContentType() string {
 	return ""
 }
 
-type CreateWorktreePreviewResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *WorktreePreview
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateWorktreePreviewResponse) GetJSON201() *WorktreePreview {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateWorktreePreviewResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateWorktreePreviewResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateWorktreePreviewResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateWorktreePreviewResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateWorktreePreviewResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetWorktreePreviewResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorktreePreview
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetWorktreePreviewResponse) GetJSON200() *WorktreePreview {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetWorktreePreviewResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetWorktreePreviewResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetWorktreePreviewResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetWorktreePreviewResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetWorktreePreviewResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AddWorktreePreviewPublicURLResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorktreePreview
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AddWorktreePreviewPublicURLResponse) GetJSON200() *WorktreePreview {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AddWorktreePreviewPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AddWorktreePreviewPublicURLResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AddWorktreePreviewPublicURLResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AddWorktreePreviewPublicURLResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AddWorktreePreviewPublicURLResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
 // Returns a wrapper object for the known response body format(s).
@@ -5431,6 +5431,71 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetHealthResponse(rsp)
+}
+
+// CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+func (c *ClientWithResponses) CreatePreviewWithBodyWithResponse(ctx context.Context, params *CreatePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePreviewResponse, error) {
+	rsp, err := c.CreatePreviewWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePreviewResponse(rsp)
+}
+
+// CreatePreviewWithResponse Create or reuse a preview for one team
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
+func (c *ClientWithResponses) CreatePreviewWithResponse(ctx context.Context, params *CreatePreviewParams, body CreatePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePreviewResponse, error) {
+	rsp, err := c.CreatePreview(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePreviewResponse(rsp)
+}
+
+// GetPreviewWithResponse Read a preview and its public URLs
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
+func (c *ClientWithResponses) GetPreviewWithResponse(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*GetPreviewResponse, error) {
+	rsp, err := c.GetPreview(ctx, previewId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPreviewResponse(rsp)
+}
+
+// AddPreviewPublicURLWithBodyWithResponse Add an authorized public URL to a preview
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+func (c *ClientWithResponses) AddPreviewPublicURLWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error) {
+	rsp, err := c.AddPreviewPublicURLWithBody(ctx, previewId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddPreviewPublicURLResponse(rsp)
+}
+
+// AddPreviewPublicURLWithResponse Add an authorized public URL to a preview
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
+func (c *ClientWithResponses) AddPreviewPublicURLWithResponse(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error) {
+	rsp, err := c.AddPreviewPublicURL(ctx, previewId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddPreviewPublicURLResponse(rsp)
 }
 
 // ListPublicURLsWithResponse List public URLs for one team
@@ -5743,71 +5808,6 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseRevokeHostedPolicyResponse(rsp)
-}
-
-// CreateWorktreePreviewWithBodyWithResponse Create or reuse a worktree preview for one team
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-func (c *ClientWithResponses) CreateWorktreePreviewWithBodyWithResponse(ctx context.Context, params *CreateWorktreePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorktreePreviewResponse, error) {
-	rsp, err := c.CreateWorktreePreviewWithBody(ctx, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateWorktreePreviewResponse(rsp)
-}
-
-// CreateWorktreePreviewWithResponse Create or reuse a worktree preview for one team
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/worktree-previews (the `CreateWorktreePreview` operationId).
-func (c *ClientWithResponses) CreateWorktreePreviewWithResponse(ctx context.Context, params *CreateWorktreePreviewParams, body CreateWorktreePreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorktreePreviewResponse, error) {
-	rsp, err := c.CreateWorktreePreview(ctx, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateWorktreePreviewResponse(rsp)
-}
-
-// GetWorktreePreviewWithResponse Read a worktree preview and its public URLs
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/worktree-previews/{worktree_preview_id} (the `GetWorktreePreview` operationId).
-func (c *ClientWithResponses) GetWorktreePreviewWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, reqEditors ...RequestEditorFn) (*GetWorktreePreviewResponse, error) {
-	rsp, err := c.GetWorktreePreview(ctx, worktreePreviewId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetWorktreePreviewResponse(rsp)
-}
-
-// AddWorktreePreviewPublicURLWithBodyWithResponse Add an authorized public URL to a worktree preview
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-func (c *ClientWithResponses) AddWorktreePreviewPublicURLWithBodyWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddWorktreePreviewPublicURLResponse, error) {
-	rsp, err := c.AddWorktreePreviewPublicURLWithBody(ctx, worktreePreviewId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAddWorktreePreviewPublicURLResponse(rsp)
-}
-
-// AddWorktreePreviewPublicURLWithResponse Add an authorized public URL to a worktree preview
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/worktree-previews/{worktree_preview_id}/public-urls (the `AddWorktreePreviewPublicURL` operationId).
-func (c *ClientWithResponses) AddWorktreePreviewPublicURLWithResponse(ctx context.Context, worktreePreviewId WorktreePreviewID, body AddWorktreePreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddWorktreePreviewPublicURLResponse, error) {
-	rsp, err := c.AddWorktreePreviewPublicURL(ctx, worktreePreviewId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAddWorktreePreviewPublicURLResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -6222,6 +6222,105 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest HealthResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePreviewResponse parses an HTTP response from a CreatePreviewWithResponse call
+func ParseCreatePreviewResponse(rsp *http.Response) (*CreatePreviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePreviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPreviewResponse parses an HTTP response from a GetPreviewWithResponse call
+func ParseGetPreviewResponse(rsp *http.Response) (*GetPreviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPreviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddPreviewPublicURLResponse parses an HTTP response from a AddPreviewPublicURLWithResponse call
+func ParseAddPreviewPublicURLResponse(rsp *http.Response) (*AddPreviewPublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddPreviewPublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Preview
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -6762,105 +6861,6 @@ func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyRes
 	return response, nil
 }
 
-// ParseCreateWorktreePreviewResponse parses an HTTP response from a CreateWorktreePreviewWithResponse call
-func ParseCreateWorktreePreviewResponse(rsp *http.Response) (*CreateWorktreePreviewResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateWorktreePreviewResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest WorktreePreview
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetWorktreePreviewResponse parses an HTTP response from a GetWorktreePreviewWithResponse call
-func ParseGetWorktreePreviewResponse(rsp *http.Response) (*GetWorktreePreviewResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetWorktreePreviewResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorktreePreview
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAddWorktreePreviewPublicURLResponse parses an HTTP response from a AddWorktreePreviewPublicURLWithResponse call
-func ParseAddWorktreePreviewPublicURLResponse(rsp *http.Response) (*AddWorktreePreviewPublicURLResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AddWorktreePreviewPublicURLResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorktreePreview
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListMaintenanceControls List maintenance controls
@@ -6902,6 +6902,15 @@ type ServerInterface interface {
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// CreatePreview Create or reuse a preview for one team
+	// (POST /v1/previews)
+	CreatePreview(w http.ResponseWriter, r *http.Request, params CreatePreviewParams)
+	// GetPreview Read a preview and its public URLs
+	// (GET /v1/previews/{preview_id})
+	GetPreview(w http.ResponseWriter, r *http.Request, previewId PreviewID)
+	// AddPreviewPublicURL Add an authorized public URL to a preview
+	// (POST /v1/previews/{preview_id}/public-urls)
+	AddPreviewPublicURL(w http.ResponseWriter, r *http.Request, previewId PreviewID)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -6950,15 +6959,6 @@ type ServerInterface interface {
 	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
-	// CreateWorktreePreview Create or reuse a worktree preview for one team
-	// (POST /v1/worktree-previews)
-	CreateWorktreePreview(w http.ResponseWriter, r *http.Request, params CreateWorktreePreviewParams)
-	// GetWorktreePreview Read a worktree preview and its public URLs
-	// (GET /v1/worktree-previews/{worktree_preview_id})
-	GetWorktreePreview(w http.ResponseWriter, r *http.Request, worktreePreviewId WorktreePreviewID)
-	// AddWorktreePreviewPublicURL Add an authorized public URL to a worktree preview
-	// (POST /v1/worktree-previews/{worktree_preview_id}/public-urls)
-	AddWorktreePreviewPublicURL(w http.ResponseWriter, r *http.Request, worktreePreviewId WorktreePreviewID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -7222,6 +7222,103 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePreview operation middleware
+func (siw *ServerInterfaceWrapper) CreatePreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreatePreviewParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePreview(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPreview operation middleware
+func (siw *ServerInterfaceWrapper) GetPreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPreview(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddPreviewPublicURL operation middleware
+func (siw *ServerInterfaceWrapper) AddPreviewPublicURL(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddPreviewPublicURL(w, r, previewId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7778,103 +7875,6 @@ func (siw *ServerInterfaceWrapper) RevokeHostedPolicy(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// CreateWorktreePreview operation middleware
-func (siw *ServerInterfaceWrapper) CreateWorktreePreview(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateWorktreePreviewParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateWorktreePreview(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetWorktreePreview operation middleware
-func (siw *ServerInterfaceWrapper) GetWorktreePreview(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "worktree_preview_id" -------------
-	var worktreePreviewId WorktreePreviewID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "worktree_preview_id", r.PathValue("worktree_preview_id"), &worktreePreviewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "worktree_preview_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetWorktreePreview(w, r, worktreePreviewId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AddWorktreePreviewPublicURL operation middleware
-func (siw *ServerInterfaceWrapper) AddWorktreePreviewPublicURL(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "worktree_preview_id" -------------
-	var worktreePreviewId WorktreePreviewID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "worktree_preview_id", r.PathValue("worktree_preview_id"), &worktreePreviewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "worktree_preview_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AddWorktreePreviewPublicURL(w, r, worktreePreviewId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -8001,9 +8001,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/worktree-previews", wrapper.CreateWorktreePreview)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/worktree-previews/{worktree_preview_id}", wrapper.GetWorktreePreview)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/worktree-previews/{worktree_preview_id}/public-urls", wrapper.AddWorktreePreviewPublicURL)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)

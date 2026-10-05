@@ -11,10 +11,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func (h *handler) CreateWorktreePreview(response http.ResponseWriter, request *http.Request, _ controlv1.CreateWorktreePreviewParams) {
-	var body controlv1.CreateWorktreePreviewRequest
+func (h *handler) CreatePreview(response http.ResponseWriter, request *http.Request, _ controlv1.CreatePreviewParams) {
+	var body controlv1.CreatePreviewRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.TeamId == "" {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid worktree preview request")
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview request")
 		return
 	}
 	key := request.Header.Get("Idempotency-Key")
@@ -31,39 +31,39 @@ func (h *handler) CreateWorktreePreview(response http.ResponseWriter, request *h
 		return
 	}
 	if h.previews == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "worktree previews are unavailable")
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "previews are unavailable")
 		return
 	}
-	preview, err := h.previews.CreateWorktreePreview(request.Context(), body.TeamId, principal.identityID, key, time.Now())
+	preview, err := h.previews.CreatePreview(request.Context(), body.TeamId, principal.identityID, key, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create worktree preview", err)
+		writeControlStateProblem(response, "create preview", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, worktreePreviewResponse(preview))
+	writeJSON(response, http.StatusCreated, previewResponse(preview))
 }
 
-func (h *handler) GetWorktreePreview(response http.ResponseWriter, request *http.Request, previewID controlv1.WorktreePreviewID) {
+func (h *handler) GetPreview(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
 	principal, ok := h.authorizeRouteReads(response, request)
 	if !ok {
 		return
 	}
-	preview, ok := h.readWorktreePreview(response, request, string(previewID), principal)
+	preview, ok := h.readPreview(response, request, string(previewID), principal)
 	if ok {
-		writeJSON(response, http.StatusOK, worktreePreviewResponse(preview))
+		writeJSON(response, http.StatusOK, previewResponse(preview))
 	}
 }
 
-func (h *handler) AddWorktreePreviewPublicURL(response http.ResponseWriter, request *http.Request, previewID controlv1.WorktreePreviewID) {
-	var body controlv1.AddWorktreePreviewPublicURLRequest
+func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
+	var body controlv1.AddPreviewPublicURLRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.PublicUrlId == "" {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid worktree preview public URL")
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview public URL")
 		return
 	}
 	principal, ok := h.authorizeRouteReads(response, request)
 	if !ok {
 		return
 	}
-	preview, ok := h.readWorktreePreview(response, request, string(previewID), principal)
+	preview, ok := h.readPreview(response, request, string(previewID), principal)
 	if !ok {
 		return
 	}
@@ -73,7 +73,7 @@ func (h *handler) AddWorktreePreviewPublicURL(response http.ResponseWriter, requ
 		return
 	}
 	if err != nil {
-		writeControlStateProblem(response, "read worktree preview public URL", err)
+		writeControlStateProblem(response, "read preview public URL", err)
 		return
 	}
 	if route.TeamID != preview.TeamID {
@@ -94,37 +94,37 @@ func (h *handler) AddWorktreePreviewPublicURL(response http.ResponseWriter, requ
 	if !ok {
 		return
 	}
-	updated, err := h.previews.AddWorktreePreviewPublicURL(request.Context(), controlstate.AddWorktreePreviewPublicURLRequest{
+	updated, err := h.previews.AddPreviewPublicURL(request.Context(), controlstate.AddPreviewPublicURLRequest{
 		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: decision.TeamID, IdentityID: decision.IdentityID,
 		AuthorityIssuer: h.authorityIssuerFor(decision), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "add worktree preview public URL", err)
+		writeControlStateProblem(response, "add preview public URL", err)
 		return
 	}
-	writeJSON(response, http.StatusOK, worktreePreviewResponse(updated))
+	writeJSON(response, http.StatusOK, previewResponse(updated))
 }
 
-func (h *handler) readWorktreePreview(response http.ResponseWriter, request *http.Request, id string, principal publicURLReadPrincipal) (controlstate.WorktreePreview, bool) {
+func (h *handler) readPreview(response http.ResponseWriter, request *http.Request, id string, principal publicURLReadPrincipal) (controlstate.Preview, bool) {
 	if h.previews == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "worktree previews are unavailable")
-		return controlstate.WorktreePreview{}, false
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "previews are unavailable")
+		return controlstate.Preview{}, false
 	}
-	preview, err := h.previews.GetWorktreePreview(request.Context(), id)
+	preview, err := h.previews.GetPreview(request.Context(), id)
 	if err != nil {
-		writeControlStateProblem(response, "read worktree preview", err)
-		return controlstate.WorktreePreview{}, false
+		writeControlStateProblem(response, "read preview", err)
+		return controlstate.Preview{}, false
 	}
 	if _, member := principal.teamIDs[preview.TeamID]; !member || principal.identityID != preview.CreatedByIdentityID {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return controlstate.WorktreePreview{}, false
+		return controlstate.Preview{}, false
 	}
 	return preview, true
 }
 
-func worktreePreviewResponse(preview controlstate.WorktreePreview) controlv1.WorktreePreview {
-	return controlv1.WorktreePreview{
+func previewResponse(preview controlstate.Preview) controlv1.Preview {
+	return controlv1.Preview{
 		Id: preview.ID, TeamId: preview.TeamID, CreatedAt: preview.CreatedAt,
 		PublicUrlIds: preview.PublicURLIDs,
 	}

@@ -106,10 +106,10 @@ type Store interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
-type WorktreePreviewStore interface {
-	CreateWorktreePreview(context.Context, string, string, string, time.Time) (controlstate.WorktreePreview, error)
-	GetWorktreePreview(context.Context, string) (controlstate.WorktreePreview, error)
-	AddWorktreePreviewPublicURL(context.Context, controlstate.AddWorktreePreviewPublicURLRequest, time.Time) (controlstate.WorktreePreview, error)
+type PreviewStore interface {
+	CreatePreview(context.Context, string, string, string, time.Time) (controlstate.Preview, error)
+	GetPreview(context.Context, string) (controlstate.Preview, error)
+	AddPreviewPublicURL(context.Context, controlstate.AddPreviewPublicURLRequest, time.Time) (controlstate.Preview, error)
 }
 
 // BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
@@ -126,7 +126,7 @@ type handler struct {
 	dnsAuthorities DNSAuthorityStore
 	revocations    HostedRevocationStore
 	admin          AdminStore
-	previews       WorktreePreviewStore
+	previews       PreviewStore
 	guests         interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
@@ -152,7 +152,7 @@ func NewHandler(
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, dnsAuthorities: store,
 		revocations: store, admin: store, readiness: readiness}
-	if previews, ok := store.(WorktreePreviewStore); ok {
+	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
 	}
 	if guestStore, ok := store.(interface {

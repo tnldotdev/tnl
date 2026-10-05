@@ -13,14 +13,14 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-type worktreePreviewControl interface {
-	CreateWorktreePreview(context.Context, string, string) (controlv1.WorktreePreview, error)
-	AddWorktreePreviewPublicURL(context.Context, string, string) (controlv1.WorktreePreview, error)
+type previewControl interface {
+	CreatePreview(context.Context, string, string) (controlv1.Preview, error)
+	AddPreviewPublicURL(context.Context, string, string) (controlv1.Preview, error)
 }
 
-func ensureWorktreePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control worktreePreviewControl, server, teamID, projectRoot string) (string, error) {
+func ensurePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control previewControl, server, teamID, projectRoot string) (string, error) {
 	if teamID == "" || projectRoot == "" || server == "" {
-		return "", errors.New("worktree preview requires one server, team, and project")
+		return "", errors.New("preview requires one server, team, and project")
 	}
 	salt, err := state.WorktreeHashSalt(ctx)
 	if err != nil {
@@ -29,19 +29,19 @@ func ensureWorktreePreview(ctx context.Context, state *clientstate.Database, sto
 	hash := hmac.New(sha256.New, salt[:])
 	_, _ = hash.Write([]byte(server + "\x00" + teamID + "\x00" + projectRoot))
 	key := hex.EncodeToString(hash.Sum(nil))
-	preview, err := control.CreateWorktreePreview(ctx, teamID, key)
+	preview, err := control.CreatePreview(ctx, teamID, key)
 	if err != nil {
-		return "", fmt.Errorf("create worktree preview: %w", err)
+		return "", fmt.Errorf("create preview: %w", err)
 	}
-	if !opaqueid.Valid(preview.Id, opaqueid.WorktreePreviewPrefix) || preview.TeamId != teamID {
-		return "", errors.New("server returned an invalid worktree preview")
+	if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.TeamId != teamID {
+		return "", errors.New("server returned an invalid preview")
 	}
-	if saved, found, err := store.WorktreePreviewID(ctx, teamID, projectRoot); err != nil {
+	if saved, found, err := store.PreviewID(ctx, teamID, projectRoot); err != nil {
 		return "", err
 	} else if found && saved != preview.Id {
-		return "", errors.New("saved worktree preview differs from the server; check the selected team and client state")
+		return "", errors.New("saved preview differs from the server; check the selected team and client state")
 	}
-	if err := store.SaveWorktreePreviewID(ctx, teamID, projectRoot, preview.Id); err != nil {
+	if err := store.SavePreviewID(ctx, teamID, projectRoot, preview.Id); err != nil {
 		return "", err
 	}
 	return preview.Id, nil

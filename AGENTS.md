@@ -65,6 +65,8 @@ mutation counters; public URL counters are publish run numbers.
 | Term              | Definition                                                                        |
 | ----------------- | --------------------------------------------------------------------------------- |
 | **identity**      | A person or administrator known to one tnl server.                                |
+| **developer**     | The person running `tnl dev` and addressing feedback in the local project.        |
+| **reviewer**      | A person using a share to visit a preview and optionally leave feedback.          |
 | **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
 | **visitor**       | A browser or other client connecting to a public URL.                             |
 | **local service** | The developer's HTTP application.                                                 |
@@ -73,14 +75,16 @@ mutation counters; public URL counters are publish run numbers.
 
 ## projects and client state
 
-| Term                      | Definition                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                             |
-| **project service**       | A named local service in project configuration, with optional settings that override project defaults.                   |
-| **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                      |
-| **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development.      |
-| **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                 |
-| **worktree label**        | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames. |
+| Term                      | Definition                                                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                                |
+| **preview**               | Control's saved group of public URLs for one project checkout, reused across `tnl dev` runs.                                |
+| **project service**       | A named local service in project configuration, with optional settings that override project defaults.                      |
+| **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                         |
+| **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development.         |
+| **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                    |
+| **worktree label**        | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames.    |
+| **path mount**            | Serving one configured local service beneath a path on another service's public URL; the hostname's visitor policy applies. |
 
 ## addresses and dns
 
@@ -113,6 +117,25 @@ mutation counters; public URL counters are publish run numbers.
 | **ingress routing table**        | Short-lived routing information control sends to ingress, including public URL policy and connected relays. |
 | **policy revision**              | The authority policy version recorded when a public URL operation is authorized.                            |
 | **public URL mutation revision** | An ever-increasing counter changed whenever editable public URL state changes.                              |
+
+## preview sharing and feedback
+
+| Term                  | Definition                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **share**             | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
+| **share link**        | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
+| **feedback thread**   | A durable conversation containing an immutable first report and ordered follow-up events.                             |
+| **report**            | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and checkout marker. |
+| **evidence**          | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
+| **pin**               | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
+| **feedback toolbar**  | The development-only browser interface for leaving and reading feedback.                                              |
+| **checkout marker**   | The recorded Git HEAD, branch, changed-file identifiers, and combined fingerprint; it does not store source bytes.    |
+| **ready for recheck** | A feedback thread state after a developer records a fix and asks a reviewer to try again.                             |
+
+Feedback thread states are `open`, `ready_for_recheck`, and `resolved`.
+**Still broken** returns a thread to `open`. The developer uses
+`tnl feedback ready` to request a recheck. Use **feedback list**, not
+_inbox_, for the collection of threads.
 
 ## publisher connections
 
@@ -211,6 +234,9 @@ mutation counters; public URL counters are publish run numbers.
 | Concept                         | Field                             |
 | ------------------------------- | --------------------------------- |
 | Public URL ID                   | `public_url_id`                   |
+| Preview ID                      | `preview_id`                      |
+| Share ID                        | `share_id`                        |
+| Feedback ID                     | `feedback_id`                     |
 | Publish run ID                  | `publish_run_id`                  |
 | Publish run number              | `publish_run_number`              |
 | Publish run token               | `publish_run_token`               |

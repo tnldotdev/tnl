@@ -193,7 +193,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	previewID := ""
 	if flags.project.Found() && flags.Service != "" {
-		previewID, err = ensureWorktreePreview(ctx, state, services.state, services.routes, serverURL, services.teamID, flags.project.Root)
+		previewID, err = ensurePreview(ctx, state, services.state, services.routes, serverURL, services.teamID, flags.project.Root)
 		if err != nil {
 			return err
 		}
@@ -277,12 +277,12 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {
 			if previewID != "" && event.Type == publisher.EventPublicURLAssigned {
-				preview, err := services.routes.AddWorktreePreviewPublicURL(publishCtx, previewID, event.PublicURLID)
+				preview, err := services.routes.AddPreviewPublicURL(publishCtx, previewID, event.PublicURLID)
 				if err != nil {
-					return fmt.Errorf("associate service %q with worktree preview: %w", flags.Service, err)
+					return fmt.Errorf("associate service %q with preview: %w", flags.Service, err)
 				}
 				if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
-					return errors.New("server returned a worktree preview without the assigned public URL")
+					return errors.New("server returned a preview without the assigned public URL")
 				}
 			}
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
