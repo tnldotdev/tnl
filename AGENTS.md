@@ -65,11 +65,11 @@ mutation counters; public URL counters are publish run numbers.
 | Term              | Definition                                                                        |
 | ----------------- | --------------------------------------------------------------------------------- |
 | **identity**      | A person or administrator known to one tnl server.                                |
-| **developer**     | The person running `tnl dev` and addressing feedback in the local project.        |
+| **implementer**   | The person or AI coding agent working in the project checkout.                    |
 | **reviewer**      | A person using a share to visit a preview and optionally leave feedback.          |
 | **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
 | **visitor**       | A browser or other client connecting to a public URL.                             |
-| **local service** | The developer's HTTP application.                                                 |
+| **local service** | The project's local HTTP application.                                             |
 | **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
 | **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
 
@@ -120,22 +120,21 @@ mutation counters; public URL counters are publish run numbers.
 
 ## preview sharing and feedback
 
-| Term                  | Definition                                                                                                            |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **share**             | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
-| **share link**        | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
-| **feedback thread**   | A durable conversation containing an immutable first report and ordered follow-up events.                             |
-| **report**            | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and checkout marker. |
-| **evidence**          | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
-| **pin**               | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
-| **feedback toolbar**  | The development-only browser interface for leaving and reading feedback.                                              |
-| **checkout marker**   | The recorded Git HEAD, branch, changed-file identifiers, and combined fingerprint; it does not store source bytes.    |
-| **ready for recheck** | A feedback thread state after a developer records a fix and asks a reviewer to try again.                             |
+| Term                 | Definition                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **share**            | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
+| **share link**       | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
+| **feedback thread**  | A durable conversation containing an immutable first report and ordered follow-up events.                             |
+| **report**           | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and checkout marker. |
+| **evidence**         | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
+| **pin**              | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
+| **feedback toolbar** | The development-only browser interface for leaving and reading feedback.                                              |
+| **checkout marker**  | The recorded Git HEAD, branch, changed-file identifiers, and combined fingerprint; it does not store source bytes.    |
 
-Feedback thread states are `open`, `ready_for_recheck`, and `resolved`.
-**Still broken** returns a thread to `open`. The developer uses
-`tnl feedback ready` to request a recheck. Use **feedback list**, not
-_inbox_, for the collection of threads.
+Feedback is `open` until someone with preview access resolves it. They can
+reopen it later; replies, updates, and status changes remain in its history.
+Implementers and reviewers use the same feedback toolbar. Use **feedback list**,
+not _inbox_, for the collection of threads.
 
 ## publisher connections
 

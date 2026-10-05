@@ -7,8 +7,8 @@ workflow.
 
 Run `tnl dev` to publish the configured services in one Git worktree. Send a
 reviewer one share link to that preview. The reviewer can use the app and
-leave pinned feedback. The developer or a local coding agent can inspect the
-report, address it in the right checkout, and ask for a recheck.
+leave pinned feedback. The implementer, a person or AI coding agent, can inspect
+the report, work in the right checkout, and post an update.
 
 A preview groups saved public URLs; each public URL still owns its
 hostname, visitor policy, and publish runs. A feedback thread is a durable
@@ -114,23 +114,14 @@ marker so a later comparison can distinguish it from a complete match. A
 publish run number identifies the tunnel lifecycle. The checkout marker
 identifies the local code state recorded with the report.
 
-Replies, context requests, added evidence, fixes, rechecks, and resolution
-are timestamped events appended to the thread. Fix and recheck events carry
-their own checkout markers. The current state is projected from the event
-history:
+Feedback is open until someone with current preview access resolves it. They
+can reopen it later. Replies do not change state; implementer updates include
+a checkout marker. Reports, replies, updates, resolution, and reopening remain
+in the ordered history. Reopen a resolved thread before adding more to it.
 
-```text
-open -> ready_for_recheck -> resolved
-             |
-             +-- still broken -> open
-```
-
-A reviewer with share access can reply, answer a context request, and report
-a failed recheck. An identity authorized to manage the public URL marks a
-thread ready for recheck or resolved. Member-owned public URL feedback belongs
-to that member; team-shared public URL feedback is managed by admins and
-owners. Reviewers with valid preview access see shared threads on the
-included public URLs.
+Implementers and reviewers use the same toolbar and can resolve or reopen
+feedback through current preview access. CLI access uses the existing
+member-owned and team-shared public URL authorization.
 
 Creating a report appends a `thread.created` event in the same transaction.
 Control assigns ordered, durable cursors to feedback events. The CLI can
@@ -149,9 +140,8 @@ security policy at the publisher boundary.
 
 Reviewers can pin feedback threads, read shared threads, and reply. Pins track
 an element while it matches confidently; threads with changed or missing
-elements remain in the page's feedback list with their original evidence. The
-developer opens review and resolution controls through a short-lived local
-handoff.
+elements remain in the page's feedback list with their original evidence.
+There is one toolbar, with no separate implementer mode or browser handoff.
 
 The feedback toolbar keeps a short, in-browser trail of semantic clicks, submits,
 and navigations. At submission it prepares a bounded, sanitized HTML excerpt
@@ -168,24 +158,25 @@ tnl feedback list --output=json
 tnl feedback inspect FEEDBACK_ID --output=json
 tnl feedback watch --after CURSOR --output=ndjson
 tnl feedback reply FEEDBACK_ID --message "..."
-tnl feedback ready FEEDBACK_ID --message "..."
-tnl feedback resolve FEEDBACK_ID
+tnl feedback update FEEDBACK_ID --message "..."
+tnl feedback resolve FEEDBACK_ID [--message "..."]
+tnl feedback reopen FEEDBACK_ID [--message "..."]
 ```
 
 List and inspect work after the tunnel stops. Inspect returns the durable
-thread and adds `local_worktree` from the developer's machine: its path,
+thread and adds `local_worktree` from the implementer's machine: its path,
 whether it matches the preview, and whether its current checkout matches
 the report marker. Control stores project-relative changed-file identifiers
 and checkout fingerprints; the CLI resolves the local path.
 
-For example, a ready-for-recheck thread can produce this JSON shape. The
-original report stays in place when the fix event is appended:
+For example, an open thread can produce this JSON shape. The original report
+stays in place when an update is appended:
 
 ```json
 {
   "schema_version": 1,
   "id": "fb_123",
-  "state": "ready_for_recheck",
+  "state": "open",
   "scope": {
     "preview_id": "pv_0123456789abcdefghijkl",
     "public_url_id": "url_789",
@@ -235,10 +226,10 @@ original report stays in place when the fix event is appended:
     },
     {
       "cursor": 41,
-      "type": "fix.ready_for_recheck",
+      "type": "update",
       "at": "2026-10-04T14:40:00Z",
       "text": "Updated the save handler; please try again.",
-      "checkout": {
+      "checkout_marker": {
         "head_commit": "0123456789abcdef0123456789abcdef01234567",
         "fingerprint": "sha256:..."
       }
@@ -253,8 +244,8 @@ original report stays in place when the fix event is appended:
 ```
 
 An agent uses the page, element HTML, actions, failed requests, and checkout
-comparison to search and verify the relevant code. It records a fix as an
-event, reads the recheck, and resolves the thread through an explicit command.
+comparison to search and verify the relevant code. It records updates and
+resolves or reopens the thread through explicit commands.
 The feedback toolbar and CLI project the same state and event history.
 
 ## own the boundaries
@@ -278,7 +269,7 @@ The publisher owns visitor HTTP access checks, local path dispatch, browser
 redemption and feedback endpoints, HTML injection, and the bounded per-browser
 failed-request trail. The feedback toolbar sends submitted feedback through the
 publisher; the authenticated CLI reads and manages the same control records.
-Keep local worktree paths and source bytes on the developer's machine. Build
+Keep local worktree paths and source bytes on the implementer's machine. Build
 the feedback toolbar bundle reproducibly and include its dependencies' legal files in
 the client release artifacts.
 
@@ -292,7 +283,7 @@ the client release artifacts.
 3. Add immutable feedback reports, bounded evidence, ordered events, state
    projections, checkout markers, and member and team-shared authorization.
 4. Bundle and embed the feedback toolbar, inject it at the publisher, add the
-   developer handoff and agent CLI, and expose resumable event reads.
+   agent CLI, and expose resumable event reads.
 5. Verify path matching and streaming, preview ownership, share membership
    and revocation, HTML injection in Next and Vite, dynamic pins, evidence
    bounds, checkout comparison, event ordering and resume, and hosted and
