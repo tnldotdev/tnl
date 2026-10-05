@@ -24,6 +24,9 @@ func (d *Database) CreatePublishRunPreview(ctx context.Context, auth PublishRunA
 	}
 	defer rollback(ctx, tx, "create demo preview", &retErr)()
 	queries := controlstatedb.New(tx)
+	if _, err := queries.LockPublicURLForRun(ctx, auth.PublicURLID); err != nil {
+		return Preview{}, ErrFeedbackAccess
+	}
 	run, err := queries.LockPublishRun(ctx, auth.PublishRunID)
 	if err != nil || run.ClosedAt.Valid || run.PublicURLID != auth.PublicURLID || uint64(run.PublishRunNumber) != auth.PublishRunNumber {
 		return Preview{}, ErrFeedbackAccess

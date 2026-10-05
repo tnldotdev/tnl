@@ -181,6 +181,10 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	}
 	defer rollback(ctx, tx, "create feedback", &retErr)()
 	queries := controlstatedb.New(tx)
+	// follow public URL -> publish run -> thread order during demo cleanup.
+	if _, err := queries.LockPublicURLForRun(ctx, auth.PublicURLID); err != nil {
+		return FeedbackThread{}, ErrFeedbackAccess
+	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
 		PublishRunID: auth.PublishRunID, PreviewID: request.PreviewID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
@@ -270,16 +274,28 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	}
 	defer rollback(ctx, tx, "append feedback", &retErr)()
 	queries := controlstatedb.New(tx)
+	candidate, err := queries.GetFeedbackThread(ctx, request.FeedbackID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FeedbackEvent{}, ErrFeedbackNotFound
+	}
+	if err != nil {
+		return FeedbackEvent{}, err
+	}
+	if request.Actor.Kind == "reviewer" {
+		if _, err := queries.LockPublicURLForRun(ctx, candidate.PublicURLID); err != nil {
+			return FeedbackEvent{}, ErrFeedbackAccess
+		}
+	}
+	actorRef, err := d.authorizeFeedbackActor(ctx, queries, candidate, request.Actor, now)
+	if err != nil {
+		return FeedbackEvent{}, err
+	}
 	thread, err := queries.LockFeedbackThread(ctx, request.FeedbackID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FeedbackEvent{}, ErrFeedbackNotFound
 	}
 	if err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: lock feedback thread: %w", err)
-	}
-	actorRef, err := d.authorizeFeedbackActor(ctx, queries, thread, request.Actor, now)
-	if err != nil {
-		return FeedbackEvent{}, err
 	}
 	existing, err := queries.GetFeedbackEventByActorKey(ctx, controlstatedb.GetFeedbackEventByActorKeyParams{
 		FeedbackID: thread.ID, ActorKind: request.Actor.Kind, ActorReference: actorRef,
