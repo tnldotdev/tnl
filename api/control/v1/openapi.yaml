@@ -1211,8 +1211,19 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, preview_id, team_id, public_url_ids, created_by_identity_id, created_at, expires_at]
+        [
+          schema_version,
+          id,
+          preview_id,
+          team_id,
+          public_url_ids,
+          created_by_identity_id,
+          created_at,
+          expires_at,
+        ]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         id:
           $ref: "#/components/schemas/ShareID"
         preview_id:
@@ -1240,8 +1251,10 @@ components:
     SharePage:
       type: object
       additionalProperties: false
-      required: [shares]
+      required: [schema_version, shares]
       properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
         shares:
           type: array
           maxItems: 100

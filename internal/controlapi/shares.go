@@ -120,7 +120,7 @@ func (h *handler) ListShares(response http.ResponseWriter, request *http.Request
 		writeControlStateProblem(response, "list shares", err)
 		return
 	}
-	body := controlv1.SharePage{Shares: make([]controlv1.Share, len(page.Shares))}
+	body := controlv1.SharePage{SchemaVersion: controlstate.ReviewSchemaVersion, Shares: make([]controlv1.Share, len(page.Shares))}
 	for index, share := range page.Shares {
 		body.Shares[index] = shareResponse(share)
 	}
@@ -176,7 +176,8 @@ func (h *handler) readShare(response http.ResponseWriter, request *http.Request,
 
 func shareResponse(share controlstate.Share) controlv1.Share {
 	return controlv1.Share{
-		Id: share.ID, PreviewId: share.PreviewID, TeamId: share.TeamID,
+		SchemaVersion: controlv1.ReviewSchemaVersion(share.SchemaVersion),
+		Id:            share.ID, PreviewId: share.PreviewID, TeamId: share.TeamID,
 		PublicUrlIds: share.PublicURLIDs, CreatedByIdentityId: share.CreatedByIdentityID,
 		CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt, RevokedAt: share.RevokedAt,
 	}

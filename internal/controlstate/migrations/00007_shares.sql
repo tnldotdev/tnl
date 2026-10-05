@@ -1,6 +1,7 @@
 -- +goose Up
 CREATE TABLE control.shares (
     id text PRIMARY KEY CHECK (id <> ''),
+    schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
     preview_id text NOT NULL,
     team_id text NOT NULL CHECK (team_id <> ''),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,

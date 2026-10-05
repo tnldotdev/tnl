@@ -935,7 +935,10 @@ type Share struct {
 	PreviewId           PreviewID     `json:"preview_id"`
 	PublicUrlIds        []PublicURLID `json:"public_url_ids"`
 	RevokedAt           *time.Time    `json:"revoked_at,omitempty"`
-	TeamId              TeamID        `json:"team_id"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	TeamId        TeamID              `json:"team_id"`
 }
 
 // ShareID defines model for ShareID.
@@ -944,7 +947,10 @@ type ShareID = ResourceID
 // SharePage defines model for SharePage.
 type SharePage struct {
 	NextCursor *ShareID `json:"next_cursor,omitempty"`
-	Shares     []Share  `json:"shares"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Shares        []Share             `json:"shares"`
 }
 
 // TeamID defines model for TeamID.

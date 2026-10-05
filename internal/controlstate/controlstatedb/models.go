@@ -618,6 +618,7 @@ type ControlRuntimeSecret struct {
 
 type ControlShare struct {
 	ID                  string
+	SchemaVersion       int16
 	PreviewID           string
 	TeamID              string
 	CreatedByIdentityID string

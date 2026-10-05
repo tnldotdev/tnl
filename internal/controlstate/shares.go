@@ -27,6 +27,7 @@ var (
 const maximumShareLifetime = 30 * 24 * time.Hour
 
 type Share struct {
+	SchemaVersion       int
 	ID                  string
 	PreviewID           string
 	TeamID              string
@@ -277,7 +278,8 @@ func shareFromModel(row controlstatedb.ControlShare, ids []string) Share {
 		ids = []string{}
 	}
 	return Share{
-		ID: row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID,
+		SchemaVersion: int(row.SchemaVersion),
+		ID:            row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID,
 		CreatedByIdentityID: row.CreatedByIdentityID, PublicURLIDs: ids,
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt),
 	}
