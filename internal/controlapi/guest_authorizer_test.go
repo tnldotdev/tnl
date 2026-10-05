@@ -90,6 +90,12 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 			r.Operation = authorization.OperationPublicURLUpdate
 			return r
 		}(),
+		func() authorization.Request { r := create; r.Operation = authorization.OperationShareCreate; return r }(),
+		func() authorization.Request {
+			r := create
+			r.Operation = authorization.OperationFeedbackManage
+			return r
+		}(),
 	} {
 		if _, err := authorizer.Authorize(t.Context(), invalid); !errors.Is(err, authorization.ErrGuestDemoOnly) {
 			t.Fatalf("guest accepted forbidden operation %+v: %v", invalid, err)

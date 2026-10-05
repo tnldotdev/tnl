@@ -23,15 +23,19 @@ import (
 
 // Defines values for AuthorizationOperation.
 const (
+	FeedbackManage   AuthorizationOperation = "feedback.manage"
 	PublicUrlCreate  AuthorizationOperation = "public_url.create"
 	PublicUrlDelete  AuthorizationOperation = "public_url.delete"
 	PublicUrlUpdate  AuthorizationOperation = "public_url.update"
 	PublishRunCreate AuthorizationOperation = "publish_run.create"
+	ShareCreate      AuthorizationOperation = "share.create"
 )
 
 // Valid indicates whether the value is a known member of the AuthorizationOperation enum.
 func (e AuthorizationOperation) Valid() bool {
 	switch e {
+	case FeedbackManage:
+		return true
 	case PublicUrlCreate:
 		return true
 	case PublicUrlDelete:
@@ -39,6 +43,8 @@ func (e AuthorizationOperation) Valid() bool {
 	case PublicUrlUpdate:
 		return true
 	case PublishRunCreate:
+		return true
+	case ShareCreate:
 		return true
 	default:
 		return false
