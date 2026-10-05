@@ -28,7 +28,11 @@ func (d *Database) GetFeedback(ctx context.Context, id string) (FeedbackThread, 
 }
 
 func (d *Database) ListFeedbackForPage(ctx context.Context, previewID, publicURLID, pagePath, cursor string) (FeedbackThreadPage, error) {
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || publicURLID == "" || !validFeedbackPath(pagePath) ||
+	return d.ListFeedbackForPublicURL(ctx, previewID, publicURLID, pagePath, "", cursor)
+}
+
+func (d *Database) ListFeedbackForPublicURL(ctx context.Context, previewID, publicURLID, pagePath, state, cursor string) (FeedbackThreadPage, error) {
+	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || publicURLID == "" || pagePath != "" && !validFeedbackPath(pagePath) || state != "" && state != "open" && state != "resolved" ||
 		cursor != "" && !opaqueid.Valid(cursor, opaqueid.FeedbackPrefix) {
 		return FeedbackThreadPage{}, ErrFeedbackInvalid
 	}
@@ -41,7 +45,7 @@ func (d *Database) ListFeedbackForPage(ctx context.Context, previewID, publicURL
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: read feedback cursor: %w", err)
 	}
 	rows, err := queries.ListFeedbackThreadsForPage(ctx, controlstatedb.ListFeedbackThreadsForPageParams{
-		PreviewID: previewID, PublicURLID: publicURLID, PagePath: pagePath, AfterID: cursor,
+		PreviewID: previewID, PublicURLID: publicURLID, PagePath: pagePath, ThreadState: state, AfterID: cursor,
 	})
 	if err != nil {
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: list page feedback: %w", err)

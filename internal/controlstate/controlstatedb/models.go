@@ -217,6 +217,9 @@ type ControlFeedbackThread struct {
 	PublishRunNumber  int64
 	Service           string
 	PagePath          string
+	PageTitle         string
+	MessageCount      int64
+	LatestEventCursor int64
 	ReportText        string
 	AuthorDisplayName pgtype.Text
 	Anchor            []byte

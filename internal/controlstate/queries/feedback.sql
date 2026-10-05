@@ -11,13 +11,13 @@ FROM control.feedback_event_clock WHERE id = 1;
 -- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
     id, preview_id, team_id, public_url_id, publish_run_id,
-    publish_run_number, service, page_path, report_text, author_display_name,
+    publish_run_number, service, page_path, page_title, report_text, author_display_name,
     anchor, evidence, checkout_at_report, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
     sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(public_url_id),
     sqlc.arg(publish_run_id), sqlc.arg(publish_run_number), sqlc.arg(service),
-    sqlc.arg(page_path), sqlc.arg(report_text), sqlc.narg(author_display_name),
+    sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name),
     convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(evidence)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(checkout_at_report)::bytea, 'UTF8')::jsonb,
@@ -41,7 +41,8 @@ SELECT * FROM control.feedback_threads WHERE id = $1 FOR UPDATE;
 SELECT * FROM control.feedback_threads
 WHERE preview_id = sqlc.arg(preview_id)
   AND public_url_id = sqlc.arg(public_url_id)
-  AND page_path = sqlc.arg(page_path)
+   AND (sqlc.arg(page_path)::text = '' OR page_path = sqlc.arg(page_path))
+   AND (sqlc.arg(thread_state)::text = '' OR state = sqlc.arg(thread_state))
   AND id > sqlc.arg(after_id)
 ORDER BY id LIMIT 101;
 
@@ -73,6 +74,12 @@ INSERT INTO control.feedback_events (
     sqlc.arg(occurred_at)
 )
 RETURNING *;
+
+-- name: RecordFeedbackActivity :exec
+UPDATE control.feedback_threads
+SET latest_event_cursor = sqlc.arg(event_cursor),
+    message_count = message_count + CASE WHEN sqlc.arg(add_message)::boolean THEN 1 ELSE 0 END
+WHERE id = sqlc.arg(feedback_id);
 
 -- name: UpdateFeedbackThreadState :one
 UPDATE control.feedback_threads

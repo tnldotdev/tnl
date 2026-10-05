@@ -80,6 +80,9 @@ type FeedbackThread struct {
 	PublishRunNumber  uint64
 	Service           string
 	PagePath          string
+	PageTitle         string
+	MessageCount      uint64
+	LatestEventCursor uint64
 	State             FeedbackThreadState
 	ReportText        string
 	AuthorDisplayName string
@@ -120,6 +123,7 @@ type CreateFeedbackRequest struct {
 	PreviewID         string
 	Service           string
 	PagePath          string
+	PageTitle         string
 	ReportText        string
 	AuthorDisplayName string
 	Anchor            json.RawMessage
@@ -144,7 +148,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		return FeedbackThread{}, err
 	}
 	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || !naming.ValidServiceName(request.Service) ||
-		!validFeedbackPath(request.PagePath) || !validFeedbackText(request.ReportText, 4000) ||
+		!validFeedbackPath(request.PagePath) || len([]rune(request.PageTitle)) > 256 || !validFeedbackText(request.ReportText, 4000) ||
 		request.AuthorDisplayName != "" && !validFeedbackText(request.AuthorDisplayName, 64) ||
 		!validFeedbackKey(request.IdempotencyKey) ||
 		request.Actor.Kind != "reviewer" {
@@ -167,9 +171,9 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		return FeedbackThread{}, err
 	}
 	digestInput, err := json.Marshal(struct {
-		PreviewID, Service, PagePath, ReportText, AuthorDisplayName string
-		Anchor, Evidence, CheckoutAtReport                          json.RawMessage
-	}{request.PreviewID, request.Service, request.PagePath, request.ReportText, request.AuthorDisplayName,
+		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName string
+		Anchor, Evidence, CheckoutAtReport                                     json.RawMessage
+	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
 		request.Anchor, request.Evidence, request.CheckoutAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -206,7 +210,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	stored, err := queries.CreateFeedbackThread(ctx, controlstatedb.CreateFeedbackThreadParams{
 		ID: id, PreviewID: request.PreviewID, TeamID: scope.TeamID,
 		PublicURLID: scope.PublicURLID, PublishRunID: auth.PublishRunID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath,
+		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
 		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
 		Anchor: request.Anchor, Evidence: request.Evidence, CheckoutAtReport: request.CheckoutAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),
@@ -230,6 +234,10 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		}); err != nil {
 			return FeedbackThread{}, fmt.Errorf("controlstate: record feedback creation: %w", err)
 		}
+		if err := queries.RecordFeedbackActivity(ctx, controlstatedb.RecordFeedbackActivityParams{FeedbackID: id, EventCursor: cursor, AddMessage: false}); err != nil {
+			return FeedbackThread{}, err
+		}
+		stored.LatestEventCursor = cursor
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: commit feedback report: %w", err)
@@ -326,6 +334,9 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	})
 	if err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: save feedback event: %w", err)
+	}
+	if err := queries.RecordFeedbackActivity(ctx, controlstatedb.RecordFeedbackActivityParams{FeedbackID: thread.ID, EventCursor: cursor, AddMessage: request.Type == FeedbackReply || request.Type == FeedbackUpdate}); err != nil {
+		return FeedbackEvent{}, err
 	}
 	if next != FeedbackThreadState(thread.State) {
 		if _, err := queries.UpdateFeedbackThreadState(ctx, controlstatedb.UpdateFeedbackThreadStateParams{
@@ -489,6 +500,7 @@ func validFeedbackJSON(value json.RawMessage, maxBytes int) bool {
 
 func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThread {
 	return FeedbackThread{
+		PageTitle: row.PageTitle, MessageCount: uint64(row.MessageCount), LatestEventCursor: uint64(row.LatestEventCursor),
 		ID: row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID, PublicURLID: row.PublicURLID,
 		PublishRunID: row.PublishRunID, PublishRunNumber: uint64(row.PublishRunNumber),
 		Service: row.Service, PagePath: row.PagePath, State: FeedbackThreadState(row.State),

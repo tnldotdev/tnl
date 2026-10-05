@@ -10,10 +10,18 @@ import (
 
 func feedbackScope(thread controlstate.FeedbackThread) controlv1.FeedbackScope {
 	return controlv1.FeedbackScope{
+		PageTitle: feedbackPageTitle(thread.PageTitle),
 		PreviewId: thread.PreviewID, PublicUrlId: thread.PublicURLID,
 		PublishRunId: thread.PublishRunID, PublishRunNumber: int64(thread.PublishRunNumber),
 		PagePath: thread.PagePath, Service: thread.Service,
 	}
+}
+
+func feedbackPageTitle(title string) *string {
+	if title == "" {
+		return nil
+	}
+	return &title
 }
 
 func feedbackReport(thread controlstate.FeedbackThread) controlv1.FeedbackReport {
@@ -43,6 +51,7 @@ func feedbackThreadResponse(thread controlstate.FeedbackThread) (controlv1.Feedb
 		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored checkout marker: %w", err)
 	}
 	return controlv1.FeedbackThread{
+		MessageCount: int64(thread.MessageCount), LatestEventCursor: int64(thread.LatestEventCursor),
 		SchemaVersion: controlv1.ReviewSchemaVersion(thread.SchemaVersion), Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
 		Scope: feedbackScope(thread), Report: feedbackReport(thread),
 		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
@@ -57,6 +66,7 @@ func feedbackThreadSummary(thread controlstate.FeedbackThread) (controlv1.Feedba
 		}
 	}
 	return controlv1.FeedbackThreadSummary{
+		MessageCount: int64(thread.MessageCount), LatestEventCursor: int64(thread.LatestEventCursor),
 		Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
 		SchemaVersion: controlv1.ReviewSchemaVersion(thread.SchemaVersion), Scope: feedbackScope(thread), Report: feedbackReport(thread), Anchor: anchor,
 	}, nil

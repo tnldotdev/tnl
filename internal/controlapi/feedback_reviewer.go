@@ -65,6 +65,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		displayName = *body.Report.DisplayName
 	}
 	thread, err := h.feedback.CreateFeedback(request.Context(), auth, controlstate.CreateFeedbackRequest{
+		PageTitle: optionalFeedbackString(body.PageTitle),
 		PreviewID: body.PreviewId, Service: body.Service, PagePath: body.PagePath,
 		ReportText: body.Report.Text, AuthorDisplayName: displayName,
 		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
@@ -84,7 +85,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 
 func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
 	var body controlv1.PreviewPageFeedbackRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber < 1 || body.PagePath == "" {
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber < 1 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid page feedback request")
 		return
 	}
@@ -110,7 +111,7 @@ func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request 
 	if body.Cursor != nil {
 		cursor = *body.Cursor
 	}
-	page, err := h.feedback.ListFeedbackForPage(request.Context(), body.PreviewId, publicURLID, body.PagePath, cursor)
+	page, err := h.feedback.ListFeedbackForPublicURL(request.Context(), body.PreviewId, publicURLID, optionalFeedbackString(body.PagePath), optionalFeedbackString(body.State), cursor)
 	if err != nil {
 		writeControlStateProblem(response, "list page feedback", err)
 		return
@@ -121,6 +122,13 @@ func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request 
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
+}
+
+func optionalFeedbackString[T ~string](value *T) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
 }
 
 func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID, feedbackID controlv1.FeedbackID, _ controlv1.AppendReviewerFeedbackEventParams) {

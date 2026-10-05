@@ -1624,6 +1624,9 @@ components:
           minLength: 1
           maxLength: 2048
           pattern: "^/"
+        page_title:
+          type: string
+          maxLength: 256
         service:
           type: string
           minLength: 1
@@ -1814,8 +1817,27 @@ components:
     FeedbackThread:
       type: object
       additionalProperties: false
-      required: [schema_version, id, state, scope, report, evidence, checkout_at_report]
+      required:
+        [
+          schema_version,
+          id,
+          state,
+          scope,
+          report,
+          evidence,
+          checkout_at_report,
+          message_count,
+          latest_event_cursor,
+        ]
       properties:
+        message_count:
+          type: integer
+          format: int64
+          minimum: 1
+        latest_event_cursor:
+          type: integer
+          format: int64
+          minimum: 0
         schema_version:
           $ref: "#/components/schemas/ReviewSchemaVersion"
         id:
@@ -1835,8 +1857,16 @@ components:
     FeedbackThreadSummary:
       type: object
       additionalProperties: false
-      required: [schema_version, id, state, scope, report]
+      required: [schema_version, id, state, scope, report, message_count, latest_event_cursor]
       properties:
+        message_count:
+          type: integer
+          format: int64
+          minimum: 1
+        latest_event_cursor:
+          type: integer
+          format: int64
+          minimum: 0
         schema_version:
           $ref: "#/components/schemas/ReviewSchemaVersion"
         id:
@@ -1954,6 +1984,9 @@ components:
           type: string
         page_path:
           type: string
+        page_title:
+          type: string
+          maxLength: 256
         report:
           type: object
           additionalProperties: false
@@ -1974,8 +2007,10 @@ components:
     PreviewPageFeedbackRequest:
       type: object
       additionalProperties: false
-      required: [preview_id, publish_run_number, page_path, access]
+      required: [preview_id, publish_run_number, access]
       properties:
+        state:
+          $ref: "#/components/schemas/FeedbackThreadState"
         preview_id:
           $ref: "#/components/schemas/PreviewID"
         publish_run_number:

@@ -128,6 +128,7 @@ type ShareAccessStore interface {
 }
 
 type FeedbackStore interface {
+	ListFeedbackForPublicURL(context.Context, string, string, string, string, string) (controlstate.FeedbackThreadPage, error)
 	CreatePublishRunPreview(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.Preview, error)
 	CreateFeedback(context.Context, controlstate.PublishRunAuthentication, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
 	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)

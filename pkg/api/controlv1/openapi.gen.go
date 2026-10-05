@@ -792,6 +792,7 @@ type CreateFeedbackReportRequest struct {
 	CheckoutAtReport CheckoutMarker         `json:"checkout_at_report"`
 	Evidence         FeedbackEvidence       `json:"evidence"`
 	PagePath         string                 `json:"page_path"`
+	PageTitle        *string                `json:"page_title,omitempty"`
 	PreviewId        PreviewID              `json:"preview_id"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
 	Report           struct {
@@ -959,6 +960,7 @@ type FeedbackReviewerAccess struct {
 // FeedbackScope defines model for FeedbackScope.
 type FeedbackScope struct {
 	PagePath         string       `json:"page_path"`
+	PageTitle        *string      `json:"page_title,omitempty"`
 	PreviewId        PreviewID    `json:"preview_id"`
 	PublicUrlId      PublicURLID  `json:"public_url_id"`
 	PublishRunId     PublishRunID `json:"publish_run_id"`
@@ -978,11 +980,13 @@ type FeedbackTextBoundary struct {
 
 // FeedbackThread defines model for FeedbackThread.
 type FeedbackThread struct {
-	Anchor           *FeedbackAnchor  `json:"anchor,omitempty"`
-	CheckoutAtReport CheckoutMarker   `json:"checkout_at_report"`
-	Evidence         FeedbackEvidence `json:"evidence"`
-	Id               FeedbackID       `json:"id"`
-	Report           FeedbackReport   `json:"report"`
+	Anchor            *FeedbackAnchor  `json:"anchor,omitempty"`
+	CheckoutAtReport  CheckoutMarker   `json:"checkout_at_report"`
+	Evidence          FeedbackEvidence `json:"evidence"`
+	Id                FeedbackID       `json:"id"`
+	LatestEventCursor int64            `json:"latest_event_cursor"`
+	MessageCount      int64            `json:"message_count"`
+	Report            FeedbackReport   `json:"report"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
@@ -1005,9 +1009,11 @@ type FeedbackThreadState string
 
 // FeedbackThreadSummary defines model for FeedbackThreadSummary.
 type FeedbackThreadSummary struct {
-	Anchor *FeedbackAnchor `json:"anchor,omitempty"`
-	Id     FeedbackID      `json:"id"`
-	Report FeedbackReport  `json:"report"`
+	Anchor            *FeedbackAnchor `json:"anchor,omitempty"`
+	Id                FeedbackID      `json:"id"`
+	LatestEventCursor int64           `json:"latest_event_cursor"`
+	MessageCount      int64           `json:"message_count"`
+	Report            FeedbackReport  `json:"report"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
@@ -1101,9 +1107,10 @@ type PreviewID = ResourceID
 type PreviewPageFeedbackRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
 	Cursor           *FeedbackID            `json:"cursor,omitempty"`
-	PagePath         string                 `json:"page_path"`
+	PagePath         *string                `json:"page_path,omitempty"`
 	PreviewId        PreviewID              `json:"preview_id"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
+	State            *FeedbackThreadState   `json:"state,omitempty"`
 }
 
 // Problem defines model for Problem.

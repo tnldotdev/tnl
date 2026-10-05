@@ -63,7 +63,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	actor := FeedbackActor{Kind: "reviewer", ShareID: share.ID, CookieSecret: cookie}
 	marker := feedbackTestCheckout(t)
 	request := CreateFeedbackRequest{
-		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile",
+		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
 		ReportText: "Save says it worked, but changes disappear after reload.", AuthorDisplayName: "Sam",
 		Anchor:           json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
 		Evidence:         json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
@@ -169,6 +169,21 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	listed, err := database.ListFeedbackForPage(t.Context(), preview.ID, f.setup.PublicURLID, "/settings/profile", "")
 	if err != nil || len(listed.Threads) != 1 || listed.Threads[0].State != FeedbackOpen {
 		t.Fatalf("page feedback = %+v, %v", listed, err)
+	}
+	if listed.Threads[0].MessageCount != 3 || listed.Threads[0].LatestEventCursor != events.EventCursor || listed.Threads[0].PageTitle != "Profile settings" {
+		t.Fatalf("summary activity = %+v", listed.Threads[0])
+	}
+	all, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, f.setup.PublicURLID, "", "open", "")
+	if err != nil || len(all.Threads) != 1 {
+		t.Fatalf("all-page filter = %+v, %v", all, err)
+	}
+	closed, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, f.setup.PublicURLID, "", "resolved", "")
+	if err != nil || len(closed.Threads) != 0 {
+		t.Fatalf("resolved filter = %+v, %v", closed, err)
+	}
+	other, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, "url_other_host", "", "", "")
+	if err != nil || len(other.Threads) != 0 {
+		t.Fatalf("hostname scope leaked feedback: %+v, %v", other, err)
 	}
 }
 
