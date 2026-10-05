@@ -15,16 +15,16 @@ type previewControlStub struct {
 	keys []string
 }
 
-func (c *previewControlStub) CreateWorktreePreview(_ context.Context, teamID, key string) (controlv1.WorktreePreview, error) {
+func (c *previewControlStub) CreatePreview(_ context.Context, teamID, key string) (controlv1.Preview, error) {
 	c.keys = append(c.keys, key)
-	return controlv1.WorktreePreview{Id: c.id, TeamId: teamID}, nil
+	return controlv1.Preview{Id: c.id, TeamId: teamID}, nil
 }
 
-func (*previewControlStub) AddWorktreePreviewPublicURL(_ context.Context, _, _ string) (controlv1.WorktreePreview, error) {
+func (*previewControlStub) AddPreviewPublicURL(_ context.Context, _, _ string) (controlv1.Preview, error) {
 	panic("not called")
 }
 
-func TestEnsureWorktreePreviewPersistsServerIdentityForCheckout(t *testing.T) {
+func TestEnsurePreviewPersistsServerIdentityForCheckout(t *testing.T) {
 	ctx := t.Context()
 	state, err := clientstate.Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -36,13 +36,13 @@ func TestEnsureWorktreePreviewPersistsServerIdentityForCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := opaqueid.New(opaqueid.WorktreePreviewPrefix)
+	id, err := opaqueid.New(opaqueid.PreviewPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	control := &previewControlStub{id: id}
 	for range 2 {
-		got, err := ensureWorktreePreview(ctx, state, store, control, server, "team_1", "/project/checkout")
+		got, err := ensurePreview(ctx, state, store, control, server, "team_1", "/project/checkout")
 		if err != nil || got != id {
 			t.Fatalf("preview identity = %q, %v", got, err)
 		}
@@ -50,16 +50,16 @@ func TestEnsureWorktreePreviewPersistsServerIdentityForCheckout(t *testing.T) {
 	if len(control.keys) != 2 || control.keys[0] != control.keys[1] || control.keys[0] == "" {
 		t.Fatalf("create requests did not share a stable idempotency key: %v", control.keys)
 	}
-	saved, found, err := store.WorktreePreviewID(ctx, "team_1", "/project/checkout")
+	saved, found, err := store.PreviewID(ctx, "team_1", "/project/checkout")
 	if err != nil || !found || saved != id {
 		t.Fatalf("saved preview = %q, %v, %v", saved, found, err)
 	}
-	other, err := opaqueid.New(opaqueid.WorktreePreviewPrefix)
+	other, err := opaqueid.New(opaqueid.PreviewPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	control.id = other
-	if _, err := ensureWorktreePreview(ctx, state, store, control, server, "team_1", "/project/checkout"); err == nil {
+	if _, err := ensurePreview(ctx, state, store, control, server, "team_1", "/project/checkout"); err == nil {
 		t.Fatal("server reassigned an existing checkout to another preview")
 	}
 }

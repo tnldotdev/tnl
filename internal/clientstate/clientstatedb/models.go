@@ -76,18 +76,18 @@ type LocalTunnel struct {
 	LastError        string
 }
 
+type Preview struct {
+	ServerOrigin string
+	TeamID       string
+	ProjectRoot  string
+	PreviewID    string
+	UpdatedAt    int64
+}
+
 type ServerProfile struct {
 	ID             int64
 	Origin         string
 	SelectedTeamID string
 	CreatedAt      int64
 	LastUsedAt     int64
-}
-
-type WorktreePreview struct {
-	ServerOrigin      string
-	TeamID            string
-	ProjectRoot       string
-	WorktreePreviewID string
-	UpdatedAt         int64
 }

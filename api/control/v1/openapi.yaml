@@ -100,10 +100,10 @@ paths:
                 $ref: "#/components/schemas/GuestDemoNumber"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/worktree-previews:
+  /v1/previews:
     post:
-      operationId: createWorktreePreview
-      summary: Create or reuse a worktree preview for one team
+      operationId: createPreview
+      summary: Create or reuse a preview for one team
       security:
         - bearerAuth: []
       parameters:
@@ -113,54 +113,54 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateWorktreePreviewRequest"
+              $ref: "#/components/schemas/CreatePreviewRequest"
       responses:
         "201":
-          description: Worktree preview identity
+          description: Preview identity
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorktreePreview"
+                $ref: "#/components/schemas/Preview"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/worktree-previews/{worktree_preview_id}:
+  /v1/previews/{preview_id}:
     get:
-      operationId: getWorktreePreview
-      summary: Read a worktree preview and its public URLs
+      operationId: getPreview
+      summary: Read a preview and its public URLs
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/WorktreePreviewID"
+        - $ref: "#/components/parameters/PreviewID"
       responses:
         "200":
-          description: Worktree preview
+          description: Preview
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorktreePreview"
+                $ref: "#/components/schemas/Preview"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/worktree-previews/{worktree_preview_id}/public-urls:
+  /v1/previews/{preview_id}/public-urls:
     post:
-      operationId: addWorktreePreviewPublicURL
-      summary: Add an authorized public URL to a worktree preview
+      operationId: addPreviewPublicURL
+      summary: Add an authorized public URL to a preview
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/WorktreePreviewID"
+        - $ref: "#/components/parameters/PreviewID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddWorktreePreviewPublicURLRequest"
+              $ref: "#/components/schemas/AddPreviewPublicURLRequest"
       responses:
         "200":
-          description: Worktree preview with updated public URLs
+          description: Preview with updated public URLs
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorktreePreview"
+                $ref: "#/components/schemas/Preview"
         default:
           $ref: "#/components/responses/Problem"
   /v1/public-urls:
@@ -645,12 +645,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PublicURLID"
-    WorktreePreviewID:
-      name: worktree_preview_id
+    PreviewID:
+      name: preview_id
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/WorktreePreviewID"
+        $ref: "#/components/schemas/PreviewID"
     PublishRunID:
       name: publish_run_id
       in: path
@@ -707,7 +707,7 @@ components:
       $ref: "#/components/schemas/ResourceID"
     PublicURLID:
       $ref: "#/components/schemas/ResourceID"
-    WorktreePreviewID:
+    PreviewID:
       $ref: "#/components/schemas/ResourceID"
     PublishRunID:
       $ref: "#/components/schemas/ResourceID"
@@ -1069,27 +1069,27 @@ components:
         ephemeral:
           type: boolean
           default: false
-    CreateWorktreePreviewRequest:
+    CreatePreviewRequest:
       type: object
       additionalProperties: false
       required: [team_id]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
-    AddWorktreePreviewPublicURLRequest:
+    AddPreviewPublicURLRequest:
       type: object
       additionalProperties: false
       required: [public_url_id]
       properties:
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
-    WorktreePreview:
+    Preview:
       type: object
       additionalProperties: false
       required: [id, team_id, public_url_ids, created_at]
       properties:
         id:
-          $ref: "#/components/schemas/WorktreePreviewID"
+          $ref: "#/components/schemas/PreviewID"
         team_id:
           $ref: "#/components/schemas/TeamID"
         public_url_ids:
