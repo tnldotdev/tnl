@@ -70,10 +70,6 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (http.Handler, error) {
-	return NewWithMounts(target, hostname, requestLimit, nil, onTargetFailure...)
-}
-
 // NewWithMounts shares one hostname check and request limit across the base
 // service and all mounted local services.
 func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {

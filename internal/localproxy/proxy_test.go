@@ -41,7 +41,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 }
 
 func TestNewDiagnosesInvalidRouteHostname(t *testing.T) {
-	if _, err := New("3000", "INVALID.example", 0); err == nil {
+	if _, err := NewWithMounts("3000", "INVALID.example", 0, nil); err == nil {
 		t.Fatal("New accepted a noncanonical route hostname")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLInvalid {
 		t.Fatalf("New diagnostic = %q, %t", code, ok)
@@ -105,7 +105,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := New(target, "route.example", 0)
+	handler, err := NewWithMounts(target, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestProxyReportsTargetFailureOnceUntilItRecovers(t *testing.T) {
 	}))
 	defer upstream.Close()
 	var failures atomic.Int32
-	handler, err := New(upstream.URL, "route.example", 0, func() { failures.Add(1) })
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil, func() { failures.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 		http.Error(response, "application failure", http.StatusBadGateway)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func testProxyForwardsWebSocketUpgrade(t *testing.T, mounted bool) {
 	})
 	base := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(base.Close)
-	handler, err := New(upstream.URL, "route.example", 1)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 1, nil)
 	path := "/hmr"
 	if mounted {
 		path = "/api/hmr"
@@ -347,7 +347,7 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(unblock)
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
