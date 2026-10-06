@@ -87,11 +87,11 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	}
 }
 
-func TestNewDiagnosesInvalidRouteHostname(t *testing.T) {
+func TestNewWithMountsDiagnosesInvalidPublicURLHostname(t *testing.T) {
 	if _, err := NewWithMounts("3000", "INVALID.example", 0, nil); err == nil {
-		t.Fatal("New accepted a noncanonical route hostname")
+		t.Fatal("NewWithMounts accepted a noncanonical public URL hostname")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLInvalid {
-		t.Fatalf("New diagnostic = %q, %t", code, ok)
+		t.Fatalf("NewWithMounts diagnostic = %q, %t", code, ok)
 	}
 }
 
