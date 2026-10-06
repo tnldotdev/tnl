@@ -85,6 +85,17 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	if acting.ID == "" {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
+	if request.Operation == authorization.OperationFeedbackManage {
+		if request.PublicURLID == "" || request.PublicURLMutationRevision == 0 {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		if request.PublicURLScope == authorization.PublicURLScopeMember && request.PublicURLMembershipID != acting.ID ||
+			request.PublicURLScope == authorization.PublicURLScopeShared && (request.PublicURLMembershipID != "" || acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner) || !request.PublicURLScope.Valid() {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		return authorization.Decision{IdentityID: principal.IdentityID, TeamID: request.TeamID, ActingMembershipID: acting.ID, ActingRole: string(acting.Role), PublicURLMembershipID: request.PublicURLMembershipID,
+			PolicyRevision: uint64(acting.PolicyRevision), DomainID: request.DomainID, CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope, RetrySecret: principal.RetrySecret}, nil
+	}
 	domains, err := a.store.ListTeamDomains(ctx, principal.IdentityID, request.TeamID)
 	if err != nil {
 		return authorization.Decision{}, authorization.ErrUnavailable
@@ -254,7 +265,7 @@ func validAuthorizationDecision(request authorization.Request, decision authoriz
 		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
 		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
 		decision.CanonicalHostname != request.CanonicalHostname || !decision.PublicURLScope.Valid() || decision.PublicURLScope != request.PublicURLScope ||
-		strings.TrimSpace(decision.DNSAuthorityReference) == "" {
+		request.Operation != authorization.OperationFeedbackManage && strings.TrimSpace(decision.DNSAuthorityReference) == "" {
 		return false
 	}
 	if request.ActingMembershipID != "" && decision.ActingMembershipID != request.ActingMembershipID ||
