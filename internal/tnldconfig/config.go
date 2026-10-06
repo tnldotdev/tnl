@@ -91,6 +91,8 @@ type Config struct {
 
 	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
 	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
+	EmailURL            string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the typed email receiver."`
+	EmailToken          string `name:"email-token" env:"TNLD_EMAIL_TOKEN" help:"Credential used only to deliver email requests."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."`
@@ -163,7 +165,7 @@ func (c Config) Validate() (retErr error) {
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
-		if c.WebServiceSecret != "" || c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+		if c.EmailURL != "" || c.EmailToken != "" || c.WebServiceSecret != "" || c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
@@ -230,6 +232,17 @@ func (c Config) Validate() (retErr error) {
 }
 
 func (c Config) validateControl() error {
+	if (c.EmailURL == "") != (c.EmailToken == "") {
+		return errors.New("email URL and token must be configured together")
+	}
+	if c.EmailURL != "" {
+		if err := validateHTTPSOrigin(c.EmailURL, "email receiver"); err != nil {
+			return err
+		}
+		if _, err := serviceapi.NewBearerSecrets(c.EmailToken, ""); err != nil {
+			return fmt.Errorf("email token: %w", err)
+		}
+	}
 	if c.WebServiceSecret != "" {
 		if c.OIDCIssuer == "" || c.AuthorityEndpoint != "" {
 			return errors.New("website identity operations require built-in authority with an OIDC issuer")

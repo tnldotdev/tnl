@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
+	"github.com/tnldotdev/tnl/internal/emaildelivery"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publicurlusageworker"
@@ -151,6 +152,13 @@ func (d *daemon) startControlWorkers(
 			return err
 		}
 		d.start("run public URL usage worker", func() error { return worker.Run(lifetime) })
+	}
+	if cfg.EmailURL != "" {
+		worker, err := emaildelivery.New(database, cfg.EmailURL, cfg.EmailToken, nil)
+		if err != nil {
+			return err
+		}
+		d.start("run email delivery worker", func() error { return worker.Run(lifetime) })
 	}
 	if cfg.DNSAutomationEnabled() {
 		workerID, err := opaqueid.New(opaqueid.DNSWorkerPrefix)

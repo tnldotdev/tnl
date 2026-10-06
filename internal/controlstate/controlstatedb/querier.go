@@ -43,6 +43,7 @@ type Querier interface {
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
+	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlEmailDelivery, error)
 	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
 	// require the exact publish run, assignment revision, and relay service. only
 	// the same process and claim ID may repeat a connected or ready claim.
@@ -72,6 +73,7 @@ type Querier interface {
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
 	CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
+	CreateInvitationEmail(ctx context.Context, arg CreateInvitationEmailParams) error
 	CreateManagedDomain(ctx context.Context, arg CreateManagedDomainParams) error
 	CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentityParams) (ControlIdentity, error)
 	CreateOrGetDNSAuthority(ctx context.Context, arg CreateOrGetDNSAuthorityParams) (ControlDnsAuthority, error)
@@ -89,6 +91,7 @@ type Querier interface {
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
+	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
@@ -107,6 +110,7 @@ type Querier interface {
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
 	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
 	FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error)
+	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
 	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)
 	ForgetExpiredGuestRoutingHashes(ctx context.Context, arg ForgetExpiredGuestRoutingHashesParams) (int64, error)
 	ForgetExpiredGuestRunDigests(ctx context.Context, arg ForgetExpiredGuestRunDigestsParams) (int64, error)

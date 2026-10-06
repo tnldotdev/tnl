@@ -25,3 +25,35 @@ memberships. control does not store the selected team or website billing state.
 
 the OpenAPI source is `api/authority/v1/openapi.yaml`. keep hosted consumers on
 the generated types from that source.
+
+## email delivery
+
+configure `TNLD_EMAIL_URL` with the mailer's HTTPS origin and `TNLD_EMAIL_TOKEN`
+with an independent delivery credential. control sends `EmailDeliveryRequest`
+from the authority OpenAPI schemas to `POST /api/internal/tnl/emails`:
+
+```json
+{
+  "delivery_id": "ivt_0123456789abcdefghijkl",
+  "type": "team_invitation",
+  "to": "sam@example.com",
+  "data": {
+    "team_display_name": "studio",
+    "secret": "<invitation-secret>",
+    "expires_at": "2026-10-07T12:00:00Z"
+  }
+}
+```
+
+the mailer owns the template, sender, and SES call. HTTP 204 acknowledges sending
+or an already-sent delivery ID; 400 and 422 reject a malformed job permanently.
+other statuses and network failures retry with bounded exponential backoff.
+the mailer records delivery IDs and must not log payloads or invitation secrets.
+email transport is at-least-once: a crash after SES accepts but before saving the
+receipt can send a duplicate, and the mailer cannot promise exactly-once delivery.
+
+control commits one encrypted job with an email-restricted invitation, checks its
+pending state before claiming it, and clears payloads after completion, expiry,
+or revocation. revocation can race a send already in flight; acceptance still
+checks current invitation state. storage-key rotation includes pending jobs.
+without a mailer, invitations remain available through CLI-shared secrets.
