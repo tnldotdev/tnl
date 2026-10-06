@@ -900,6 +900,7 @@ components:
           public_url.delete,
           share.create,
           feedback.manage,
+          preview.visit,
         ]
     ServiceAuthorizationRequest:
       type: object

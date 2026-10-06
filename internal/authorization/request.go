@@ -23,6 +23,7 @@ const (
 	OperationPublicURLDelete  Operation = "public_url.delete"
 	OperationShareCreate      Operation = "share.create"
 	OperationFeedbackManage   Operation = "feedback.manage"
+	OperationPreviewVisit     Operation = "preview.visit"
 )
 
 // PublicURLScope identifies the ownership boundary for an authorized public URL.

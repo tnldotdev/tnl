@@ -24,6 +24,7 @@ import (
 // Defines values for AuthorizationOperation.
 const (
 	FeedbackManage   AuthorizationOperation = "feedback.manage"
+	PreviewVisit     AuthorizationOperation = "preview.visit"
 	PublicUrlCreate  AuthorizationOperation = "public_url.create"
 	PublicUrlDelete  AuthorizationOperation = "public_url.delete"
 	PublicUrlUpdate  AuthorizationOperation = "public_url.update"
@@ -35,6 +36,8 @@ const (
 func (e AuthorizationOperation) Valid() bool {
 	switch e {
 	case FeedbackManage:
+		return true
+	case PreviewVisit:
 		return true
 	case PublicUrlCreate:
 		return true
