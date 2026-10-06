@@ -34,7 +34,7 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 			IdentityId: "identity_1", TeamId: "team_1", ActingMembershipId: "membership_1",
 			ActingRole: authorityv1.TeamRoleOwner, PublicUrlMembershipId: pointer("membership_1"), PolicyRevision: 4,
 			DomainId: "domain_1", CanonicalHostname: "api.example.test", PublicUrlScope: authorityv1.PublicURLScopeMember,
-			DnsAuthorityReference: "dns_authority_1", CertificatePlan: &authorityv1.CertificatePlan{
+			DnsAuthorityReference: new("dns_authority_1"), CertificatePlan: &authorityv1.CertificatePlan{
 				CacheKey: "example.test", Scope: "example.test", Identifiers: []string{"*.example.test", "example.test"},
 				ChallengeMethod: authorityv1.Dns01,
 			},

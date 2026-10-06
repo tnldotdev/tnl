@@ -86,7 +86,7 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 				IdentityId: "external_identity", TeamId: request.TeamId, DomainId: request.DomainId,
 				ActingMembershipId: membershipID, PublicUrlMembershipId: &membershipID, ActingRole: authorityv1.TeamRoleMember,
 				PolicyRevision: 1, CanonicalHostname: hostname, PublicUrlScope: authorityv1.PublicURLScopeMember,
-				DnsAuthorityReference: "managed:routes.example.test",
+				DnsAuthorityReference: new("managed:routes.example.test"),
 			}
 			if request.Operation == authorityv1.PublishRunCreate {
 				decision.CertificatePlan = &plan

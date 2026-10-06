@@ -485,7 +485,7 @@ type ServiceAuthorizationDecision struct {
 	ActingRole            TeamRole          `json:"acting_role"`
 	CanonicalHostname     CanonicalHostname `json:"canonical_hostname"`
 	CertificatePlan       *CertificatePlan  `json:"certificate_plan,omitempty"`
-	DnsAuthorityReference string            `json:"dns_authority_reference"`
+	DnsAuthorityReference *string           `json:"dns_authority_reference,omitempty"`
 	DomainId              DomainID          `json:"domain_id"`
 	IdentityId            IdentityID        `json:"identity_id"`
 	PolicyRevision        int64             `json:"policy_revision"`

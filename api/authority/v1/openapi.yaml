@@ -972,7 +972,6 @@ components:
           domain_id,
           canonical_hostname,
           public_url_scope,
-          dns_authority_reference,
         ]
       properties:
         identity_id:
