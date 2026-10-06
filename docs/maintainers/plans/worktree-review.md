@@ -8,7 +8,7 @@ workflow.
 Run `tnl dev` to publish the configured services in one Git worktree. Send a
 reviewer one share link to that preview. The reviewer can use the app and
 leave pinned feedback. The implementer, a person or AI coding agent, can inspect
-the report, work in the right checkout, and post an update.
+the report, work in the right project directory, and post an update.
 
 A preview groups saved public URLs; each public URL still owns its
 hostname, visitor policy, and publish runs. A feedback thread is a durable
@@ -48,7 +48,7 @@ after terminating visitor TLS. Reserve `/__tnl/` for publisher-served review
 pages, assets, and requests.
 
 Control assigns a `preview_id` and records its authorized public URL
-IDs. Store the group ID in client state for later runs of the same checkout;
+IDs. Store the group ID in client state for later runs in the same project directory;
 validate group membership against the selected server, team, and public URL
 ownership. `.tnl/project.json` continues to describe worktree-specific
 service hostnames and URLs and expands to describe path mounts. `tnl init`
@@ -283,6 +283,21 @@ stays in place when an update is appended:
   "local_project": {
     "path": "/Users/alex/git/shop-perf",
     "matches_preview": true,
+    "source_state": {
+      "schema_version": 1,
+      "head_commit": "0123456789abcdef0123456789abcdef01234567",
+      "project_path": "apps/web",
+      "branch": "perf",
+      "changed_files": [
+        {
+          "path": "src/ProfileForm.tsx",
+          "status": "modified",
+          "blob_id": "ffffffffffffffffffffffffffffffffffffffff",
+          "mode": "100644"
+        }
+      ],
+      "complete": true
+    },
     "matches_report_source": false,
     "comparison": "different"
   }

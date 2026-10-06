@@ -445,6 +445,10 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	if flags.URL.List.ServerURL != server || flags.URL.List.ProjectTeam != team {
 		t.Fatalf("url flags = %#v", flags.URL.List)
 	}
+	if !projectSensitiveCommand("feedback inspect <feedback-id>") || applyProjectCommandContext("feedback inspect <feedback-id>", project, &flags) != nil ||
+		flags.Feedback.Inspect.ServerURL != server || flags.Feedback.Inspect.ProjectTeam != team {
+		t.Fatalf("feedback flags = %#v", flags.Feedback.Inspect)
+	}
 	flags.Domain.List.ServerURL = "https://explicit.example"
 	if err := applyProjectCommandContext("domain list", project, &flags); err != nil {
 		t.Fatal(err)
