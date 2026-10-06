@@ -24,9 +24,13 @@ import (
 )
 
 type shareCommand struct {
+	Link linkShareCommand `cmd:"" help:"Create and revoke preview links."`
+	List shareListCommand `cmd:"" help:"List preview access for the selected team."`
+}
+
+type linkShareCommand struct {
 	Create shareCreateCommand `cmd:"" help:"Create a link for this preview."`
-	List   shareListCommand   `cmd:"" help:"List shares for the selected team."`
-	Revoke shareRevokeCommand `cmd:"" help:"Revoke a share by ID."`
+	Revoke shareRevokeCommand `cmd:"" help:"Revoke a link by ID."`
 }
 
 type shareCreateCommand struct {
@@ -68,7 +72,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 		if len(routes) == 1 {
 			return routes[0], nil
 		}
-		return controlv1.PublicURL{}, errors.New("select the public URL to open, for example tnl share create web.example.com")
+		return controlv1.PublicURL{}, errors.New("select the public URL to open, for example tnl share link create web.example.com")
 	}
 	hostname := selector
 	if strings.HasPrefix(selector, "https://") {
@@ -153,7 +157,7 @@ func runShareCreate(ctx context.Context, flags shareCreateCommand, project proje
 	if err != nil {
 		return err
 	}
-	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share create", diagnostics)
+	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share link create", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -234,7 +238,7 @@ func runShareList(ctx context.Context, flags shareListCommand, output, diagnosti
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {
-	session, err := openTeamSession(ctx, flags.selection(), "tnl share revoke", diagnostics)
+	session, err := openTeamSession(ctx, flags.selection(), "tnl share link revoke", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -253,5 +257,5 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 	if _, err := session.authenticated.Control.RevokeShare(ctx, share.Id); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl share revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: share.Id}))
+	return writeHumanFrame(output, "tnl share link revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: share.Id}))
 }

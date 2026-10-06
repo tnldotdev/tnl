@@ -405,12 +405,12 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.List.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
-	case "share create <url>":
-		apply(&flags.Share.Create.remoteFlags, true)
+	case "share link create <url>":
+		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share list <url>":
 		apply(&flags.Share.List.remoteFlags, true)
-	case "share revoke <share-id>":
-		apply(&flags.Share.Revoke.remoteFlags, true)
+	case "share link revoke <share-id>":
+		apply(&flags.Share.Link.Revoke.remoteFlags, true)
 	case "admin server status":
 		apply(&flags.Admin.Server.Status.remoteFlags, false)
 	case "admin relays list":

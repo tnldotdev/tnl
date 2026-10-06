@@ -48,7 +48,7 @@ func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 }
 
 func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
-	err := run(t.Context(), []string{"--no-config", "share", "create", "--expires-in", "0d"}, io.Discard, io.Discard)
+	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--expires-in", "0d"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "share lifetime") {
 		t.Fatalf("share create dispatch error = %v", err)
 	}

@@ -440,12 +440,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLList(ctx, flags.URL.List, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "share create <url>":
-		return runShareCreate(ctx, flags.Share.Create, project, stdout, stderr)
+	case "share link create <url>":
+		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":
 		return runShareList(ctx, flags.Share.List, stdout, stderr)
-	case "share revoke <share-id>":
-		return runShareRevoke(ctx, flags.Share.Revoke, stdout, stderr)
+	case "share link revoke <share-id>":
+		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":
@@ -505,8 +505,8 @@ func canonicalParsedCommand(command string) string {
 		return "dev <service>"
 	case "publish":
 		return "publish <service-or-target>"
-	case "share create":
-		return "share create <url>"
+	case "share link create":
+		return "share link create <url>"
 	case "share list":
 		return "share list <url>"
 	default:
