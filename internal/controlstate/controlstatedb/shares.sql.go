@@ -183,7 +183,7 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 }
 
 const listTeamShares = `-- name: ListTeamShares :many
-SELECT id, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
+SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
 WHERE team_id = $1
   AND created_by_identity_id = $2
   AND id > $3
@@ -207,6 +207,7 @@ func (q *Queries) ListTeamShares(ctx context.Context, arg ListTeamSharesParams) 
 		var i ControlShare
 		if err := rows.Scan(
 			&i.ID,
+			&i.SchemaVersion,
 			&i.PreviewID,
 			&i.TeamID,
 			&i.CreatedByIdentityID,
