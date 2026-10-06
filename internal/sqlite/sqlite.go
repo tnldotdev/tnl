@@ -37,8 +37,9 @@ func Open(ctx context.Context, path string, migrations fs.FS) (*sql.DB, error) {
 	return db, nil
 }
 
-// OpenReadOnly opens an existing database with the exact expected schema version.
-func OpenReadOnly(ctx context.Context, path string, supportedVersion int64) (*sql.DB, error) {
+// OpenReadOnly opens an existing database without migrating it. callers check
+// which of their own schema versions they can read.
+func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("sqlite: stat database: %w", err)
 	}
@@ -50,15 +51,6 @@ func OpenReadOnly(ctx context.Context, path string, supportedVersion int64) (*sq
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("sqlite: connect database read-only: %w", err)
-	}
-	var version int64
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sqlite: read schema version: %w", err)
-	}
-	if version != supportedVersion {
-		db.Close()
-		return nil, fmt.Errorf("sqlite: unsupported database schema version %d", version)
 	}
 	return db, nil
 }

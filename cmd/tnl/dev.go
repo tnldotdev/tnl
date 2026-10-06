@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -47,6 +48,8 @@ type devCommand struct {
 	useMetadataHostname   bool
 	portFromCLI           bool
 	startupTimeoutFromCLI bool
+	metadataWriter        *devMetadataWriter
+	coordinated           bool
 }
 
 type childExitError struct {
@@ -163,7 +166,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		}
 	}
 	if flags.project.Found() {
-		if err := projectmeta.Write(ctx, flags.project.Root, metadata); err != nil {
+		write := func() error { return projectmeta.Write(ctx, flags.project.Root, metadata) }
+		if flags.metadataWriter != nil {
+			write = func() error { return flags.metadataWriter.write(ctx, flags.project.Root, metadata) }
+		}
+		if err := write(); err != nil {
 			return err
 		}
 	}
@@ -180,6 +187,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		services, err = preparePublisherServices(
 			ctx, state, serverURL, flags.PublicURL, flags.Name, flags.Domain, flags.selectedTeam, flags.Ephemeral, authenticated,
 		)
+		if err != nil {
+			return err
+		}
+	}
+	previewID := ""
+	if flags.project.Found() && flags.Service != "" {
+		previewID, err = ensurePreview(ctx, state, services.state, services.routes, serverURL, services.teamID, flags.project.Root)
 		if err != nil {
 			return err
 		}
@@ -237,7 +251,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		defer frameworkMu.RUnlock()
 		return framework
 	}
-	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation))
+	commandName := "tnl dev"
+	if flags.coordinated {
+		commandName += " " + flags.Service
+	}
+	output, err := newPublishOutput("human", commandName, stdout, stderr, browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation))
 	if err != nil {
 		return err
 	}
@@ -258,6 +276,15 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {
+			if previewID != "" && event.Type == publisher.EventPublicURLAssigned {
+				preview, err := services.routes.AddPreviewPublicURL(publishCtx, previewID, event.PublicURLID)
+				if err != nil {
+					return fmt.Errorf("associate service %q with preview: %w", flags.Service, err)
+				}
+				if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
+					return errors.New("server returned a preview without the assigned public URL")
+				}
+			}
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
 		publishDone <- publisher.Run(publishCtx, publisherConfig)

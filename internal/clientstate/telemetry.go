@@ -49,8 +49,8 @@ func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 }
 
 func readTelemetryPreference(ctx context.Context, path string) (bool, error) {
-	// accept the guest-session migration without opening or migrating client state.
-	db, err := tnlsqlite.OpenReadOnly(ctx, path, 2)
+	// read the telemetry value without opening writable state or migrating it.
+	db, err := tnlsqlite.OpenReadOnly(ctx, path)
 	if err != nil {
 		return false, fmt.Errorf("clientstate: open telemetry preference: %w", err)
 	}

@@ -102,6 +102,25 @@ func (c *Client) AllocateGuestDemoNumber(ctx context.Context) (controlv1.GuestDe
 	return requestWithAccess[controlv1.GuestDemoNumber](ctx, c, c.api.AllocateGuestDemoNumber)
 }
 
+func (c *Client) CreatePreview(ctx context.Context, teamID, key string) (controlv1.Preview, error) {
+	params := &controlv1.CreatePreviewParams{IdempotencyKey: key}
+	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePreview(ctx, params, controlv1.CreatePreviewRequest{TeamId: teamID}, editors...)
+	})
+}
+
+func (c *Client) GetPreview(ctx context.Context, id string) (controlv1.Preview, error) {
+	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetPreview(ctx, id, editors...)
+	})
+}
+
+func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string) (controlv1.Preview, error) {
+	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AddPreviewPublicURL(ctx, id, controlv1.AddPreviewPublicURLRequest{PublicUrlId: publicURLID}, editors...)
+	})
+}
+
 func (c *Client) CreatePublicURL(ctx context.Context, body controlv1.CreatePublicURLRequest, idempotencyKey string) (controlv1.PublicURL, error) {
 	params := &controlv1.CreatePublicURLParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

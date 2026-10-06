@@ -100,6 +100,69 @@ paths:
                 $ref: "#/components/schemas/GuestDemoNumber"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/previews:
+    post:
+      operationId: createPreview
+      summary: Create or reuse a preview for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePreviewRequest"
+      responses:
+        "201":
+          description: Preview identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/previews/{preview_id}:
+    get:
+      operationId: getPreview
+      summary: Read a preview and its public URLs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PreviewID"
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/previews/{preview_id}/public-urls:
+    post:
+      operationId: addPreviewPublicURL
+      summary: Add an authorized public URL to a preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PreviewID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPreviewPublicURLRequest"
+      responses:
+        "200":
+          description: Preview with updated public URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls:
     get:
       operationId: listPublicURLs
@@ -582,6 +645,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PublicURLID"
+    PreviewID:
+      name: preview_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PreviewID"
     PublishRunID:
       name: publish_run_id
       in: path
@@ -637,6 +706,8 @@ components:
     DomainID:
       $ref: "#/components/schemas/ResourceID"
     PublicURLID:
+      $ref: "#/components/schemas/ResourceID"
+    PreviewID:
       $ref: "#/components/schemas/ResourceID"
     PublishRunID:
       $ref: "#/components/schemas/ResourceID"
@@ -998,6 +1069,43 @@ components:
         ephemeral:
           type: boolean
           default: false
+    ReviewSchemaVersion:
+      type: integer
+      minimum: 1
+      description: Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+    CreatePreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+    AddPreviewPublicURLRequest:
+      type: object
+      additionalProperties: false
+      required: [public_url_id]
+      properties:
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+    Preview:
+      type: object
+      additionalProperties: false
+      required: [schema_version, id, team_id, public_url_ids, created_at]
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/ReviewSchemaVersion"
+        id:
+          $ref: "#/components/schemas/PreviewID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_ids:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/PublicURLID"
+        created_at:
+          type: string
+          format: date-time
     UpdatePublicURLRequest:
       type: object
       additionalProperties: false

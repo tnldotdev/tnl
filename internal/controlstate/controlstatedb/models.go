@@ -342,6 +342,22 @@ type ControlOidcAssertionExchange struct {
 	ExpiresAt       pgtype.Timestamptz
 }
 
+type ControlPreview struct {
+	ID                  string
+	SchemaVersion       int16
+	TeamID              string
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ControlPreviewPublicUrl struct {
+	PreviewID   string
+	TeamID      string
+	PublicURLID string
+	AddedAt     pgtype.Timestamptz
+}
+
 type ControlPublicUrl struct {
 	ID                          string
 	TeamID                      string
