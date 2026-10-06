@@ -316,7 +316,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 
 func projectSensitiveCommand(command string) bool {
 	return command == "login" || command == "logout" || strings.HasPrefix(command, "admin ") ||
-		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ")
+		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -405,6 +405,12 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.List.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
+	case "share link create <url>":
+		apply(&flags.Share.Link.Create.remoteFlags, true)
+	case "share list <url>":
+		apply(&flags.Share.List.remoteFlags, true)
+	case "share link revoke <share-id>":
+		apply(&flags.Share.Link.Revoke.remoteFlags, true)
 	case "admin server status":
 		apply(&flags.Admin.Server.Status.remoteFlags, false)
 	case "admin relays list":

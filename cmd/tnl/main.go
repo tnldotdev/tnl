@@ -36,6 +36,7 @@ type cli struct {
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
+	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
@@ -439,6 +440,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLList(ctx, flags.URL.List, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
+	case "share link create <url>":
+		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
+	case "share list <url>":
+		return runShareList(ctx, flags.Share.List, stdout, stderr)
+	case "share link revoke <share-id>":
+		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":
@@ -481,6 +488,8 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.DomainUnavailable
 	case strings.HasPrefix(command, "tnl url "):
 		return failure.ServerConflict
+	case strings.HasPrefix(command, "tnl share "):
+		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl admin "):
 		return failure.AdminUnavailable
 	case command == "tnl version":
@@ -496,6 +505,10 @@ func canonicalParsedCommand(command string) string {
 		return "dev <service>"
 	case "publish":
 		return "publish <service-or-target>"
+	case "share link create":
+		return "share link create <url>"
+	case "share list":
+		return "share list <url>"
 	default:
 		return command
 	}

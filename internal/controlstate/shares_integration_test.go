@@ -71,6 +71,14 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	if err != nil || len(page.Shares) != 1 || page.Shares[0].ID != share.ID || page.NextCursor != "" {
 		t.Fatalf("share list = %+v, %v", page, err)
 	}
+	teamPage, err := database.ListTeamShares(t.Context(), preview.TeamID, routeRequest.ActingIdentityID, "")
+	if err != nil || len(teamPage.Shares) != 1 || teamPage.Shares[0].ID != share.ID {
+		t.Fatalf("creator's team shares = %+v, %v", teamPage, err)
+	}
+	otherPage, err := database.ListTeamShares(t.Context(), preview.TeamID, "other-identity", "")
+	if err != nil || len(otherPage.Shares) != 0 {
+		t.Fatalf("another identity's team shares = %+v, %v", otherPage, err)
+	}
 	if _, err := database.RevokeShare(t.Context(), share.ID, "other-identity", now); !errors.Is(err, ErrShareNotFound) {
 		t.Fatalf("other identity revoked share: %v", err)
 	}

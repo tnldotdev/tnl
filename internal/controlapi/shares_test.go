@@ -69,6 +69,13 @@ func (s *shareStoreStub) ListShares(_ context.Context, _, _ string) (controlstat
 	return controlstate.SharePage{Shares: []controlstate.Share{s.share}}, nil
 }
 
+func (s *shareStoreStub) ListTeamShares(_ context.Context, teamID, identityID, _ string) (controlstate.SharePage, error) {
+	if teamID != s.share.TeamID || identityID != s.share.CreatedByIdentityID {
+		return controlstate.SharePage{}, nil
+	}
+	return controlstate.SharePage{Shares: []controlstate.Share{s.share}}, nil
+}
+
 func (s *shareStoreStub) RevokeShare(_ context.Context, _, _ string, now time.Time) (controlstate.Share, error) {
 	s.share.RevokedAt = &now
 	return s.share, nil
@@ -117,6 +124,20 @@ func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testin
 	h.ListShares(list, read, "pv_preview", controlv1.ListSharesParams{})
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"shr_example"`) {
 		t.Fatalf("share list = %d %s", list.Code, list.Body.String())
+	}
+	teamRequest := httptest.NewRequest(http.MethodGet, "/v1/shares?team_id=team_1", nil)
+	teamRequest.Header.Set("Authorization", "Bearer access-token")
+	teamList := httptest.NewRecorder()
+	h.ListTeamShares(teamList, teamRequest, controlv1.ListTeamSharesParams{})
+	if teamList.Code != http.StatusOK || !strings.Contains(teamList.Body.String(), `"id":"shr_example"`) {
+		t.Fatalf("team share list = %d %s", teamList.Code, teamList.Body.String())
+	}
+	otherRequest := httptest.NewRequest(http.MethodGet, "/v1/shares?team_id=team_other", nil)
+	otherRequest.Header.Set("Authorization", "Bearer access-token")
+	otherList := httptest.NewRecorder()
+	h.ListTeamShares(otherList, otherRequest, controlv1.ListTeamSharesParams{})
+	if otherList.Code != http.StatusNotFound {
+		t.Fatalf("other team shares were listed: %d %s", otherList.Code, otherList.Body.String())
 	}
 	preview.preview.CreatedByIdentityID = "different-identity"
 	denied := httptest.NewRecorder()

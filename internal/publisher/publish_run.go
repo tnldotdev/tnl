@@ -111,10 +111,42 @@ func runSession(
 		}
 	}
 	ctx = sessionCtx
+	var shareRuntime *shareAccess
+	if config.PreviewID != "" {
+		client, ok := config.Control.(shareAccessClient)
+		if !ok {
+			return errors.New("publisher: share-capable control client is required for this preview")
+		}
+		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, config.PreviewID, publishRunToken); err != nil {
+			return fmt.Errorf("publisher: enable share access: %w", err)
+		}
+		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}
+		if err := shareRuntime.refresh(ctx); err != nil {
+			return fmt.Errorf("publisher: read share access: %w", err)
+		}
+		refreshDone := make(chan struct{})
+		go func() {
+			defer close(refreshDone)
+			ticker := time.NewTicker(shareRefreshPeriod)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-sessionCtx.Done():
+					return
+				case <-ticker.C:
+					if err := shareRuntime.refresh(sessionCtx); err != nil && config.Logf != nil && sessionCtx.Err() == nil {
+						config.Logf("publisher: refresh share access: %v", err)
+					}
+				}
+			}
+		}()
+		defer func() { cancelSession(nil); <-refreshDone }()
+	}
 	var material clientstate.Material
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
 		Mounts:       config.Mounts,
+		ShareAccess:  shareRuntime,
 		RequestLimit: config.RequestLimit,
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
