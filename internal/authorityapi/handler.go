@@ -111,6 +111,11 @@ func (h *handler) AuthorizeServiceOperation(response http.ResponseWriter, _ *htt
 	notFound(response, nil)
 }
 
+// browser token exchange is enabled when browser OIDC support is configured.
+func (h *handler) ExchangeBrowserOIDCToken(response http.ResponseWriter, _ *http.Request) {
+	notFound(response, nil)
+}
+
 // hosted guest domain lookup is not available through the built-in authority.
 func (h *handler) GetGuestDomain(response http.ResponseWriter, _ *http.Request, _ authorityv1.GetGuestDomainParams) {
 	notFound(response, nil)

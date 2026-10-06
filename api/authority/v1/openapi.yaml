@@ -69,6 +69,26 @@ paths:
                 $ref: "#/components/schemas/ControlSessionResponse"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/auth/browser:
+    post:
+      operationId: exchangeBrowserOIDCToken
+      summary: Exchange a browser OIDC ID token for a control session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+      responses:
+        "200":
+          description: Browser control session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/auth/logout:
     post:
       operationId: logoutControlSession

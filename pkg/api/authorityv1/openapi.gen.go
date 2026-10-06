@@ -573,6 +573,9 @@ type CreateTeamInvitationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ExchangeBrowserOIDCTokenJSONRequestBody defines body for ExchangeBrowserOIDCToken for application/json ContentType.
+type ExchangeBrowserOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
+
 // ExchangeOIDCTokenJSONRequestBody defines body for ExchangeOIDCToken for application/json ContentType.
 type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
 
@@ -673,6 +676,20 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// ExchangeBrowserOIDCTokenWithBody Exchange a browser OIDC ID token for a control session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+	ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+	ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LogoutControlSession Revoke the authenticated control session
 	//
@@ -859,6 +876,40 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ExchangeBrowserOIDCTokenWithBody Exchange a browser OIDC ID token for a control session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+func (c *Client) ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeBrowserOIDCTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+func (c *Client) ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeBrowserOIDCTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // LogoutControlSession Revoke the authenticated control session
@@ -1345,6 +1396,46 @@ func (c *Client) SetMembershipRole(ctx context.Context, teamId TeamID, membershi
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewExchangeBrowserOIDCTokenRequest calls the generic ExchangeBrowserOIDCToken builder with application/json body
+func NewExchangeBrowserOIDCTokenRequest(server string, body ExchangeBrowserOIDCTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeBrowserOIDCTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeBrowserOIDCTokenRequestWithBody constructs an http.Request for the ExchangeBrowserOIDCToken method, with any body, and a specified content type
+func NewExchangeBrowserOIDCTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/browser")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewLogoutControlSessionRequest constructs an http.Request for the LogoutControlSession method
@@ -2249,6 +2340,20 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ExchangeBrowserOIDCTokenWithBodyWithResponse Exchange a browser OIDC ID token for a control session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+	ExchangeBrowserOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error)
+
+	// ExchangeBrowserOIDCTokenWithResponse Exchange a browser OIDC ID token for a control session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+	ExchangeBrowserOIDCTokenWithResponse(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error)
+
 	// LogoutControlSessionWithResponse Revoke the authenticated control session
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2458,6 +2563,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
+}
+
+type ExchangeBrowserOIDCTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ControlSessionResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeBrowserOIDCTokenResponse) GetJSON200() *ControlSessionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeBrowserOIDCTokenResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeBrowserOIDCTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeBrowserOIDCTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeBrowserOIDCTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeBrowserOIDCTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 // LogoutControlSessionResponseDefaultHeaders the declared response headers of an HTTP default response for LogoutControlSession
@@ -3461,6 +3614,32 @@ func (r SetMembershipRoleResponse) ContentType() string {
 	return ""
 }
 
+// ExchangeBrowserOIDCTokenWithBodyWithResponse Exchange a browser OIDC ID token for a control session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+func (c *ClientWithResponses) ExchangeBrowserOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error) {
+	rsp, err := c.ExchangeBrowserOIDCTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeBrowserOIDCTokenResponse(rsp)
+}
+
+// ExchangeBrowserOIDCTokenWithResponse Exchange a browser OIDC ID token for a control session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
+func (c *ClientWithResponses) ExchangeBrowserOIDCTokenWithResponse(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error) {
+	rsp, err := c.ExchangeBrowserOIDCToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeBrowserOIDCTokenResponse(rsp)
+}
+
 // LogoutControlSessionWithResponse Revoke the authenticated control session
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3849,6 +4028,39 @@ func (c *ClientWithResponses) SetMembershipRoleWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseSetMembershipRoleResponse(rsp)
+}
+
+// ParseExchangeBrowserOIDCTokenResponse parses an HTTP response from a ExchangeBrowserOIDCTokenWithResponse call
+func ParseExchangeBrowserOIDCTokenResponse(rsp *http.Response) (*ExchangeBrowserOIDCTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeBrowserOIDCTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ControlSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseLogoutControlSessionResponse parses an HTTP response from a LogoutControlSessionWithResponse call
@@ -4569,6 +4781,9 @@ func ParseSetMembershipRoleResponse(rsp *http.Response) (*SetMembershipRoleRespo
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
+	// (POST /v1/auth/browser)
+	ExchangeBrowserOIDCToken(w http.ResponseWriter, r *http.Request)
 	// LogoutControlSession Revoke the authenticated control session
 	// (POST /v1/auth/logout)
 	LogoutControlSession(w http.ResponseWriter, r *http.Request)
@@ -4642,6 +4857,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ExchangeBrowserOIDCToken operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeBrowserOIDCToken(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangeBrowserOIDCToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // LogoutControlSession operation middleware
 func (siw *ServerInterfaceWrapper) LogoutControlSession(w http.ResponseWriter, r *http.Request) {
@@ -5343,6 +5572,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/token", wrapper.ExchangeLoginToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/oidc", wrapper.ExchangeOIDCToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshControlSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser", wrapper.ExchangeBrowserOIDCToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.LogoutControlSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/identity", wrapper.GetIdentityContext)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams", wrapper.ListTeams)
