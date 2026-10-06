@@ -69,6 +69,26 @@ paths:
                 $ref: "#/components/schemas/ControlSessionResponse"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/auth/browser:
+    post:
+      operationId: exchangeBrowserOIDCToken
+      summary: Exchange a browser OIDC ID token for a control session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+      responses:
+        "200":
+          description: Browser control session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/auth/logout:
     post:
       operationId: logoutControlSession
@@ -892,7 +912,16 @@ components:
           $ref: "#/components/schemas/CertificateChallengeMethod"
     AuthorizationOperation:
       type: string
-      enum: [public_url.create, public_url.update, publish_run.create, public_url.delete]
+      enum:
+        [
+          public_url.create,
+          public_url.update,
+          publish_run.create,
+          public_url.delete,
+          share.create,
+          feedback.manage,
+          preview.visit,
+        ]
     ServiceAuthorizationRequest:
       type: object
       additionalProperties: false
@@ -964,7 +993,6 @@ components:
           domain_id,
           canonical_hostname,
           public_url_scope,
-          dns_authority_reference,
         ]
       properties:
         identity_id:

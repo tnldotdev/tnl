@@ -225,7 +225,9 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 		IdentityID: wire.IdentityId, TeamID: wire.TeamId, ActingMembershipID: wire.ActingMembershipId,
 		ActingRole: string(wire.ActingRole), PolicyRevision: uint64(wire.PolicyRevision),
 		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(wire.PublicUrlScope),
-		DNSAuthorityReference: wire.DnsAuthorityReference,
+	}
+	if wire.DnsAuthorityReference != nil {
+		decision.DNSAuthorityReference = *wire.DnsAuthorityReference
 	}
 	if wire.PublicUrlMembershipId != nil {
 		decision.PublicURLMembershipID = *wire.PublicUrlMembershipId
