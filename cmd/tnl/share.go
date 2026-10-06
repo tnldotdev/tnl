@@ -228,11 +228,11 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 		if err != nil {
 			return err
 		}
-		selectedID = selected.Id
 		selected, err := selectSharePublicURL(flags.URL, routes)
 		if err != nil {
 			return err
 		}
+		selectedID = selected.Id
 		shares = slices.DeleteFunc(shares, func(share controlv1.Share) bool {
 			return !slices.Contains(share.PublicUrlIds, selected.Id)
 		})
