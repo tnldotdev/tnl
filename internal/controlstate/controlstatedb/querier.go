@@ -317,6 +317,7 @@ type Querier interface {
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error)
+	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
 	// and each publish run number's latest revision. concurrent publication can

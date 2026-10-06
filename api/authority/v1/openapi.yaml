@@ -9,6 +9,69 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://authority.example
 paths:
+  /v1/service/identity-context:
+    post:
+      operationId: resolveServiceIdentity
+      summary: Read current memberships for the signed-in website identity
+      security:
+        - webServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceIdentity"
+      responses:
+        "200":
+          description: Current identity and memberships, without session credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityContext"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service/invitations/preview:
+    post:
+      operationId: previewServiceInvitation
+      summary: Preview an invitation for the signed-in website identity
+      security:
+        - webServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceInvitationRequest"
+      responses:
+        "200":
+          description: Invitation details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationPreview"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service/invitations/accept:
+    post:
+      operationId: acceptServiceInvitation
+      summary: Accept an invitation for the signed-in website identity
+      security:
+        - webServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceInvitationRequest"
+      responses:
+        "200":
+          description: Accepted membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Membership"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/auth/token:
     post:
       operationId: exchangeLoginToken
@@ -415,6 +478,10 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
+    webServiceAuth:
+      type: http
+      scheme: bearer
+      description: Scoped website credential; identity facts are bound to the server-configured OIDC issuer.
     bearerAuth:
       type: http
       scheme: bearer
@@ -476,6 +543,46 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    ServiceIdentity:
+      type: object
+      additionalProperties: false
+      required: [subject, display_name]
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 256
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        verified_email:
+          type: string
+          format: email
+          maxLength: 320
+    ServiceInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [identity, secret]
+      properties:
+        identity:
+          $ref: "#/components/schemas/ServiceIdentity"
+        secret:
+          type: string
+          minLength: 32
+          maxLength: 4096
+    InvitationPreview:
+      type: object
+      additionalProperties: false
+      required: [team_display_name, initial_role, expires_at]
+      properties:
+        team_display_name:
+          $ref: "#/components/schemas/CanonicalLabel"
+        initial_role:
+          $ref: "#/components/schemas/TeamRole"
+        expires_at:
+          type: string
+          format: date-time
     GuestDomain:
       type: object
       additionalProperties: false

@@ -410,6 +410,13 @@ type InvitationPage struct {
 	NextCursor  *InvitationID `json:"next_cursor,omitempty"`
 }
 
+// InvitationPreview defines model for InvitationPreview.
+type InvitationPreview struct {
+	ExpiresAt       time.Time      `json:"expires_at"`
+	InitialRole     TeamRole       `json:"initial_role"`
+	TeamDisplayName CanonicalLabel `json:"team_display_name"`
+}
+
 // InvitationSecret defines model for InvitationSecret.
 type InvitationSecret struct {
 	Invitation Invitation `json:"invitation"`
@@ -515,6 +522,19 @@ type ServiceAuthorizationRequest struct {
 	TeamId                    TeamID                 `json:"team_id"`
 }
 
+// ServiceIdentity defines model for ServiceIdentity.
+type ServiceIdentity struct {
+	DisplayName   string               `json:"display_name"`
+	Subject       string               `json:"subject"`
+	VerifiedEmail *openapi_types.Email `json:"verified_email,omitempty"`
+}
+
+// ServiceInvitationRequest defines model for ServiceInvitationRequest.
+type ServiceInvitationRequest struct {
+	Identity ServiceIdentity `json:"identity"`
+	Secret   string          `json:"secret"`
+}
+
 // SetMembershipRoleRequest defines model for SetMembershipRoleRequest.
 type SetMembershipRoleRequest struct {
 	Role TeamRole `json:"role"`
@@ -590,6 +610,15 @@ type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
 // AuthorizeServiceOperationJSONRequestBody defines body for AuthorizeServiceOperation for application/json ContentType.
 type AuthorizeServiceOperationJSONRequestBody = ServiceAuthorizationRequest
+
+// ResolveServiceIdentityJSONRequestBody defines body for ResolveServiceIdentity for application/json ContentType.
+type ResolveServiceIdentityJSONRequestBody = ServiceIdentity
+
+// AcceptServiceInvitationJSONRequestBody defines body for AcceptServiceInvitation for application/json ContentType.
+type AcceptServiceInvitationJSONRequestBody = ServiceInvitationRequest
+
+// PreviewServiceInvitationJSONRequestBody defines body for PreviewServiceInvitation for application/json ContentType.
+type PreviewServiceInvitationJSONRequestBody = ServiceInvitationRequest
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
@@ -775,6 +804,48 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
 	GetGuestDomain(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+	ResolveServiceIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveServiceIdentity Read current memberships for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+	ResolveServiceIdentity(ctx context.Context, body ResolveServiceIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptServiceInvitationWithBody Accept an invitation for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+	AcceptServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptServiceInvitation Accept an invitation for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+	AcceptServiceInvitation(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewServiceInvitationWithBody Preview an invitation for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+	PreviewServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewServiceInvitation Preview an invitation for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+	PreviewServiceInvitation(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams for the authenticated identity
 	//
@@ -1117,6 +1188,108 @@ func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeSe
 // Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
 func (c *Client) GetGuestDomain(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetGuestDomainRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+func (c *Client) ResolveServiceIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveServiceIdentityRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveServiceIdentity Read current memberships for the signed-in website identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+func (c *Client) ResolveServiceIdentity(ctx context.Context, body ResolveServiceIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveServiceIdentityRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptServiceInvitationWithBody Accept an invitation for the signed-in website identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+func (c *Client) AcceptServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptServiceInvitationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptServiceInvitation Accept an invitation for the signed-in website identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+func (c *Client) AcceptServiceInvitation(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptServiceInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewServiceInvitationWithBody Preview an invitation for the signed-in website identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+func (c *Client) PreviewServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewServiceInvitationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewServiceInvitation Preview an invitation for the signed-in website identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+func (c *Client) PreviewServiceInvitation(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewServiceInvitationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1738,6 +1911,126 @@ func NewGetGuestDomainRequest(server string, params *GetGuestDomainParams) (*htt
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewResolveServiceIdentityRequest calls the generic ResolveServiceIdentity builder with application/json body
+func NewResolveServiceIdentityRequest(server string, body ResolveServiceIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResolveServiceIdentityRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewResolveServiceIdentityRequestWithBody constructs an http.Request for the ResolveServiceIdentity method, with any body, and a specified content type
+func NewResolveServiceIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/identity-context")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAcceptServiceInvitationRequest calls the generic AcceptServiceInvitation builder with application/json body
+func NewAcceptServiceInvitationRequest(server string, body AcceptServiceInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcceptServiceInvitationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcceptServiceInvitationRequestWithBody constructs an http.Request for the AcceptServiceInvitation method, with any body, and a specified content type
+func NewAcceptServiceInvitationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPreviewServiceInvitationRequest calls the generic PreviewServiceInvitation builder with application/json body
+func NewPreviewServiceInvitationRequest(server string, body PreviewServiceInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreviewServiceInvitationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPreviewServiceInvitationRequestWithBody constructs an http.Request for the PreviewServiceInvitation method, with any body, and a specified content type
+func NewPreviewServiceInvitationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/invitations/preview")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2445,6 +2738,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
 	GetGuestDomainWithResponse(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*GetGuestDomainResponse, error)
 
+	// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+	ResolveServiceIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveServiceIdentityResponse, error)
+
+	// ResolveServiceIdentityWithResponse Read current memberships for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+	ResolveServiceIdentityWithResponse(ctx context.Context, body ResolveServiceIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveServiceIdentityResponse, error)
+
+	// AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+	AcceptServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error)
+
+	// AcceptServiceInvitationWithResponse Accept an invitation for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+	AcceptServiceInvitationWithResponse(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error)
+
+	// PreviewServiceInvitationWithBodyWithResponse Preview an invitation for the signed-in website identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+	PreviewServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error)
+
+	// PreviewServiceInvitationWithResponse Preview an invitation for the signed-in website identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+	PreviewServiceInvitationWithResponse(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error)
+
 	// ListTeamsWithResponse List teams for the authenticated identity
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2998,6 +3333,150 @@ func (r GetGuestDomainResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetGuestDomainResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResolveServiceIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IdentityContext
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResolveServiceIdentityResponse) GetJSON200() *IdentityContext {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResolveServiceIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResolveServiceIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolveServiceIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolveServiceIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResolveServiceIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcceptServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Membership
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcceptServiceInvitationResponse) GetJSON200() *Membership {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcceptServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcceptServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcceptServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcceptServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcceptServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PreviewServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *InvitationPreview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreviewServiceInvitationResponse) GetJSON200() *InvitationPreview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreviewServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PreviewServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreviewServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreviewServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreviewServiceInvitationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3809,6 +4288,84 @@ func (c *ClientWithResponses) GetGuestDomainWithResponse(ctx context.Context, pa
 	return ParseGetGuestDomainResponse(rsp)
 }
 
+// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+func (c *ClientWithResponses) ResolveServiceIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveServiceIdentityResponse, error) {
+	rsp, err := c.ResolveServiceIdentityWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveServiceIdentityResponse(rsp)
+}
+
+// ResolveServiceIdentityWithResponse Read current memberships for the signed-in website identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/identity-context (the `ResolveServiceIdentity` operationId).
+func (c *ClientWithResponses) ResolveServiceIdentityWithResponse(ctx context.Context, body ResolveServiceIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveServiceIdentityResponse, error) {
+	rsp, err := c.ResolveServiceIdentity(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveServiceIdentityResponse(rsp)
+}
+
+// AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in website identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+func (c *ClientWithResponses) AcceptServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error) {
+	rsp, err := c.AcceptServiceInvitationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptServiceInvitationResponse(rsp)
+}
+
+// AcceptServiceInvitationWithResponse Accept an invitation for the signed-in website identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/invitations/accept (the `AcceptServiceInvitation` operationId).
+func (c *ClientWithResponses) AcceptServiceInvitationWithResponse(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error) {
+	rsp, err := c.AcceptServiceInvitation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptServiceInvitationResponse(rsp)
+}
+
+// PreviewServiceInvitationWithBodyWithResponse Preview an invitation for the signed-in website identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+func (c *ClientWithResponses) PreviewServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error) {
+	rsp, err := c.PreviewServiceInvitationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewServiceInvitationResponse(rsp)
+}
+
+// PreviewServiceInvitationWithResponse Preview an invitation for the signed-in website identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
+func (c *ClientWithResponses) PreviewServiceInvitationWithResponse(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error) {
+	rsp, err := c.PreviewServiceInvitation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewServiceInvitationResponse(rsp)
+}
+
 // ListTeamsWithResponse List teams for the authenticated identity
 //
 // Returns a wrapper object for the known response body format(s).
@@ -4349,6 +4906,105 @@ func ParseGetGuestDomainResponse(rsp *http.Response) (*GetGuestDomainResponse, e
 	return response, nil
 }
 
+// ParseResolveServiceIdentityResponse parses an HTTP response from a ResolveServiceIdentityWithResponse call
+func ParseResolveServiceIdentityResponse(rsp *http.Response) (*ResolveServiceIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolveServiceIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IdentityContext
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcceptServiceInvitationResponse parses an HTTP response from a AcceptServiceInvitationWithResponse call
+func ParseAcceptServiceInvitationResponse(rsp *http.Response) (*AcceptServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcceptServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Membership
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePreviewServiceInvitationResponse parses an HTTP response from a PreviewServiceInvitationWithResponse call
+func ParsePreviewServiceInvitationResponse(rsp *http.Response) (*PreviewServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreviewServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvitationPreview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamsResponse parses an HTTP response from a ListTeamsWithResponse call
 func ParseListTeamsResponse(rsp *http.Response) (*ListTeamsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4808,6 +5464,15 @@ type ServerInterface interface {
 	// GetGuestDomain Read the managed domain and check a guest label
 	// (GET /v1/service/guest-domain)
 	GetGuestDomain(w http.ResponseWriter, r *http.Request, params GetGuestDomainParams)
+	// ResolveServiceIdentity Read current memberships for the signed-in website identity
+	// (POST /v1/service/identity-context)
+	ResolveServiceIdentity(w http.ResponseWriter, r *http.Request)
+	// AcceptServiceInvitation Accept an invitation for the signed-in website identity
+	// (POST /v1/service/invitations/accept)
+	AcceptServiceInvitation(w http.ResponseWriter, r *http.Request)
+	// PreviewServiceInvitation Preview an invitation for the signed-in website identity
+	// (POST /v1/service/invitations/preview)
+	PreviewServiceInvitation(w http.ResponseWriter, r *http.Request)
 	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -4994,6 +5659,48 @@ func (siw *ServerInterfaceWrapper) GetGuestDomain(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetGuestDomain(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveServiceIdentity operation middleware
+func (siw *ServerInterfaceWrapper) ResolveServiceIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveServiceIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptServiceInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) PreviewServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewServiceInvitation(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5569,6 +6276,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/identity-context", wrapper.ResolveServiceIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/preview", wrapper.PreviewServiceInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/accept", wrapper.AcceptServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/token", wrapper.ExchangeLoginToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/oidc", wrapper.ExchangeOIDCToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshControlSession)

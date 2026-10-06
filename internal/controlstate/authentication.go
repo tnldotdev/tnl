@@ -179,22 +179,9 @@ func (d *Database) CreateOIDCControlSession(
 	if inserted != 1 {
 		return ControlSession{}, ErrOIDCAssertionReplay
 	}
-	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
-	if err != nil {
-		return ControlSession{}, err
-	}
-	stored, err := queries.FindOIDCIdentity(ctx, controlstatedb.FindOIDCIdentityParams{
-		Issuer: text(identity.Issuer), Subject: text(identity.Subject),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		stored, err = createOIDCIdentity(ctx, queries, domain.ID, identity, now)
-	} else if err == nil && stored.DisabledAt.Valid {
+	stored, err := ensureOIDCIdentity(ctx, queries, managedDomain, identity, now)
+	if errors.Is(err, ErrAuthorityAccess) {
 		return ControlSession{}, ErrControlAuthentication
-	} else if err == nil {
-		stored, err = queries.UpdateOIDCIdentity(ctx, controlstatedb.UpdateOIDCIdentityParams{
-			DisplayName: identity.DisplayName, NormalizedEmail: nullableText(identity.NormalizedEmail),
-			EmailVerified: identity.EmailVerified, UpdatedAt: timestamp(now), ID: stored.ID,
-		})
 	}
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: ensure OIDC identity: %w", err)

@@ -1795,6 +1795,46 @@ func (q *Queries) MarkInvitationExpired(ctx context.Context, invitationID string
 	return result.RowsAffected(), nil
 }
 
+const previewInvitation = `-- name: PreviewInvitation :one
+SELECT t.display_name, invitation.initial_role, invitation.expires_at,
+       invitation.state, invitation.normalized_email_restriction,
+       identity.normalized_email, identity.email_verified
+FROM control.team_invitations AS invitation
+JOIN control.teams AS t ON t.id = invitation.team_id AND t.deleted_at IS NULL
+JOIN control.identities AS identity ON identity.id = $1 AND identity.disabled_at IS NULL
+WHERE invitation.token_digest = $2
+`
+
+type PreviewInvitationParams struct {
+	IdentityID  string
+	TokenDigest []byte
+}
+
+type PreviewInvitationRow struct {
+	DisplayName                string
+	InitialRole                string
+	ExpiresAt                  pgtype.Timestamptz
+	State                      string
+	NormalizedEmailRestriction pgtype.Text
+	NormalizedEmail            pgtype.Text
+	EmailVerified              bool
+}
+
+func (q *Queries) PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error) {
+	row := q.db.QueryRow(ctx, previewInvitation, arg.IdentityID, arg.TokenDigest)
+	var i PreviewInvitationRow
+	err := row.Scan(
+		&i.DisplayName,
+		&i.InitialRole,
+		&i.ExpiresAt,
+		&i.State,
+		&i.NormalizedEmailRestriction,
+		&i.NormalizedEmail,
+		&i.EmailVerified,
+	)
+	return i, err
+}
+
 const quarantineMemberSlug = `-- name: QuarantineMemberSlug :execrows
 UPDATE control.member_slug_reservations
 SET state = 'quarantined',

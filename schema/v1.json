@@ -415,6 +415,10 @@
           "type": "string",
           "description": "OIDC client ID for browser preview sign-in."
         },
+        "web_service_secret": {
+          "type": "string",
+          "description": "Scoped credential for identity-context and website invitation operations."
+        },
         "oidc_login_flow": {
           "type": "string",
           "description": "OIDC login flow: device_code or authorization_code_pkce."

@@ -80,6 +80,7 @@ type Config struct {
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
 	BrowserOIDCClientID  string        `name:"browser-oidc-client-id" env:"TNLD_BROWSER_OIDC_CLIENT_ID" help:"OIDC client ID for browser preview sign-in."`
+	WebServiceSecret     string        `name:"web-service-secret" env:"TNLD_WEB_SERVICE_SECRET" help:"Scoped credential for identity-context and website invitation operations."`
 	OIDCLoginFlow        OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
 	OIDCScopes           []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
 	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Login token for the built-in administrator identity."`
@@ -162,7 +163,7 @@ func (c Config) Validate() (retErr error) {
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
-		if c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+		if c.WebServiceSecret != "" || c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
@@ -229,6 +230,14 @@ func (c Config) Validate() (retErr error) {
 }
 
 func (c Config) validateControl() error {
+	if c.WebServiceSecret != "" {
+		if c.OIDCIssuer == "" || c.AuthorityEndpoint != "" {
+			return errors.New("website identity operations require built-in authority with an OIDC issuer")
+		}
+		if _, err := serviceapi.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
+			return fmt.Errorf("website service secret: %w", err)
+		}
+	}
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
 		return failure.WrapSetting("validate pooled database URL", failure.ServerDatabaseURLInvalid, failure.SettingDatabaseURL, err)
 	}
