@@ -148,6 +148,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	if flags.Demo {
+		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
+	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service, nil)
 	if err != nil {
 		return err

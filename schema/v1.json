@@ -57,6 +57,10 @@
           "type": "string",
           "description": "Unique lowercase team name or team ID used by this project."
         },
+        "feedback": {
+          "type": "boolean",
+          "description": "Show the feedback toolbar on development pages."
+        },
         "tunnel": {
           "allOf": [
             {

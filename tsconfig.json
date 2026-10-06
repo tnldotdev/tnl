@@ -16,7 +16,7 @@
     "packages/tnl/fixtures/**/*.ts",
     "packages/tnl/fixtures/**/*.tsx",
     "scripts/**/*.ts",
-    "vitest.config.ts"
+    "vitest*.ts"
   ],
   "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**"]
 }

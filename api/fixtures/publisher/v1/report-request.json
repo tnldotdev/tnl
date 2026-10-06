@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "text": "Save says it worked, but the change disappears after reload.",
+  "display_name": "Sam",
+  "page_path": "/settings",
+  "page_title": "settings",
+  "evidence": { "schema_version": 1, "actions": [], "failed_requests": [] }
+}

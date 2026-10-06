@@ -250,6 +250,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		PolicyRevision: 1, Target: localDemo.Target(),
 		AllowedIPPrefixes: []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()},
 		Ephemeral:         true, State: store,
+		Demo: true, Feedback: true, Service: "demo",
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)
@@ -281,7 +282,36 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if decodeErr != nil || pong.RequestCount != 1 || pong.GeneratedAt == "" {
 		t.Fatalf("guest pong = %d, %+v, %v", ping.StatusCode, pong, decodeErr)
 	}
+	page, err := visitor.client.Get(ready.PublicURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	if err != nil || !strings.Contains(string(html), "/__tnl/feedback/toolbar.") || !strings.Contains(page.Header.Get("Content-Security-Policy"), "style-src 'unsafe-inline'") {
+		t.Fatalf("demo toolbar or original styles missing: %v", err)
+	}
+	reportRequest, err := http.NewRequest(http.MethodPost, ready.PublicURL+"/__tnl/feedback", strings.NewReader(`{"schema_version":1,"text":"Demo suggestion","display_name":"Sam","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportRequest.Header.Set("Content-Type", "application/json")
+	reportRequest.Header.Set("Idempotency-Key", "demo-report")
+	reported, err := visitor.client.Do(reportRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var thread controlv1.FeedbackThread
+	decodeErr = json.NewDecoder(reported.Body).Decode(&thread)
+	reported.Body.Close()
+	if decodeErr != nil || reported.StatusCode != http.StatusOK || thread.SchemaVersion != 1 || thread.SourceAtReport.Complete || thread.SourceAtReport.HeadCommit != "" || len(thread.SourceAtReport.ChangedFiles) != 0 {
+		t.Fatalf("guest feedback = %d, %+v, %v", reported.StatusCode, thread, decodeErr)
+	}
 	stopIntegrationPublisher(t, handle)
+	var demoComments int
+	if err := inspect.QueryRow(`SELECT count(*) FROM control.feedback_threads WHERE public_url_id = $1`, ready.PublicURLID).Scan(&demoComments); err != nil || demoComments != 0 {
+		t.Fatalf("demo comments retained after stop: %d, %v", demoComments, err)
+	}
 	var deleted bool
 	if err := inspect.QueryRow(`SELECT lifecycle_state = 'deleted' AND request_digest_ciphertext IS NULL
 		AND request_digest_storage_key_id IS NULL AND allowed_ip_hashes IS NULL

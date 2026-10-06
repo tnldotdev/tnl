@@ -47,6 +47,10 @@ type Config struct {
 	PublicURLScope           controlv1.PublicURLScope
 	Hostname                 string
 	PreviewID                string
+	Feedback                 bool
+	Demo                     bool
+	ProjectRoot              string
+	Service                  string
 	Target                   string
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.

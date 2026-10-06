@@ -42,18 +42,37 @@ export default defineConfig(({ mode }) => ({
     exclude: ["**/dist/**", "**/.next/**", "**/node_modules/**"],
     globals: false,
     hookTimeout: 10_000,
-    include: [
-      "scripts/release-check.test.ts",
-      "scripts/runtime-faults.test.ts",
-      "scripts/release-version.test.ts",
-      "packages/tnl/test-helper.test.ts",
-      "packages/tnl/bun.test.ts",
-      "packages/tnl/internal-dev.test.ts",
-      "packages/tnl/launcher.test.ts",
-      "packages/tnl/next.test.ts",
-      "packages/tnl/register.test.ts",
-      "packages/tnl/runtime.test.ts",
-      "packages/tnl/vite.test.ts",
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "node",
+          include: ["**/*.test.{ts,tsx}"],
+          exclude: [
+            "**/dist/**",
+            "**/.next/**",
+            "**/node_modules/**",
+            "**/*.dom.test.ts",
+            "**/*.dom.test.tsx",
+            "**/*.browser.test.ts",
+          ],
+        },
+      },
+      {
+        extends: true,
+        resolve: {
+          alias: [
+            { find: /^react$/, replacement: "preact/compat" },
+            { find: /^react\/jsx-runtime$/, replacement: "preact/jsx-runtime" },
+          ],
+        },
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["**/*.dom.test.ts", "**/*.dom.test.tsx"],
+          server: { deps: { inline: ["@tanstack/react-query"] } },
+        },
+      },
     ],
     isolate: true,
     mockReset: true,

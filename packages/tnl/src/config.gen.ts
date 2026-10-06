@@ -10,6 +10,10 @@ export interface TnlConfig {
    */
   team?: string;
   /**
+   * Show the feedback toolbar on development pages.
+   */
+  feedback?: boolean;
+  /**
    * Default public URL and tunnel settings.
    */
   tunnel?: {

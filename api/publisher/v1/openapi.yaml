@@ -1,0 +1,247 @@
+openapi: 3.1.0
+info:
+  title: tnl publisher API
+  version: 1.0.0
+  license: { name: MIT, identifier: MIT }
+  description: >-
+    Same-origin browser feedback endpoints served by the local publisher on a
+    public URL. The publisher supplies the preview, service, public URL, publish
+    run, and current source state. Visitors cannot select that scope or supply
+    control credentials. IP policy or a current share cookie grants preview
+    access; the browser tracking cookie only selects a short failed-request
+    trail. Requests and responses use Cache-Control no-store. Errors are plain
+    text diagnostics and never include upstream response bodies or credentials.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers: [{ url: / }]
+security: [{}, { shareCookie: [] }]
+paths:
+  /__tnl/feedback:
+    get:
+      operationId: listBrowserFeedback
+      summary: List feedback on the current hostname
+      description: >-
+        Omitting path lists all pages on this hostname. Omitting state includes
+        open and resolved threads. Results are ordered by feedback ID, with up
+        to 100 threads per page. next_cursor is a feedback ID for the next list
+        page; event_cursor is a separate numeric activity watermark.
+      parameters:
+        - name: path
+          in: query
+          schema: { type: string, maxLength: 2048, pattern: "^/" }
+        - name: state
+          in: query
+          schema:
+            $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackThreadState"
+        - name: cursor
+          in: query
+          schema:
+            $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackID"
+      responses:
+        "200":
+          description: One hostname-scoped page of thread summaries
+          content:
+            application/json:
+              schema:
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackThreadPage"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+    post:
+      operationId: createBrowserFeedbackReport
+      summary: Create a report and its first history event
+      description: >-
+        The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen
+        body after an uncertain response; a different body with the same key
+        conflicts. The publisher captures source state and control sanitizes
+        submitted evidence. A report without an anchor refers to the page.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserFeedbackReportRequest"
+            example:
+              schema_version: 1
+              text: Save says it worked, but the change disappears after reload.
+              display_name: Sam
+              page_path: /settings
+              page_title: settings
+              evidence: { schema_version: 1, actions: [], failed_requests: [] }
+      responses:
+        "200":
+          description: Created report or the original result of an idempotent retry
+          content:
+            application/json:
+              schema:
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackThread"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/feedback/{feedback_id}:
+    parameters:
+      - $ref: "#/components/parameters/FeedbackID"
+    get:
+      operationId: getBrowserFeedbackThread
+      summary: Read the immutable report and current thread state
+      description: The thread must belong to this publisher's preview and public URL.
+      responses:
+        "200":
+          description: Report, anchor, evidence, source state, and current thread state
+          content:
+            application/json:
+              schema:
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackThread"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/feedback/{feedback_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/FeedbackID"
+    get:
+      operationId: listBrowserFeedbackEvents
+      summary: Read ordered history after an event cursor
+      description: >-
+        Return up to 25 events with cursor greater than after_cursor. Follow
+        next_cursor to read more; event_cursor is the current high-water mark.
+        Cursors may have gaps and do not identify pages or publish runs. An
+        aborted browser request may be retried from the last processed cursor.
+      parameters:
+        - name: after_cursor
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: Ordered thread events
+          content:
+            application/json:
+              schema:
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackEventPage"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+    post:
+      operationId: appendBrowserFeedbackEvent
+      summary: Reply, resolve, or reopen a thread through current preview access
+      description: >-
+        Reuse the same Idempotency-Key and body when retrying. Replies require
+        text and an open thread. Resolution and reopening accept an optional
+        note. Browser visitors cannot post an implementer update or select its
+        source state. The body is bounded to 64 KiB.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserFeedbackEventRequest"
+            example: { schema_version: 1, type: reply, text: Still seeing it after a reload. }
+      responses:
+        "200":
+          description: Appended event or the original result of an idempotent retry
+          content:
+            application/json:
+              schema:
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackEvent"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/feedback/evidence:
+    get:
+      operationId: getBrowserFeedbackEvidence
+      summary: Read this browser's recent failed-request trail
+      description: >-
+        Return at most 20 failures from the last 15 minutes, selected by the
+        publisher's HttpOnly __Host-tnl-feedback-browser cookie. Missing or
+        expired browser state returns an empty trail. Only methods, paths,
+        statuses, and bounded durations are included; query strings, headers,
+        and bodies are omitted. This cookie does not grant preview access.
+      security: []
+      responses:
+        "200":
+          description: Browser-scoped failures available for optional report evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserFeedbackEvidence"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+components:
+  securitySchemes:
+    shareCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-tnl-share
+      description: Current share access; allowed visitor IPs may use the API without this cookie
+  parameters:
+    FeedbackID:
+      name: feedback_id
+      in: path
+      required: true
+      schema:
+        $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackID"
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Reuse for retries of one mutation; at most 128 bytes
+      schema: { type: string, minLength: 1, maxLength: 128 }
+  responses:
+    FeedbackError:
+      description: >-
+        400 for invalid input, 403 for expired or missing preview access, 404 for
+        an unavailable thread or path, 405 for an unsupported method, 409 for a
+        state or idempotency conflict, 429 for rate limiting, or 503 when control
+        is unavailable. The browser displays its own diagnostic rather than the
+        upstream error body. Use the same mutation key and body for retries.
+      content:
+        text/plain:
+          schema: { type: string }
+          example: feedback changed; reload and retry
+  schemas:
+    BrowserFeedbackReportRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, text, page_path, evidence]
+      properties:
+        schema_version:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+        text: { type: string, minLength: 1, maxLength: 4000 }
+        display_name: { type: string, maxLength: 64 }
+        page_path: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+        page_title: { type: string, maxLength: 256 }
+        anchor:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackAnchor"
+        evidence:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/FeedbackEvidence"
+    BrowserFeedbackEventRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, type]
+      properties:
+        schema_version:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+        type: { type: string, enum: [reply, thread.resolved, thread.reopened] }
+        text: { type: string, minLength: 1, maxLength: 4000 }
+    BrowserFailedRequest:
+      type: object
+      additionalProperties: false
+      required: [method, path, status, duration_ms]
+      properties:
+        method: { type: string, minLength: 1, maxLength: 12 }
+        path: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+        status:
+          type: integer
+          minimum: 0
+          maximum: 599
+          description: Zero for a forwarding failure, otherwise an HTTP failure status from 400 through 599
+        duration_ms: { type: integer, minimum: 0, maximum: 600000 }
+    BrowserFeedbackEvidence:
+      type: object
+      additionalProperties: false
+      required: [schema_version, failed_requests]
+      properties:
+        schema_version:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+        failed_requests:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/BrowserFailedRequest"

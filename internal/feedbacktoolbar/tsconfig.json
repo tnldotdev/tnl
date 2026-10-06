@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "types": ["vitest", "node"],
+    "paths": {
+      "react": ["../../node_modules/preact/compat/src/index.d.ts"],
+      "react/jsx-runtime": ["../../node_modules/preact/jsx-runtime/src/index.d.ts"]
+    }
+  },
+  "include": ["*.ts", "*.tsx"]
+}

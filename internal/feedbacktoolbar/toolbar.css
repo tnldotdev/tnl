@@ -1,0 +1,277 @@
+:host {
+  all: initial;
+  --paper: #fff;
+  --ink: #111;
+  --muted: #666;
+  --rule: #b8b8b8;
+  --subtle: #f5f5f5;
+  font:
+    13px/1.7 "tnl Fira Code",
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+textarea {
+  font: inherit;
+  border-radius: 0;
+}
+button {
+  cursor: pointer;
+  padding: 4px 8px;
+  margin: 4px 4px 4px 0;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  text-transform: lowercase;
+}
+button:hover {
+  background: var(--subtle);
+}
+button:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 1px dashed var(--ink);
+  outline-offset: 3px;
+}
+.toolbar {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 2147483647;
+}
+.panel {
+  position: fixed;
+  bottom: 64px;
+  right: 16px;
+  z-index: 2147483647;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+  background: var(--paper);
+}
+.popover {
+  position: fixed;
+  z-index: 2147483647;
+  width: min(380px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  background: var(--paper);
+}
+.placement-cursor {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  padding: 2px;
+  background: var(--paper);
+}
+.selection-hint {
+  position: fixed;
+  z-index: 2147483647;
+  margin: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.display-name {
+  color: var(--muted);
+  font-size: 11px;
+}
+.display-name input {
+  padding: 4px;
+}
+.composer-actions,
+.card-actions,
+.comment-meta,
+.list-filters {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.activity-choice {
+  color: var(--muted);
+  font-size: 11px;
+}
+.muted,
+.context {
+  color: var(--muted);
+}
+.context {
+  font-size: 11px;
+  margin: 8px 0;
+}
+.context ul {
+  margin: 4px 0;
+}
+.feedback-cards {
+  list-style: none;
+  padding: 0;
+}
+.feedback-cards > li {
+  border-top: 1px solid var(--rule);
+  padding: 12px 0;
+}
+.comment-meta {
+  font-size: 11px;
+  color: var(--muted);
+  align-items: baseline;
+}
+.feedback-cards blockquote {
+  color: var(--muted);
+  max-height: 72px;
+  overflow: hidden;
+}
+.list-filters label {
+  flex: 1;
+}
+select {
+  width: 100%;
+  font: inherit;
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+}
+.thread-navigation {
+  display: flex;
+  justify-content: space-between;
+}
+.panel-body {
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  padding: 0 12px 12px;
+  margin: 0 3px;
+}
+.ascii-bar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  white-space: nowrap;
+  color: var(--rule);
+}
+.frame-rule {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.frame-title {
+  color: var(--ink);
+}
+.frame-close {
+  border: 0;
+  margin: 0;
+  padding: 0 4px;
+}
+h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 8px;
+}
+section[aria-label="New feedback"] h2,
+section[aria-label="Feedback list"] h2,
+label,
+summary {
+  text-transform: lowercase;
+}
+p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+label {
+  display: block;
+  margin: 8px 0;
+}
+input:not([type="checkbox"]),
+textarea {
+  width: 100%;
+  display: block;
+  padding: 8px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+}
+textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+section + section {
+  border-top: 1px dashed var(--rule);
+  margin-top: 16px;
+}
+ul,
+ol {
+  padding-left: 20px;
+}
+li {
+  margin: 8px 0;
+}
+time,
+small {
+  font-size: 11px;
+  color: var(--muted);
+}
+pre {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow-y: auto;
+}
+blockquote {
+  margin: 8px 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--rule);
+}
+[role="alert"] {
+  color: #a33a19;
+}
+.comment-button {
+  text-transform: none;
+  text-align: left;
+}
+.pin {
+  position: fixed;
+  z-index: 2147483646;
+  padding: 0 2px;
+  margin: 0;
+  background: var(--paper);
+  border: 0;
+  font-size: 11px;
+}
+.highlight {
+  position: fixed;
+  z-index: 2147483645;
+  pointer-events: none;
+  background: #1111110d;
+  border-bottom: 1px solid var(--ink);
+}
+.highlight.changed {
+  border-bottom-style: dashed;
+}
+.pin-preview-text {
+  max-height: 96px;
+  overflow: hidden;
+}
