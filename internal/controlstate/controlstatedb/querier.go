@@ -14,6 +14,7 @@ type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	AddPreviewPublicURL(ctx context.Context, arg AddPreviewPublicURLParams) (string, error)
+	AddSharePublicURL(ctx context.Context, arg AddSharePublicURLParams) (string, error)
 	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
 	AdvanceGuestDemoNumber(ctx context.Context, arg AdvanceGuestDemoNumberParams) (int64, error)
 	// commit the retention floor before pruning in another transaction. a crash
@@ -69,6 +70,7 @@ type Querier interface {
 	CreateOwnerMembership(ctx context.Context, arg CreateOwnerMembershipParams) error
 	CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeamParams) error
 	CreatePreview(ctx context.Context, arg CreatePreviewParams) (CreatePreviewRow, error)
+	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
@@ -141,6 +143,7 @@ type Querier interface {
 	// overlap; readiness checks its lease, and projection reads exclude drained leases.
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
+	GetShare(ctx context.Context, id string) (ControlShare, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
@@ -189,6 +192,8 @@ type Querier interface {
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
+	ListSharePublicURLs(ctx context.Context, shareID string) ([]string, error)
+	ListShares(ctx context.Context, arg ListSharesParams) ([]ControlShare, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
@@ -305,6 +310,7 @@ type Querier interface {
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
+	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)

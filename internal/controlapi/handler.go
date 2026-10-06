@@ -112,6 +112,13 @@ type PreviewStore interface {
 	AddPreviewPublicURL(context.Context, controlstate.AddPreviewPublicURLRequest, time.Time) (controlstate.Preview, error)
 }
 
+type ShareStore interface {
+	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
+	GetShare(context.Context, string) (controlstate.Share, error)
+	ListShares(context.Context, string, string) (controlstate.SharePage, error)
+	RevokeShare(context.Context, string, string, time.Time) (controlstate.Share, error)
+}
+
 // BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
 type BuiltinAuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
@@ -127,6 +134,7 @@ type handler struct {
 	revocations    HostedRevocationStore
 	admin          AdminStore
 	previews       PreviewStore
+	shares         ShareStore
 	guests         interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
@@ -154,6 +162,9 @@ func NewHandler(
 		revocations: store, admin: store, readiness: readiness}
 	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
+	}
+	if shares, ok := store.(ShareStore); ok {
+		h.shares = shares
 	}
 	if guestStore, ok := store.(interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error

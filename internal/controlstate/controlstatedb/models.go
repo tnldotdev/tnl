@@ -616,6 +616,27 @@ type ControlRuntimeSecret struct {
 	CreatedAt                          pgtype.Timestamptz
 }
 
+type ControlShare struct {
+	ID                  string
+	SchemaVersion       int16
+	PreviewID           string
+	TeamID              string
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	SecretFingerprint   []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	RevokedByIdentityID pgtype.Text
+}
+
+type ControlSharePublicUrl struct {
+	ShareID     string
+	TeamID      string
+	PublicURLID string
+}
+
 type ControlTeam struct {
 	ID                     string
 	Kind                   string
