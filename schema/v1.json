@@ -411,6 +411,10 @@
           "type": "string",
           "description": "OIDC client ID used by the authority."
         },
+        "browser_oidc_client_id": {
+          "type": "string",
+          "description": "OIDC client ID for browser preview sign-in."
+        },
         "oidc_login_flow": {
           "type": "string",
           "description": "OIDC login flow: device_code or authorization_code_pkce."

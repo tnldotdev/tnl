@@ -173,16 +173,22 @@ func (f *feedbackRuntime) evidenceForBrowser(request *http.Request) []failedRequ
 
 func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (controlv1.FeedbackReviewerAccess, bool) {
 	result := controlv1.FeedbackReviewerAccess{AllowedIp: !denied}
+	if _, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse); verified {
+		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
+			secret := cookie.Value
+			result.BrowserCookieSecret = &secret
+		}
+	}
 	if !denied {
 		return result, true
 	}
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {
-		return result, false
+		return result, result.BrowserCookieSecret != nil
 	}
 	id, secret, found := strings.Cut(cookie.Value, ".")
 	if !found || !opaqueid.Valid(id, opaqueid.SharePrefix) {
-		return result, false
+		return result, result.BrowserCookieSecret != nil
 	}
 	result.ShareId, result.CookieSecret = &id, &secret
 	return result, true

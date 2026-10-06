@@ -77,6 +77,31 @@ afterEach(() => {
   document.body.replaceChildren();
   document.getSelection()?.removeAllRanges();
   window.history.replaceState(null, "", "/");
+  vi.unstubAllGlobals();
+});
+
+test("a signed-in visitor sends feedback under the account name instead of an unverified name", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        signed_in: true,
+        display_name: "Sam",
+        team_member: false,
+      }),
+    ),
+  );
+  const { api, user } = mount();
+  await screen.findByText("signed in as Sam");
+  await openDraft(user, appButton());
+  expect(screen.queryByRole("textbox", { name: /name \(optional/i })).toBeNull();
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "Suggestion from Sam",
+  );
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
+  await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(api.report).mock.calls[0]?.[0].display_name).toBe("");
 });
 
 test("placement creates only a local draft, prevents app activation, and sends subtle context", async () => {

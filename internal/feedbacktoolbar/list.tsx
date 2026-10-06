@@ -82,7 +82,9 @@ export function FeedbackList({
             <div class="comment-meta">
               <span>
                 {thread.report.author?.display_name ?? "anonymous"}
-                {thread.report.author && <small> · unverified</small>}
+                {thread.report.author && !thread.report.author.verified && (
+                  <small> · unverified</small>
+                )}
               </span>
               <time dateTime={thread.report.created_at}>
                 {new Date(thread.report.created_at).toLocaleString()}

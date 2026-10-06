@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -33,6 +34,7 @@ type Config struct {
 	LoginToken                  string
 	OIDCIssuer                  string
 	OIDCClientID                string
+	BrowserOIDCClientID         string
 	OIDCLoginFlow               tnldconfig.OIDCLoginFlow
 	OIDCScopes                  []string
 	CertificateIssuance         bool
@@ -117,6 +119,17 @@ type PreviewTeamAccessStore interface {
 	SetPreviewTeamAccess(context.Context, controlstate.SetPreviewTeamAccessRequest, time.Time) (controlstate.Preview, error)
 }
 
+type BrowserAccessStore interface {
+	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, time.Time) (string, error)
+	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
+	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
+	RedeemBrowserHandoff(context.Context, string, string, time.Time) (string, string, string, bool, time.Time, error)
+	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
+	RotateBrowserSession(context.Context, string, string, string, time.Time) error
+	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
+	RevokeBrowserSession(context.Context, string, string, time.Time) error
+}
+
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
@@ -160,6 +173,9 @@ type handler struct {
 	admin             AdminStore
 	previews          PreviewStore
 	previewTeamAccess PreviewTeamAccessStore
+	browserAccess     BrowserAccessStore
+	browserVerifier   oidcauth.Verifier
+	browserAuthority  *authorityclient.Client
 	shares            ShareStore
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
@@ -193,6 +209,9 @@ func NewHandler(
 	}
 	if access, ok := store.(PreviewTeamAccessStore); ok {
 		h.previewTeamAccess = access
+	}
+	if access, ok := store.(BrowserAccessStore); ok {
+		h.browserAccess = access
 	}
 	if shares, ok := store.(ShareStore); ok {
 		h.shares = shares
@@ -242,6 +261,19 @@ func NewHandler(
 		if store != nil {
 			h.authorizer = hostedAuthorizer{client: client, secret: cfg.HostedSecret, store: store}
 			h.guestAuthority = client
+		}
+	}
+	if cfg.BrowserOIDCClientID != "" {
+		var err error
+		h.browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: cfg.HTTPClient,
+		})
+		if err != nil {
+			return nil, err
+		}
+		h.browserAuthority, err = authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
+		if err != nil {
+			return nil, err
 		}
 	}
 	if cfg.GuestDemoEnabled && h.guests != nil && h.authorizer != nil {
@@ -330,6 +362,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
 		DnsAutomation:           cfg.DNSAutomation,
 		GuestDemo:               cfg.GuestDemoEnabled,
+		BrowserLoginAvailable:   new(cfg.BrowserOIDCClientID != ""),
 		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}

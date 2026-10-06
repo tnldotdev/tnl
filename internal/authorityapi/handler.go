@@ -20,6 +20,7 @@ type Config struct {
 	RefreshTokenLifetime    time.Duration
 	DNSAutomation           bool
 	OIDCVerifier            oidcauth.Verifier
+	BrowserOIDCVerifier     oidcauth.Verifier
 }
 
 // Store is the stored state used by the built-in authority API.
@@ -108,11 +109,6 @@ func NewHandler(cfg Config, store Store) (*http.ServeMux, error) {
 // AuthorizeServiceOperation belongs to the external authority and is
 // deliberately absent from the built-in authority implementation.
 func (h *handler) AuthorizeServiceOperation(response http.ResponseWriter, _ *http.Request) {
-	notFound(response, nil)
-}
-
-// browser token exchange is enabled when browser OIDC support is configured.
-func (h *handler) ExchangeBrowserOIDCToken(response http.ResponseWriter, _ *http.Request) {
 	notFound(response, nil)
 }
 

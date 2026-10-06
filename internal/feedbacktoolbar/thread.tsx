@@ -66,6 +66,12 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
             {data.events.map((event) => (
               <li key={event.cursor}>
                 <strong>{eventLabels[event.type]}</strong>{" "}
+                {event.author && (
+                  <span class="muted">
+                    by {event.author.display_name}
+                    {!event.author.verified && " (unverified)"}{" "}
+                  </span>
+                )}
                 <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time>
                 {event.text && <p>{event.text}</p>}
               </li>

@@ -143,8 +143,17 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	}
 	write.FeedbackID = thread.ID
 	write.IdempotencyKey = request.Header.Get("Idempotency-Key")
+	token, _ := requestBearerToken(request)
+	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), token)
+	if err != nil || principal.identityID != decision.IdentityID {
+		if err == nil {
+			err = authorization.ErrUnauthenticated
+		}
+		feedbackOwnerFailure(response, err)
+		return
+	}
 	write.Actor = controlstate.FeedbackActor{
-		Kind: "implementer", IdentityID: decision.IdentityID,
+		Kind: "implementer", IdentityID: decision.IdentityID, DisplayName: principal.displayName,
 		PolicyRevision: decision.PolicyRevision, AuthorityIssuer: h.authorityIssuerFor(decision),
 		ExpectedMutationRevision: revision,
 	}

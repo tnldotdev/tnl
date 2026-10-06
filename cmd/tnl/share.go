@@ -289,7 +289,7 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	if err != nil {
 		return err
 	}
-	if session.authenticated.Discovery.Authentication.Oidc == nil {
+	if session.authenticated.Discovery.BrowserLoginAvailable == nil || !*session.authenticated.Discovery.BrowserLoginAvailable {
 		return errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team")
 	}
 	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, preview.Id, true)
@@ -299,8 +299,9 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	if updated.Id != preview.Id || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
 		return errors.New("server did not enable this preview's team access")
 	}
-	_, err = fmt.Fprintf(output, "https://%s/\n", selected.CanonicalHostname)
-	return err
+	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
+		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
+	))
 }
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {

@@ -16,6 +16,7 @@ export function ReportForm({
   target,
   saved,
   cancel,
+  browserName,
 }: {
   api: FeedbackAPI;
   path: string;
@@ -24,6 +25,7 @@ export function ReportForm({
   target?: AnchorTarget | undefined;
   saved: (thread: Thread) => void;
   cancel: () => void;
+  browserName?: string | undefined;
 }) {
   const [text, setText] = useState("");
   const [name, setName] = useState("");
@@ -62,7 +64,7 @@ export function ReportForm({
     send.mutate({
       schema_version: 1,
       text: text.trim(),
-      display_name: name.trim(),
+      display_name: browserName ? "" : name.trim(),
       page_path: path,
       page_title: boundedText(document.title, 256),
       ...(target ? { anchor: target.anchor } : {}),
@@ -96,15 +98,19 @@ export function ReportForm({
               onInput={(event) => setText(event.currentTarget.value)}
             />
           </label>
-          <label class="display-name">
-            Name (optional, unverified)
-            <input
-              maxLength={64}
-              placeholder="name (optional)"
-              value={name}
-              onInput={(event) => setName(event.currentTarget.value)}
-            />
-          </label>
+          {browserName ? (
+            <small>posting as {browserName}</small>
+          ) : (
+            <label class="display-name">
+              Name (optional, unverified)
+              <input
+                maxLength={64}
+                placeholder="name (optional)"
+                value={name}
+                onInput={(event) => setName(event.currentTarget.value)}
+              />
+            </label>
+          )}
           <EvidenceView evidence={evidence} />
           <label class="activity-choice">
             <input

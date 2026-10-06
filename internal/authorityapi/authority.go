@@ -86,6 +86,49 @@ func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.
 	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
 }
 
+func (h *handler) ExchangeBrowserOIDCToken(response http.ResponseWriter, request *http.Request) {
+	var body authorityv1.OIDCTokenExchangeRequest
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
+		return
+	}
+	if h.config.BrowserOIDCVerifier == nil {
+		writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
+		return
+	}
+	if h.store == nil {
+		writeAuthenticationUnavailable(response, "exchange browser OIDC token", nil)
+		return
+	}
+	identity, err := h.config.BrowserOIDCVerifier.Verify(request.Context(), body.IdToken)
+	if errors.Is(err, oidcauth.ErrUnauthenticated) {
+		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
+		return
+	}
+	if errors.Is(err, oidcauth.ErrUnavailable) {
+		writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "OIDC provider unavailable")
+		return
+	}
+	if err != nil {
+		writeAuthenticationUnavailable(response, "verify browser OIDC token", err)
+		return
+	}
+	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDeploymentDomain, controlstate.OIDCIdentity{
+		Issuer: identity.Issuer, Subject: identity.Subject, DisplayName: identity.DisplayName,
+		NormalizedEmail: identity.NormalizedEmail, EmailVerified: identity.EmailVerified,
+		AssertionDigest: identity.AssertionDigest, AssertionExpiry: identity.ExpiresAt,
+	}, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
+	if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) {
+		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
+		return
+	}
+	if err != nil {
+		writeAuthenticationUnavailable(response, "exchange browser OIDC token", err)
+		return
+	}
+	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
+}
+
 func (h *handler) RefreshControlSession(response http.ResponseWriter, request *http.Request) {
 	var body authorityv1.RefreshControlSessionRequest
 	if err := decodeJSON(response, request, &body); err != nil {

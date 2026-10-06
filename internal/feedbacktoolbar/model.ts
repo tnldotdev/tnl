@@ -41,6 +41,7 @@ export const evidenceSchema = z.object({
   failed_requests: z.array(failureSchema).max(20),
 });
 const report = FeedbackThreadSummary.shape.report;
+const authorSchema = z.object(report.shape.author.unwrap().shape);
 export const summarySchema = z.object({
   ...FeedbackThreadSummary.shape,
   schema_version: z.literal(1),
@@ -48,7 +49,7 @@ export const summarySchema = z.object({
   report: z.object({
     ...report.shape,
     created_at: z.iso.datetime({ offset: true }),
-    author: z.object(report.shape.author.unwrap().shape).optional(),
+    author: authorSchema.optional(),
   }),
   anchor: z.union([anchorSchema, unsupportedAnchorSchema]).optional(),
   scope: z.object(FeedbackScope.pick({ page_path: true, page_title: true }).shape),
@@ -63,6 +64,7 @@ export const eventSchema = z.object({
     text: true,
   }).shape,
   schema_version: z.literal(1),
+  author: authorSchema.optional(),
   at: z.iso.datetime({ offset: true }),
 });
 export const threadPageSchema = z.object({

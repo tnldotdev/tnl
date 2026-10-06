@@ -148,6 +148,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	publisherConfig.ControlURL = authenticated.ServerEndpoint
+	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {
 		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
 	}

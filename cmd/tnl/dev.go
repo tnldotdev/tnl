@@ -286,6 +286,8 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishDone := make(chan error, 1)
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.ControlURL = authenticated.ServerEndpoint
+		publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 		publisherConfig.PreviewID = previewID
 		publisherConfig.ProjectRoot = flags.project.Root
 		publisherConfig.Service = flags.Service

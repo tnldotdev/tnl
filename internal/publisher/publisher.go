@@ -40,6 +40,8 @@ type PublicURLControlClient interface {
 
 type Config struct {
 	Control                  PublicURLControlClient
+	ControlURL               string
+	BrowserLoginAvailable    bool
 	TeamID                   string
 	DomainID                 string
 	MembershipID             string

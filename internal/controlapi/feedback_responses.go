@@ -27,10 +27,10 @@ func feedbackPageTitle(title string) *string {
 func feedbackReport(thread controlstate.FeedbackThread) controlv1.FeedbackReport {
 	report := controlv1.FeedbackReport{Text: thread.ReportText, CreatedAt: thread.CreatedAt}
 	if thread.AuthorDisplayName != "" {
-		report.Author = &struct {
-			DisplayName string `json:"display_name"`
-			Verified    bool   `json:"verified"`
-		}{DisplayName: thread.AuthorDisplayName, Verified: false}
+		report.Author = &controlv1.FeedbackAuthor{DisplayName: thread.AuthorDisplayName, Verified: thread.AuthorVerified}
+		if thread.AuthorVerified {
+			report.Author.IdentityId = &thread.AuthorIdentityID
+		}
 	}
 	return report
 }
@@ -95,6 +95,12 @@ func feedbackEventResponse(event controlstate.FeedbackEvent) (controlv1.Feedback
 		SchemaVersion: controlv1.ReviewSchemaVersion(event.SchemaVersion),
 		Cursor:        int64(event.Cursor), FeedbackId: event.FeedbackID,
 		Type: controlv1.FeedbackEventType(event.Type), Actor: controlv1.FeedbackEventActor(event.ActorKind), At: event.At,
+	}
+	if event.AuthorDisplayName != "" {
+		result.Author = &controlv1.FeedbackAuthor{DisplayName: event.AuthorDisplayName, Verified: event.AuthorVerified}
+		if event.AuthorVerified {
+			result.Author.IdentityId = &event.AuthorIdentityID
+		}
 	}
 	if event.Text != "" {
 		result.Text = &event.Text

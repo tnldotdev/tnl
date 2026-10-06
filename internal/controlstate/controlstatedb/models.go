@@ -104,6 +104,46 @@ type ControlAuthorityRevisionState struct {
 	AppliedAt              pgtype.Timestamptz
 }
 
+type ControlBrowserAccessHandoff struct {
+	TokenDigest      []byte
+	SessionDigest    []byte
+	PublicURLID      string
+	CookieCiphertext []byte
+	StorageKeyID     string
+	ReturnPath       string
+	NextUrl          string
+	Bridge           bool
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
+}
+
+type ControlBrowserAccessSession struct {
+	TokenDigest       []byte
+	PreviewID         string
+	PublicURLID       string
+	IdentityID        string
+	DisplayName       string
+	AccessCiphertext  []byte
+	RefreshCiphertext []byte
+	StorageKeyID      string
+	AccessExpiresAt   pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+}
+
+type ControlBrowserLoginAttempt struct {
+	StateDigest          []byte
+	BindingDigest        []byte
+	PreviewID            string
+	PublicURLID          string
+	ReturnPath           string
+	Nonce                string
+	VerifierCiphertext   []byte
+	VerifierStorageKeyID string
+	ExpiresAt            pgtype.Timestamptz
+	ConsumedAt           pgtype.Timestamptz
+}
+
 type ControlControlSession struct {
 	ID                           string
 	IdentityID                   string
@@ -187,19 +227,22 @@ type ControlDomain struct {
 }
 
 type ControlFeedbackEvent struct {
-	Cursor         int64
-	SchemaVersion  int16
-	FeedbackID     string
-	TeamID         string
-	EventType      string
-	ActorKind      string
-	ActorReference string
-	IdempotencyKey string
-	RequestDigest  []byte
-	Text           pgtype.Text
-	Evidence       []byte
-	SourceState    []byte
-	OccurredAt     pgtype.Timestamptz
+	Cursor            int64
+	SchemaVersion     int16
+	FeedbackID        string
+	TeamID            string
+	EventType         string
+	ActorKind         string
+	ActorReference    string
+	IdempotencyKey    string
+	RequestDigest     []byte
+	Text              pgtype.Text
+	Evidence          []byte
+	SourceState       []byte
+	OccurredAt        pgtype.Timestamptz
+	AuthorIdentityID  pgtype.Text
+	AuthorDisplayName pgtype.Text
+	AuthorVerified    bool
 }
 
 type ControlFeedbackEventClock struct {
@@ -230,6 +273,8 @@ type ControlFeedbackThread struct {
 	StateUpdatedAt    pgtype.Timestamptz
 	IdempotencyKey    string
 	RequestDigest     []byte
+	AuthorIdentityID  pgtype.Text
+	AuthorVerified    bool
 }
 
 type ControlGuestPublicUrl struct {

@@ -49,6 +49,24 @@ textarea:focus-visible {
   bottom: 16px;
   right: 16px;
   z-index: 2147483647;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+.toolbar > .muted {
+  max-width: min(200px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
+}
+.account-link {
+  display: inline-block;
+  padding: 4px 8px;
+  margin-right: 4px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+  text-decoration: none;
 }
 .panel {
   position: fixed;

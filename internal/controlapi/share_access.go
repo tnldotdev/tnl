@@ -1,8 +1,10 @@
 package controlapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"time"
 
@@ -51,6 +53,16 @@ func (h *handler) GetPublishRunShareState(response http.ResponseWriter, request 
 		return
 	}
 	result := controlv1.PublishRunShareState{SchemaVersion: controlstate.ReviewSchemaVersion, Shares: make([]controlv1.PublisherShare, len(shares))}
+	if store, ok := h.store.(interface {
+		PreviewTeamAccessForPublicURL(context.Context, string) (controlstate.Preview, error)
+	}); ok {
+		if preview, err := store.PreviewTeamAccessForPublicURL(request.Context(), auth.PublicURLID); err == nil {
+			result.TeamAccessEnabled = &preview.TeamAccessEnabled
+		} else if !errors.Is(err, controlstate.ErrPreviewAccess) {
+			writeControlStateProblem(response, "read preview team access", err)
+			return
+		}
+	}
 	for index, share := range shares {
 		cookies := make([]string, len(share.CookieHashes))
 		for cookieIndex, hash := range share.CookieHashes {

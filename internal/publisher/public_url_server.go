@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +35,7 @@ type PublicURLServerConfig struct {
 	Target          string
 	Mounts          []localproxy.Mount
 	ShareAccess     *shareAccess
+	BrowserAccess   *browserAccess
 	Feedback        *feedbackRuntime
 	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
@@ -108,6 +111,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				denied := request.Context().Value(denialContextKey{}) == true
+				sharePermitted := config.ShareAccess != nil && config.ShareAccess.permits(request)
 				if sharePath(request.URL.EscapedPath()) {
 					response.Header().Set("Cache-Control", "no-store")
 					response.Header().Set("Referrer-Policy", "no-referrer")
@@ -137,7 +141,41 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					shareRedirect(response, redemption)
 					return
 				}
-				if denied && (config.ShareAccess == nil || !config.ShareAccess.permits(request)) {
+				if config.BrowserAccess != nil {
+					if strings.HasPrefix(request.URL.Path, "/__tnl/team/") {
+						select {
+						case shareSlots <- struct{}{}:
+							defer func() { <-shareSlots }()
+						default:
+							response.Header().Set("Retry-After", "1")
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+							return
+						}
+						if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
+							_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+							defer connection.SetDeadline(time.Time{})
+						}
+						if config.BrowserAccess.handle(response, request, !denied || sharePermitted) {
+							return
+						}
+					}
+				}
+				browser := controlv1.BrowserAccessResponse{}
+				browserPermitted := false
+				if config.BrowserAccess != nil {
+					browser, browserPermitted = config.BrowserAccess.check(request)
+				}
+				if browserPermitted {
+					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
+				}
+				if denied && !sharePermitted && (!browserPermitted || !browser.TeamMember) {
+					if !browserPermitted && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
+						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
+						response.Header().Set("Cache-Control", "no-store")
+						response.Header().Set("Referrer-Policy", "no-referrer")
+						http.Redirect(response, request, "/__tnl/team/login?return="+url.QueryEscape(request.URL.RequestURI()), http.StatusSeeOther)
+						return
+					}
 					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
 					return
 				}
@@ -152,7 +190,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					request = config.Feedback.prepareBrowser(response, request)
 				}
-				if config.ShareAccess != nil || config.Feedback != nil {
+				if config.ShareAccess != nil || config.Feedback != nil || config.BrowserAccess != nil {
 					request = stripTnlCookies(request)
 				}
 				handler.ServeHTTP(response, request)

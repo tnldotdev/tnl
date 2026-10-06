@@ -32,6 +32,7 @@ type Querier interface {
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
+	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
 	CancelPublishRunACMEOrders(ctx context.Context, arg CancelPublishRunACMEOrdersParams) error
@@ -48,10 +49,13 @@ type Querier interface {
 	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error)
+	CleanupBrowserAccess(ctx context.Context, now pgtype.Timestamptz) error
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompletePublicURLUsageDelivery(ctx context.Context, arg CompletePublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
+	ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBrowserAccessHandoffParams) (ConsumeBrowserAccessHandoffRow, error)
+	ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBrowserLoginAttemptParams) (ConsumeBrowserLoginAttemptRow, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
 	ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error)
 	CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error)
@@ -115,6 +119,7 @@ type Querier interface {
 	GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
+	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)
@@ -168,6 +173,9 @@ type Querier interface {
 	HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishRunParams) (ControlPublishRun, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
+	InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrowserAccessHandoffParams) error
+	InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error
+	InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
 	InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error)
@@ -215,6 +223,7 @@ type Querier interface {
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
@@ -227,6 +236,7 @@ type Querier interface {
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
+	LockBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
@@ -343,10 +353,12 @@ type Querier interface {
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
+	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
+	RotateBrowserAccessSession(ctx context.Context, arg RotateBrowserAccessSessionParams) error
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)
 	RotateControlSessionRetrySecret(ctx context.Context, arg RotateControlSessionRetrySecretParams) error
 	RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error

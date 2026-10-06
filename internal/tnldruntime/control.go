@@ -34,6 +34,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		LoginToken:              loginToken,
 		OIDCIssuer:              cfg.OIDCIssuer,
 		OIDCClientID:            cfg.OIDCClientID,
+		BrowserOIDCClientID:     cfg.BrowserOIDCClientID,
 		OIDCLoginFlow:           cfg.OIDCLoginFlow,
 		OIDCScopes:              cfg.EffectiveOIDCScopes(),
 		CertificateIssuance:     cfg.ACMEEnabled(),
@@ -47,7 +48,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 	}
 }
 
-func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier oidcauth.Verifier) authorityapi.Config {
+func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oidcauth.Verifier) authorityapi.Config {
 	return authorityapi.Config{
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
 		LoginToken:              cfg.LoginToken,
@@ -55,6 +56,7 @@ func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier oidcauth.Verifier) a
 		RefreshTokenLifetime:    cfg.RefreshTokenLifetime,
 		DNSAutomation:           cfg.DNSAutomationEnabled(),
 		OIDCVerifier:            verifier,
+		BrowserOIDCVerifier:     browserVerifier,
 	}
 }
 
@@ -84,7 +86,7 @@ func newPublicAPIHandler(
 	}
 	var authorityRoutes authorityapi.Routes
 	if cfg.AuthorityEndpoint == "" {
-		var verifier oidcauth.Verifier
+		var verifier, browserVerifier oidcauth.Verifier
 		if cfg.OIDCEnabled() {
 			var err error
 			verifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
@@ -94,7 +96,15 @@ func newPublicAPIHandler(
 				return nil, err
 			}
 		}
-		authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier), database)
+		if cfg.BrowserOIDCClientID != "" {
+			browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
+				Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: httpClient,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier, browserVerifier), database)
 		if err != nil {
 			return nil, err
 		}

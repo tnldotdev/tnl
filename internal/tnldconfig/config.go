@@ -79,6 +79,7 @@ type Config struct {
 
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
+	BrowserOIDCClientID  string        `name:"browser-oidc-client-id" env:"TNLD_BROWSER_OIDC_CLIENT_ID" help:"OIDC client ID for browser preview sign-in."`
 	OIDCLoginFlow        OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
 	OIDCScopes           []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
 	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Login token for the built-in administrator identity."`
@@ -416,7 +417,7 @@ func (c Config) validateOIDC() (retErr error) {
 			retErr = failure.Wrap("validate OIDC settings", failure.ServerOIDCInvalid, retErr)
 		}
 	}()
-	configured := c.OIDCIssuer != "" || c.OIDCClientID != "" || c.OIDCLoginFlow != "" || len(c.OIDCScopes) != 0
+	configured := c.OIDCIssuer != "" || c.OIDCClientID != "" || c.BrowserOIDCClientID != "" || c.OIDCLoginFlow != "" || len(c.OIDCScopes) != 0
 	if !configured {
 		return nil
 	}
@@ -430,6 +431,9 @@ func (c Config) validateOIDC() (retErr error) {
 	}
 	if strings.TrimSpace(c.OIDCClientID) != c.OIDCClientID || c.OIDCClientID == "" || len(c.OIDCClientID) > 128 {
 		return errors.New("OIDC client ID is invalid")
+	}
+	if c.BrowserOIDCClientID != "" && (strings.TrimSpace(c.BrowserOIDCClientID) != c.BrowserOIDCClientID || len(c.BrowserOIDCClientID) > 128 || strings.ContainsAny(c.BrowserOIDCClientID, " \t\r\n")) {
+		return errors.New("browser OIDC client ID is invalid")
 	}
 	if c.OIDCLoginFlow != OIDCLoginFlowDeviceCode && c.OIDCLoginFlow != OIDCLoginFlowAuthorizationCodePKCE {
 		return errors.New("OIDC login flow is invalid")

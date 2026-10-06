@@ -192,6 +192,25 @@ func (c *Client) EnableShareAccess(ctx context.Context, runID string, version ui
 	return err
 }
 
+func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}, editors...)
+	})
+}
+
+func (c *Client) CheckBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
+	return request[controlv1.BrowserAccessResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CheckPreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
+	})
+}
+
+func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokePreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
+	})
+	return err
+}
+
 func (c *Client) GetPublishRunShareState(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
 	return request[controlv1.PublishRunShareState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetPublishRunShareState(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)

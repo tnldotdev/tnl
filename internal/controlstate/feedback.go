@@ -62,6 +62,9 @@ const (
 type FeedbackActor struct {
 	Kind                     string
 	IdentityID               string
+	DisplayName              string
+	BrowserCookieSecret      []byte
+	TeamMember               bool
 	ShareID                  string
 	CookieSecret             []byte
 	AllowedIP                bool
@@ -86,6 +89,8 @@ type FeedbackThread struct {
 	State             FeedbackThreadState
 	ReportText        string
 	AuthorDisplayName string
+	AuthorIdentityID  string
+	AuthorVerified    bool
 	Anchor            json.RawMessage
 	Evidence          json.RawMessage
 	SourceAtReport    json.RawMessage
@@ -94,17 +99,20 @@ type FeedbackThread struct {
 }
 
 type FeedbackEvent struct {
-	SchemaVersion  int
-	Cursor         uint64
-	FeedbackID     string
-	TeamID         string
-	Type           FeedbackEventType
-	ActorKind      string
-	ActorReference string
-	Text           string
-	Evidence       json.RawMessage
-	SourceState    json.RawMessage
-	At             time.Time
+	SchemaVersion     int
+	Cursor            uint64
+	FeedbackID        string
+	TeamID            string
+	Type              FeedbackEventType
+	ActorKind         string
+	ActorReference    string
+	AuthorDisplayName string
+	AuthorIdentityID  string
+	AuthorVerified    bool
+	Text              string
+	Evidence          json.RawMessage
+	SourceState       json.RawMessage
+	At                time.Time
 }
 
 type FeedbackThreadPage struct {
@@ -170,10 +178,14 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err := d.requireOpen(); err != nil {
 		return FeedbackThread{}, err
 	}
+	if request.Actor.IdentityID != "" {
+		request.AuthorDisplayName = request.Actor.DisplayName
+	}
 	digestInput, err := json.Marshal(struct {
-		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName string
-		Anchor, Evidence, SourceAtReport                                       json.RawMessage
+		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
+		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
 	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
+		request.Actor.IdentityID,
 		request.Anchor, request.Evidence, request.SourceAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -199,7 +211,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: resolve report publish run: %w", err)
 	}
-	actorRef, err := reviewerReference(ctx, queries, scope.PublicURLID, request.Actor, now)
+	actorRef, err := reviewerReference(ctx, queries, scope.PublicURLID, scope.PreviewID, request.Actor, now)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
@@ -212,6 +224,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		PublicURLID: scope.PublicURLID, PublishRunID: auth.PublishRunID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
 		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
+		AuthorIdentityID: nullableText(request.Actor.IdentityID), AuthorVerified: request.Actor.IdentityID != "",
 		Anchor: request.Anchor, Evidence: request.Evidence, SourceAtReport: request.SourceAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:],
@@ -231,6 +244,8 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 			Cursor: cursor, FeedbackID: id, TeamID: scope.TeamID, EventType: string(FeedbackCreated),
 			ActorKind: "reviewer", ActorReference: actorRef,
 			IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:], OccurredAt: timestamptz(now),
+			AuthorIdentityID: nullableText(request.Actor.IdentityID), AuthorDisplayName: nullableText(request.Actor.DisplayName),
+			AuthorVerified: request.Actor.IdentityID != "",
 		}); err != nil {
 			return FeedbackThread{}, fmt.Errorf("controlstate: record feedback creation: %w", err)
 		}
@@ -331,6 +346,8 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		EventType: string(request.Type), ActorKind: request.Actor.Kind, ActorReference: actorRef,
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:], Text: nullableText(request.Text),
 		Evidence: request.Evidence, SourceState: request.SourceState, OccurredAt: timestamptz(now),
+		AuthorIdentityID: nullableText(verifiedFeedbackAuthorID(request.Actor)), AuthorDisplayName: nullableText(request.Actor.DisplayName),
+		AuthorVerified: request.Actor.IdentityID != "" && request.Actor.DisplayName != "",
 	})
 	if err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: save feedback event: %w", err)
@@ -354,9 +371,16 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	return feedbackEventFromRow(stored), nil
 }
 
+func verifiedFeedbackAuthorID(actor FeedbackActor) string {
+	if actor.DisplayName == "" {
+		return ""
+	}
+	return actor.IdentityID
+}
+
 func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controlstatedb.Queries, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (string, error) {
 	if actor.Kind == "reviewer" {
-		return reviewerReference(ctx, queries, thread.PublicURLID, actor, now)
+		return reviewerReference(ctx, queries, thread.PublicURLID, thread.PreviewID, actor, now)
 	}
 	if actor.Kind != "implementer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
 		return "", ErrFeedbackAccess
@@ -390,24 +414,56 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 	return actor.IdentityID, nil
 }
 
-func reviewerReference(ctx context.Context, queries *controlstatedb.Queries, publicURLID string, actor FeedbackActor, now time.Time) (string, error) {
+func reviewerReference(ctx context.Context, queries *controlstatedb.Queries, publicURLID, previewID string, actor FeedbackActor, now time.Time) (string, error) {
 	if actor.Kind != "reviewer" {
 		return "", ErrFeedbackAccess
 	}
+	identity := ""
+	if len(actor.BrowserCookieSecret) != 0 {
+		if actor.IdentityID == "" || !validFeedbackText(actor.DisplayName, 256) || len(actor.BrowserCookieSecret) != 32 {
+			return "", ErrFeedbackAccess
+		}
+		digest := sha256.Sum256(actor.BrowserCookieSecret)
+		session, err := queries.GetBrowserAccessSession(ctx, digest[:])
+		if err != nil || session.IdentityID != actor.IdentityID || session.PreviewID != previewID ||
+			session.RevokedAt.Valid || !session.ExpiresAt.Time.After(now) {
+			return "", ErrFeedbackAccess
+		}
+		if _, err := queries.BrowserSessionPublicURLIncluded(ctx, controlstatedb.BrowserSessionPublicURLIncludedParams{
+			TokenDigest: digest[:], PublicURLID: publicURLID,
+		}); err != nil {
+			return "", ErrFeedbackAccess
+		}
+		identity = actor.IdentityID
+	} else if actor.IdentityID != "" || actor.TeamMember {
+		return "", ErrFeedbackAccess
+	}
 	if actor.AllowedIP {
+		if identity != "" {
+			return "identity:" + identity, nil
+		}
 		return "allowed_ip", nil
 	}
-	if !opaqueid.Valid(actor.ShareID, opaqueid.SharePrefix) || len(actor.CookieSecret) != 32 {
+	if opaqueid.Valid(actor.ShareID, opaqueid.SharePrefix) && len(actor.CookieSecret) == 32 {
+		digest := sha256.Sum256(actor.CookieSecret)
+		if _, err := queries.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{
+			ShareID: actor.ShareID, PublicURLID: publicURLID,
+			TokenDigest: digest[:], Now: timestamptz(now),
+		}); err == nil {
+			if identity != "" {
+				return "identity:" + identity, nil
+			}
+			return actor.ShareID, nil
+		}
+	}
+	if !actor.TeamMember || identity == "" {
 		return "", ErrFeedbackAccess
 	}
-	digest := sha256.Sum256(actor.CookieSecret)
-	if _, err := queries.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{
-		ShareID: actor.ShareID, PublicURLID: publicURLID,
-		TokenDigest: digest[:], Now: timestamptz(now),
-	}); err != nil {
+	preview, err := queries.GetPreview(ctx, previewID)
+	if err != nil || !preview.TeamAccessEnabled {
 		return "", ErrFeedbackAccess
 	}
-	return actor.ShareID, nil
+	return "identity:" + identity, nil
 }
 
 func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (string, string, error) {
@@ -431,7 +487,7 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 	if err != nil {
 		return "", "", fmt.Errorf("controlstate: read reviewer preview: %w", err)
 	}
-	if _, err := reviewerReference(ctx, queries, scope.PublicURLID, actor, now); err != nil {
+	if _, err := reviewerReference(ctx, queries, scope.PublicURLID, previewID, actor, now); err != nil {
 		return "", "", err
 	}
 	return scope.TeamID, scope.PublicURLID, nil
@@ -505,6 +561,7 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 		PublishRunID: row.PublishRunID, PublishRunNumber: uint64(row.PublishRunNumber),
 		Service: row.Service, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
 		ReportText: row.ReportText, AuthorDisplayName: row.AuthorDisplayName.String,
+		AuthorIdentityID: row.AuthorIdentityID.String, AuthorVerified: row.AuthorVerified,
 		SchemaVersion: int(row.SchemaVersion), Anchor: slices.Clone(row.Anchor), Evidence: slices.Clone(row.Evidence),
 		SourceAtReport: slices.Clone(row.SourceAtReport),
 		CreatedAt:      row.CreatedAt.Time, StateUpdatedAt: row.StateUpdatedAt.Time,
@@ -516,6 +573,7 @@ func feedbackEventFromRow(row controlstatedb.ControlFeedbackEvent) FeedbackEvent
 		SchemaVersion: int(row.SchemaVersion),
 		Cursor:        uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID,
 		Type: FeedbackEventType(row.EventType), ActorKind: row.ActorKind, ActorReference: row.ActorReference,
+		AuthorIdentityID: row.AuthorIdentityID.String, AuthorDisplayName: row.AuthorDisplayName.String, AuthorVerified: row.AuthorVerified,
 		Text: row.Text.String, Evidence: slices.Clone(row.Evidence), SourceState: slices.Clone(row.SourceState),
 		At: row.OccurredAt.Time,
 	}

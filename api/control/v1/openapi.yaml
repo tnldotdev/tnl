@@ -9,6 +9,120 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.tnl.dev
 paths:
+  /v1/browser/login:
+    get:
+      operationId: beginPreviewBrowserLogin
+      summary: Start sign-in for a preview visitor
+      security: []
+      parameters:
+        - name: preview_id
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/PreviewID"
+        - name: public_url_id
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/PublicURLID"
+        - name: return_path
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^/"
+            maxLength: 2048
+      responses:
+        "302":
+          description: Redirect to the configured identity provider
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/browser/callback:
+    get:
+      operationId: completePreviewBrowserLogin
+      summary: Return a signed-in visitor to the preview
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirect to a one-time handoff on the public URL
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/browser/handoff:
+    post:
+      operationId: redeemPreviewBrowserHandoff
+      summary: Redeem a one-time browser handoff on the publisher
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserHandoffRequest"
+      responses:
+        "200":
+          description: Browser cookie and safe return path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserHandoffResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/browser/access:
+    post:
+      operationId: checkPreviewBrowserAccess
+      summary: Check a browser cookie against current preview access
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserAccessRequest"
+      responses:
+        "200":
+          description: Browser identity and current team access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserAccessResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/browser/logout:
+    post:
+      operationId: revokePreviewBrowserAccess
+      summary: Revoke the current browser session
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserAccessRequest"
+      responses:
+        "204":
+          description: Browser session revoked
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/preview:
     post:
       operationId: createPublishRunPreview
@@ -1233,6 +1347,9 @@ components:
         guest_demo:
           type: boolean
           description: Whether this server accepts limited anonymous demo publishers.
+        browser_login_available:
+          type: boolean
+          description: Whether visitors can sign in through a browser OIDC client.
         authority_endpoint:
           type: string
           format: uri
@@ -1536,6 +1653,62 @@ components:
       properties:
         enabled:
           type: boolean
+    BrowserHandoffRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, token]
+      properties:
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        token:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+    BrowserHandoffResponse:
+      type: object
+      additionalProperties: false
+      required: [cookie_secret, return_path, expires_at]
+      properties:
+        cookie_secret:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+        return_path:
+          type: string
+          pattern: "^/"
+        next_url:
+          type: string
+          pattern: "^https://"
+        bridge:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+    BrowserAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, cookie_secret]
+      properties:
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        cookie_secret:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+    BrowserAccessResponse:
+      type: object
+      additionalProperties: false
+      required: [identity_id, display_name, team_member]
+      properties:
+        identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        team_member:
+          type: boolean
     Preview:
       type: object
       additionalProperties: false
@@ -1663,6 +1836,19 @@ components:
           type: string
           minLength: 1
           maxLength: 32
+    FeedbackAuthor:
+      type: object
+      additionalProperties: false
+      required: [display_name, verified]
+      properties:
+        identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        verified:
+          type: boolean
     FeedbackReport:
       type: object
       additionalProperties: false
@@ -1673,16 +1859,7 @@ components:
           minLength: 1
           maxLength: 4000
         author:
-          type: object
-          additionalProperties: false
-          required: [display_name, verified]
-          properties:
-            display_name:
-              type: string
-              minLength: 1
-              maxLength: 64
-            verified:
-              type: boolean
+          $ref: "#/components/schemas/FeedbackAuthor"
         created_at:
           type: string
           format: date-time
@@ -1967,6 +2144,8 @@ components:
         actor:
           type: string
           enum: [implementer, reviewer]
+        author:
+          $ref: "#/components/schemas/FeedbackAuthor"
         at:
           type: string
           format: date-time
@@ -2008,6 +2187,10 @@ components:
         share_id:
           $ref: "#/components/schemas/ShareID"
         cookie_secret:
+          type: string
+          minLength: 43
+          maxLength: 43
+        browser_cookie_secret:
           type: string
           minLength: 43
           maxLength: 43
@@ -2337,6 +2520,8 @@ components:
       properties:
         schema_version:
           $ref: "#/components/schemas/ReviewSchemaVersion"
+        team_access_enabled:
+          type: boolean
         shares:
           type: array
           items:

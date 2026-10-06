@@ -149,6 +149,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 			clioutput.Field{Label: "state", Value: string(thread.State)},
 			clioutput.Field{Label: "service", Value: thread.Scope.Service},
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
+			clioutput.Field{Label: "author", Value: feedbackAuthorLabel(thread.Report.Author)},
 			clioutput.Field{Label: "report", Value: thread.Report.Text},
 		)))
 	}
@@ -265,6 +266,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "state", Value: string(thread.State)},
 			clioutput.Field{Label: "service", Value: thread.Scope.Service},
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
+			clioutput.Field{Label: "author", Value: feedbackAuthorLabel(thread.Report.Author)},
 			clioutput.Field{Label: "report", Value: thread.Report.Text},
 			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Evidence.Element)},
 			clioutput.Field{Label: "source", Value: result.LocalProject.Comparison},
@@ -276,7 +278,10 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 		if event.Text != nil {
 			text = *event.Text
 		}
-		blocks = append(blocks, clioutput.Section(strconv.FormatInt(event.Cursor, 10)+" "+string(event.Type), clioutput.Text(text)))
+		blocks = append(blocks, clioutput.Section(strconv.FormatInt(event.Cursor, 10)+" "+string(event.Type), clioutput.Fields(
+			clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
+			clioutput.Field{Label: "message", Value: text},
+		)))
 	}
 	return writeHumanFrame(output, "tnl feedback inspect", string(thread.State), "", blocks...)
 }
@@ -286,6 +291,23 @@ func feedbackElementLabel(element *controlv1.FeedbackElement) string {
 		return *element.Label
 	}
 	return "page"
+}
+
+func feedbackAuthorLabel(author *controlv1.FeedbackAuthor) string {
+	if author == nil {
+		return "anonymous"
+	}
+	if author.Verified {
+		return author.DisplayName
+	}
+	return author.DisplayName + " (unverified)"
+}
+
+func feedbackEventAuthorLabel(event controlv1.FeedbackEvent) string {
+	if event.Author != nil {
+		return feedbackAuthorLabel(event.Author)
+	}
+	return string(event.Actor)
 }
 
 type feedbackEventReader interface {
@@ -329,6 +351,7 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 			err = writeHumanFrame(output, "tnl feedback watch", string(event.Type), "", clioutput.Fields(
 				clioutput.Field{Label: "feedback ID", Value: event.FeedbackId},
 				clioutput.Field{Label: "cursor", Value: strconv.FormatInt(event.Cursor, 10)},
+				clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
 				clioutput.Field{Label: "message", Value: text},
 			))
 		}

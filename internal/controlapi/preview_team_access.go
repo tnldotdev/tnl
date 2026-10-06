@@ -28,6 +28,10 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "team access is unavailable")
 		return
 	}
+	if body.Enabled && h.config.BrowserOIDCClientID == "" {
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "browser sign-in requires an OIDC client configured on control")
+		return
+	}
 	write := controlstate.SetPreviewTeamAccessRequest{
 		PreviewID: preview.ID, TeamID: preview.TeamID, IdentityID: principal.identityID, Enabled: body.Enabled,
 	}
