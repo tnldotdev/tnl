@@ -24,6 +24,7 @@ type Preview struct {
 	TeamID              string
 	CreatedByIdentityID string
 	PublicURLIDs        []string
+	TeamAccessEnabled   bool
 	CreatedAt           time.Time
 }
 
@@ -83,6 +84,7 @@ func (d *Database) GetPreview(ctx context.Context, id string) (Preview, error) {
 		SchemaVersion: int(row.SchemaVersion),
 		ID:            row.ID, TeamID: row.TeamID, CreatedByIdentityID: row.CreatedByIdentityID,
 		PublicURLIDs: ids, CreatedAt: row.CreatedAt.Time,
+		TeamAccessEnabled: row.TeamAccessEnabled,
 	}, nil
 }
 
@@ -124,6 +126,9 @@ func (d *Database) AddPreviewPublicURL(ctx context.Context, request AddPreviewPu
 	} else if err != nil {
 		return Preview{}, fmt.Errorf("controlstate: observe preview authority: %w", err)
 	}
+	if _, err := queries.LockPreviewForTeamAccess(ctx, request.PreviewID); err != nil {
+		return Preview{}, fmt.Errorf("controlstate: lock preview: %w", err)
+	}
 	route, err := queries.LockPublicURLForRun(ctx, request.PublicURLID)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && route.TeamID != request.TeamID {
 		return Preview{}, ErrPublicURLNotFound
@@ -136,6 +141,13 @@ func (d *Database) AddPreviewPublicURL(ctx context.Context, request AddPreviewPu
 	}
 	if route.PolicyRevision > policyRevision {
 		return Preview{}, ErrPublicURLAuthority
+	}
+	if _, err := queries.OtherTeamAccessForPublicURL(ctx, controlstatedb.OtherTeamAccessForPublicURLParams{
+		PublicURLID: request.PublicURLID, PreviewID: request.PreviewID,
+	}); err == nil {
+		return Preview{}, ErrPreviewStale
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Preview{}, fmt.Errorf("controlstate: check team access: %w", err)
 	}
 	if request.AuthorityIssuer == "" {
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{

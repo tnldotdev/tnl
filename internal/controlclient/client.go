@@ -115,6 +115,12 @@ func (c *Client) GetPreview(ctx context.Context, id string) (controlv1.Preview, 
 	})
 }
 
+func (c *Client) SetPreviewTeamAccess(ctx context.Context, id string, enabled bool) (controlv1.Preview, error) {
+	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetPreviewTeamAccess(ctx, id, controlv1.SetPreviewTeamAccessRequest{Enabled: enabled}, editors...)
+	})
+}
+
 func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string) (controlv1.Preview, error) {
 	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AddPreviewPublicURL(ctx, id, controlv1.AddPreviewPublicURLRequest{PublicUrlId: publicURLID}, editors...)
@@ -182,6 +188,25 @@ func (c *Client) EnableShareAccess(ctx context.Context, runID string, version ui
 		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{
 			PublishRunNumber: int64(version), PreviewId: previewID,
 		}, editors...)
+	})
+	return err
+}
+
+func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}, editors...)
+	})
+}
+
+func (c *Client) CheckBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
+	return request[controlv1.BrowserAccessResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CheckPreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
+	})
+}
+
+func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokePreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
 	})
 	return err
 }

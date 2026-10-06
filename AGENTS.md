@@ -120,16 +120,19 @@ mutation counters; public URL counters are publish run numbers.
 
 ## preview sharing and feedback
 
-| Term                 | Definition                                                                                                            |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **share**            | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
-| **share link**       | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
-| **feedback thread**  | A durable conversation containing an immutable first report and ordered follow-up events.                             |
-| **report**           | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and source state.    |
-| **evidence**         | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
-| **pin**              | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
-| **feedback toolbar** | The development-only browser interface for leaving and reading feedback.                                              |
-| **source state**     | The recorded Git HEAD, project-relative path, and changed-file blob IDs; branch and staging do not affect matching.   |
+| Term                       | Definition                                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **share**                  | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
+| **share link**             | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
+| **team access grant**      | An opt-in setting on one preview that lets current team members sign in and visit its included public URLs.           |
+| **browser access session** | A host-bound visitor credential issued after browser sign-in; control checks current access before use.               |
+| **feedback thread**        | A durable conversation containing an immutable first report and ordered follow-up events.                             |
+| **report**                 | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and source state.    |
+| **verified author**        | An account identity and name snapshot derived by control from an authenticated browser or CLI session.                |
+| **evidence**               | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
+| **pin**                    | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
+| **feedback toolbar**       | The development-only browser interface for leaving and reading feedback.                                              |
+| **source state**           | The recorded Git HEAD, project-relative path, and changed-file blob IDs; branch and staging do not affect matching.   |
 
 Feedback is `open` until someone with preview access resolves it. They can
 reopen it later; replies, updates, and status changes remain in its history.

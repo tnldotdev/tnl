@@ -83,6 +83,13 @@ func (c *Client) ExchangeOIDC(ctx context.Context, token string) (authorityv1.Co
 	})
 }
 
+func (c *Client) ExchangeBrowserOIDC(ctx context.Context, token string) (authorityv1.ControlSessionResponse, error) {
+	body := authorityv1.OIDCTokenExchangeRequest{IdToken: token}
+	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ExchangeBrowserOIDCToken(ctx, body, editors...)
+	})
+}
+
 func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (authorityv1.ControlSessionResponse, error) {
 	body := authorityv1.RefreshControlSessionRequest{RefreshToken: token.String()}
 	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {

@@ -672,6 +672,34 @@ type AuthenticationFacts struct {
 // AuthenticationFactsMethods defines model for AuthenticationFacts.Methods.
 type AuthenticationFactsMethods string
 
+// BrowserAccessRequest defines model for BrowserAccessRequest.
+type BrowserAccessRequest struct {
+	CookieSecret     string `json:"cookie_secret"`
+	PublishRunNumber int64  `json:"publish_run_number"`
+}
+
+// BrowserAccessResponse defines model for BrowserAccessResponse.
+type BrowserAccessResponse struct {
+	DisplayName string     `json:"display_name"`
+	IdentityId  IdentityID `json:"identity_id"`
+	TeamMember  bool       `json:"team_member"`
+}
+
+// BrowserHandoffRequest defines model for BrowserHandoffRequest.
+type BrowserHandoffRequest struct {
+	PublishRunNumber int64  `json:"publish_run_number"`
+	Token            string `json:"token"`
+}
+
+// BrowserHandoffResponse defines model for BrowserHandoffResponse.
+type BrowserHandoffResponse struct {
+	Bridge       *bool     `json:"bridge,omitempty"`
+	CookieSecret string    `json:"cookie_secret"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	NextUrl      *string   `json:"next_url,omitempty"`
+	ReturnPath   string    `json:"return_path"`
+}
+
 // CanonicalHostname defines model for CanonicalHostname.
 type CanonicalHostname = string
 
@@ -744,7 +772,10 @@ type ConnectionAssignment struct {
 type ControlDiscovery struct {
 	Authentication    AuthenticationFacts `json:"authentication"`
 	AuthorityEndpoint string              `json:"authority_endpoint"`
-	DnsAutomation     bool                `json:"dns_automation"`
+
+	// BrowserLoginAvailable Whether visitors can sign in through a browser OIDC client.
+	BrowserLoginAvailable *bool `json:"browser_login_available,omitempty"`
+	DnsAutomation         bool  `json:"dns_automation"`
 
 	// GuestDemo Whether this server accepts limited anonymous demo publishers.
 	GuestDemo               bool              `json:"guest_demo"`
@@ -856,6 +887,13 @@ type FeedbackAnchor struct {
 	Y         float32           `json:"y"`
 }
 
+// FeedbackAuthor defines model for FeedbackAuthor.
+type FeedbackAuthor struct {
+	DisplayName string      `json:"display_name"`
+	IdentityId  *IdentityID `json:"identity_id,omitempty"`
+	Verified    bool        `json:"verified"`
+}
+
 // FeedbackElement defines model for FeedbackElement.
 type FeedbackElement struct {
 	Html   *string `json:"html,omitempty"`
@@ -868,6 +906,7 @@ type FeedbackElement struct {
 type FeedbackEvent struct {
 	Actor      FeedbackEventActor `json:"actor"`
 	At         time.Time          `json:"at"`
+	Author     *FeedbackAuthor    `json:"author,omitempty"`
 	Cursor     int64              `json:"cursor"`
 	Evidence   *FeedbackEvidence  `json:"evidence,omitempty"`
 	FeedbackId FeedbackID         `json:"feedback_id"`
@@ -925,19 +964,17 @@ type FeedbackID = ResourceID
 
 // FeedbackReport defines model for FeedbackReport.
 type FeedbackReport struct {
-	Author *struct {
-		DisplayName string `json:"display_name"`
-		Verified    bool   `json:"verified"`
-	} `json:"author,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	Text      string    `json:"text"`
+	Author    *FeedbackAuthor `json:"author,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	Text      string          `json:"text"`
 }
 
 // FeedbackReviewerAccess defines model for FeedbackReviewerAccess.
 type FeedbackReviewerAccess struct {
-	AllowedIp    bool     `json:"allowed_ip"`
-	CookieSecret *string  `json:"cookie_secret,omitempty"`
-	ShareId      *ShareID `json:"share_id,omitempty"`
+	AllowedIp           bool     `json:"allowed_ip"`
+	BrowserCookieSecret *string  `json:"browser_cookie_secret,omitempty"`
+	CookieSecret        *string  `json:"cookie_secret,omitempty"`
+	ShareId             *ShareID `json:"share_id,omitempty"`
 }
 
 // FeedbackScope defines model for FeedbackScope.
@@ -1081,8 +1118,9 @@ type Preview struct {
 	PublicUrlIds []PublicURLID `json:"public_url_ids"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
-	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
-	TeamId        TeamID              `json:"team_id"`
+	SchemaVersion     ReviewSchemaVersion `json:"schema_version"`
+	TeamAccessEnabled *bool               `json:"team_access_enabled,omitempty"`
+	TeamId            TeamID              `json:"team_id"`
 }
 
 // PreviewID defines model for PreviewID.
@@ -1187,8 +1225,9 @@ type PublishRunSetup struct {
 // PublishRunShareState defines model for PublishRunShareState.
 type PublishRunShareState struct {
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
-	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
-	Shares        []PublisherShare    `json:"shares"`
+	SchemaVersion     ReviewSchemaVersion `json:"schema_version"`
+	Shares            []PublisherShare    `json:"shares"`
+	TeamAccessEnabled *bool               `json:"team_access_enabled,omitempty"`
 }
 
 // PublishRunState defines model for PublishRunState.
@@ -1284,6 +1323,11 @@ type ReviewerFeedbackReadRequest struct {
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
+}
+
+// SetPreviewTeamAccessRequest defines model for SetPreviewTeamAccessRequest.
+type SetPreviewTeamAccessRequest struct {
+	Enabled bool `json:"enabled"`
 }
 
 // Share defines model for Share.
@@ -1393,6 +1437,19 @@ type ListAdminRelaysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CompletePreviewBrowserLoginParams defines parameters for CompletePreviewBrowserLogin.
+type CompletePreviewBrowserLoginParams struct {
+	State string `form:"state" json:"state"`
+	Code  string `form:"code" json:"code"`
+}
+
+// BeginPreviewBrowserLoginParams defines parameters for BeginPreviewBrowserLogin.
+type BeginPreviewBrowserLoginParams struct {
+	PreviewId   PreviewID   `form:"preview_id" json:"preview_id"`
+	PublicUrlId PublicURLID `form:"public_url_id" json:"public_url_id"`
+	ReturnPath  string      `form:"return_path" json:"return_path"`
+}
+
 // ListFeedbackThreadsParams defines parameters for ListFeedbackThreads.
 type ListFeedbackThreadsParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -1498,11 +1555,23 @@ type AddPreviewPublicURLJSONRequestBody = AddPreviewPublicURLRequest
 // CreateShareJSONRequestBody defines body for CreateShare for application/json ContentType.
 type CreateShareJSONRequestBody = CreateShareRequest
 
+// SetPreviewTeamAccessJSONRequestBody defines body for SetPreviewTeamAccess for application/json ContentType.
+type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
+
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
 
 // UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
 type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
+
+// CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
+type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
+
+// RedeemPreviewBrowserHandoffJSONRequestBody defines body for RedeemPreviewBrowserHandoff for application/json ContentType.
+type RedeemPreviewBrowserHandoffJSONRequestBody = BrowserHandoffRequest
+
+// RevokePreviewBrowserAccessJSONRequestBody defines body for RevokePreviewBrowserAccess for application/json ContentType.
+type RevokePreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
 
 // MarkPublishRunCertificateInstalledJSONRequestBody defines body for MarkPublishRunCertificateInstalled for application/json ContentType.
 type MarkPublishRunCertificateInstalledJSONRequestBody = CertificateInstalledRequest
@@ -1666,6 +1735,16 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
+	//
+	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
+	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
+	//
+	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
+	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	//
 	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
@@ -1792,6 +1871,20 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPublicURLs List public URLs for one team
 	//
 	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -1844,6 +1937,48 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 	ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+	CheckPreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckPreviewBrowserAccess Check a browser cookie against current preview access
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+	CheckPreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+	RedeemPreviewBrowserHandoffWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+	RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePreviewBrowserAccessWithBody Revoke the current browser session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+	RevokePreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePreviewBrowserAccess Revoke the current browser session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+	RevokePreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
 	//
@@ -2189,6 +2324,36 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminServerStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
+//
+// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
+func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompletePreviewBrowserLoginRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginPreviewBrowserLogin Start sign-in for a preview visitor
+//
+// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
+func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginPreviewBrowserLoginRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2545,6 +2710,40 @@ func (c *Client) CreateShare(ctx context.Context, previewId PreviewID, params *C
 	return c.Client.Do(req)
 }
 
+// SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *Client) SetPreviewTeamAccessWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPreviewTeamAccessRequestWithBody(c.Server, previewId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPreviewTeamAccessRequest(c.Server, previewId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListPublicURLs List public URLs for one team
 //
 // Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -2678,6 +2877,108 @@ func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, 
 // Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClosePublishRunRequest(c.Server, publishRunId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+func (c *Client) CheckPreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckPreviewBrowserAccessRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckPreviewBrowserAccess Check a browser cookie against current preview access
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+func (c *Client) CheckPreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckPreviewBrowserAccessRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+func (c *Client) RedeemPreviewBrowserHandoffWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPreviewBrowserHandoffRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+func (c *Client) RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPreviewBrowserHandoffRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePreviewBrowserAccessWithBody Revoke the current browser session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+func (c *Client) RevokePreviewBrowserAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePreviewBrowserAccessRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePreviewBrowserAccess Revoke the current browser session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+func (c *Client) RevokePreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePreviewBrowserAccessRequest(c.Server, publishRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3490,6 +3791,130 @@ func NewGetAdminServerStatusRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCompletePreviewBrowserLoginRequest constructs an http.Request for the CompletePreviewBrowserLogin method
+func NewCompletePreviewBrowserLoginRequest(server string, params *CompletePreviewBrowserLoginParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBeginPreviewBrowserLoginRequest constructs an http.Request for the BeginPreviewBrowserLogin method
+func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrowserLoginParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "preview_id", params.PreviewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "public_url_id", params.PublicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "return_path", params.ReturnPath, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCertificateIssuanceRequest constructs an http.Request for the GetCertificateIssuance method
 func NewGetCertificateIssuanceRequest(server string, issuanceId IssuanceID) (*http.Request, error) {
 	var err error
@@ -4261,6 +4686,53 @@ func NewCreateShareRequestWithBody(server string, previewId PreviewID, params *C
 	return req, nil
 }
 
+// NewSetPreviewTeamAccessRequest calls the generic SetPreviewTeamAccess builder with application/json body
+func NewSetPreviewTeamAccessRequest(server string, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPreviewTeamAccessRequestWithBody(server, previewId, "application/json", bodyReader)
+}
+
+// NewSetPreviewTeamAccessRequestWithBody constructs an http.Request for the SetPreviewTeamAccess method, with any body, and a specified content type
+func NewSetPreviewTeamAccessRequestWithBody(server string, previewId PreviewID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s/team-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPublicURLsRequest constructs an http.Request for the ListPublicURLs method
 func NewListPublicURLsRequest(server string, params *ListPublicURLsParams) (*http.Request, error) {
 	var err error
@@ -4580,6 +5052,147 @@ func NewClosePublishRunRequest(server string, publishRunId PublishRunID) (*http.
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCheckPreviewBrowserAccessRequest calls the generic CheckPreviewBrowserAccess builder with application/json body
+func NewCheckPreviewBrowserAccessRequest(server string, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCheckPreviewBrowserAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewCheckPreviewBrowserAccessRequestWithBody constructs an http.Request for the CheckPreviewBrowserAccess method, with any body, and a specified content type
+func NewCheckPreviewBrowserAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemPreviewBrowserHandoffRequest calls the generic RedeemPreviewBrowserHandoff builder with application/json body
+func NewRedeemPreviewBrowserHandoffRequest(server string, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemPreviewBrowserHandoffRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewRedeemPreviewBrowserHandoffRequestWithBody constructs an http.Request for the RedeemPreviewBrowserHandoff method, with any body, and a specified content type
+func NewRedeemPreviewBrowserHandoffRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/handoff", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokePreviewBrowserAccessRequest calls the generic RevokePreviewBrowserAccess builder with application/json body
+func NewRevokePreviewBrowserAccessRequest(server string, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRevokePreviewBrowserAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewRevokePreviewBrowserAccessRequestWithBody constructs an http.Request for the RevokePreviewBrowserAccess method, with any body, and a specified content type
+func NewRevokePreviewBrowserAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/browser/logout", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5679,6 +6292,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
+	// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
+	CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error)
+
+	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
+	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
+
 	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -5833,6 +6460,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShareWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareResponse, error)
 
+	// SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
+
+	// SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
+
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -5895,6 +6536,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 	ClosePublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*ClosePublishRunResponse, error)
+
+	// CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+	CheckPreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error)
+
+	// CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+	CheckPreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error)
+
+	// RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+	RedeemPreviewBrowserHandoffWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error)
+
+	// RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+	RedeemPreviewBrowserHandoffWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error)
+
+	// RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+	RevokePreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error)
+
+	// RevokePreviewBrowserAccessWithResponse Revoke the current browser session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+	RevokePreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error)
 
 	// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
 	//
@@ -6383,6 +7066,88 @@ func (r GetAdminServerStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAdminServerStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CompletePreviewBrowserLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompletePreviewBrowserLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompletePreviewBrowserLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompletePreviewBrowserLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompletePreviewBrowserLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompletePreviewBrowserLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginPreviewBrowserLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginPreviewBrowserLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginPreviewBrowserLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginPreviewBrowserLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginPreviewBrowserLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginPreviewBrowserLoginResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7253,6 +8018,54 @@ func (r CreateShareResponse) ContentType() string {
 	return ""
 }
 
+type SetPreviewTeamAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPreviewTeamAccessResponse) GetJSON200() *Preview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetPreviewTeamAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPreviewTeamAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPreviewTeamAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPreviewTeamAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPreviewTeamAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPublicURLsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7569,6 +8382,143 @@ func (r ClosePublishRunResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClosePublishRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CheckPreviewBrowserAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BrowserAccessResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckPreviewBrowserAccessResponse) GetJSON200() *BrowserAccessResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CheckPreviewBrowserAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckPreviewBrowserAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckPreviewBrowserAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckPreviewBrowserAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckPreviewBrowserAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemPreviewBrowserHandoffResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BrowserHandoffResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemPreviewBrowserHandoffResponse) GetJSON200() *BrowserHandoffResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemPreviewBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemPreviewBrowserHandoffResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemPreviewBrowserHandoffResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemPreviewBrowserHandoffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemPreviewBrowserHandoffResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokePreviewBrowserAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokePreviewBrowserAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokePreviewBrowserAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePreviewBrowserAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePreviewBrowserAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokePreviewBrowserAccessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8667,6 +9617,32 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 	return ParseGetAdminServerStatusResponse(rsp)
 }
 
+// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
+func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error) {
+	rsp, err := c.CompletePreviewBrowserLogin(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompletePreviewBrowserLoginResponse(rsp)
+}
+
+// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
+func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error) {
+	rsp, err := c.BeginPreviewBrowserLogin(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginPreviewBrowserLoginResponse(rsp)
+}
+
 // GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 //
 // Returns a wrapper object for the known response body format(s).
@@ -8953,6 +9929,32 @@ func (c *ClientWithResponses) CreateShareWithResponse(ctx context.Context, previ
 	return ParseCreateShareResponse(rsp)
 }
 
+// SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *ClientWithResponses) SetPreviewTeamAccessWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error) {
+	rsp, err := c.SetPreviewTeamAccessWithBody(ctx, previewId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPreviewTeamAccessResponse(rsp)
+}
+
+// SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error) {
+	rsp, err := c.SetPreviewTeamAccess(ctx, previewId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPreviewTeamAccessResponse(rsp)
+}
+
 // ListPublicURLsWithResponse List public URLs for one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -9068,6 +10070,84 @@ func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, p
 		return nil, err
 	}
 	return ParseClosePublishRunResponse(rsp)
+}
+
+// CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+func (c *ClientWithResponses) CheckPreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error) {
+	rsp, err := c.CheckPreviewBrowserAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckPreviewBrowserAccessResponse(rsp)
+}
+
+// CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
+func (c *ClientWithResponses) CheckPreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error) {
+	rsp, err := c.CheckPreviewBrowserAccess(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckPreviewBrowserAccessResponse(rsp)
+}
+
+// RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error) {
+	rsp, err := c.RedeemPreviewBrowserHandoffWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPreviewBrowserHandoffResponse(rsp)
+}
+
+// RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
+func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error) {
+	rsp, err := c.RedeemPreviewBrowserHandoff(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPreviewBrowserHandoffResponse(rsp)
+}
+
+// RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+func (c *ClientWithResponses) RevokePreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error) {
+	rsp, err := c.RevokePreviewBrowserAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePreviewBrowserAccessResponse(rsp)
+}
+
+// RevokePreviewBrowserAccessWithResponse Revoke the current browser session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
+func (c *ClientWithResponses) RevokePreviewBrowserAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error) {
+	rsp, err := c.RevokePreviewBrowserAccess(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePreviewBrowserAccessResponse(rsp)
 }
 
 // MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
@@ -9703,6 +10783,64 @@ func ParseGetAdminServerStatusResponse(rsp *http.Response) (*GetAdminServerStatu
 	return response, nil
 }
 
+// ParseCompletePreviewBrowserLoginResponse parses an HTTP response from a CompletePreviewBrowserLoginWithResponse call
+func ParseCompletePreviewBrowserLoginResponse(rsp *http.Response) (*CompletePreviewBrowserLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompletePreviewBrowserLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 303:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBeginPreviewBrowserLoginResponse parses an HTTP response from a BeginPreviewBrowserLoginWithResponse call
+func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBrowserLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginPreviewBrowserLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetCertificateIssuanceResponse parses an HTTP response from a GetCertificateIssuanceWithResponse call
 func ParseGetCertificateIssuanceResponse(rsp *http.Response) (*GetCertificateIssuanceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10297,6 +11435,39 @@ func ParseCreateShareResponse(rsp *http.Response) (*CreateShareResponse, error) 
 	return response, nil
 }
 
+// ParseSetPreviewTeamAccessResponse parses an HTTP response from a SetPreviewTeamAccessWithResponse call
+func ParseSetPreviewTeamAccessResponse(rsp *http.Response) (*SetPreviewTeamAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPreviewTeamAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
 func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10500,6 +11671,101 @@ func ParseClosePublishRunResponse(rsp *http.Response) (*ClosePublishRunResponse,
 	}
 
 	response := &ClosePublishRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckPreviewBrowserAccessResponse parses an HTTP response from a CheckPreviewBrowserAccessWithResponse call
+func ParseCheckPreviewBrowserAccessResponse(rsp *http.Response) (*CheckPreviewBrowserAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckPreviewBrowserAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrowserAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemPreviewBrowserHandoffResponse parses an HTTP response from a RedeemPreviewBrowserHandoffWithResponse call
+func ParseRedeemPreviewBrowserHandoffResponse(rsp *http.Response) (*RedeemPreviewBrowserHandoffResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemPreviewBrowserHandoffResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrowserHandoffResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokePreviewBrowserAccessResponse parses an HTTP response from a RevokePreviewBrowserAccessWithResponse call
+func ParseRevokePreviewBrowserAccessResponse(rsp *http.Response) (*RevokePreviewBrowserAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePreviewBrowserAccessResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -11229,6 +12495,12 @@ type ServerInterface interface {
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
+	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
+	// (GET /v1/browser/callback)
+	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
+	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
+	// (GET /v1/browser/login)
+	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
 	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
@@ -11283,6 +12555,9 @@ type ServerInterface interface {
 	// CreateShare Store one share for a snapshot of authorized public URLs
 	// (POST /v1/previews/{preview_id}/shares)
 	CreateShare(w http.ResponseWriter, r *http.Request, previewId PreviewID, params CreateShareParams)
+	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+	// (PUT /v1/previews/{preview_id}/team-access)
+	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -11304,6 +12579,15 @@ type ServerInterface interface {
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	// (DELETE /v1/publish-runs/{publish_run_id})
 	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// CheckPreviewBrowserAccess Check a browser cookie against current preview access
+	// (POST /v1/publish-runs/{publish_run_id}/browser/access)
+	CheckPreviewBrowserAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
+	// (POST /v1/publish-runs/{publish_run_id}/browser/handoff)
+	RedeemPreviewBrowserHandoff(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// RevokePreviewBrowserAccess Revoke the current browser session
+	// (POST /v1/publish-runs/{publish_run_id}/browser/logout)
+	RevokePreviewBrowserAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
 	// (POST /v1/publish-runs/{publish_run_id}/certificate-installed)
 	MarkPublishRunCertificateInstalled(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -11482,6 +12766,111 @@ func (siw *ServerInterfaceWrapper) GetAdminServerStatus(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAdminServerStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompletePreviewBrowserLogin operation middleware
+func (siw *ServerInterfaceWrapper) CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompletePreviewBrowserLoginParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompletePreviewBrowserLogin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginPreviewBrowserLogin operation middleware
+func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BeginPreviewBrowserLoginParams
+
+	// ------------- Required query parameter "preview_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "preview_id", r.URL.Query(), &params.PreviewId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "preview_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "public_url_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "public_url_id", r.URL.Query(), &params.PublicUrlId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "public_url_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "return_path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "return_path", r.URL.Query(), &params.ReturnPath, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return_path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return_path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginPreviewBrowserLogin(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -12046,6 +13435,32 @@ func (siw *ServerInterfaceWrapper) CreateShare(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// SetPreviewTeamAccess operation middleware
+func (siw *ServerInterfaceWrapper) SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPreviewTeamAccess(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListPublicURLs operation middleware
 func (siw *ServerInterfaceWrapper) ListPublicURLs(w http.ResponseWriter, r *http.Request) {
 
@@ -12299,6 +13714,84 @@ func (siw *ServerInterfaceWrapper) ClosePublishRun(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ClosePublishRun(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CheckPreviewBrowserAccess operation middleware
+func (siw *ServerInterfaceWrapper) CheckPreviewBrowserAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckPreviewBrowserAccess(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemPreviewBrowserHandoff operation middleware
+func (siw *ServerInterfaceWrapper) RedeemPreviewBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemPreviewBrowserHandoff(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePreviewBrowserAccess operation middleware
+func (siw *ServerInterfaceWrapper) RevokePreviewBrowserAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePreviewBrowserAccess(w, r, publishRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13128,6 +14621,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/login", wrapper.BeginPreviewBrowserLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/callback", wrapper.CompletePreviewBrowserLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/handoff", wrapper.RedeemPreviewBrowserHandoff)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/access", wrapper.CheckPreviewBrowserAccess)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/logout", wrapper.RevokePreviewBrowserAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/preview", wrapper.CreatePublishRunPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/health", wrapper.GetHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
@@ -13138,6 +14636,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/previews/{preview_id}/team-access", wrapper.SetPreviewTeamAccess)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)

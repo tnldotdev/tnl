@@ -11,13 +11,13 @@ FROM control.feedback_event_clock WHERE id = 1;
 -- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
     id, preview_id, team_id, public_url_id, publish_run_id,
-    publish_run_number, service, page_path, page_title, report_text, author_display_name,
+    publish_run_number, service, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
     anchor, evidence, source_at_report, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
     sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(public_url_id),
     sqlc.arg(publish_run_id), sqlc.arg(publish_run_number), sqlc.arg(service),
-    sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name),
+    sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name), sqlc.narg(author_identity_id), sqlc.arg(author_verified),
     convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(evidence)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.arg(source_at_report)::bytea, 'UTF8')::jsonb,
@@ -63,7 +63,7 @@ WHERE feedback_id = sqlc.arg(feedback_id)
 INSERT INTO control.feedback_events (
     cursor, feedback_id, team_id, event_type, actor_kind,
     actor_reference, idempotency_key, request_digest, text,
-    evidence, source_state, occurred_at
+    evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified
 ) VALUES (
     sqlc.arg(cursor), sqlc.arg(feedback_id), sqlc.arg(team_id),
     sqlc.arg(event_type), sqlc.arg(actor_kind), sqlc.arg(actor_reference),
@@ -71,7 +71,7 @@ INSERT INTO control.feedback_events (
     sqlc.narg(text),
     convert_from(sqlc.narg(evidence)::bytea, 'UTF8')::jsonb,
     convert_from(sqlc.narg(source_state)::bytea, 'UTF8')::jsonb,
-    sqlc.arg(occurred_at)
+    sqlc.arg(occurred_at), sqlc.narg(author_identity_id), sqlc.narg(author_display_name), sqlc.arg(author_verified)
 )
 RETURNING *;
 

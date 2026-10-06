@@ -32,12 +32,17 @@ export const FeedbackScope = z.strictObject({
   service: z.string().min(1).max(32),
 });
 
+export type FeedbackAuthor = z.infer<typeof FeedbackAuthor>;
+export const FeedbackAuthor = z.strictObject({
+  identity_id: ResourceID.optional(),
+  display_name: z.string().min(1).max(256),
+  verified: z.boolean(),
+});
+
 export type FeedbackReport = z.infer<typeof FeedbackReport>;
 export const FeedbackReport = z.strictObject({
   text: z.string().min(1).max(4000),
-  author: z
-    .strictObject({ display_name: z.string().min(1).max(64), verified: z.boolean() })
-    .optional(),
+  author: FeedbackAuthor.optional(),
   created_at: z.iso.datetime(),
 });
 
@@ -165,6 +170,7 @@ export const FeedbackEvent = z.strictObject({
   feedback_id: ResourceID,
   type: FeedbackEventType,
   actor: z.enum(["implementer", "reviewer"]),
+  author: FeedbackAuthor.optional(),
   at: z.iso.datetime(),
   text: z.string().min(1).max(4000).optional(),
   evidence: FeedbackEvidence.optional(),

@@ -42,9 +42,10 @@ type shareAccess struct {
 	version uint64
 	token   credentials.PublishRunToken
 
-	mu        sync.RWMutex
-	confirmed time.Time
-	shares    map[string]cachedShare
+	mu                sync.RWMutex
+	confirmed         time.Time
+	shares            map[string]cachedShare
+	teamAccessEnabled bool
 }
 
 func (a *shareAccess) refresh(ctx context.Context) error {
@@ -82,9 +83,15 @@ func (a *shareAccess) refresh(ctx context.Context) error {
 		shares[entry.ShareId] = share
 	}
 	a.mu.Lock()
-	a.shares, a.confirmed = shares, started
+	a.shares, a.confirmed, a.teamAccessEnabled = shares, started, response.TeamAccessEnabled != nil && *response.TeamAccessEnabled
 	a.mu.Unlock()
 	return nil
+}
+
+func (a *shareAccess) permitsTeamLogin() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.teamAccessEnabled && !a.confirmed.IsZero() && time.Since(a.confirmed) <= shareStateFreshness
 }
 
 func (a *shareAccess) permits(request *http.Request) bool {
@@ -161,7 +168,7 @@ func stripTnlCookies(request *http.Request) *http.Request {
 		for _, pair := range strings.Split(header, ";") {
 			pair = strings.TrimSpace(pair)
 			name, _, found := strings.Cut(pair, "=")
-			if found && name != shareCookieName && name != feedbackBrowserCookieName && pair != "" {
+			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && pair != "" {
 				clean = append(clean, pair)
 			}
 		}

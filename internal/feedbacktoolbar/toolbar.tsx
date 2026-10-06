@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import * as z from "zod/mini";
 import { usePageFeedback } from "./queries.ts";
 import { observeActions } from "./evidence.ts";
 import type { Action, Summary } from "./model.ts";
@@ -15,6 +22,11 @@ import type { FeedbackAPI } from "./api.ts";
 
 type Draft = { path: string; target?: AnchorTarget | undefined; key: string };
 type Selected = { thread: Summary; threads: Summary[] };
+const browserStatusSchema = z.object({
+  signed_in: z.boolean(),
+  display_name: z.optional(z.string()),
+  team_member: z.optional(z.boolean()),
+});
 
 function FeedbackLayer({
   api,
@@ -34,6 +46,29 @@ function FeedbackLayer({
   const actions = useRef<Action[]>([{ type: "navigation", path: document.location.pathname }]);
   const toolbar = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
+  const browserStatus = useQuery({
+    queryKey: ["feedback-browser-status"],
+    queryFn: async ({ signal }) => {
+      const response = await document.defaultView?.fetch("/__tnl/team/session", {
+        credentials: "same-origin",
+        signal,
+      });
+      if (!response?.ok) throw new Error("account status is unavailable");
+      return browserStatusSchema.parse((await response.json()) as unknown);
+    },
+    retry: false,
+    refetchInterval: 30_000,
+  });
+  const signOut = useMutation({
+    mutationFn: async () => {
+      const response = await document.defaultView?.fetch("/__tnl/team/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!response?.ok) throw new Error("could not sign out of this preview");
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-browser-status"] }),
+  });
   const query = usePageFeedback(api, path);
   const threads = [
     ...new Map(
@@ -94,6 +129,19 @@ function FeedbackLayer({
   return (
     <>
       <div ref={toolbar} class="toolbar" role="toolbar" aria-label="Feedback controls">
+        {browserStatus.data?.signed_in ? (
+          <>
+            <span class="muted">signed in as {browserStatus.data.display_name}</span>
+            <button type="button" onClick={() => signOut.mutate()}>
+              [ sign out ]
+            </button>
+          </>
+        ) : browserStatus.data ? (
+          <a class="account-link" href={"/__tnl/team/login?return=" + encodeURIComponent(path)}>
+            [ sign in ]
+          </a>
+        ) : null}
+        {signOut.error && <small role="status">{signOut.error.message}</small>}
         <button
           type="button"
           aria-label="Comment"
@@ -156,6 +204,9 @@ function FeedbackLayer({
             document={document}
             actions={() => actions.current}
             target={draft.target}
+            browserName={
+              browserStatus.data?.signed_in ? browserStatus.data.display_name : undefined
+            }
             cancel={() => setDraft(undefined)}
             saved={(thread) => {
               setDraft(undefined);

@@ -65,9 +65,11 @@ separate from database migrations, publish run numbers, and mutation revisions.
 ```text
 tnl share link create
 tnl share link create web.example.com --expires-in 7d
+tnl share team create web.example.com
 tnl share list
 tnl share list web.example.com
 tnl share link revoke SHARE_ID
+tnl share team revoke
 ```
 
 Link creation captures the IDs of all public URLs configured for the worktree at
@@ -84,6 +86,18 @@ stores a share with the secret fingerprint, included public URL IDs, creator,
 and expiry.
 Links expire after 24 hours by default, accept day shorthand, and support an
 explicit longer lifetime up to 30 days.
+
+Team creation saves one opt-in visitor grant on this checkout's preview and
+shows the ordinary public URL in the CLI frame. Team members can visit through browser OIDC
+sign-in, including from outside the IP allowlist; adding another service to the
+preview carries the grant to its URL. A public URL included in another preview
+cannot be enabled for team access through only one of them. The login callback
+redeems a one-time, URL-bound handoff at the publisher. Control checks current
+membership for every browser access decision. IP access and link cookies keep
+working; nonmembers using either can sign in for verified feedback without
+gaining team visitor access. A browser identity is derived from the authority,
+not from the reviewer's submitted name. Its name is snapshotted on reports and
+events. Revoking team access only removes the team visitor path.
 
 The link opens at `/__tnl/share/<share-id>.<secret>` on the selected hostname.
 Redemption establishes a separate, host-only `__Host-tnl-share` cookie on each
@@ -325,6 +339,13 @@ control sends either operation to an external authority. Deploy the hosted
 authority with both operations before switching hosted control from its
 existing `public_url.update` check; both decisions retain the public URL's
 ownership and mutation-revision binding.
+
+Deploy authority support for `preview.visit` and browser OIDC exchange before
+enabling browser sign-in on control. Apply the additive control schema 10 with
+`tnld migrate` before serving the new control processes; schema 9 control and
+standalone processes can continue to serve during that migration. Control
+encrypts browser tokens in PostgreSQL and validates team membership before
+granting access; the publisher never sends tnl browser cookies to the app.
 
 The publisher owns visitor HTTP access checks, local path dispatch, browser
 redemption and feedback endpoints, HTML injection, and the bounded per-browser

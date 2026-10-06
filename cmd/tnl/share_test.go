@@ -53,3 +53,13 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 		t.Fatalf("share create dispatch error = %v", err)
 	}
 }
+
+func TestTeamShareCommandsSelectAConfiguredPreviewBeforeAuthentication(t *testing.T) {
+	for _, command := range [][]string{{"team", "create"}, {"team", "revoke"}} {
+		arguments := append([]string{"--no-config", "share"}, command...)
+		err := run(t.Context(), arguments, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "project") {
+			t.Fatalf("team share command %v selected a preview: %v", arguments, err)
+		}
+	}
+}
