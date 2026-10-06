@@ -21,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -158,35 +157,14 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicAddress, relayUDPAddress := unusedTCPAddress(t), unusedUDPAddress(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), startIntegrationDNS(t))
-	const hostedSecret = "test-hosted-guest-secret-012345678901"
-	authority := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/service/guest-domain" || r.Header.Get("Authorization") != "Bearer "+hostedSecret ||
-			!strings.HasPrefix(r.URL.Query().Get("namespace_label"), "guest-") {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(authorityv1.GuestDomain{
-			DomainId: "dom_guest", ManagedDomain: "routes.integration.test", NamespaceAvailable: true,
-			DnsAuthorityReference: "da_guest",
-		})
-	}))
-	defer authority.Close()
 	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
-	cfg.LoginToken = ""
-	cfg.AuthorityEndpoint = authority.URL
-	cfg.HostedSecret = hostedSecret
 	cfg.GuestDemoEnabled = true
-	cfg.OIDCIssuer = authority.URL
-	cfg.OIDCClientID = "tnl-cli"
-	cfg.OIDCLoginFlow = tnldconfig.OIDCLoginFlowDeviceCode
-	cfg.OIDCScopes = []string{"openid"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	owner := newRuntimeTopology(t)
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
-		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: authority.Client(),
+		acmeHTTPClient: pebble.httpClient,
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
 	waitForProcessReady(t, process)

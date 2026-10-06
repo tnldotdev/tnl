@@ -19,7 +19,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "guest demos are disabled")
 		return
 	}
-	if h.guests == nil || h.guestAuthority == nil || h.config.HostedSecret == "" {
+	if h.guests == nil || h.config.HostedSecret != "" && h.guestAuthority == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
 		return
 	}
@@ -42,23 +42,30 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		if err != nil {
 			break
 		}
-		domain, err := h.guestAuthority.GetGuestDomain(request.Context(), h.config.HostedSecret, guest.NamespaceLabel)
-		if err != nil || domain.ManagedDomain != h.config.ManagedDeploymentDomain || domain.DomainId == "" || domain.DnsAuthorityReference == "" {
-			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest domain")
-			return
-		}
-		if !domain.NamespaceAvailable {
-			continue
-		}
 		issuedAt := time.Now()
-		if err := h.guests.CreateGuestTrial(request.Context(), guest, domain.DomainId, domain.DnsAuthorityReference, issuedAt); err != nil {
+		var domainID string
+		if h.config.HostedSecret == "" {
+			domainID, err = h.guests.CreateBuiltinGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
+		} else {
+			domain, lookupErr := h.guestAuthority.GetGuestDomain(request.Context(), h.config.HostedSecret, guest.NamespaceLabel)
+			if lookupErr != nil || domain.ManagedDomain != h.config.ManagedDeploymentDomain || domain.DomainId == "" || domain.DnsAuthorityReference == "" {
+				writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest domain")
+				return
+			}
+			if !domain.NamespaceAvailable {
+				continue
+			}
+			domainID = domain.DomainId
+			err = h.guests.CreateGuestTrial(request.Context(), guest, domainID, domain.DnsAuthorityReference, issuedAt)
+		}
+		if err != nil {
 			if errors.Is(err, controlstate.ErrGuestIssuance) {
 				response.Header().Set("Retry-After", "3600")
 				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
 				return
 			}
 			var conflict *pgconn.PgError
-			if errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
+			if errors.Is(err, controlstate.ErrGuestNamespace) || errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
 				continue
 			}
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not save guest demo")
@@ -66,7 +73,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		}
 		writeJSON(response, http.StatusCreated, controlv1.GuestDemoSession{
 			AccessToken: string(guest.Token), GuestId: guest.ID, TeamId: guest.TeamID,
-			MembershipId: guest.MembershipID, DomainId: domain.DomainId,
+			MembershipId: guest.MembershipID, DomainId: domainID,
 			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDeploymentDomain,
 			ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
 		})

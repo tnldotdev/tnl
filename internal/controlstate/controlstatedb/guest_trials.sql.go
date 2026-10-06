@@ -339,6 +339,17 @@ func (q *Queries) GuestForPublicURL(ctx context.Context, publicUrlID string) (st
 	return guest_id, err
 }
 
+const guestNamespaceReserved = `-- name: GuestNamespaceReserved :one
+SELECT EXISTS (SELECT 1 FROM control.guest_trials WHERE namespace_label = $1)
+`
+
+func (q *Queries) GuestNamespaceReserved(ctx context.Context, label string) (bool, error) {
+	row := q.db.QueryRow(ctx, guestNamespaceReserved, label)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const guestOwnsPublicURL = `-- name: GuestOwnsPublicURL :one
 SELECT EXISTS(
     SELECT 1 FROM control.guest_public_urls

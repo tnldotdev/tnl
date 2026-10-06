@@ -29,6 +29,7 @@ var (
 	ErrGuestUnknown    = errors.New("controlstate: guest credential is invalid")
 	ErrGuestTrialSpent = errors.New("controlstate: guest demo trial is exhausted")
 	ErrGuestIssuance   = errors.New("controlstate: guest demo creation is rate limited")
+	ErrGuestNamespace  = errors.New("controlstate: guest namespace is reserved")
 )
 
 type GuestTrial struct {
@@ -89,30 +90,63 @@ func NewGuestTrialCredential(sourceIP netip.Addr) (NewGuestTrial, error) {
 }
 
 func (d *Database) CreateGuestTrial(ctx context.Context, guest NewGuestTrial, domainID, dnsAuthorityReference string, now time.Time) (retErr error) {
+	_, err := d.createGuestTrial(ctx, guest, domainID, dnsAuthorityReference, "", now)
+	return err
+}
+
+// CreateBuiltinGuestTrial provisions the managed domain and reserves the label.
+// the reservation and trial commit together before a signed-in user can claim it.
+func (d *Database) CreateBuiltinGuestTrial(ctx context.Context, guest NewGuestTrial, managedDomain string, now time.Time) (string, error) {
+	if !validStateText(managedDomain) {
+		return "", ErrGuestUnknown
+	}
+	return d.createGuestTrial(ctx, guest, "", "", managedDomain, now)
+}
+
+func (d *Database) createGuestTrial(ctx context.Context, guest NewGuestTrial, domainID, dnsAuthorityReference, managedDomain string, now time.Time) (result string, retErr error) {
 	if !opaqueid.Valid(guest.ID, opaqueid.GuestPrefix) || !opaqueid.Valid(guest.TeamID, opaqueid.TeamPrefix) ||
-		!opaqueid.Valid(guest.MembershipID, opaqueid.MembershipPrefix) || domainID == "" || dnsAuthorityReference == "" {
-		return ErrGuestUnknown
+		!opaqueid.Valid(guest.MembershipID, opaqueid.MembershipPrefix) || managedDomain == "" && (domainID == "" || dnsAuthorityReference == "") {
+		return "", ErrGuestUnknown
+	}
+	if err := d.requireOpen(); err != nil {
+		return "", err
 	}
 	keyID := d.storageKey.CurrentID()
 	sourceDigest, err := d.guestIPDigest(keyID, "guest:"+guest.ID, guest.SourceIP)
 	if err != nil {
-		return err
+		return "", err
 	}
 	issuanceDigest, err := d.guestIPDigest(keyID, "issuance", guest.SourceIP)
 	if err != nil {
-		return err
+		return "", err
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer rollback(ctx, tx, "create guest trial", &retErr)()
+	queries := controlstatedb.New(tx)
+	if managedDomain != "" {
+		if err := queries.LockIdentityBootstrap(ctx); err != nil {
+			return "", err
+		}
+		domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
+		if err != nil {
+			return "", err
+		}
+		domainID = domain.ID
+		if _, err := queries.ReserveManagedLabel(ctx, controlstatedb.ReserveManagedLabelParams{Label: guest.NamespaceLabel, CreatedAt: timestamp(now)}); errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrGuestNamespace
+		} else if err != nil {
+			return "", err
+		}
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 		"tnl:guest-issuance:"+issuanceDigest); err != nil {
-		return fmt.Errorf("controlstate: lock guest issuance: %w", err)
+		return "", fmt.Errorf("controlstate: lock guest issuance: %w", err)
 	}
 	if err := d.guestIssuanceAllowed(ctx, controlstatedb.New(tx), guest.SourceIP, now); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := controlstatedb.New(tx).InsertGuestTrial(ctx, controlstatedb.InsertGuestTrialParams{
 		ID: guest.ID, CredentialID: text(string(guest.CredentialID)), CredentialHash: guest.Hash[:],
@@ -121,9 +155,9 @@ func (d *Database) CreateGuestTrial(ctx context.Context, guest NewGuestTrial, do
 		SourceIpDigest: text(sourceDigest), SourceIpKeyID: text(keyID), IssuanceIpDigest: text(issuanceDigest),
 		ExpiresAt: timestamptz(now.Add(GuestLifetime)), CreatedAt: timestamptz(now),
 	}); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return domainID, tx.Commit(ctx)
 }
 
 func (d *Database) GuestIssuanceAllowed(ctx context.Context, sourceIP netip.Addr, now time.Time) error {

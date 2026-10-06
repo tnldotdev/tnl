@@ -180,6 +180,7 @@ type handler struct {
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
 	guests            interface {
+		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -223,6 +224,7 @@ func NewHandler(
 		h.feedback = feedback
 	}
 	if guestStore, ok := store.(interface {
+		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)

@@ -19,6 +19,9 @@ WHERE credential_id = sqlc.arg(credential_id);
 SELECT * FROM control.guest_trials
 WHERE id = sqlc.arg(id);
 
+-- name: GuestNamespaceReserved :one
+SELECT EXISTS (SELECT 1 FROM control.guest_trials WHERE namespace_label = sqlc.arg(label));
+
 -- name: LockGuestTrialByID :one
 SELECT * FROM control.guest_trials WHERE id = sqlc.arg(id) FOR UPDATE;
 

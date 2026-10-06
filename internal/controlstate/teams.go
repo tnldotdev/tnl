@@ -122,6 +122,11 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Team{}, fmt.Errorf("controlstate: create team: reserve name label: %w", err)
 	}
+	if reserved, err := queries.GuestNamespaceReserved(ctx, request.DisplayName); err != nil {
+		return Team{}, err
+	} else if reserved {
+		return Team{}, ErrTeamNameUnavailable
+	}
 	managedLabel, err := availableManagedLabel(ctx, queries, now)
 	if err != nil {
 		return Team{}, err

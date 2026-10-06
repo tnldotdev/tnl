@@ -196,6 +196,11 @@ Control or standalone can serve the built-in authority. It can instead call an
 external authority maintained outside this repository. The control API does not
 become the owner of authority state in that arrangement.
 
+with the built-in authority, control creates guest trials against its own managed
+domain. it reserves each guest namespace in the managed-label pool in the same
+transaction as the trial; team creation cannot reuse a guest namespace. managed
+guest DNS uses the configured managed zone, without a claimed DNS authority.
+
 `TNLD_SERVER_DOMAIN` names server infrastructure. It is independent from
 `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which provides managed public URL
 namespaces.
