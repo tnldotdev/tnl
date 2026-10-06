@@ -56,7 +56,6 @@ type CreateShareRequest struct {
 	IdempotencyKey    string
 	SecretFingerprint [32]byte
 	ExpiresAt         time.Time
-	AuthorityIssuer   string
 	PolicyRevision    uint64
 	PublicURLs        []AuthorizedSharePublicURL
 }
@@ -122,22 +121,15 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		}
 	}
 	policyRevision := positive(request.PolicyRevision)
-	if request.AuthorityIssuer == "" {
+	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return Share{}, ErrPreviewAccess
 		} else if err != nil {
 			return Share{}, fmt.Errorf("controlstate: create share: lock team: %w", err)
 		}
-	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return Share{}, ErrPublicURLAuthority
-	} else if err != nil {
-		return Share{}, fmt.Errorf("controlstate: create share: observe authority revision: %w", err)
 	}
 	var membership controlstatedb.GetActivePublishRunMembershipRow
-	if request.AuthorityIssuer == "" {
+	{
 		membership, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 		})
@@ -163,9 +155,9 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			route.MutationRevision != int64(authorized.ExpectedMutationRevision) || route.PolicyRevision > policyRevision {
 			return Share{}, ErrShareStale
 		}
-		if request.AuthorityIssuer == "" && (route.PublicURLScope == string(PublicURLScopeMember) &&
+		if route.PublicURLScope == string(PublicURLScopeMember) &&
 			(!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner") {
+			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
 			return Share{}, ErrPreviewAccess
 		}
 		count, err := queries.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{

@@ -20,8 +20,8 @@ func controlSessionRetrySecretContext(sessionID string) string {
 	return "control.control_sessions.retry_secret_ciphertext\x00" + sessionID
 }
 
-func externalRetryMasterKeyContext() string {
-	return "control.runtime_secret.external_retry_master_key_ciphertext\x00id"
+func guestRetryMasterKeyContext() string {
+	return "control.runtime_secret.guest_retry_master_key_ciphertext\x00id"
 }
 
 func visitorNetworkHashMasterKeyContext() string {

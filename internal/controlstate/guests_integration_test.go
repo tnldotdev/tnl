@@ -33,7 +33,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil || stored.ID != guest.ID || stored.NamespaceLabel != guest.NamespaceLabel {
 		t.Fatalf("guest = %+v, error = %v", stored, err)
 	}
-	if _, err := database.EnsureExternalAuthorityPrincipal(t.Context(), guest.ID, now); err != nil {
+	if _, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	request := CreatePublicURLRequest{
@@ -42,7 +42,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 		CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".example.test",
 		Target:            "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember,
 		AllowedIPPrefixes: []string{"192.0.2.7/32"}, DNSState: PublicURLDNSPending,
-		DNSAuthorityReference: "da_guest", AuthorityIssuer: "guest", PolicyRevision: 1, Ephemeral: true,
+		DNSAuthorityReference: "da_guest", PolicyRevision: 1, Ephemeral: true,
 	}
 	first, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if err := database.DeleteAuthorizedPublicURL(t.Context(), AuthorizedPublicURLDeleteRequest{
 		PublicURLID: first.ID, TeamID: guest.TeamID, ActingIdentityID: guest.ID,
-		AuthorityIssuer: "guest", PolicyRevision: 1, ExpectedMutationRevision: first.MutationRevision,
+		GuestID: guest.ID, PolicyRevision: 1, ExpectedMutationRevision: first.MutationRevision,
 	}, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if err := database.DeleteAuthorizedPublicURL(t.Context(), AuthorizedPublicURLDeleteRequest{
 		PublicURLID: replacement.ID, TeamID: guest.TeamID, ActingIdentityID: guest.ID,
-		AuthorityIssuer: "guest", PolicyRevision: 1, ExpectedMutationRevision: replacement.MutationRevision,
+		GuestID: guest.ID, PolicyRevision: 1, ExpectedMutationRevision: replacement.MutationRevision,
 	}, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}

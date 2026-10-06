@@ -14,7 +14,6 @@ func TestExamplesMatchGeneratedModels(t *testing.T) {
 		path  string
 		model any
 	}{
-		{name: "service authorization decision", path: "../../../api/fixtures/authority/v1/service-authorization-decision.json", model: &ServiceAuthorizationDecision{}},
 		{name: "token exchange request", path: "../../../api/fixtures/authority/v1/token-exchange-request.json", model: &LoginTokenExchangeRequest{}},
 		{name: "token exchange response", path: "../../../api/fixtures/authority/v1/token-exchange-response.json", model: &ControlSessionResponse{}},
 	}

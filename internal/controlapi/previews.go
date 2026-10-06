@@ -96,7 +96,7 @@ func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *htt
 	}
 	updated, err := h.previews.AddPreviewPublicURL(request.Context(), controlstate.AddPreviewPublicURLRequest{
 		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: decision.TeamID, IdentityID: decision.IdentityID,
-		AuthorityIssuer: h.authorityIssuerFor(decision), PolicyRevision: decision.PolicyRevision,
+		PolicyRevision:           decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())
 	if err != nil {

@@ -434,10 +434,6 @@
           "type": "string",
           "description": "Login token for the built-in administrator identity."
         },
-        "authority_endpoint": {
-          "type": "string",
-          "description": "External authority URL. Defaults to the control URL."
-        },
         "access_token_lifetime": {
           "type": "string",
           "description": "Lifetime of newly issued access tokens.",
@@ -502,14 +498,6 @@
         "cluster_secret_previous": {
           "type": "string",
           "description": "Previous cluster secret accepted only during rotation."
-        },
-        "hosted_secret": {
-          "type": "string",
-          "description": "Current secret shared by control and the external authority."
-        },
-        "hosted_secret_previous": {
-          "type": "string",
-          "description": "Previous hosted secret accepted only during rotation."
         },
         "storage_key": {
           "type": "string",

@@ -23,15 +23,11 @@ import (
 )
 
 func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
-	loginToken := cfg.LoginToken
-	if cfg.AuthorityEndpoint != "" {
-		loginToken = ""
-	}
 	return controlapi.Config{
 		Role:                    cfg.Role,
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
 		AuthorityEndpoint:       cfg.AuthorityOrigin(),
-		LoginToken:              loginToken,
+		LoginToken:              cfg.LoginToken,
 		OIDCIssuer:              cfg.OIDCIssuer,
 		OIDCClientID:            cfg.OIDCClientID,
 		BrowserOIDCClientID:     cfg.BrowserOIDCClientID,
@@ -40,8 +36,6 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		CertificateIssuance:     cfg.ACMEEnabled(),
 		ACMEDirectoryURL:        cfg.ACMEDirectoryURL,
 		ServerDomain:            cfg.ServerDomain,
-		HostedSecret:            cfg.HostedSecret,
-		HostedSecretPrevious:    cfg.HostedSecretPrevious,
 		HTTPClient:              httpClient,
 		DNSAutomation:           cfg.DNSAutomationEnabled(),
 		GuestDemoEnabled:        cfg.GuestDemoEnabled,
@@ -87,29 +81,27 @@ func newPublicAPIHandler(
 		return nil, err
 	}
 	var authorityRoutes authorityapi.Routes
-	if cfg.AuthorityEndpoint == "" {
-		var verifier, browserVerifier oidcauth.Verifier
-		if cfg.OIDCEnabled() {
-			var err error
-			verifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-				Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: httpClient,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		if cfg.BrowserOIDCClientID != "" {
-			browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-				Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: httpClient,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier, browserVerifier), database)
+	var verifier, browserVerifier oidcauth.Verifier
+	if cfg.OIDCEnabled() {
+		var err error
+		verifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: httpClient,
+		})
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.BrowserOIDCClientID != "" {
+		browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: httpClient,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier, browserVerifier), database)
+	if err != nil {
+		return nil, err
 	}
 	controlObserved := metrics.APIRequests("control", mux)
 	authorityObserved := metrics.APIRequests("authority", mux)

@@ -25,7 +25,7 @@ type guestAuthorizationStore interface {
 	GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 	GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 	GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
-	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
+	EnsureGuestPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
 func (a guestAuthorizer) AuthorizePublicURLReads(ctx context.Context, token string) (publicURLReadPrincipal, error) {
@@ -97,7 +97,7 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 	}
-	retrySecret, err := a.store.EnsureExternalAuthorityPrincipal(ctx, guest.ID, time.Now())
+	retrySecret, err := a.store.EnsureGuestPrincipal(ctx, guest.ID, time.Now())
 	if err != nil {
 		return authorization.Decision{}, authorization.ErrUnavailable
 	}

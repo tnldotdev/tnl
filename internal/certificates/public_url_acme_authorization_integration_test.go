@@ -35,7 +35,6 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			expires := now.Add(time.Hour)
-			identifiers := []string{"*.member.routes.example.test", "member.routes.example.test"}
 			const (
 				directoryURL        = "https://acme.example.test/directory"
 				accountURL          = "https://acme.example.test/account/1"
@@ -63,24 +62,34 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_authz", now)
+			session, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
 			if err != nil {
 				t.Fatal(err)
 			}
+			membership := session.Identity.Memberships[0]
+			principal, err := database.AuthenticateAccessToken(t.Context(), session.AccessToken, 1, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			domains, err := database.ListTeamDomains(t.Context(), session.Identity.Identity.ID, membership.TeamID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identifiers := []string{"*." + membership.ManagedLabel + ".routes.example.test", membership.ManagedLabel + ".routes.example.test"}
 			route, err := database.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{
-				TeamID: "team_authz", DomainID: "domain_authz", MembershipID: "membership_authz", ActingIdentityID: "identity_authz",
+				TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID, ActingIdentityID: session.Identity.Identity.ID,
 				IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api." + identifiers[1],
 				Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, DNSState: controlstate.PublicURLDNSPending,
-				DNSAuthorityReference: "managed:routes.example.test", AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
+				PolicyRevision: 1,
 			}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			setup, err := database.CreatePublishRun(t.Context(), controlstate.PublishRunRequest{
-				PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_authz",
-				RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
+				PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: session.Identity.Identity.ID,
+				RetrySecret: principal.RetrySecret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
 				CertificateCacheKey: identifiers[1], CertificateScope: identifiers[1], CertificateIdentifiers: identifiers, CertificateChallenge: "dns-01",
-				AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: route.MutationRevision,
+				ExpectedMutationRevision: route.MutationRevision,
 			}, now, time.Hour, time.Hour)
 			if err != nil {
 				t.Fatal(err)

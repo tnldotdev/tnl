@@ -263,8 +263,8 @@ func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (
 	seedControlPublicURL(t, database, now, "relaylifecycle")
 	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
 		PublicURLID: "public_url_relaylifecycle", TeamID: "team_relaylifecycle", ActingIdentityID: "identity_relaylifecycle",
-		MembershipID: "membership_relaylifecycle", RequireLocalAuthority: true,
-		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
+		MembershipID: "membership_relaylifecycle",
+		RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 		PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: "relay_lifecycle", CertificateScope: "route",
 		CertificateIdentifiers: []string{"route-relaylifecycle.example.test"}, CertificateChallenge: "tls-alpn-01",
 	}, now, time.Hour, time.Minute)

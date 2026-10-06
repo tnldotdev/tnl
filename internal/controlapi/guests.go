@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -19,7 +18,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "guest demos are disabled")
 		return
 	}
-	if h.guests == nil || h.config.HostedSecret != "" && h.guestAuthority == nil {
+	if h.guests == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
 		return
 	}
@@ -43,29 +42,14 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			break
 		}
 		issuedAt := time.Now()
-		var domainID string
-		if h.config.HostedSecret == "" {
-			domainID, err = h.guests.CreateBuiltinGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
-		} else {
-			domain, lookupErr := h.guestAuthority.GetGuestDomain(request.Context(), h.config.HostedSecret, guest.NamespaceLabel)
-			if lookupErr != nil || domain.ManagedDomain != h.config.ManagedDeploymentDomain || domain.DomainId == "" || domain.DnsAuthorityReference == "" {
-				writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest domain")
-				return
-			}
-			if !domain.NamespaceAvailable {
-				continue
-			}
-			domainID = domain.DomainId
-			err = h.guests.CreateGuestTrial(request.Context(), guest, domainID, domain.DnsAuthorityReference, issuedAt)
-		}
+		domainID, err := h.guests.CreateBuiltinGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
 		if err != nil {
 			if errors.Is(err, controlstate.ErrGuestIssuance) {
 				response.Header().Set("Retry-After", "3600")
 				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
 				return
 			}
-			var conflict *pgconn.PgError
-			if errors.Is(err, controlstate.ErrGuestNamespace) || errors.As(err, &conflict) && conflict.Code == "23505" && conflict.ConstraintName == "guest_trials_namespace_label_key" {
+			if errors.Is(err, controlstate.ErrGuestNamespace) {
 				continue
 			}
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not save guest demo")

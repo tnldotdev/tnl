@@ -452,7 +452,7 @@ func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunR
 		leases[lease.RelayServiceID] = lease
 	}
 	return database, now, PublishRunRequest{PublicURLID: "public_url_session", TeamID: "team_session", ActingIdentityID: "identity_session", MembershipID: "membership_session",
-		RequireLocalAuthority: true, RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
+		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
 		CertificateCacheKey: "certificate_session", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "tls-alpn-01", ExpectedMutationRevision: 1}, leases
 }
 

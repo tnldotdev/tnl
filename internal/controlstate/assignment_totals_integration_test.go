@@ -375,7 +375,23 @@ func TestIntegrationAssignmentTotalsBulkClosureLockOrder(t *testing.T) {
 				if cleanup {
 					closed, err = database.DeleteExpiredEphemeralPublicURLs(ctx, now.Add(2*time.Second))
 				} else {
-					_, closed, err = database.ApplyHostedPolicyRevocation(ctx, "https://authority.example.test", fixtures[0].setup.TeamID, 2, true, nil, nil, now)
+					tx, beginErr := database.pool.Begin(ctx)
+					if beginErr != nil {
+						bulk <- beginErr
+						return
+					}
+					queries := controlstatedb.New(tx)
+					pending := pendingIngressRoutingTableEvents{}
+					err = closeMembershipPublishRuns(ctx, queries, &pending, fixtures[0].setup.TeamID, fixtures[0].request.MembershipID, false, now, "membership_changed")
+					if err == nil {
+						err = pending.publish(ctx, queries)
+					}
+					if err == nil {
+						err = tx.Commit(ctx)
+						closed = 2
+					} else {
+						_ = tx.Rollback(ctx)
+					}
 				}
 				if err == nil && closed != 2 {
 					err = fmt.Errorf("closed %d sessions, want 2", closed)

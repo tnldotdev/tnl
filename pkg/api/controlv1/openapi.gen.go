@@ -110,60 +110,6 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
-// Defines values for DNSAuthorityState.
-const (
-	DNSAuthorityStateFailed    DNSAuthorityState = "failed"
-	DNSAuthorityStatePending   DNSAuthorityState = "pending"
-	DNSAuthorityStateReady     DNSAuthorityState = "ready"
-	DNSAuthorityStateReleased  DNSAuthorityState = "released"
-	DNSAuthorityStateReleasing DNSAuthorityState = "releasing"
-)
-
-// Valid indicates whether the value is a known member of the DNSAuthorityState enum.
-func (e DNSAuthorityState) Valid() bool {
-	switch e {
-	case DNSAuthorityStateFailed:
-		return true
-	case DNSAuthorityStatePending:
-		return true
-	case DNSAuthorityStateReady:
-		return true
-	case DNSAuthorityStateReleased:
-		return true
-	case DNSAuthorityStateReleasing:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DNSRecordType.
-const (
-	A    DNSRecordType = "A"
-	AAAA DNSRecordType = "AAAA"
-	NS   DNSRecordType = "NS"
-	SOA  DNSRecordType = "SOA"
-	TXT  DNSRecordType = "TXT"
-)
-
-// Valid indicates whether the value is a known member of the DNSRecordType enum.
-func (e DNSRecordType) Valid() bool {
-	switch e {
-	case A:
-		return true
-	case AAAA:
-		return true
-	case NS:
-		return true
-	case SOA:
-		return true
-	case TXT:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -788,13 +734,6 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
-// CreateDNSAuthorityRequest defines model for CreateDNSAuthorityRequest.
-type CreateDNSAuthorityRequest struct {
-	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
-	DomainId        DomainID          `json:"domain_id"`
-	TeamId          TeamID            `json:"team_id"`
-}
-
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -837,32 +776,6 @@ type CreateShareRequest struct {
 	PublicUrlIds      []PublicURLID `json:"public_url_ids"`
 	SecretFingerprint string        `json:"secret_fingerprint"`
 }
-
-// DNSAuthority defines model for DNSAuthority.
-type DNSAuthority struct {
-	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
-	CreatedAt       time.Time         `json:"created_at"`
-	DomainId        DomainID          `json:"domain_id"`
-	LastError       *string           `json:"last_error,omitempty"`
-	Reference       string            `json:"reference"`
-	RequiredRecords []DNSRecord       `json:"required_records"`
-	State           DNSAuthorityState `json:"state"`
-	TeamId          TeamID            `json:"team_id"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-}
-
-// DNSAuthorityState defines model for DNSAuthorityState.
-type DNSAuthorityState string
-
-// DNSRecord defines model for DNSRecord.
-type DNSRecord struct {
-	Name  CanonicalHostname `json:"name"`
-	Type  DNSRecordType     `json:"type"`
-	Value string            `json:"value"`
-}
-
-// DNSRecordType defines model for DNSRecord.Type.
-type DNSRecordType string
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
@@ -1066,15 +979,6 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
-
-// HostedPolicyRevocation defines model for HostedPolicyRevocation.
-type HostedPolicyRevocation struct {
-	AllSessions    bool           `json:"all_sessions"`
-	DomainIds      []DomainID     `json:"domain_ids"`
-	MembershipIds  []MembershipID `json:"membership_ids"`
-	PolicyRevision int64          `json:"policy_revision"`
-	TeamId         TeamID         `json:"team_id"`
-}
 
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
@@ -1423,9 +1327,6 @@ type CanonicalHostnameQuery = CanonicalHostname
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
-// DNSAuthorityReference defines model for DNSAuthorityReference.
-type DNSAuthorityReference = string
-
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
 
@@ -1521,16 +1422,6 @@ type AppendReviewerFeedbackEventParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// CreateDNSAuthorityParams defines parameters for CreateDNSAuthority.
-type CreateDNSAuthorityParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// ReleaseDNSAuthorityParams defines parameters for ReleaseDNSAuthority.
-type ReleaseDNSAuthorityParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // ListTeamSharesParams defines parameters for ListTeamShares.
 type ListTeamSharesParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -1611,12 +1502,6 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
-
-// CreateDNSAuthorityJSONRequestBody defines body for CreateDNSAuthority for application/json ContentType.
-type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
-
-// RevokeHostedPolicyJSONRequestBody defines body for RevokeHostedPolicy for application/json ContentType.
-type RevokeHostedPolicyJSONRequestBody = HostedPolicyRevocation
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -2166,44 +2051,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-	CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateDNSAuthority Create a DNS authority for one claimed domain
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-	CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
-	//
-	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
-	ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetDNSAuthority Read a claimed domain's DNS authority
-	//
-	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
-	GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-	RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamShares List manageable shares for one team
 	//
@@ -3436,104 +3283,6 @@ func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId Publi
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-func (c *Client) CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateDNSAuthorityRequestWithBody(c.Server, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateDNSAuthority Create a DNS authority for one claimed domain
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-func (c *Client) CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateDNSAuthorityRequest(c.Server, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
-//
-// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
-func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReleaseDNSAuthorityRequest(c.Server, dnsAuthorityReference, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetDNSAuthority Read a claimed domain's DNS authority
-//
-// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
-func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetDNSAuthorityRequest(c.Server, dnsAuthorityReference)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected publish runs
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeHostedPolicyRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5895,180 +5644,6 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewCreateDNSAuthorityRequest calls the generic CreateDNSAuthority builder with application/json body
-func NewCreateDNSAuthorityRequest(server string, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateDNSAuthorityRequestWithBody(server, params, "application/json", bodyReader)
-}
-
-// NewCreateDNSAuthorityRequestWithBody constructs an http.Request for the CreateDNSAuthority method, with any body, and a specified content type
-func NewCreateDNSAuthorityRequestWithBody(server string, params *CreateDNSAuthorityParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/dns-authorities")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewReleaseDNSAuthorityRequest constructs an http.Request for the ReleaseDNSAuthority method
-func NewReleaseDNSAuthorityRequest(server string, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dns_authority_reference", dnsAuthorityReference, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/dns-authorities/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewGetDNSAuthorityRequest constructs an http.Request for the GetDNSAuthority method
-func NewGetDNSAuthorityRequest(server string, dnsAuthorityReference DNSAuthorityReference) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dns_authority_reference", dnsAuthorityReference, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/dns-authorities/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRevokeHostedPolicyRequest calls the generic RevokeHostedPolicy builder with application/json body
-func NewRevokeHostedPolicyRequest(server string, body RevokeHostedPolicyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRevokeHostedPolicyRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRevokeHostedPolicyRequestWithBody constructs an http.Request for the RevokeHostedPolicy method, with any body, and a specified content type
-func NewRevokeHostedPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/revoke")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewListTeamSharesRequest constructs an http.Request for the ListTeamShares method
 func NewListTeamSharesRequest(server string, params *ListTeamSharesParams) (*http.Request, error) {
 	var err error
@@ -6767,48 +6342,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
-
-	// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-	CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
-
-	// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-	CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
-
-	// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
-	ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error)
-
-	// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
-	GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error)
-
-	// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-	RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
-
-	// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 
 	// ListTeamSharesWithResponse List manageable shares for one team
 	//
@@ -9197,191 +8730,6 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
-type CreateDNSAuthorityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *DNSAuthority
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateDNSAuthorityResponse) GetJSON201() *DNSAuthority {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateDNSAuthorityResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateDNSAuthorityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateDNSAuthorityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateDNSAuthorityResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReleaseDNSAuthorityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *DNSAuthority
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r ReleaseDNSAuthorityResponse) GetJSON202() *DNSAuthority {
-	return r.JSON202
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReleaseDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReleaseDNSAuthorityResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReleaseDNSAuthorityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReleaseDNSAuthorityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReleaseDNSAuthorityResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetDNSAuthorityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DNSAuthority
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetDNSAuthorityResponse) GetJSON200() *DNSAuthority {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetDNSAuthorityResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetDNSAuthorityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetDNSAuthorityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetDNSAuthorityResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeHostedPolicyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeHostedPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeHostedPolicyResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeHostedPolicyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeHostedPolicyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeHostedPolicyResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListTeamSharesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10499,84 +9847,6 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetReadinessResponse(rsp)
-}
-
-// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-func (c *ClientWithResponses) CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
-	rsp, err := c.CreateDNSAuthorityWithBody(ctx, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateDNSAuthorityResponse(rsp)
-}
-
-// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
-func (c *ClientWithResponses) CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
-	rsp, err := c.CreateDNSAuthority(ctx, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateDNSAuthorityResponse(rsp)
-}
-
-// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
-func (c *ClientWithResponses) ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error) {
-	rsp, err := c.ReleaseDNSAuthority(ctx, dnsAuthorityReference, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReleaseDNSAuthorityResponse(rsp)
-}
-
-// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
-func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error) {
-	rsp, err := c.GetDNSAuthority(ctx, dnsAuthorityReference, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetDNSAuthorityResponse(rsp)
-}
-
-// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected publish runs
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
-	rsp, err := c.RevokeHostedPolicyWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeHostedPolicyResponse(rsp)
-}
-
-// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected publish runs
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
-func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
-	rsp, err := c.RevokeHostedPolicy(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeHostedPolicyResponse(rsp)
 }
 
 // ListTeamSharesWithResponse List manageable shares for one team
@@ -12251,134 +11521,6 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	return response, nil
 }
 
-// ParseCreateDNSAuthorityResponse parses an HTTP response from a CreateDNSAuthorityWithResponse call
-func ParseCreateDNSAuthorityResponse(rsp *http.Response) (*CreateDNSAuthorityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateDNSAuthorityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest DNSAuthority
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReleaseDNSAuthorityResponse parses an HTTP response from a ReleaseDNSAuthorityWithResponse call
-func ParseReleaseDNSAuthorityResponse(rsp *http.Response) (*ReleaseDNSAuthorityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReleaseDNSAuthorityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest DNSAuthority
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetDNSAuthorityResponse parses an HTTP response from a GetDNSAuthorityWithResponse call
-func ParseGetDNSAuthorityResponse(rsp *http.Response) (*GetDNSAuthorityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetDNSAuthorityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DNSAuthority
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeHostedPolicyResponse parses an HTTP response from a RevokeHostedPolicyWithResponse call
-func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeHostedPolicyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListTeamSharesResponse parses an HTTP response from a ListTeamSharesWithResponse call
 func ParseListTeamSharesResponse(rsp *http.Response) (*ListTeamSharesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12630,18 +11772,6 @@ type ServerInterface interface {
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-	// CreateDNSAuthority Create a DNS authority for one claimed domain
-	// (POST /v1/service/dns-authorities)
-	CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams)
-	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
-	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
-	ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams)
-	// GetDNSAuthority Read a claimed domain's DNS authority
-	// (GET /v1/service/dns-authorities/{dns_authority_reference})
-	GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference)
-	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected publish runs
-	// (POST /v1/service/revoke)
-	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
 	// ListTeamShares List manageable shares for one team
 	// (GET /v1/shares)
 	ListTeamShares(w http.ResponseWriter, r *http.Request, params ListTeamSharesParams)
@@ -14264,145 +13394,6 @@ func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// CreateDNSAuthority operation middleware
-func (siw *ServerInterfaceWrapper) CreateDNSAuthority(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateDNSAuthorityParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateDNSAuthority(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ReleaseDNSAuthority operation middleware
-func (siw *ServerInterfaceWrapper) ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "dns_authority_reference" -------------
-	var dnsAuthorityReference DNSAuthorityReference
-
-	err = runtime.BindStyledParameterWithOptions("simple", "dns_authority_reference", r.PathValue("dns_authority_reference"), &dnsAuthorityReference, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dns_authority_reference", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ReleaseDNSAuthorityParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReleaseDNSAuthority(w, r, dnsAuthorityReference, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetDNSAuthority operation middleware
-func (siw *ServerInterfaceWrapper) GetDNSAuthority(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "dns_authority_reference" -------------
-	var dnsAuthorityReference DNSAuthorityReference
-
-	err = runtime.BindStyledParameterWithOptions("simple", "dns_authority_reference", r.PathValue("dns_authority_reference"), &dnsAuthorityReference, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dns_authority_reference", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetDNSAuthority(w, r, dnsAuthorityReference)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeHostedPolicy operation middleware
-func (siw *ServerInterfaceWrapper) RevokeHostedPolicy(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeHostedPolicy(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListTeamShares operation middleware
 func (siw *ServerInterfaceWrapper) ListTeamShares(w http.ResponseWriter, r *http.Request) {
 
@@ -14674,10 +13665,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/relays/{relay_id}/drain", wrapper.DrainAdminRelay)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/maintenance-controls", wrapper.ListMaintenanceControls)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/admin/maintenance-controls/{control_name}", wrapper.SetMaintenanceControl)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/revoke", wrapper.RevokeHostedPolicy)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/dns-authorities", wrapper.CreateDNSAuthority)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/dns-authorities/{dns_authority_reference}", wrapper.ReleaseDNSAuthority)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/dns-authorities/{dns_authority_reference}", wrapper.GetDNSAuthority)
 
 	return m
 }

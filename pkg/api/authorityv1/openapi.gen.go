@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,39 +19,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
-
-// Defines values for AuthorizationOperation.
-const (
-	FeedbackManage   AuthorizationOperation = "feedback.manage"
-	PreviewVisit     AuthorizationOperation = "preview.visit"
-	PublicUrlCreate  AuthorizationOperation = "public_url.create"
-	PublicUrlDelete  AuthorizationOperation = "public_url.delete"
-	PublicUrlUpdate  AuthorizationOperation = "public_url.update"
-	PublishRunCreate AuthorizationOperation = "publish_run.create"
-	ShareCreate      AuthorizationOperation = "share.create"
-)
-
-// Valid indicates whether the value is a known member of the AuthorizationOperation enum.
-func (e AuthorizationOperation) Valid() bool {
-	switch e {
-	case FeedbackManage:
-		return true
-	case PreviewVisit:
-		return true
-	case PublicUrlCreate:
-		return true
-	case PublicUrlDelete:
-		return true
-	case PublicUrlUpdate:
-		return true
-	case PublishRunCreate:
-		return true
-	case ShareCreate:
-		return true
-	default:
-		return false
-	}
-}
 
 // Defines values for CertificateChallengeMethod.
 const (
@@ -287,9 +253,6 @@ type AcceptInvitationRequest struct {
 	Secret string `json:"secret"`
 }
 
-// AuthorizationOperation defines model for AuthorizationOperation.
-type AuthorizationOperation string
-
 // CanonicalHostname defines model for CanonicalHostname.
 type CanonicalHostname = string
 
@@ -386,14 +349,6 @@ type EmailDeliveryRequest struct {
 
 // EmailDeliveryRequestType defines model for EmailDeliveryRequest.Type.
 type EmailDeliveryRequestType string
-
-// GuestDomain defines model for GuestDomain.
-type GuestDomain struct {
-	DnsAuthorityReference string   `json:"dns_authority_reference"`
-	DomainId              DomainID `json:"domain_id"`
-	ManagedDomain         string   `json:"managed_domain"`
-	NamespaceAvailable    bool     `json:"namespace_available"`
-}
 
 // Identity defines model for Identity.
 type Identity struct {
@@ -515,39 +470,6 @@ type RefreshControlSessionRequest struct {
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
-// ServiceAuthorizationDecision defines model for ServiceAuthorizationDecision.
-type ServiceAuthorizationDecision struct {
-	ActingMembershipId    MembershipID      `json:"acting_membership_id"`
-	ActingRole            TeamRole          `json:"acting_role"`
-	CanonicalHostname     CanonicalHostname `json:"canonical_hostname"`
-	CertificatePlan       *CertificatePlan  `json:"certificate_plan,omitempty"`
-	DnsAuthorityReference *string           `json:"dns_authority_reference,omitempty"`
-	DomainId              DomainID          `json:"domain_id"`
-	IdentityId            IdentityID        `json:"identity_id"`
-	PolicyRevision        int64             `json:"policy_revision"`
-	PublicUrlMembershipId *MembershipID     `json:"public_url_membership_id,omitempty"`
-	PublicUrlScope        PublicURLScope    `json:"public_url_scope"`
-	TeamId                TeamID            `json:"team_id"`
-}
-
-// ServiceAuthorizationRequest defines model for ServiceAuthorizationRequest.
-type ServiceAuthorizationRequest struct {
-	AccessToken               string                 `json:"access_token"`
-	ActingMembershipId        *MembershipID          `json:"acting_membership_id,omitempty"`
-	AllowedIpPrefixes         []string               `json:"allowed_ip_prefixes"`
-	CanonicalHostname         CanonicalHostname      `json:"canonical_hostname"`
-	DomainId                  DomainID               `json:"domain_id"`
-	Ephemeral                 bool                   `json:"ephemeral"`
-	Operation                 AuthorizationOperation `json:"operation"`
-	PublicUrlId               *PublicURLID           `json:"public_url_id,omitempty"`
-	PublicUrlMembershipId     *MembershipID          `json:"public_url_membership_id,omitempty"`
-	PublicUrlMutationRevision *int64                 `json:"public_url_mutation_revision,omitempty"`
-	PublicUrlScope            PublicURLScope         `json:"public_url_scope"`
-	PublishRunNumber          *int64                 `json:"publish_run_number,omitempty"`
-	Target                    string                 `json:"target"`
-	TeamId                    TeamID                 `json:"team_id"`
-}
-
 // ServiceIdentity defines model for ServiceIdentity.
 type ServiceIdentity struct {
 	DisplayName   string               `json:"display_name"`
@@ -606,11 +528,6 @@ type IdempotencyKey = string
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
-// GetGuestDomainParams defines parameters for GetGuestDomain.
-type GetGuestDomainParams struct {
-	NamespaceLabel string `form:"namespace_label" json:"namespace_label"`
-}
-
 // CreateTeamParams defines parameters for CreateTeam.
 type CreateTeamParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -640,9 +557,6 @@ type ExchangeLoginTokenJSONRequestBody = LoginTokenExchangeRequest
 
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
-
-// AuthorizeServiceOperationJSONRequestBody defines body for AuthorizeServiceOperation for application/json ContentType.
-type AuthorizeServiceOperationJSONRequestBody = ServiceAuthorizationRequest
 
 // ResolveServiceIdentityJSONRequestBody defines body for ResolveServiceIdentity for application/json ContentType.
 type ResolveServiceIdentityJSONRequestBody = ServiceIdentity
@@ -818,25 +732,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-	AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceOperation Authorize a control operation using current authority state
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-	AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetGuestDomain Read the managed domain and check a guest label
-	//
-	// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
-	GetGuestDomain(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
 	//
@@ -1172,55 +1067,6 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceOperationRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceOperation Authorize a control operation using current authority state
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceOperationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetGuestDomain Read the managed domain and check a guest label
-//
-// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
-func (c *Client) GetGuestDomain(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetGuestDomainRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1854,96 +1700,6 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAuthorizeServiceOperationRequest calls the generic AuthorizeServiceOperation builder with application/json body
-func NewAuthorizeServiceOperationRequest(server string, body AuthorizeServiceOperationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceOperationRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceOperationRequestWithBody constructs an http.Request for the AuthorizeServiceOperation method, with any body, and a specified content type
-func NewAuthorizeServiceOperationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/authorize")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetGuestDomainRequest constructs an http.Request for the GetGuestDomain method
-func NewGetGuestDomainRequest(server string, params *GetGuestDomainParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/service/guest-domain")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace_label", params.NamespaceLabel, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -2750,27 +2506,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
-	// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-	AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
-
-	// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-	AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
-
-	// GetGuestDomainWithResponse Read the managed domain and check a guest label
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
-	GetGuestDomainWithResponse(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*GetGuestDomainResponse, error)
-
 	// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -3270,102 +3005,6 @@ func (r AcceptInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AcceptInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AuthorizeServiceOperationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceAuthorizationDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceOperationResponse) GetJSON200() *ServiceAuthorizationDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceOperationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceOperationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceOperationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceOperationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceOperationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetGuestDomainResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *GuestDomain
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetGuestDomainResponse) GetJSON200() *GuestDomain {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetGuestDomainResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetGuestDomainResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetGuestDomainResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetGuestDomainResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetGuestDomainResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4282,45 +3921,6 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 	return ParseAcceptInvitationResponse(rsp)
 }
 
-// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-func (c *ClientWithResponses) AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
-	rsp, err := c.AuthorizeServiceOperationWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceOperationResponse(rsp)
-}
-
-// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
-func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
-	rsp, err := c.AuthorizeServiceOperation(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceOperationResponse(rsp)
-}
-
-// GetGuestDomainWithResponse Read the managed domain and check a guest label
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/service/guest-domain (the `GetGuestDomain` operationId).
-func (c *ClientWithResponses) GetGuestDomainWithResponse(ctx context.Context, params *GetGuestDomainParams, reqEditors ...RequestEditorFn) (*GetGuestDomainResponse, error) {
-	rsp, err := c.GetGuestDomain(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetGuestDomainResponse(rsp)
-}
-
 // ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4856,72 +4456,6 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Membership
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAuthorizeServiceOperationResponse parses an HTTP response from a AuthorizeServiceOperationWithResponse call
-func ParseAuthorizeServiceOperationResponse(rsp *http.Response) (*AuthorizeServiceOperationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceOperationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceAuthorizationDecision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetGuestDomainResponse parses an HTTP response from a GetGuestDomainWithResponse call
-func ParseGetGuestDomainResponse(rsp *http.Response) (*GetGuestDomainResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetGuestDomainResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GuestDomain
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5491,12 +5025,6 @@ type ServerInterface interface {
 	// AcceptInvitation Accept an invitation with its secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
-	// AuthorizeServiceOperation Authorize a control operation using current authority state
-	// (POST /v1/service/authorize)
-	AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request)
-	// GetGuestDomain Read the managed domain and check a guest label
-	// (GET /v1/service/guest-domain)
-	GetGuestDomain(w http.ResponseWriter, r *http.Request, params GetGuestDomainParams)
 	// ResolveServiceIdentity Read current memberships for the signed-in website identity
 	// (POST /v1/service/identity-context)
 	ResolveServiceIdentity(w http.ResponseWriter, r *http.Request)
@@ -5645,53 +5173,6 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AcceptInvitation(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AuthorizeServiceOperation operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceOperation(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetGuestDomain operation middleware
-func (siw *ServerInterfaceWrapper) GetGuestDomain(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetGuestDomainParams
-
-	// ------------- Required query parameter "namespace_label" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "namespace_label", r.URL.Query(), &params.NamespaceLabel, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "namespace_label"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace_label", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetGuestDomain(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6332,8 +5813,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains", wrapper.ClaimTeamDomain)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}/default", wrapper.SetTeamDefaultDomain)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.ReleaseTeamDomain)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/authorize", wrapper.AuthorizeServiceOperation)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/guest-domain", wrapper.GetGuestDomain)
 
 	return m
 }

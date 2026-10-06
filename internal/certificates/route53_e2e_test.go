@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -54,16 +53,6 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	random := make([]byte, 8)
-	if _, err := rand.Read(random); err != nil {
-		t.Fatal(err)
-	}
-	namespace := "run-" + hex.EncodeToString(random) + ".test.tnl.wtf"
-	challengeName := "_acme-challenge." + namespace
-	if record, err := route53SmokeTXT(ctx, route53Client, *route53TestZoneID, challengeName); err != nil || record != nil {
-		t.Fatalf("fresh challenge name already exists or is unreadable: present=%t error=%v", record != nil, err)
-	}
-	t.Cleanup(func() { cleanupRoute53SmokeTXT(t, route53Client, *route53TestZoneID, challengeName) })
 
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "route53_acme_staging")
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
@@ -84,27 +73,41 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	secret, err := database.EnsureExternalAuthorityPrincipal(ctx, "identity_dns_ci", now)
+	session, err := database.CreateBuiltinControlSession(ctx, "test.tnl.wtf", 1, time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	member := session.Identity.Memberships[0]
+	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domains, err := database.ListTeamDomains(ctx, session.Identity.Identity.ID, member.TeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace := member.ManagedLabel + ".test.tnl.wtf"
+	challengeName := "_acme-challenge." + namespace
+	if record, err := route53SmokeTXT(ctx, route53Client, *route53TestZoneID, challengeName); err != nil || record != nil {
+		t.Fatalf("fresh challenge name already exists or is unreadable: present=%t error=%v", record != nil, err)
+	}
+	t.Cleanup(func() { cleanupRoute53SmokeTXT(t, route53Client, *route53TestZoneID, challengeName) })
 	hostname := "api." + namespace
 	publicURL, err := database.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
-		TeamID: "team_dns_ci", DomainID: "domain_dns_ci", MembershipID: "member_dns_ci", ActingIdentityID: "identity_dns_ci",
+		TeamID: member.TeamID, DomainID: domains[0].ID, ActingIdentityID: session.Identity.Identity.ID,
 		IdempotencyKey: "ci", RequestDigest: sha256.Sum256([]byte(hostname)), CanonicalHostname: hostname,
-		Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember,
-		DNSState: controlstate.PublicURLDNSPending, DNSAuthorityReference: "managed:tnl.wtf",
-		AuthorityIssuer: "https://authority.ci.test", PolicyRevision: 1,
+		Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, MembershipID: member.ID,
+		DNSState: controlstate.PublicURLDNSPending, PolicyRevision: 1,
 	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	identifiers := []string{"*." + namespace, namespace}
 	run, err := database.CreatePublishRun(ctx, controlstate.PublishRunRequest{
-		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: "identity_dns_ci",
-		RetrySecret: secret[:], IdempotencyKey: "ci-run", RequestDigest: sha256.Sum256([]byte("ci-run")), PolicyRevision: 1,
+		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: session.Identity.Identity.ID,
+		RetrySecret: principal.RetrySecret[:], IdempotencyKey: "ci-run", RequestDigest: sha256.Sum256([]byte("ci-run")), PolicyRevision: 1,
 		CertificateCacheKey: namespace, CertificateScope: namespace, CertificateIdentifiers: identifiers,
-		CertificateChallenge: "dns-01", AuthorityIssuer: "https://authority.ci.test", ExpectedMutationRevision: publicURL.MutationRevision,
+		CertificateChallenge: "dns-01", ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)

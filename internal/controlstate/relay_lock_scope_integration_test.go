@@ -372,8 +372,8 @@ func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) (
 		}
 		request := PublishRunRequest{
 			PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
-			MembershipID: "membership_" + suffix, RequireLocalAuthority: true,
-			RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
+			MembershipID: "membership_" + suffix,
+			RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",
 			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
 		}

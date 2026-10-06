@@ -21,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -32,25 +31,10 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		t.Fatal(err)
 	}
 	defer state.Close()
-	const hostedSecret = "test-hosted-guest-secret-012345678901"
-	authority := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/service/guest-domain" && r.Header.Get("Authorization") == "Bearer "+hostedSecret &&
-			strings.HasPrefix(r.URL.Query().Get("namespace_label"), "guest-"):
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(authorityv1.GuestDomain{
-				DomainId: "dom_guest", ManagedDomain: "tnl.wtf", NamespaceAvailable: true, DnsAuthorityReference: "da_guest",
-			})
-		default:
-			w.WriteHeader(http.StatusUnauthorized)
-		}
-	}))
-	defer authority.Close()
 	h, err := controlapi.NewHandler(controlapi.Config{
-		ManagedDeploymentDomain: "tnl.wtf", AuthorityEndpoint: authority.URL,
-		GuestDemoEnabled: true, DNSAutomation: true,
-		HostedSecret: hostedSecret, HTTPClient: authority.Client(),
-	}, state, nil, state.Readiness)
+		ManagedDeploymentDomain: "tnl.wtf",
+		GuestDemoEnabled:        true, DNSAutomation: true,
+	}, state, state, state.Readiness)
 	if err != nil {
 		t.Fatal(err)
 	}

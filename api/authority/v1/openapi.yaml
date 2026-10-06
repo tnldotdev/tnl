@@ -433,49 +433,6 @@ paths:
           description: Domain release started
         default:
           $ref: "#/components/responses/Problem"
-  /v1/service/authorize:
-    post:
-      operationId: authorizeServiceOperation
-      summary: Authorize a control operation using current authority state
-      security:
-        - hostedServiceAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ServiceAuthorizationRequest"
-      responses:
-        "200":
-          description: Current authorization decision
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ServiceAuthorizationDecision"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/service/guest-domain:
-    get:
-      operationId: getGuestDomain
-      summary: Read the managed domain and check a guest label
-      security:
-        - hostedServiceAuth: []
-      parameters:
-        - name: namespace_label
-          in: query
-          required: true
-          schema:
-            type: string
-            pattern: "^guest-[0-9a-z]{8}$"
-      responses:
-        "200":
-          description: Managed domain facts and label availability
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GuestDomain"
-        default:
-          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     webServiceAuth:
@@ -486,10 +443,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: OAuth access token
-    hostedServiceAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: tnl hosted service secret
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -613,21 +566,6 @@ components:
         expires_at:
           type: string
           format: date-time
-    GuestDomain:
-      type: object
-      additionalProperties: false
-      required: [domain_id, managed_domain, dns_authority_reference, namespace_available]
-      properties:
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        managed_domain:
-          type: string
-          minLength: 1
-        dns_authority_reference:
-          type: string
-          minLength: 1
-        namespace_available:
-          type: boolean
     ResourceID:
       type: string
       minLength: 1
@@ -1047,117 +985,6 @@ components:
             pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
         challenge_method:
           $ref: "#/components/schemas/CertificateChallengeMethod"
-    AuthorizationOperation:
-      type: string
-      enum:
-        [
-          public_url.create,
-          public_url.update,
-          publish_run.create,
-          public_url.delete,
-          share.create,
-          feedback.manage,
-          preview.visit,
-        ]
-    ServiceAuthorizationRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          access_token,
-          operation,
-          team_id,
-          domain_id,
-          canonical_hostname,
-          public_url_scope,
-          target,
-          allowed_ip_prefixes,
-          ephemeral,
-        ]
-      properties:
-        access_token:
-          type: string
-          minLength: 1
-          maxLength: 4096
-        operation:
-          $ref: "#/components/schemas/AuthorizationOperation"
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        acting_membership_id:
-          $ref: "#/components/schemas/MembershipID"
-        public_url_membership_id:
-          $ref: "#/components/schemas/MembershipID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        canonical_hostname:
-          $ref: "#/components/schemas/CanonicalHostname"
-        public_url_scope:
-          $ref: "#/components/schemas/PublicURLScope"
-        public_url_id:
-          $ref: "#/components/schemas/PublicURLID"
-        publish_run_number:
-          type: integer
-          format: int64
-          minimum: 1
-        public_url_mutation_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        target:
-          type: string
-          format: uri
-          pattern: "^http://"
-        allowed_ip_prefixes:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 64
-            pattern: "^\\S+$"
-        ephemeral:
-          type: boolean
-    ServiceAuthorizationDecision:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          identity_id,
-          team_id,
-          acting_membership_id,
-          acting_role,
-          policy_revision,
-          domain_id,
-          canonical_hostname,
-          public_url_scope,
-        ]
-      properties:
-        identity_id:
-          $ref: "#/components/schemas/IdentityID"
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        acting_membership_id:
-          $ref: "#/components/schemas/MembershipID"
-        acting_role:
-          $ref: "#/components/schemas/TeamRole"
-        public_url_membership_id:
-          $ref: "#/components/schemas/MembershipID"
-        policy_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        canonical_hostname:
-          $ref: "#/components/schemas/CanonicalHostname"
-        public_url_scope:
-          $ref: "#/components/schemas/PublicURLScope"
-        dns_authority_reference:
-          type: string
-          minLength: 1
-          maxLength: 512
-        certificate_plan:
-          $ref: "#/components/schemas/CertificatePlan"
     Problem:
       type: object
       additionalProperties: false

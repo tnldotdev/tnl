@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,17 +322,14 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at = $1 WHERE id = $2`, now.Add(time.Second), replacementAuthentication.PublishRunID); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_"+replacementPublicURL.TeamID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	secret := sha256.Sum256([]byte("plan-retry"))
 	replacementRequest := PublishRunRequest{
 		PublicURLID: replacementPublicURL.ID, TeamID: replacementPublicURL.TeamID, MembershipID: replacementPublicURL.MembershipID,
-		ActingIdentityID: "identity_" + replacementPublicURL.TeamID, RetrySecret: secret[:], IdempotencyKey: "replacement",
+		ActingIdentityID: "identity_" + strings.TrimPrefix(replacementPublicURL.TeamID, "team_"), RetrySecret: secret[:], IdempotencyKey: "replacement",
 		RequestDigest: sha256.Sum256([]byte("replacement")), PolicyRevision: 1,
 		CertificateCacheKey: replacementPublicURL.CanonicalHostname, CertificateScope: replacementPublicURL.CanonicalHostname,
 		CertificateIdentifiers: []string{replacementPublicURL.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
-		AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: replacementPublicURL.MutationRevision + 1,
+		ExpectedMutationRevision: replacementPublicURL.MutationRevision + 1,
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -655,69 +653,6 @@ func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
 	}
 }
 
-func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "revocation_creation")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	const identity = "identity_transaction_hosted"
-	if _, err := database.EnsureExternalAuthorityPrincipal(ctx, identity, now); err != nil {
-		t.Fatal(err)
-	}
-	request := CreatePublicURLRequest{
-		TeamID: "team_external", DomainID: "domain_external", ActingIdentityID: identity,
-		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.example.test",
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, DNSState: PublicURLDNSUnmanaged,
-		AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
-	}
-	gate, err := database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'public_url_creation' FOR UPDATE`); err != nil {
-		t.Fatal(err)
-	}
-	workers := newIntegrationWorkers(t, cancel)
-	defer workers.stop()
-	created := make(chan error, 1)
-	var route PublicURL
-	workers.Go(func() {
-		var err error
-		route, err = database.CreatePublicURL(ctx, request, now)
-		created <- err
-	})
-	creatorPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), created)
-	revoked := make(chan error, 1)
-	workers.Go(func() {
-		applied, _, err := database.ApplyHostedPolicyRevocation(ctx, request.AuthorityIssuer, request.TeamID, 2, false, nil, []string{request.DomainID}, now)
-		if err == nil && !applied {
-			err = errors.New("revocation was not applied")
-		}
-		revoked <- err
-	})
-	waitForPostgresBlock(t, ctx, database, creatorPID, revoked)
-	if err := gate.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, done := range []<-chan error{created, revoked} {
-		if err := awaitIntegrationResult(t, ctx, done); err != nil {
-			t.Fatal(err)
-		}
-	}
-	current, err := database.GetPublicURLForAuthorization(ctx, route.ID)
-	if err != nil || current.LifecycleState != PublicURLLifecycleSuspended {
-		t.Fatalf("revocation missed concurrent public_url: %#v, %v", current, err)
-	}
-	if _, err := database.CreatePublicURL(ctx, request, now); !errors.Is(err, ErrPublicURLAuthority) {
-		t.Fatalf("stale hosted creation replay = %v", err)
-	}
-	assertNoBuiltinAuthority(t, database)
-	var teams int
-	if err := database.pool.QueryRow(ctx, `SELECT count(*) FROM control.teams`).Scan(&teams); err != nil || teams != 0 {
-		t.Fatalf("hosted mutation fabricated local teams: %d, %v", teams, err)
-	}
-}
-
 func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 	fixture := newTransactionAuthorityFixture(t)
 	database, now := fixture.database, fixture.now
@@ -821,7 +756,7 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 		database: database, now: now, owner: owner, member: member, domain: domain, route: route, createRequest: request,
 		sessionRequest: PublishRunRequest{
 			PublicURLID: route.ID, TeamID: team.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
-			RequireLocalAuthority: true, RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
+			RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
 			CertificateCacheKey: route.CanonicalHostname, CertificateScope: route.CanonicalHostname,
 			CertificateIdentifiers: []string{route.CanonicalHostname}, CertificateChallenge: "dns-01",

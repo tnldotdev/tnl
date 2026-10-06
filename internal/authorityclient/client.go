@@ -204,33 +204,6 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string)
 	return err
 }
 
-// AuthorizeServiceOperation asks the external authority to authorize an
-// operation. it uses the hosted secret instead of the user's access token.
-func (c *Client) AuthorizeServiceOperation(
-	ctx context.Context,
-	serviceSecret string,
-	body authorityv1.ServiceAuthorizationRequest,
-) (authorityv1.ServiceAuthorizationDecision, error) {
-	return requestWithToken[authorityv1.ServiceAuthorizationDecision](
-		ctx,
-		c,
-		serviceSecret,
-		func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.AuthorizeServiceOperation(ctx, body, editors...)
-		},
-	)
-}
-
-// GetGuestDomain reads the managed domain and checks whether a guest label is available.
-func (c *Client) GetGuestDomain(
-	ctx context.Context, serviceSecret, label string,
-) (authorityv1.GuestDomain, error) {
-	return requestWithToken[authorityv1.GuestDomain](ctx, c, serviceSecret,
-		func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.GetGuestDomain(ctx, &authorityv1.GetGuestDomainParams{NamespaceLabel: label}, editors...)
-		})
-}
-
 type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)
 
 func request[T any](ctx context.Context, client *Client, call authorityRequest) (T, error) {
