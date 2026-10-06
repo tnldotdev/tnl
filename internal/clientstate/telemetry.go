@@ -49,19 +49,12 @@ func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 }
 
 func readTelemetryPreference(ctx context.Context, path string) (bool, error) {
-	// read both existing and preview-enabled state without migrating client state.
+	// read the telemetry value without opening writable state or migrating it.
 	db, err := tnlsqlite.OpenReadOnly(ctx, path)
 	if err != nil {
 		return false, fmt.Errorf("clientstate: open telemetry preference: %w", err)
 	}
 	defer db.Close()
-	var version int64
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
-		return false, fmt.Errorf("clientstate: read telemetry schema version: %w", err)
-	}
-	if version != 2 && version != 3 {
-		return false, fmt.Errorf("clientstate: unsupported telemetry schema version %d", version)
-	}
 	enabled, err := clientstatedb.New(db).GetTelemetryEnabled(ctx)
 	if err != nil {
 		return false, fmt.Errorf("clientstate: read telemetry preference: %w", err)
