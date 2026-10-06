@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/checkoutmarker"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/sourcestate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -27,11 +27,11 @@ const (
 )
 
 type feedbackCommand struct {
-	List    feedbackListCommand    `cmd:"" help:"List feedback for this checkout."`
-	Inspect feedbackInspectCommand `cmd:"" help:"Read a report, events, and local checkout comparison."`
+	List    feedbackListCommand    `cmd:"" help:"List feedback for this project's preview."`
+	Inspect feedbackInspectCommand `cmd:"" help:"Read a report, events, and compare with your current source."`
 	Watch   feedbackWatchCommand   `cmd:"" help:"Follow ordered feedback events; resume after a cursor."`
 	Reply   feedbackReplyCommand   `cmd:"" help:"Reply to a feedback thread."`
-	Update  feedbackUpdateCommand  `cmd:"" help:"Post an update with the current checkout marker."`
+	Update  feedbackUpdateCommand  `cmd:"" help:"Post an update with the current source state."`
 	Resolve feedbackResolveCommand `cmd:"" help:"Resolve an open feedback thread."`
 	Reopen  feedbackReopenCommand  `cmd:"" help:"Reopen a resolved feedback thread."`
 }
@@ -80,18 +80,19 @@ type feedbackListResult struct {
 	EventCursor   uint64                            `json:"event_cursor"`
 }
 
-type feedbackLocalWorktree struct {
-	Path                  string `json:"path"`
-	MatchesPreview        bool   `json:"matches_preview"`
-	MatchesReportCheckout bool   `json:"matches_report_checkout"`
-	Comparison            string `json:"comparison"`
+type feedbackLocalProject struct {
+	Path                string                 `json:"path"`
+	MatchesPreview      bool                   `json:"matches_preview"`
+	SourceState         *controlv1.SourceState `json:"source_state,omitempty"`
+	MatchesReportSource bool                   `json:"matches_report_source"`
+	Comparison          string                 `json:"comparison"`
 }
 
 type feedbackInspectResult struct {
 	controlv1.FeedbackThread
-	Events        []controlv1.FeedbackEvent `json:"events"`
-	EventCursor   uint64                    `json:"event_cursor"`
-	LocalWorktree feedbackLocalWorktree     `json:"local_worktree"`
+	Events       []controlv1.FeedbackEvent `json:"events"`
+	EventCursor  uint64                    `json:"event_cursor"`
+	LocalProject feedbackLocalProject      `json:"local_project"`
 }
 
 func feedbackSession(ctx context.Context, flags scopedTeamFlags, project projectConfiguration, command string, diagnostics io.Writer) (*teamSession, string, string, error) {
@@ -132,7 +133,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return errors.New("preview is not saved for this checkout; run tnl dev first")
+		return errors.New("preview is not saved for this project; run tnl dev first")
 	}
 	threads, cursor, err := session.authenticated.Control.ListFeedbackThreads(ctx, teamID)
 	if err != nil {
@@ -208,25 +209,29 @@ func readFeedbackHistory(ctx context.Context, client feedbackThreadReader, id st
 	}
 }
 
-func compareFeedbackCheckout(ctx context.Context, project projectConfiguration, previewID string, thread controlv1.FeedbackThread) feedbackLocalWorktree {
-	result := feedbackLocalWorktree{Path: project.Root, MatchesPreview: previewID != "" && previewID == thread.Scope.PreviewId, Comparison: "unavailable"}
-	if project.Root == "" || previewID == "" {
+func compareFeedbackSource(ctx context.Context, project projectConfiguration, previewID string, thread controlv1.FeedbackThread) feedbackLocalProject {
+	result := feedbackLocalProject{Path: project.Root, MatchesPreview: previewID != "" && previewID == thread.Scope.PreviewId, Comparison: "unavailable"}
+	if project.Root == "" {
+		return result
+	}
+	current, err := sourcestate.Capture(ctx, project.Root)
+	if err == nil {
+		result.SourceState = &current
+	}
+	if previewID == "" {
 		return result
 	}
 	if !result.MatchesPreview {
 		result.Comparison = "different preview"
 		return result
 	}
-	current, err := checkoutmarker.Capture(ctx, project.Root)
-	if err != nil || current.SchemaVersion != 1 || thread.CheckoutAtReport.SchemaVersion != 1 || !current.Complete || !thread.CheckoutAtReport.Complete {
+	if err != nil {
 		result.Comparison = "inconclusive"
 		return result
 	}
-	result.MatchesReportCheckout = current.HeadCommit == thread.CheckoutAtReport.HeadCommit && current.Fingerprint == thread.CheckoutAtReport.Fingerprint
-	result.Comparison = "different"
-	if result.MatchesReportCheckout {
-		result.Comparison = "matches"
-	}
+	comparison := sourcestate.Compare(current, thread.SourceAtReport)
+	result.MatchesReportSource = comparison == sourcestate.Matches
+	result.Comparison = string(comparison)
 	return result
 }
 
@@ -250,7 +255,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 	if err != nil {
 		return err
 	}
-	result := feedbackInspectResult{FeedbackThread: thread, Events: events, EventCursor: cursor, LocalWorktree: compareFeedbackCheckout(ctx, project, previewID, thread)}
+	result := feedbackInspectResult{FeedbackThread: thread, Events: events, EventCursor: cursor, LocalProject: compareFeedbackSource(ctx, project, previewID, thread)}
 	if flags.Output == feedbackJSON {
 		return json.NewEncoder(output).Encode(result)
 	}
@@ -262,7 +267,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
 			clioutput.Field{Label: "report", Value: thread.Report.Text},
 			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Evidence.Element)},
-			clioutput.Field{Label: "checkout", Value: result.LocalWorktree.Comparison},
+			clioutput.Field{Label: "source", Value: result.LocalProject.Comparison},
 			clioutput.Field{Label: "event cursor", Value: strconv.FormatUint(cursor, 10)},
 		),
 	}
@@ -351,7 +356,7 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return errors.New("preview is not saved for this checkout; run tnl dev first")
+		return errors.New("preview is not saved for this project; run tnl dev first")
 	}
 	cursor := flags.After
 	for {
@@ -397,13 +402,13 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 			return err
 		}
 		if project.Root == "" || previewID == "" || thread.Scope.PreviewId != previewID {
-			return errors.New("run the update from the checkout that owns this preview")
+			return errors.New("run the update from the project directory that owns this preview")
 		}
-		marker, err := checkoutmarker.Capture(ctx, project.Root)
+		source, err := sourcestate.Capture(ctx, project.Root)
 		if err != nil {
 			return err
 		}
-		body.CheckoutMarker = &marker
+		body.SourceState = &source
 	}
 	key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err != nil {

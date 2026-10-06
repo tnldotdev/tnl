@@ -112,15 +112,23 @@ func TestFeedbackInspectKeepsReportAndAddsLocalComparison(t *testing.T) {
 		Report: controlv1.FeedbackReport{Text: "original report"},
 		Scope:  controlv1.FeedbackScope{PreviewId: "pv_mine"},
 	}
-	comparison := compareFeedbackCheckout(t.Context(), projectConfiguration{}, "", thread)
-	result := feedbackInspectResult{FeedbackThread: thread, Events: []controlv1.FeedbackEvent{{Cursor: 8}}, LocalWorktree: comparison}
+	comparison := compareFeedbackSource(t.Context(), projectConfiguration{}, "", thread)
+	result := feedbackInspectResult{FeedbackThread: thread, Events: []controlv1.FeedbackEvent{{Cursor: 8}}, LocalProject: comparison}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &fields); err != nil || string(fields["id"]) != `"fb_example"` ||
-		!bytes.Contains(fields["report"], []byte("original report")) || !bytes.Contains(fields["local_worktree"], []byte(`"matches_preview":false`)) || len(fields["events"]) == 0 {
+		!bytes.Contains(fields["report"], []byte("original report")) || !bytes.Contains(fields["local_project"], []byte(`"matches_preview":false`)) || len(fields["events"]) == 0 {
 		t.Fatalf("inspect projection = %s, %v", encoded, err)
+	}
+}
+
+func TestFeedbackInspectExposesIncompleteLocalSourceWithoutClaimingAMatch(t *testing.T) {
+	thread := controlv1.FeedbackThread{Scope: controlv1.FeedbackScope{PreviewId: "pv_mine"}, SourceAtReport: controlv1.SourceState{SchemaVersion: 1, Complete: false}}
+	local := compareFeedbackSource(t.Context(), projectConfiguration{Root: t.TempDir()}, "pv_mine", thread)
+	if !local.MatchesPreview || local.MatchesReportSource || local.Comparison != "inconclusive" || local.SourceState == nil || local.SourceState.SchemaVersion != 1 || local.SourceState.Complete {
+		t.Fatalf("inspect must expose current source and its incomplete comparison: %+v", local)
 	}
 }
