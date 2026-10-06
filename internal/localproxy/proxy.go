@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -69,7 +70,9 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (http.Handler, error) {
+// NewWithMounts shares one hostname check and request limit across the base
+// service and all mounted local services.
+func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -80,6 +83,82 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 	if err != nil || canonical != hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
+	base, err := newReverseProxy(target, requestLimit, onTargetFailure)
+	if err != nil {
+		return nil, err
+	}
+	type mountedProxy struct {
+		Mount
+		proxy *httputil.ReverseProxy
+	}
+	routes := make([]mountedProxy, 0, len(mounts))
+	seen := make(map[string]bool, len(mounts))
+	for _, mount := range mounts {
+		if !ValidMountPrefix(mount.Prefix) || seen[mount.Prefix] {
+			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
+		}
+		seen[mount.Prefix] = true
+		proxy, err := newReverseProxy(mount.Target, requestLimit, onTargetFailure)
+		if err != nil {
+			return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
+		}
+		routes = append(routes, mountedProxy{Mount: mount, proxy: proxy})
+	}
+	slices.SortFunc(routes, func(left, right mountedProxy) int {
+		if len(left.Prefix) != len(right.Prefix) {
+			return len(right.Prefix) - len(left.Prefix)
+		}
+		return strings.Compare(left.Prefix, right.Prefix)
+	})
+	requests := make(chan struct{}, requestLimit)
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if code := validateRequest(request, hostname); code != "" {
+			diagnostic.WriteHTTP(response, request, code)
+			return
+		}
+		// admission is shared across the public URL, not per visitor connection. do
+		// not queue handlers behind an upstream transport's connection limit.
+		select {
+		case requests <- struct{}{}:
+			defer func() { <-requests }()
+		default:
+			if request.ProtoMajor == 1 {
+				// avoid draining an unread body before sending the rejection.
+				response.Header().Set("Connection", "close")
+			}
+			response.Header().Set("Retry-After", "1")
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+			return
+		}
+		escapedPath := request.URL.EscapedPath()
+		for _, mount := range routes {
+			if !matchesMountPath(escapedPath, mount.Prefix) {
+				continue
+			}
+			if mount.StripPrefix {
+				copy := request.Clone(request.Context())
+				location := *request.URL
+				location.Path = strings.TrimPrefix(location.Path, mount.Prefix)
+				if location.Path == "" {
+					location.Path = "/"
+				}
+				if location.RawPath != "" {
+					location.RawPath = strings.TrimPrefix(escapedPath, mount.Prefix)
+					if location.RawPath == "" {
+						location.RawPath = "/"
+					}
+				}
+				copy.URL = &location
+				request = copy
+			}
+			mount.proxy.ServeHTTP(response, request)
+			return
+		}
+		base.ServeHTTP(response, request)
+	}), nil
+}
+
+func newReverseProxy(target string, requestLimit int, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -125,29 +204,7 @@ func New(target, hostname string, requestLimit int, onTargetFailure ...func()) (
 			return nil
 		},
 	}
-	requests := make(chan struct{}, requestLimit)
-	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if code := validateRequest(request, hostname); code != "" {
-			diagnostic.WriteHTTP(response, request, code)
-			return
-		}
-		// admission is shared across the public URL, not per visitor connection. do
-		// not queue handlers behind the upstream transport's connection limit.
-		select {
-		case requests <- struct{}{}:
-			defer func() { <-requests }()
-		default:
-			if request.ProtoMajor == 1 {
-				// avoid draining an unread body before sending the rejection.
-				response.Header().Set("Connection", "close")
-			}
-			response.Header().Set("Retry-After", "1")
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
-			return
-		}
-		// the slot remains occupied through streamed responses and upgrades.
-		proxy.ServeHTTP(response, request)
-	}), nil
+	return proxy, nil
 }
 
 // NormalizeTarget validates a local proxy target and returns its canonical HTTP origin.

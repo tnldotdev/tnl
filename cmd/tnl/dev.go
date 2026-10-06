@@ -50,6 +50,7 @@ type devCommand struct {
 	startupTimeoutFromCLI bool
 	metadataWriter        *devMetadataWriter
 	coordinated           bool
+	groupTargets          *devGroupTargets
 }
 
 type childExitError struct {
@@ -245,6 +246,17 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	target, framework, frameworkDone := started.target, started.framework, started.frameworkDone
+	var mountTargets map[string]string
+	if flags.groupTargets != nil {
+		mountTargets, err = flags.groupTargets.wait(ctx, child, flags.Service, target)
+		if err != nil {
+			return err
+		}
+	}
+	mounts, err := resolveProjectMounts(flags.project, flags.Service, mountTargets)
+	if err != nil {
+		return err
+	}
 	var frameworkMu sync.RWMutex
 	currentFramework := func() string {
 		frameworkMu.RLock()
@@ -274,6 +286,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishDone := make(chan error, 1)
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.Mounts = mounts
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryDev, serverURL, currentFramework, func(event publisher.Event) error {
 			if previewID != "" && event.Type == publisher.EventPublicURLAssigned {

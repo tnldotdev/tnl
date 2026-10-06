@@ -75,11 +75,17 @@ func runtimeProjectMetadata(
 		project.Namespace = namespace
 		return project
 	}
-	project.Services[service] = projectmeta.Service{
-		Namespace: namespace,
-		Hostname:  hostname,
-		URL:       "https://" + hostname,
+	selected := project.Services[service]
+	selected.Namespace, selected.Hostname, selected.URL = namespace, hostname, "https://"+hostname
+	if selected.Paths != nil {
+		paths := make(map[string]projectmeta.Path, len(selected.Paths))
+		for prefix, mount := range selected.Paths {
+			mount.URL = selected.URL + prefix
+			paths[prefix] = mount
+		}
+		selected.Paths = paths
 	}
+	project.Services[service] = selected
 	return project
 }
 

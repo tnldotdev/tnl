@@ -22,7 +22,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {
     api: {directory: "apps/api", tunnel: {name: worktree.label}, dev: {startupTimeout: "45s"}},
-    site: {tunnel: {publicURL: "https://site.example.test", open: true}},
+    site: {tunnel: {publicURL: "https://site.example.test", open: true}, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}},
   },
 });`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -40,6 +40,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
 		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
 		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
+		value.Services["site"].Paths["/api"].Service != "api" || !value.Services["site"].Paths["/v1"].StripPrefix ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
 		!slices.Equal(value.Tunnel.AllowProviders, []string{"stripe", "github"}) ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||

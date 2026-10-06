@@ -61,6 +61,36 @@ describe("root runtime", () => {
     expect(Object.isFrozen(runtime?.services.api)).toBe(true);
   });
 
+  test("validates mounted service URLs and freezes their paths", () => {
+    const web = {
+      hostname: "web.member.example",
+      namespace: "member.example",
+      url: "https://web.member.example",
+      paths: {
+        "/api": { service: "api", url: "https://web.member.example/api", stripPrefix: true },
+      },
+    };
+    const payload = { ...project, services: { ...project.services, web }, dev: true };
+    const runtime = parseRuntimePayload(JSON.stringify(payload));
+    expect(runtime?.services.web?.paths?.["/api"]?.url).toBe("https://web.member.example/api");
+    expect(Object.isFrozen(runtime?.services.web?.paths)).toBe(true);
+    expect(Object.isFrozen(runtime?.services.web?.paths?.["/api"])).toBe(true);
+    for (const invalid of [
+      { "/api": { ...web.paths["/api"], service: "missing" } },
+      { "/api": { ...web.paths["/api"], url: "https://api.member.example/api" } },
+      { "/__tnl/share": web.paths["/api"] },
+    ]) {
+      expect(() =>
+        parseRuntimePayload(
+          JSON.stringify({
+            ...payload,
+            services: { ...payload.services, web: { ...web, paths: invalid } },
+          }),
+        ),
+      ).toThrow();
+    }
+  });
+
   test("does not expose inherited properties as project services", () => {
     const runtime = parseRuntimePayload(JSON.stringify({ ...project, dev: true }));
     expect(Object.getPrototypeOf(runtime?.services)).toBeNull();

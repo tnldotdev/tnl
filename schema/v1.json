@@ -242,6 +242,33 @@
               },
               "dev": {
                 "$ref": "#/$defs/Dev"
+              },
+              "paths": {
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                    },
+                    {
+                      "properties": {
+                        "service": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "strip_prefix": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["service"]
+                    }
+                  ]
+                },
+                "type": "object",
+                "maxProperties": 32,
+                "description": "Mount another configured service at a path on this service's public URL."
               }
             },
             "additionalProperties": false,
@@ -252,7 +279,7 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named local services with optional tunnel, publish, and dev overrides."
+          "description": "Named local services with optional tunnel, publish, and dev overrides and path mounts."
         }
       },
       "additionalProperties": false,

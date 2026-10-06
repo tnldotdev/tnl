@@ -41,7 +41,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +87,11 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	}
 }
 
-func TestNewDiagnosesInvalidRouteHostname(t *testing.T) {
-	if _, err := New("3000", "INVALID.example", 0); err == nil {
-		t.Fatal("New accepted a noncanonical route hostname")
+func TestNewWithMountsDiagnosesInvalidPublicURLHostname(t *testing.T) {
+	if _, err := NewWithMounts("3000", "INVALID.example", 0, nil); err == nil {
+		t.Fatal("NewWithMounts accepted a noncanonical public URL hostname")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLInvalid {
-		t.Fatalf("New diagnostic = %q, %t", code, ok)
+		t.Fatalf("NewWithMounts diagnostic = %q, %t", code, ok)
 	}
 }
 
@@ -105,7 +105,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := New(target, "route.example", 0)
+	handler, err := NewWithMounts(target, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestProxyReportsTargetFailureOnceUntilItRecovers(t *testing.T) {
 	}))
 	defer upstream.Close()
 	var failures atomic.Int32
-	handler, err := New(upstream.URL, "route.example", 0, func() { failures.Add(1) })
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil, func() { failures.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 		http.Error(response, "application failure", http.StatusBadGateway)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +191,16 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 }
 
 func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
+	for _, mounted := range []bool{false, true} {
+		name := "base"
+		if mounted {
+			name = "mounted"
+		}
+		t.Run(name, func(t *testing.T) { testProxyForwardsWebSocketUpgrade(t, mounted) })
+	}
+}
+
+func testProxyForwardsWebSocketUpgrade(t *testing.T, mounted bool) {
 	started, done := make(chan struct{}), make(chan struct{})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -198,7 +208,7 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		close(started)
 		defer close(done)
-		if request.Header.Get("Connection") != "Upgrade" || request.Header.Get("Upgrade") != "websocket" {
+		if request.Header.Get("Connection") != "Upgrade" || request.Header.Get("Upgrade") != "websocket" || request.URL.Path != "/hmr" {
 			http.Error(response, "missing upgrade", http.StatusBadRequest)
 			return
 		}
@@ -240,7 +250,14 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 		default:
 		}
 	})
-	handler, err := New(upstream.URL, "route.example", 1)
+	base := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(base.Close)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 1, nil)
+	path := "/hmr"
+	if mounted {
+		path = "/api/hmr"
+		handler, err = NewWithMounts(base.URL, "route.example", 1, []Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true}})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,11 +275,11 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	if err := connection.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	_, err = io.WriteString(connection, "GET /hmr HTTP/1.1\r\nHost: route.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+	_, err = io.WriteString(connection, "GET "+path+" HTTP/1.1\r\nHost: route.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := http.NewRequest(http.MethodGet, "https://route.example/hmr", nil)
+	request, err := http.NewRequest(http.MethodGet, "https://route.example"+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +347,7 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(unblock)
-	handler, err := New(upstream.URL, "route.example", 0)
+	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -128,7 +128,33 @@ func renderDeclarations(metadata Metadata) []byte {
 		output.WriteString(typeScriptString(service.Hostname))
 		output.WriteString(";\n        readonly url: ")
 		output.WriteString(typeScriptString(service.URL))
-		output.WriteString(";\n      };\n")
+		output.WriteString(";\n")
+		if len(service.Paths) > 0 {
+			output.WriteString("        readonly paths: {\n")
+			prefixes := make([]string, 0, len(service.Paths))
+			for prefix := range service.Paths {
+				prefixes = append(prefixes, prefix)
+			}
+			slices.Sort(prefixes)
+			for _, prefix := range prefixes {
+				mount := service.Paths[prefix]
+				output.WriteString("          readonly ")
+				output.WriteString(typeScriptString(prefix))
+				output.WriteString(": { readonly service: ")
+				output.WriteString(typeScriptString(mount.Service))
+				output.WriteString("; readonly url: ")
+				output.WriteString(typeScriptString(mount.URL))
+				output.WriteString("; readonly stripPrefix: ")
+				if mount.StripPrefix {
+					output.WriteString("true")
+				} else {
+					output.WriteString("false")
+				}
+				output.WriteString("; };\n")
+			}
+			output.WriteString("        };\n")
+		}
+		output.WriteString("      };\n")
 	}
 	output.WriteString("    };\n  }\n}\n")
 	return []byte(output.String())

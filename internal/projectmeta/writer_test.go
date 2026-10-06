@@ -72,6 +72,33 @@ func TestTypeScriptPropertyNameQuotesHyphenatedServices(t *testing.T) {
 	}
 }
 
+func TestRenderIncludesMountedServicePathsWithoutLocalTargets(t *testing.T) {
+	metadata := Metadata{
+		Version: Version, Namespace: "member.example.test",
+		Services: map[string]Service{
+			"web": {Namespace: "member.example.test", Hostname: "web.member.example.test", URL: "https://web.member.example.test",
+				Paths: map[string]Path{"/api": {Service: "api", URL: "https://web.member.example.test/api", StripPrefix: true}}},
+			"api": {Namespace: "member.example.test", Hostname: "api.member.example.test", URL: "https://api.member.example.test"},
+		},
+		ServiceDirectories: map[string]string{"web": "apps/web", "api": "apps/api"},
+	}
+	jsonData, declarations, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(jsonData, []byte(`"stripPrefix": true`)) ||
+		!bytes.Contains(declarations, []byte(`readonly "/api": { readonly service: "api"; readonly url: "https://web.member.example.test/api"; readonly stripPrefix: true; };`)) ||
+		bytes.Contains(jsonData, []byte("127.0.0.1")) {
+		t.Fatalf("mount metadata = %s\n%s", jsonData, declarations)
+	}
+	invalid := metadata
+	invalid.Services = map[string]Service{"web": metadata.Services["web"]}
+	invalid.ServiceDirectories = map[string]string{"web": "apps/web"}
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("mounting an unknown service was accepted")
+	}
+}
+
 func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	metadata := Metadata{

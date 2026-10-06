@@ -105,6 +105,39 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 	}
 }
 
+func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
+	for name, contents := range map[string]string{
+		"json": `{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}},"api":{}}}}`,
+		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      paths:\n        /api: api\n        /v1:\n          service: api\n          strip_prefix: true\n    api: {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			filename := "tnl." + name
+			if name == "yml" {
+				filename = "tnl.yml"
+			}
+			path := filepath.Join(t.TempDir(), filename)
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := LoadDocument(path)
+			if err != nil || parsed.TNL.Services["web"].Paths["/api"].Service != "api" ||
+				parsed.TNL.Services["web"].Paths["/v1"].Service != "api" || !parsed.TNL.Services["web"].Paths["/v1"].StripPrefix {
+				t.Fatalf("paths = %+v, %v", parsed.TNL, err)
+			}
+		})
+	}
+	for _, prefix := range []string{"/", "/api/", "/api//v1", "/api/../admin", "/api%2Fv1", "/__tnl", "/__tnl/share"} {
+		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{prefix: {Service: "api"}}}, "api": {}}}); err == nil {
+			t.Fatalf("invalid mount prefix %q was accepted", prefix)
+		}
+	}
+	for _, destination := range []string{"missing", "web", ""} {
+		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{"/api": {Service: destination}}}, "api": {}}}); err == nil {
+			t.Fatalf("mount destination %q was accepted", destination)
+		}
+	}
+}
+
 func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
 	name, publicURL, domain, open := "preview", "https://preview.example.test", "example.test", true
 	for _, tunnel := range []*Tunnel{{Name: &name}, {PublicURL: &publicURL}} {

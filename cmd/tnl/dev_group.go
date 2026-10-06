@@ -33,10 +33,12 @@ func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags 
 		return errors.New("select a service when overriding its command, port, or public URL settings")
 	}
 	writer := &devMetadataWriter{}
+	targets := newDevGroupTargets(len(names))
 	return coordinateDev(ctx, names, func(runCtx context.Context, name string) error {
 		serviceFlags := flags
 		serviceFlags.Service = name
 		serviceFlags.metadataWriter = writer
+		serviceFlags.groupTargets = targets
 		serviceFlags.coordinated = len(names) > 1
 		if err := project.applyDev(&serviceFlags); err != nil {
 			return err

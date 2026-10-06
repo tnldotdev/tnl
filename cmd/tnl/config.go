@@ -91,6 +91,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	flags.Service = service
+	flags.project = c
 	flags.projectRoot = c.Root
 	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
 	if err != nil {

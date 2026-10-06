@@ -9,15 +9,23 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const Version = 1
 
 type Service struct {
-	Namespace string `json:"namespace"`
-	Hostname  string `json:"hostname"`
-	URL       string `json:"url"`
+	Namespace string          `json:"namespace"`
+	Hostname  string          `json:"hostname"`
+	URL       string          `json:"url"`
+	Paths     map[string]Path `json:"paths,omitempty"`
+}
+
+type Path struct {
+	Service     string `json:"service"`
+	URL         string `json:"url"`
+	StripPrefix bool   `json:"stripPrefix"`
 }
 
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
@@ -40,6 +48,13 @@ type PublicMetadata struct {
 func (m Metadata) Public(dev bool) PublicMetadata {
 	services := make(map[string]Service, len(m.Services))
 	for name, service := range m.Services {
+		if service.Paths != nil {
+			paths := make(map[string]Path, len(service.Paths))
+			for prefix, path := range service.Paths {
+				paths[prefix] = path
+			}
+			service.Paths = paths
+		}
 		services[name] = service
 	}
 	return PublicMetadata{
@@ -89,6 +104,26 @@ func (m Metadata) Validate() error {
 		if err != nil || parsed.Scheme != "https" || parsed.Host != service.Hostname || parsed.Path != "" ||
 			parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
 			return fmt.Errorf("service %q URL must be exactly https://%s", name, service.Hostname)
+		}
+		if len(service.Paths) > 32 {
+			return fmt.Errorf("service %q may contain at most 32 path mounts", name)
+		}
+		prefixes := make([]string, 0, len(service.Paths))
+		for prefix := range service.Paths {
+			prefixes = append(prefixes, prefix)
+		}
+		slices.Sort(prefixes)
+		for _, prefix := range prefixes {
+			mount := service.Paths[prefix]
+			if !localproxy.ValidMountPrefix(prefix) || mount.Service == name {
+				return fmt.Errorf("service %q path mount %q is invalid", name, prefix)
+			}
+			if _, found := m.Services[mount.Service]; !found {
+				return fmt.Errorf("service %q path mount %q names an unknown service", name, prefix)
+			}
+			if mount.URL != service.URL+prefix {
+				return fmt.Errorf("service %q path mount %q URL must be %s", name, prefix, service.URL+prefix)
+			}
 		}
 		directory, found := m.ServiceDirectories[name]
 		if !found || directory == "" || filepath.IsAbs(directory) || strings.ContainsRune(directory, '\x00') {

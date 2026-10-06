@@ -6,6 +6,13 @@ export interface ProjectServiceMetadata {
   readonly namespace: string;
   readonly hostname: string;
   readonly url: `https://${string}`;
+  readonly paths?: Readonly<Record<string, ProjectPathMetadata | undefined>>;
+}
+
+export interface ProjectPathMetadata {
+  readonly service: string;
+  readonly url: `https://${string}`;
+  readonly stripPrefix: boolean;
 }
 
 export interface ProjectMetadata {
@@ -37,7 +44,9 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      ["hostname", "namespace", "url"],
+      Object.hasOwn(service, "paths")
+        ? ["hostname", "namespace", "url", "paths"]
+        : ["hostname", "namespace", "url"],
       `${description} service ${JSON.stringify(name)}`,
     );
     const serviceNamespace = requiredHostname(
@@ -56,11 +65,57 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       throw new Error(`${description} contains duplicate service hostname ${hostname}`);
     }
     hostnames.add(hostname);
+    let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
+    if (service.paths !== undefined) {
+      const pathsObject = record(
+        service.paths,
+        `${description} service ${JSON.stringify(name)} paths`,
+      );
+      if (Object.keys(pathsObject).length > 32) {
+        throw new Error(`${description} service ${JSON.stringify(name)} has too many path mounts`);
+      }
+      const parsedPaths: Record<string, ProjectPathMetadata> = Object.create(null);
+      for (const [prefix, value] of Object.entries(pathsObject)) {
+        if (!validMountPrefix(prefix)) {
+          throw new Error(
+            `${description} service ${JSON.stringify(name)} has an invalid mount path`,
+          );
+        }
+        const mount = record(value, `${description} path mount ${JSON.stringify(prefix)}`);
+        exactKeys(
+          mount,
+          ["service", "url", "stripPrefix"],
+          `${description} path mount ${JSON.stringify(prefix)}`,
+        );
+        if (
+          !validServiceName(mount.service) ||
+          mount.service === name ||
+          mount.url !== `${url}${prefix}` ||
+          typeof mount.stripPrefix !== "boolean"
+        ) {
+          throw new Error(`${description} path mount ${JSON.stringify(prefix)} is invalid`);
+        }
+        parsedPaths[prefix] = Object.freeze({
+          service: mount.service,
+          url: mount.url as `https://${string}`,
+          stripPrefix: mount.stripPrefix,
+        });
+      }
+      paths = Object.freeze(parsedPaths);
+    }
     services[name] = Object.freeze({
       namespace: serviceNamespace,
       hostname,
       url,
+      ...(paths === undefined ? {} : { paths }),
     });
+  }
+  for (const [name, service] of Object.entries(services)) {
+    for (const mount of Object.values(service.paths ?? {})) {
+      if (mount !== undefined && !Object.hasOwn(services, mount.service)) {
+        throw new Error(`${description} service ${JSON.stringify(name)} mounts an unknown service`);
+      }
+    }
   }
 
   return Object.freeze({
@@ -72,6 +127,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
 /** Reports whether a value is a valid 1-32 character ASCII service name. */
 export function validServiceName(value: unknown): value is string {
   return typeof value === "string" && serviceNamePattern.test(value);
+}
+
+function validMountPrefix(prefix: string): boolean {
+  return (
+    prefix.length >= 2 &&
+    prefix.length <= 256 &&
+    prefix.startsWith("/") &&
+    !prefix.endsWith("/") &&
+    prefix !== "/__tnl" &&
+    !prefix.startsWith("/__tnl/") &&
+    prefix
+      .slice(1)
+      .split("/")
+      .every((segment) => segment !== "." && segment !== ".." && /^[A-Za-z0-9._~-]+$/.test(segment))
+  );
 }
 
 export function parseRuntimePayload(serialized: string | undefined): ProjectRuntime | undefined {
