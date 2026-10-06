@@ -24,7 +24,7 @@ CREATE TABLE control.feedback_threads (
     author_display_name text CHECK (char_length(author_display_name) BETWEEN 1 AND 64),
     anchor jsonb,
     evidence jsonb NOT NULL,
-    checkout_at_report jsonb NOT NULL,
+    source_at_report jsonb NOT NULL,
     state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'resolved')),
     created_at timestamptz NOT NULL,
     state_updated_at timestamptz NOT NULL,
@@ -58,7 +58,7 @@ CREATE TABLE control.feedback_events (
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     text text CHECK (char_length(text) BETWEEN 1 AND 4000),
     evidence jsonb,
-    checkout_marker jsonb,
+    source_state jsonb,
     occurred_at timestamptz NOT NULL,
     UNIQUE (feedback_id, actor_kind, actor_reference, idempotency_key)
 );

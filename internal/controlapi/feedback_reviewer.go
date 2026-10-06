@@ -55,9 +55,9 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback evidence")
 		return
 	}
-	marker, err := json.Marshal(body.CheckoutAtReport)
+	source, err := json.Marshal(body.SourceAtReport)
 	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid checkout marker")
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid source state")
 		return
 	}
 	displayName := ""
@@ -68,7 +68,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		PageTitle: optionalFeedbackString(body.PageTitle),
 		PreviewID: body.PreviewId, Service: body.Service, PagePath: body.PagePath,
 		ReportText: body.Report.Text, AuthorDisplayName: displayName,
-		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
+		Anchor: anchor, Evidence: evidence, SourceAtReport: source,
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
 	}, time.Now())
 	if err != nil {
@@ -154,7 +154,7 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	if !authorized {
 		return
 	}
-	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.CheckoutMarker)
+	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.SourceState)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback")
 		return

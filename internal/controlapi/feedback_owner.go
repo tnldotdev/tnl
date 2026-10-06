@@ -136,7 +136,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	if !ok {
 		return
 	}
-	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.CheckoutMarker)
+	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.SourceState)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
 		return
@@ -241,7 +241,7 @@ func feedbackAfterCursor(request *http.Request) (uint64, error) {
 	return parsed, err
 }
 
-func feedbackEventWrite(kind controlv1.FeedbackEventType, text *string, evidence *controlv1.FeedbackEvidence, marker *controlv1.CheckoutMarker) (controlstate.AppendFeedbackRequest, error) {
+func feedbackEventWrite(kind controlv1.FeedbackEventType, text *string, evidence *controlv1.FeedbackEvidence, source *controlv1.SourceState) (controlstate.AppendFeedbackRequest, error) {
 	write := controlstate.AppendFeedbackRequest{Type: controlstate.FeedbackEventType(kind)}
 	if text != nil {
 		write.Text = *text
@@ -253,12 +253,12 @@ func feedbackEventWrite(kind controlv1.FeedbackEventType, text *string, evidence
 		}
 		write.Evidence = encoded
 	}
-	if marker != nil {
-		encoded, err := json.Marshal(marker)
+	if source != nil {
+		encoded, err := json.Marshal(source)
 		if err != nil {
 			return controlstate.AppendFeedbackRequest{}, err
 		}
-		write.CheckoutMarker = encoded
+		write.SourceState = encoded
 	}
 	return write, nil
 }

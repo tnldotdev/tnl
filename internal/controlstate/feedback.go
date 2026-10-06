@@ -88,7 +88,7 @@ type FeedbackThread struct {
 	AuthorDisplayName string
 	Anchor            json.RawMessage
 	Evidence          json.RawMessage
-	CheckoutAtReport  json.RawMessage
+	SourceAtReport    json.RawMessage
 	CreatedAt         time.Time
 	StateUpdatedAt    time.Time
 }
@@ -103,7 +103,7 @@ type FeedbackEvent struct {
 	ActorReference string
 	Text           string
 	Evidence       json.RawMessage
-	CheckoutMarker json.RawMessage
+	SourceState    json.RawMessage
 	At             time.Time
 }
 
@@ -128,7 +128,7 @@ type CreateFeedbackRequest struct {
 	AuthorDisplayName string
 	Anchor            json.RawMessage
 	Evidence          json.RawMessage
-	CheckoutAtReport  json.RawMessage
+	SourceAtReport    json.RawMessage
 	IdempotencyKey    string
 	Actor             FeedbackActor
 }
@@ -138,7 +138,7 @@ type AppendFeedbackRequest struct {
 	Type           FeedbackEventType
 	Text           string
 	Evidence       json.RawMessage
-	CheckoutMarker json.RawMessage
+	SourceState    json.RawMessage
 	IdempotencyKey string
 	Actor          FeedbackActor
 }
@@ -163,7 +163,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err != nil {
 		return FeedbackThread{}, err
 	}
-	request.CheckoutAtReport, err = normalizeCheckoutMarker(request.CheckoutAtReport)
+	request.SourceAtReport, err = normalizeSourceState(request.SourceAtReport)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
@@ -172,9 +172,9 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	}
 	digestInput, err := json.Marshal(struct {
 		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName string
-		Anchor, Evidence, CheckoutAtReport                                     json.RawMessage
+		Anchor, Evidence, SourceAtReport                                       json.RawMessage
 	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
-		request.Anchor, request.Evidence, request.CheckoutAtReport})
+		request.Anchor, request.Evidence, request.SourceAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
 	}
@@ -212,7 +212,7 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		PublicURLID: scope.PublicURLID, PublishRunID: auth.PublishRunID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
 		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
-		Anchor: request.Anchor, Evidence: request.Evidence, CheckoutAtReport: request.CheckoutAtReport,
+		Anchor: request.Anchor, Evidence: request.Evidence, SourceAtReport: request.SourceAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:],
 	})
@@ -257,8 +257,8 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 			return FeedbackEvent{}, err
 		}
 	}
-	if len(request.CheckoutMarker) != 0 {
-		request.CheckoutMarker, err = normalizeCheckoutMarker(request.CheckoutMarker)
+	if len(request.SourceState) != 0 {
+		request.SourceState, err = normalizeSourceState(request.SourceState)
 		if err != nil {
 			return FeedbackEvent{}, err
 		}
@@ -267,11 +267,11 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		return FeedbackEvent{}, err
 	}
 	digestInput, err := json.Marshal(struct {
-		Type           FeedbackEventType
-		Text           string
-		Evidence       json.RawMessage
-		CheckoutMarker json.RawMessage
-	}{request.Type, request.Text, request.Evidence, request.CheckoutMarker})
+		Type        FeedbackEventType
+		Text        string
+		Evidence    json.RawMessage
+		SourceState json.RawMessage
+	}{request.Type, request.Text, request.Evidence, request.SourceState})
 	if err != nil {
 		return FeedbackEvent{}, ErrFeedbackInvalid
 	}
@@ -330,7 +330,7 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		Cursor: cursor, FeedbackID: thread.ID, TeamID: thread.TeamID,
 		EventType: string(request.Type), ActorKind: request.Actor.Kind, ActorReference: actorRef,
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: digest[:], Text: nullableText(request.Text),
-		Evidence: request.Evidence, CheckoutMarker: request.CheckoutMarker, OccurredAt: timestamptz(now),
+		Evidence: request.Evidence, SourceState: request.SourceState, OccurredAt: timestamptz(now),
 	})
 	if err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: save feedback event: %w", err)
@@ -463,7 +463,7 @@ func validFeedbackEventPayload(request AppendFeedbackRequest) bool {
 	if request.Type == FeedbackCreated || request.Actor.Kind != "reviewer" && request.Actor.Kind != "implementer" ||
 		request.Text != "" && !validFeedbackText(request.Text, 4000) ||
 		len(request.Evidence) > 0 && !validFeedbackJSON(request.Evidence, 16384) ||
-		len(request.CheckoutMarker) > 0 && !validFeedbackJSON(request.CheckoutMarker, 16384) {
+		len(request.SourceState) > 0 && !validFeedbackJSON(request.SourceState, 16384) {
 		return false
 	}
 	if request.Type == FeedbackReply || request.Type == FeedbackUpdate {
@@ -472,9 +472,9 @@ func validFeedbackEventPayload(request AppendFeedbackRequest) bool {
 		}
 	}
 	if request.Type == FeedbackUpdate {
-		return request.Actor.Kind == "implementer" && len(request.CheckoutMarker) > 0
+		return request.Actor.Kind == "implementer" && len(request.SourceState) > 0
 	}
-	return len(request.CheckoutMarker) == 0 && (request.Type == FeedbackReply ||
+	return len(request.SourceState) == 0 && (request.Type == FeedbackReply ||
 		request.Type == FeedbackThreadResolved || request.Type == FeedbackThreadReopened)
 }
 
@@ -506,8 +506,8 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 		Service: row.Service, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
 		ReportText: row.ReportText, AuthorDisplayName: row.AuthorDisplayName.String,
 		SchemaVersion: int(row.SchemaVersion), Anchor: slices.Clone(row.Anchor), Evidence: slices.Clone(row.Evidence),
-		CheckoutAtReport: slices.Clone(row.CheckoutAtReport),
-		CreatedAt:        row.CreatedAt.Time, StateUpdatedAt: row.StateUpdatedAt.Time,
+		SourceAtReport: slices.Clone(row.SourceAtReport),
+		CreatedAt:      row.CreatedAt.Time, StateUpdatedAt: row.StateUpdatedAt.Time,
 	}
 }
 
@@ -516,7 +516,7 @@ func feedbackEventFromRow(row controlstatedb.ControlFeedbackEvent) FeedbackEvent
 		SchemaVersion: int(row.SchemaVersion),
 		Cursor:        uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID,
 		Type: FeedbackEventType(row.EventType), ActorKind: row.ActorKind, ActorReference: row.ActorReference,
-		Text: row.Text.String, Evidence: slices.Clone(row.Evidence), CheckoutMarker: slices.Clone(row.CheckoutMarker),
+		Text: row.Text.String, Evidence: slices.Clone(row.Evidence), SourceState: slices.Clone(row.SourceState),
 		At: row.OccurredAt.Time,
 	}
 }

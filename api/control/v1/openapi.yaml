@@ -1778,42 +1778,62 @@ components:
                 type: integer
                 minimum: 0
                 maximum: 600000
-    CheckoutMarker:
+    SourceFileState:
       type: object
       additionalProperties: false
-      required: [schema_version, head_commit, branch, changed_files, fingerprint, complete]
+      required: [path, status]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Path relative to the selected project directory
+        status:
+          type: string
+          enum: [added, modified, deleted]
+          description: Working-tree change from HEAD; staging does not affect this value
+        blob_id:
+          type: string
+          pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+          description: Git blob ID from git hash-object --no-filters; absent for deleted or unreadable files
+        mode:
+          type: string
+          pattern: "^100(?:644|755)$"
+          description: Git file mode; absent for deleted or unsupported files
+    SourceState:
+      type: object
+      additionalProperties: false
+      required: [schema_version, head_commit, project_path, branch, changed_files, complete]
+      description: >-
+        Bounded Git identifiers for the source present in one project directory.
+        Compare HEAD, project_path, and changed_files only when both records are
+        complete. Branch names and index state do not affect matching. Source
+        bytes and absolute paths are not stored. Ignored files are outside this
+        comparison; an unsupported or truncated capture is incomplete.
       properties:
         schema_version:
           $ref: "#/components/schemas/ReviewSchemaVersion"
         head_commit:
           type: string
           pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})?$"
+          description: Full Git HEAD commit ID; empty when unavailable
+        project_path:
+          type: string
+          maxLength: 512
+          description: Selected project's path relative to the repository root; empty at the root
         branch:
           type: string
           maxLength: 128
+          description: Informational branch name; empty for detached HEAD or when unavailable
         changed_files:
           type: array
           maxItems: 64
+          description: Unique project-relative paths sorted lexically; renames are a deletion and an addition
           items:
-            type: object
-            additionalProperties: false
-            required: [path, status]
-            properties:
-              path:
-                type: string
-                minLength: 1
-                maxLength: 512
-              status:
-                type: string
-                enum: [added, modified, deleted, renamed, untracked]
-              content_sha256:
-                type: string
-                pattern: "^sha256:[0-9a-f]{64}$"
-        fingerprint:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
+            $ref: "#/components/schemas/SourceFileState"
         complete:
           type: boolean
+          description: All supported Git-visible project changes were captured within the bounds
     FeedbackThread:
       type: object
       additionalProperties: false
@@ -1825,7 +1845,7 @@ components:
           scope,
           report,
           evidence,
-          checkout_at_report,
+          source_at_report,
           message_count,
           latest_event_cursor,
         ]
@@ -1852,8 +1872,8 @@ components:
           $ref: "#/components/schemas/FeedbackAnchor"
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
-        checkout_at_report:
-          $ref: "#/components/schemas/CheckoutMarker"
+        source_at_report:
+          $ref: "#/components/schemas/SourceState"
     FeedbackThreadSummary:
       type: object
       additionalProperties: false
@@ -1924,8 +1944,8 @@ components:
           maxLength: 4000
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
-        checkout_marker:
-          $ref: "#/components/schemas/CheckoutMarker"
+        source_state:
+          $ref: "#/components/schemas/SourceState"
     FeedbackEventPage:
       type: object
       additionalProperties: false
@@ -1970,7 +1990,7 @@ components:
           page_path,
           report,
           evidence,
-          checkout_at_report,
+          source_at_report,
           access,
         ]
       properties:
@@ -2000,8 +2020,8 @@ components:
           $ref: "#/components/schemas/FeedbackAnchor"
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
-        checkout_at_report:
-          $ref: "#/components/schemas/CheckoutMarker"
+        source_at_report:
+          $ref: "#/components/schemas/SourceState"
         access:
           $ref: "#/components/schemas/FeedbackReviewerAccess"
     PreviewPageFeedbackRequest:
@@ -2034,8 +2054,8 @@ components:
           type: string
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
-        checkout_marker:
-          $ref: "#/components/schemas/CheckoutMarker"
+        source_state:
+          $ref: "#/components/schemas/SourceState"
     AppendReviewerFeedbackEventRequest:
       type: object
       additionalProperties: false
@@ -2051,8 +2071,8 @@ components:
           type: string
         evidence:
           $ref: "#/components/schemas/FeedbackEvidence"
-        checkout_marker:
-          $ref: "#/components/schemas/CheckoutMarker"
+        source_state:
+          $ref: "#/components/schemas/SourceState"
         access:
           $ref: "#/components/schemas/FeedbackReviewerAccess"
     ReviewerFeedbackReadRequest:

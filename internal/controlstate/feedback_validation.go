@@ -98,17 +98,18 @@ type FeedbackEvidence struct {
 }
 
 type FeedbackChangedFile struct {
-	Path          string `json:"path"`
-	Status        string `json:"status"`
-	ContentSHA256 string `json:"content_sha256,omitempty"`
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	BlobID string `json:"blob_id,omitempty"`
+	Mode   string `json:"mode,omitempty"`
 }
 
-type CheckoutMarker struct {
+type SourceState struct {
 	SchemaVersion int                   `json:"schema_version"`
 	HeadCommit    string                `json:"head_commit"`
+	ProjectPath   string                `json:"project_path"`
 	Branch        string                `json:"branch"`
 	ChangedFiles  []FeedbackChangedFile `json:"changed_files"`
-	Fingerprint   string                `json:"fingerprint"`
 	Complete      *bool                 `json:"complete"`
 }
 
@@ -183,37 +184,38 @@ func normalizeFeedbackEvidence(value json.RawMessage) (json.RawMessage, error) {
 	return result, nil
 }
 
-func normalizeCheckoutMarker(value json.RawMessage) (json.RawMessage, error) {
-	marker, err := decodeFeedbackObject[CheckoutMarker](value, 16384)
-	if err != nil || marker.SchemaVersion != ReviewSchemaVersion || marker.Complete == nil || len(marker.Branch) > 128 || strings.ContainsAny(marker.Branch, "\x00\r\n") || len(marker.ChangedFiles) > 64 ||
-		!validSHA256Text(marker.Fingerprint) || marker.HeadCommit != "" && !validGitCommit(marker.HeadCommit) ||
-		*marker.Complete && marker.HeadCommit == "" {
+func normalizeSourceState(value json.RawMessage) (json.RawMessage, error) {
+	state, err := decodeFeedbackObject[SourceState](value, 16384)
+	if err != nil || state.SchemaVersion != ReviewSchemaVersion || state.Complete == nil || len(state.Branch) > 128 || strings.ContainsAny(state.Branch, "\x00\r\n") || len(state.ChangedFiles) > 64 || state.ChangedFiles == nil ||
+		state.ProjectPath != "" && !validSourcePath(state.ProjectPath) || state.HeadCommit != "" && !validGitObjectID(state.HeadCommit) ||
+		*state.Complete && state.HeadCommit == "" {
 		return nil, ErrFeedbackInvalid
 	}
-	for _, changed := range marker.ChangedFiles {
-		if changed.Path == "" || len(changed.Path) > 512 || filepath.IsAbs(changed.Path) || !filepath.IsLocal(changed.Path) ||
-			strings.ContainsRune(changed.Path, '\x00') || strings.Contains(changed.Path, "\\") ||
-			changed.Status != "added" && changed.Status != "modified" && changed.Status != "deleted" && changed.Status != "renamed" && changed.Status != "untracked" ||
-			changed.ContentSHA256 != "" && !validSHA256Text(changed.ContentSHA256) {
+	previous := ""
+	for _, changed := range state.ChangedFiles {
+		if !validSourcePath(changed.Path) || changed.Path <= previous ||
+			changed.Status != "added" && changed.Status != "modified" && changed.Status != "deleted" ||
+			changed.BlobID != "" && (!validGitObjectID(changed.BlobID) || state.HeadCommit != "" && len(changed.BlobID) != len(state.HeadCommit)) ||
+			changed.Mode != "" && changed.Mode != "100644" && changed.Mode != "100755" ||
+			changed.Status == "deleted" && (changed.BlobID != "" || changed.Mode != "") ||
+			*state.Complete && changed.Status != "deleted" && (changed.BlobID == "" || changed.Mode == "") {
 			return nil, ErrFeedbackInvalid
 		}
+		previous = changed.Path
 	}
-	result, err := json.Marshal(marker)
+	result, err := json.Marshal(state)
 	if err != nil || len(result) > 16384 {
 		return nil, ErrFeedbackInvalid
 	}
 	return result, nil
 }
 
-func validSHA256Text(value string) bool {
-	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
-		return false
-	}
-	decoded, err := hex.DecodeString(value[len("sha256:"):])
-	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == value[len("sha256:"):]
+func validSourcePath(value string) bool {
+	return value != "" && len(value) <= 512 && filepath.IsLocal(value) && filepath.ToSlash(filepath.Clean(value)) == value &&
+		!strings.ContainsAny(value, "\x00\\") && value != "."
 }
 
-func validGitCommit(value string) bool {
+func validGitObjectID(value string) bool {
 	if len(value) != 40 && len(value) != 64 {
 		return false
 	}

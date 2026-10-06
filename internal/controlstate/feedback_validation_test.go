@@ -46,21 +46,21 @@ func TestFeedbackConversationTransitions(t *testing.T) {
 		}
 	}
 	if got, err := nextFeedbackState(FeedbackOpen, FeedbackUpdate, "implementer"); err != nil || got != FeedbackOpen {
-		t.Fatalf("checkout update changed state: %s, %v", got, err)
+		t.Fatalf("source update changed state: %s, %v", got, err)
 	}
-	if validFeedbackEventPayload(AppendFeedbackRequest{Type: FeedbackUpdate, Text: "forged", CheckoutMarker: feedbackTestCheckout(t), Actor: FeedbackActor{Kind: "reviewer"}}) {
-		t.Fatal("preview access can forge an implementer checkout update")
+	if validFeedbackEventPayload(AppendFeedbackRequest{Type: FeedbackUpdate, Text: "forged", SourceState: feedbackTestSource(t), Actor: FeedbackActor{Kind: "reviewer"}}) {
+		t.Fatal("preview access can forge an implementer source update")
 	}
 }
 
-func TestFeedbackCheckoutMarkerStoresHashesAndRejectsPathsOutsideProject(t *testing.T) {
-	marker := feedbackTestCheckout(t)
-	if _, err := normalizeCheckoutMarker(marker); err != nil {
+func TestFeedbackSourceStateRejectsPathsOutsideProject(t *testing.T) {
+	source := feedbackTestSource(t)
+	if _, err := normalizeSourceState(source); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/Users/dev/.env", "../secrets", "apps\\web\\secret"} {
 		var value map[string]any
-		if err := json.Unmarshal(marker, &value); err != nil {
+		if err := json.Unmarshal(source, &value); err != nil {
 			t.Fatal(err)
 		}
 		files := value["changed_files"].([]any)
@@ -69,9 +69,38 @@ func TestFeedbackCheckoutMarkerStoresHashesAndRejectsPathsOutsideProject(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := normalizeCheckoutMarker(encoded); err == nil {
-			t.Fatalf("checkout marker escaped project with path %q", path)
+		if _, err := normalizeSourceState(encoded); err == nil {
+			t.Fatalf("source state escaped project with path %q", path)
 		}
+	}
+}
+
+func TestFeedbackSourceStateRequiresComparableCompleteFiles(t *testing.T) {
+	for _, change := range []func(*SourceState){
+		func(state *SourceState) { state.HeadCommit = "" },
+		func(state *SourceState) { state.ProjectPath = "../other" },
+		func(state *SourceState) { state.ChangedFiles[0].BlobID = "" },
+		func(state *SourceState) { state.ChangedFiles[0].BlobID = strings.Repeat("b", 64) },
+		func(state *SourceState) { state.ChangedFiles[0].Mode = "120000" },
+		func(state *SourceState) { state.ChangedFiles[0].Status = "deleted" },
+		func(state *SourceState) { state.ChangedFiles = append(state.ChangedFiles, state.ChangedFiles[0]) },
+	} {
+		var state SourceState
+		if err := json.Unmarshal(feedbackTestSource(t), &state); err != nil {
+			t.Fatal(err)
+		}
+		change(&state)
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := normalizeSourceState(encoded); err == nil {
+			t.Fatalf("invalid complete source state accepted: %s", encoded)
+		}
+	}
+	partial := json.RawMessage(`{"schema_version":1,"head_commit":"","project_path":"","branch":"","changed_files":[],"complete":false}`)
+	if _, err := normalizeSourceState(partial); err != nil {
+		t.Fatalf("source outside Git must remain explicitly incomplete: %v", err)
 	}
 }
 

@@ -38,7 +38,7 @@ func feedbackReport(thread controlstate.FeedbackThread) controlv1.FeedbackReport
 func feedbackThreadResponse(thread controlstate.FeedbackThread) (controlv1.FeedbackThread, error) {
 	var anchor *controlv1.FeedbackAnchor
 	var evidence controlv1.FeedbackEvidence
-	var marker controlv1.CheckoutMarker
+	var source controlv1.SourceState
 	if len(thread.Anchor) != 0 {
 		if err := json.Unmarshal(thread.Anchor, &anchor); err != nil {
 			return controlv1.FeedbackThread{}, fmt.Errorf("decode stored feedback element: %w", err)
@@ -47,14 +47,14 @@ func feedbackThreadResponse(thread controlstate.FeedbackThread) (controlv1.Feedb
 	if err := json.Unmarshal(thread.Evidence, &evidence); err != nil {
 		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored feedback evidence: %w", err)
 	}
-	if err := json.Unmarshal(thread.CheckoutAtReport, &marker); err != nil {
-		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored checkout marker: %w", err)
+	if err := json.Unmarshal(thread.SourceAtReport, &source); err != nil {
+		return controlv1.FeedbackThread{}, fmt.Errorf("decode stored source state: %w", err)
 	}
 	return controlv1.FeedbackThread{
 		MessageCount: int64(thread.MessageCount), LatestEventCursor: int64(thread.LatestEventCursor),
 		SchemaVersion: controlv1.ReviewSchemaVersion(thread.SchemaVersion), Id: thread.ID, State: controlv1.FeedbackThreadState(thread.State),
 		Scope: feedbackScope(thread), Report: feedbackReport(thread),
-		Anchor: anchor, Evidence: evidence, CheckoutAtReport: marker,
+		Anchor: anchor, Evidence: evidence, SourceAtReport: source,
 	}, nil
 }
 
@@ -106,12 +106,12 @@ func feedbackEventResponse(event controlstate.FeedbackEvent) (controlv1.Feedback
 		}
 		result.Evidence = &evidence
 	}
-	if len(event.CheckoutMarker) != 0 {
-		var marker controlv1.CheckoutMarker
-		if err := json.Unmarshal(event.CheckoutMarker, &marker); err != nil {
-			return controlv1.FeedbackEvent{}, fmt.Errorf("decode stored follow-up checkout marker: %w", err)
+	if len(event.SourceState) != 0 {
+		var source controlv1.SourceState
+		if err := json.Unmarshal(event.SourceState, &source); err != nil {
+			return controlv1.FeedbackEvent{}, fmt.Errorf("decode stored follow-up source state: %w", err)
 		}
-		result.CheckoutMarker = &marker
+		result.SourceState = &source
 	}
 	return result, nil
 }

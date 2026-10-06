@@ -115,17 +115,19 @@ ordered CSS selectors, and fractional x/y coordinates; a text selection adds
 start/end text-node boundaries and the original quote. Element HTML belongs in
 evidence, separate from placement. Changed text does not invalidate a pin.
 
-At submission, the local publisher records `checkout_at_report`: the Git
-`HEAD` commit, branch, changed project-relative file paths and statuses,
-per-file content SHA-256 identifiers, and a fingerprint of the combined
-checkout state. Bound the file list and fingerprint work; mark a partial
-marker so a later comparison can distinguish it from a complete match. A
-publish run number identifies the tunnel lifecycle. The checkout marker
-identifies the local code state recorded with the report.
+At submission, the local publisher records `source_at_report`: the Git
+`HEAD` commit, the project's repository-relative path, and changed
+project-relative file paths, blob IDs, and file modes. The branch is
+informational. Compare working-tree contents against `HEAD`; staging changes
+and branch names do not affect matching. Renames are a deletion and an addition.
+Bound the file list and capture work; mark an incomplete source state so a later
+comparison remains inconclusive. Ignored files are outside the comparison. A
+publish run number identifies the tunnel lifecycle. Source state records the
+Git identifiers present when the report was submitted, without saving files.
 
 Feedback is open until someone with current preview access resolves it. They
 can reopen it later. Replies do not change state; implementer updates include
-a checkout marker. Reports, replies, updates, resolution, and reopening remain
+the current source state. Reports, replies, updates, resolution, and reopening remain
 in the ordered history. Reopen a resolved thread before adding more to it.
 
 Implementers and reviewers use the same toolbar and can resolve or reopen
@@ -179,10 +181,12 @@ including expiry after a crash. The existing demo page stays unchanged and
 automatically receives the normal toolbar as an overlay.
 
 List and inspect work after the tunnel stops. Inspect returns the durable
-thread and adds `local_worktree` from the implementer's machine: its path,
-whether it matches the preview, and whether its current checkout matches
-the report marker. Control stores project-relative changed-file identifiers
-and checkout fingerprints; the CLI resolves the local path.
+thread and adds `local_project` from the implementer's machine: its path,
+whether it matches the preview, its current source state, and whether it matches
+the report's recorded source. Control stores Git identifiers and relative paths;
+the CLI resolves the local path. An agent can reproduce a file's blob ID with
+`git hash-object --no-filters -- path/to/file` and read the commit with
+`git rev-parse HEAD`.
 
 For example, an open thread can produce this JSON shape. The original report
 stays in place when an update is appended:
@@ -225,18 +229,19 @@ stays in place when an update is appended:
       { "method": "POST", "path": "/api/profile", "status": 500, "duration_ms": 184 }
     ]
   },
-  "checkout_at_report": {
+  "source_at_report": {
     "schema_version": 1,
     "head_commit": "0123456789abcdef0123456789abcdef01234567",
+    "project_path": "apps/web",
     "branch": "perf",
     "changed_files": [
       {
-        "path": "apps/web/src/ProfileForm.tsx",
+        "path": "src/ProfileForm.tsx",
         "status": "modified",
-        "content_sha256": "sha256:..."
+        "blob_id": "abcdef0123456789abcdef0123456789abcdef0123",
+        "mode": "100644"
       }
     ],
-    "fingerprint": "sha256:...",
     "complete": true
   },
   "events": [
@@ -252,22 +257,26 @@ stays in place when an update is appended:
       "type": "update",
       "at": "2026-10-04T14:40:00Z",
       "text": "Updated the save handler; please try again.",
-      "checkout_marker": {
+      "source_state": {
         "schema_version": 1,
         "head_commit": "0123456789abcdef0123456789abcdef01234567",
-        "fingerprint": "sha256:..."
+        "project_path": "apps/web",
+        "branch": "perf",
+        "changed_files": [],
+        "complete": true
       }
     }
   ],
-  "local_worktree": {
+  "local_project": {
     "path": "/Users/alex/git/shop-perf",
     "matches_preview": true,
-    "matches_report_checkout": false
+    "matches_report_source": false,
+    "comparison": "different"
   }
 }
 ```
 
-An agent uses the page, element HTML, actions, failed requests, and checkout
+An agent uses the page, element HTML, actions, failed requests, and source
 comparison to search and verify the relevant code. It records updates and
 resolves or reopens the thread through explicit commands.
 The feedback toolbar and CLI project the same state and event history.
@@ -305,12 +314,12 @@ the client release artifacts.
 2. Add share tables and control and authority contracts, share commands,
    multi-host redemption, ingress admission, and publisher access checks.
 3. Add immutable feedback reports, bounded evidence, ordered events, state
-   projections, checkout markers, and member and team-shared authorization.
+   projections, source state, and member and team-shared authorization.
 4. Bundle and embed the feedback toolbar, inject it at the publisher, add the
    agent CLI, and expose resumable event reads.
 5. Verify path matching and streaming, preview ownership, share membership
    and revocation, HTML injection in Next and Vite, dynamic pins, evidence
-   bounds, checkout comparison, event ordering and resume, and hosted and
+   bounds, source comparison, event ordering and resume, and hosted and
    self-hosted authorization. Update the public development and CLI guides
    in `tnl.dev` as each stage lands.
 

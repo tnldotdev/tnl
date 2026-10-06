@@ -198,7 +198,7 @@ type ControlFeedbackEvent struct {
 	RequestDigest  []byte
 	Text           pgtype.Text
 	Evidence       []byte
-	CheckoutMarker []byte
+	SourceState    []byte
 	OccurredAt     pgtype.Timestamptz
 }
 
@@ -224,7 +224,7 @@ type ControlFeedbackThread struct {
 	AuthorDisplayName pgtype.Text
 	Anchor            []byte
 	Evidence          []byte
-	CheckoutAtReport  []byte
+	SourceAtReport    []byte
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	StateUpdatedAt    pgtype.Timestamptz

@@ -2,7 +2,6 @@ package controlstate
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,19 +11,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-func feedbackTestCheckout(t *testing.T) json.RawMessage {
+func feedbackTestSource(t *testing.T) json.RawMessage {
 	t.Helper()
-	digest := sha256.Sum256([]byte("checkout"))
-	marker, err := json.Marshal(CheckoutMarker{
+	source, err := json.Marshal(SourceState{
 		SchemaVersion: 1,
-		HeadCommit:    strings.Repeat("a", 40), Branch: "perf",
-		ChangedFiles: []FeedbackChangedFile{{Path: "apps/web/Profile.tsx", Status: "modified", ContentSHA256: "sha256:" + hex.EncodeToString(digest[:])}},
-		Fingerprint:  "sha256:" + hex.EncodeToString(digest[:]), Complete: new(true),
+		HeadCommit:    strings.Repeat("a", 40), ProjectPath: "apps/web", Branch: "perf",
+		ChangedFiles: []FeedbackChangedFile{{Path: "Profile.tsx", Status: "modified", BlobID: strings.Repeat("b", 40), Mode: "100644"}},
+		Complete:     new(true),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return marker
+	return source
 }
 
 func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
@@ -61,13 +59,13 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	actor := FeedbackActor{Kind: "reviewer", ShareID: share.ID, CookieSecret: cookie}
-	marker := feedbackTestCheckout(t)
+	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
 		ReportText: "Save says it worked, but changes disappear after reload.", AuthorDisplayName: "Sam",
-		Anchor:           json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
-		Evidence:         json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
-		CheckoutAtReport: marker, IdempotencyKey: "first-report", Actor: actor,
+		Anchor:         json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
+		Evidence:       json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
+		SourceAtReport: source, IdempotencyKey: "first-report", Actor: actor,
 	}
 	thread, err := database.CreateFeedback(t.Context(), f.authentication(), request, now)
 	if err != nil || thread.ID == "" || thread.SchemaVersion != 1 || thread.State != FeedbackOpen || !strings.Contains(string(thread.Evidence), "data-testid") ||
@@ -98,7 +96,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}
 	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}
 	wrongImplementer := AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the copy", CheckoutMarker: marker,
+		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the copy", SourceState: source,
 		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "implementer", IdentityID: "different-identity", PolicyRevision: 1, ExpectedMutationRevision: 2},
 	}
 	if _, err := database.AppendFeedback(t.Context(), wrongImplementer, now.Add(2*time.Second)); !errors.Is(err, ErrFeedbackAccess) {
@@ -106,11 +104,11 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}
 	update := AppendFeedbackRequest{
 		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the save handler.",
-		CheckoutMarker: marker, IdempotencyKey: "update", Actor: implementer,
+		SourceState: source, IdempotencyKey: "update", Actor: implementer,
 	}
 	updated, err := database.AppendFeedback(t.Context(), update, now.Add(3*time.Second))
-	if err != nil || len(updated.CheckoutMarker) == 0 {
-		t.Fatalf("checkout update = %+v, %v", updated, err)
+	if err != nil || len(updated.SourceState) == 0 {
+		t.Fatalf("source update = %+v, %v", updated, err)
 	}
 	resolve := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved, Text: "Looks good", IdempotencyKey: "reviewer-resolve", Actor: actor}
 	if _, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second)); err != nil {
@@ -135,7 +133,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}
 	current, err := database.GetFeedback(t.Context(), thread.ID)
 	if err != nil || current.State != FeedbackOpen || current.ReportText != thread.ReportText ||
-		string(current.CheckoutAtReport) != string(thread.CheckoutAtReport) {
+		string(current.SourceAtReport) != string(thread.SourceAtReport) {
 		t.Fatalf("original report changed after reopening: %+v, %v", current, err)
 	}
 	resolved, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
@@ -202,15 +200,15 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 	}
 	started := make(chan struct{})
 	results := make(chan error, 2)
-	marker := feedbackTestCheckout(t)
+	source := feedbackTestSource(t)
 	for _, key := range []string{"first", "second"} {
 		go func() {
 			<-started
 			_, err := f.database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
 				PreviewID: preview.ID, Service: "web", PagePath: "/settings",
-				ReportText:       "The settings save is inconsistent",
-				Evidence:         json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
-				CheckoutAtReport: marker, IdempotencyKey: key,
+				ReportText:     "The settings save is inconsistent",
+				Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
+				SourceAtReport: source, IdempotencyKey: key,
 				Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true},
 			}, f.now)
 			results <- err

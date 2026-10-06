@@ -110,33 +110,6 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
-// Defines values for CheckoutMarkerChangedFilesStatus.
-const (
-	Added     CheckoutMarkerChangedFilesStatus = "added"
-	Deleted   CheckoutMarkerChangedFilesStatus = "deleted"
-	Modified  CheckoutMarkerChangedFilesStatus = "modified"
-	Renamed   CheckoutMarkerChangedFilesStatus = "renamed"
-	Untracked CheckoutMarkerChangedFilesStatus = "untracked"
-)
-
-// Valid indicates whether the value is a known member of the CheckoutMarkerChangedFilesStatus enum.
-func (e CheckoutMarkerChangedFilesStatus) Valid() bool {
-	switch e {
-	case Added:
-		return true
-	case Deleted:
-		return true
-	case Modified:
-		return true
-	case Renamed:
-		return true
-	case Untracked:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for DNSAuthorityState.
 const (
 	DNSAuthorityStateFailed    DNSAuthorityState = "failed"
@@ -593,6 +566,27 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for SourceFileStateStatus.
+const (
+	Added    SourceFileStateStatus = "added"
+	Deleted  SourceFileStateStatus = "deleted"
+	Modified SourceFileStateStatus = "modified"
+)
+
+// Valid indicates whether the value is a known member of the SourceFileStateStatus enum.
+func (e SourceFileStateStatus) Valid() bool {
+	switch e {
+	case Added:
+		return true
+	case Deleted:
+		return true
+	case Modified:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
 type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
@@ -649,20 +643,24 @@ type AdminServerStatusRole string
 
 // AppendFeedbackEventRequest defines model for AppendFeedbackEventRequest.
 type AppendFeedbackEventRequest struct {
-	CheckoutMarker *CheckoutMarker   `json:"checkout_marker,omitempty"`
-	Evidence       *FeedbackEvidence `json:"evidence,omitempty"`
-	Text           *string           `json:"text,omitempty"`
-	Type           FeedbackEventType `json:"type"`
+	Evidence *FeedbackEvidence `json:"evidence,omitempty"`
+
+	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	SourceState *SourceState      `json:"source_state,omitempty"`
+	Text        *string           `json:"text,omitempty"`
+	Type        FeedbackEventType `json:"type"`
 }
 
 // AppendReviewerFeedbackEventRequest defines model for AppendReviewerFeedbackEventRequest.
 type AppendReviewerFeedbackEventRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
-	CheckoutMarker   *CheckoutMarker        `json:"checkout_marker,omitempty"`
 	Evidence         *FeedbackEvidence      `json:"evidence,omitempty"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
-	Text             *string                `json:"text,omitempty"`
-	Type             FeedbackEventType      `json:"type"`
+
+	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	SourceState *SourceState      `json:"source_state,omitempty"`
+	Text        *string           `json:"text,omitempty"`
+	Type        FeedbackEventType `json:"type"`
 }
 
 // AuthenticationFacts defines model for AuthenticationFacts.
@@ -724,25 +722,6 @@ type CertificatePlan struct {
 	Scope           string                     `json:"scope"`
 }
 
-// CheckoutMarker defines model for CheckoutMarker.
-type CheckoutMarker struct {
-	Branch       string `json:"branch"`
-	ChangedFiles []struct {
-		ContentSha256 *string                          `json:"content_sha256,omitempty"`
-		Path          string                           `json:"path"`
-		Status        CheckoutMarkerChangedFilesStatus `json:"status"`
-	} `json:"changed_files"`
-	Complete    bool   `json:"complete"`
-	Fingerprint string `json:"fingerprint"`
-	HeadCommit  string `json:"head_commit"`
-
-	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
-	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
-}
-
-// CheckoutMarkerChangedFilesStatus defines model for CheckoutMarker.ChangedFiles.Status.
-type CheckoutMarkerChangedFilesStatus string
-
 // ClientIPResponse defines model for ClientIPResponse.
 type ClientIPResponse struct {
 	Ip string `json:"ip"`
@@ -789,7 +768,6 @@ type CreateDNSAuthorityRequest struct {
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
 	Anchor           *FeedbackAnchor        `json:"anchor,omitempty"`
-	CheckoutAtReport CheckoutMarker         `json:"checkout_at_report"`
 	Evidence         FeedbackEvidence       `json:"evidence"`
 	PagePath         string                 `json:"page_path"`
 	PageTitle        *string                `json:"page_title,omitempty"`
@@ -800,6 +778,9 @@ type CreateFeedbackReportRequest struct {
 		Text        string  `json:"text"`
 	} `json:"report"`
 	Service string `json:"service"`
+
+	// SourceAtReport Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	SourceAtReport SourceState `json:"source_at_report"`
 }
 
 // CreatePreviewRequest defines model for CreatePreviewRequest.
@@ -885,17 +866,19 @@ type FeedbackElement struct {
 
 // FeedbackEvent defines model for FeedbackEvent.
 type FeedbackEvent struct {
-	Actor          FeedbackEventActor `json:"actor"`
-	At             time.Time          `json:"at"`
-	CheckoutMarker *CheckoutMarker    `json:"checkout_marker,omitempty"`
-	Cursor         int64              `json:"cursor"`
-	Evidence       *FeedbackEvidence  `json:"evidence,omitempty"`
-	FeedbackId     FeedbackID         `json:"feedback_id"`
+	Actor      FeedbackEventActor `json:"actor"`
+	At         time.Time          `json:"at"`
+	Cursor     int64              `json:"cursor"`
+	Evidence   *FeedbackEvidence  `json:"evidence,omitempty"`
+	FeedbackId FeedbackID         `json:"feedback_id"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
-	Text          *string             `json:"text,omitempty"`
-	Type          FeedbackEventType   `json:"type"`
+
+	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	SourceState *SourceState      `json:"source_state,omitempty"`
+	Text        *string           `json:"text,omitempty"`
+	Type        FeedbackEventType `json:"type"`
 }
 
 // FeedbackEventActor defines model for FeedbackEvent.Actor.
@@ -981,7 +964,6 @@ type FeedbackTextBoundary struct {
 // FeedbackThread defines model for FeedbackThread.
 type FeedbackThread struct {
 	Anchor            *FeedbackAnchor  `json:"anchor,omitempty"`
-	CheckoutAtReport  CheckoutMarker   `json:"checkout_at_report"`
 	Evidence          FeedbackEvidence `json:"evidence"`
 	Id                FeedbackID       `json:"id"`
 	LatestEventCursor int64            `json:"latest_event_cursor"`
@@ -991,7 +973,10 @@ type FeedbackThread struct {
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Scope         FeedbackScope       `json:"scope"`
-	State         FeedbackThreadState `json:"state"`
+
+	// SourceAtReport Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	SourceAtReport SourceState         `json:"source_at_report"`
+	State          FeedbackThreadState `json:"state"`
 }
 
 // FeedbackThreadPage defines model for FeedbackThreadPage.
@@ -1338,6 +1323,45 @@ type ShareRedemption struct {
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	ShareId       ShareID             `json:"share_id"`
+}
+
+// SourceFileState defines model for SourceFileState.
+type SourceFileState struct {
+	// BlobId Git blob ID from git hash-object --no-filters; absent for deleted or unreadable files
+	BlobId *string `json:"blob_id,omitempty"`
+
+	// Mode Git file mode; absent for deleted or unsupported files
+	Mode *string `json:"mode,omitempty"`
+
+	// Path Path relative to the selected project directory
+	Path string `json:"path"`
+
+	// Status Working-tree change from HEAD; staging does not affect this value
+	Status SourceFileStateStatus `json:"status"`
+}
+
+// SourceFileStateStatus Working-tree change from HEAD; staging does not affect this value
+type SourceFileStateStatus string
+
+// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+type SourceState struct {
+	// Branch Informational branch name; empty for detached HEAD or when unavailable
+	Branch string `json:"branch"`
+
+	// ChangedFiles Unique project-relative paths sorted lexically; renames are a deletion and an addition
+	ChangedFiles []SourceFileState `json:"changed_files"`
+
+	// Complete All supported Git-visible project changes were captured within the bounds
+	Complete bool `json:"complete"`
+
+	// HeadCommit Full Git HEAD commit ID; empty when unavailable
+	HeadCommit string `json:"head_commit"`
+
+	// ProjectPath Selected project's path relative to the repository root; empty at the root
+	ProjectPath string `json:"project_path"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
 // TeamID defines model for TeamID.

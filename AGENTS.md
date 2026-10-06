@@ -65,7 +65,7 @@ mutation counters; public URL counters are publish run numbers.
 | Term              | Definition                                                                        |
 | ----------------- | --------------------------------------------------------------------------------- |
 | **identity**      | A person or administrator known to one tnl server.                                |
-| **implementer**   | The person or AI coding agent working in the project checkout.                    |
+| **implementer**   | The person or AI coding agent working in the project directory.                   |
 | **reviewer**      | A person using a share to visit a preview and optionally leave feedback.          |
 | **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
 | **visitor**       | A browser or other client connecting to a public URL.                             |
@@ -78,7 +78,7 @@ mutation counters; public URL counters are publish run numbers.
 | Term                      | Definition                                                                                                                  |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                                |
-| **preview**               | Control's saved group of public URLs for one project checkout, reused across `tnl dev` runs.                                |
+| **preview**               | Control's saved group of public URLs for one project directory, reused across `tnl dev` runs.                               |
 | **project service**       | A named local service in project configuration, with optional settings that override project defaults.                      |
 | **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                         |
 | **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development.         |
@@ -125,11 +125,11 @@ mutation counters; public URL counters are publish run numbers.
 | **share**            | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
 | **share link**       | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
 | **feedback thread**  | A durable conversation containing an immutable first report and ordered follow-up events.                             |
-| **report**           | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and checkout marker. |
+| **report**           | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and source state.    |
 | **evidence**         | Bounded, reviewed context submitted with a report, such as element HTML, actions, and failed requests.                |
 | **pin**              | A feedback thread's on-page reference to an element; if the element changes, the thread remains in the feedback list. |
 | **feedback toolbar** | The development-only browser interface for leaving and reading feedback.                                              |
-| **checkout marker**  | The recorded Git HEAD, branch, changed-file identifiers, and combined fingerprint; it does not store source bytes.    |
+| **source state**     | The recorded Git HEAD, project-relative path, and changed-file blob IDs; branch and staging do not affect matching.   |
 
 Feedback is `open` until someone with preview access resolves it. They can
 reopen it later; replies, updates, and status changes remain in its history.

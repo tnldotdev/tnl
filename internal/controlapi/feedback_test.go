@@ -47,9 +47,9 @@ func feedbackTestThread() controlstate.FeedbackThread {
 		TeamID: "team_1", PublicURLID: "url_1", PublishRunID: "pr_1", PublishRunNumber: 2,
 		PagePath: "/settings", Service: "web", State: controlstate.FeedbackOpen,
 		SchemaVersion: 1, MessageCount: 1, ReportText: "Save does nothing",
-		Evidence:         json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
-		CheckoutAtReport: json.RawMessage(`{"schema_version":1,"head_commit":"","branch":"","changed_files":[],"fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","complete":false}`),
-		CreatedAt:        time.Now().UTC(), StateUpdatedAt: time.Now().UTC(),
+		Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
+		SourceAtReport: json.RawMessage(`{"schema_version":1,"head_commit":"","project_path":"","branch":"","changed_files":[],"complete":false}`),
+		CreatedAt:      time.Now().UTC(), StateUpdatedAt: time.Now().UTC(),
 	}
 }
 

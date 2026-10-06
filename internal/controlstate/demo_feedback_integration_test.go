@@ -31,7 +31,7 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 				t.Fatal(err)
 			}
 			create := func(preview Preview, key string) FeedbackThread {
-				thread, err := d.CreateFeedback(ctx, f.authentication(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), CheckoutAtReport: feedbackTestCheckout(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true}}, now)
+				thread, err := d.CreateFeedback(ctx, f.authentication(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true}}, now)
 				if err != nil {
 					t.Fatal(err)
 				}
