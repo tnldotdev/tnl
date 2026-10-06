@@ -29,7 +29,6 @@ VALUES (1, '', x'');
 CREATE TABLE control_sessions (
     id INTEGER PRIMARY KEY,
     server_origin TEXT NOT NULL UNIQUE REFERENCES server_profiles (origin) ON DELETE CASCADE,
-    authority_endpoint TEXT NOT NULL,
     session_id TEXT NOT NULL,
     stored_access_token BLOB NOT NULL,
     access_expires_at INTEGER NOT NULL,

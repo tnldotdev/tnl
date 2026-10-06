@@ -1259,8 +1259,7 @@ components:
     ControlDiscovery:
       type: object
       additionalProperties: false
-      required:
-        [managed_deployment_domain, dns_automation, guest_demo, authority_endpoint, authentication]
+      required: [managed_deployment_domain, dns_automation, guest_demo, authentication]
       properties:
         managed_deployment_domain:
           $ref: "#/components/schemas/CanonicalHostname"
@@ -1272,9 +1271,6 @@ components:
         browser_login_available:
           type: boolean
           description: Whether visitors can sign in through a browser OIDC client.
-        authority_endpoint:
-          type: string
-          format: uri
           pattern: "^https://"
         authentication:
           $ref: "#/components/schemas/AuthenticationFacts"

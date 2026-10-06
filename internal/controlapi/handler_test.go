@@ -222,14 +222,12 @@ func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T)
 	}
 }
 
-func TestControlDiscoveryAdvertisesAuthorityEndpoint(t *testing.T) {
-	endpoint := "https://authority.example"
+func TestControlDiscoveryAdvertisesAuthenticationFacts(t *testing.T) {
 	result := controlDiscovery(Config{
 		ManagedDeploymentDomain: "example",
-		AuthorityEndpoint:       endpoint,
 		LoginToken:              testLoginToken,
 	})
-	if result.ManagedDeploymentDomain != "example" || result.AuthorityEndpoint != endpoint || result.DnsAutomation {
+	if result.ManagedDeploymentDomain != "example" || result.DnsAutomation {
 		t.Fatalf("discovery = %#v", result)
 	}
 	if len(result.Authentication.Methods) != 1 || result.Authentication.Methods[0] != controlv1.LoginToken {

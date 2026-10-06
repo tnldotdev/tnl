@@ -180,9 +180,8 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.SaveControlSession(t.Context(), ControlSession{
-		AuthorityEndpoint: "https://server.example",
-		SessionID:         "cs_0123456789abcdefghijkl",
-		AccessToken:       token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		SessionID:   "cs_0123456789abcdefghijkl",
+		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 	}); err != nil {
 		t.Fatal(err)

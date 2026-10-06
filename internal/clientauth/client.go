@@ -52,11 +52,10 @@ type Client struct {
 }
 
 type control struct {
-	serverEndpoint    string
-	authorityEndpoint string
-	discovery         controlv1.ControlDiscovery
-	rawHTTP           *http.Client
-	rawAuthority      *authorityclient.Client
+	serverEndpoint string
+	discovery      controlv1.ControlDiscovery
+	rawHTTP        *http.Client
+	rawAuthority   *authorityclient.Client
 }
 
 func Authenticate(ctx context.Context, config Config) (*Client, error) {
@@ -97,7 +96,7 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.Authority, err = authorityclient.New(resolved.authorityEndpoint, authenticatedHTTP, "")
+	result.Authority, err = authorityclient.New(resolved.serverEndpoint, authenticatedHTTP, "")
 	if err != nil {
 		return nil, err
 	}
@@ -128,9 +127,6 @@ func Logout(ctx context.Context, config Config) error {
 	if !found {
 		return errors.New("no saved login")
 	}
-	if !sessionMatches(stored, resolved) {
-		return errors.New("saved login was created for a different authority; log in to the selected server again")
-	}
 	if err := revokeSession(ctx, resolved, stored, store); err != nil &&
 		!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
 		return err
@@ -154,11 +150,7 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 	if err != nil {
 		return control{}, fmt.Errorf("read control discovery: %w", err)
 	}
-	authorityEndpoint, err := clientstate.CanonicalServer(discovery.AuthorityEndpoint)
-	if err != nil || authorityEndpoint != discovery.AuthorityEndpoint {
-		return control{}, errors.New("clientauth: control returned an invalid authority endpoint")
-	}
-	authority, err := authorityclient.New(authorityEndpoint, httpClient, "")
+	authority, err := authorityclient.New(serverEndpoint, httpClient, "")
 	if err != nil {
 		return control{}, err
 	}
@@ -167,8 +159,8 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 		return control{}, errors.New("clientauth: control returned inconsistent authentication facts")
 	}
 	resolved := control{
-		serverEndpoint: serverEndpoint, authorityEndpoint: authorityEndpoint,
-		discovery: discovery, rawHTTP: httpClient, rawAuthority: authority,
+		serverEndpoint: serverEndpoint,
+		discovery:      discovery, rawHTTP: httpClient, rawAuthority: authority,
 	}
 	return resolved, nil
 }
@@ -199,9 +191,6 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 	stored, found, err := s.store.ControlSession(ctx)
 	if err != nil {
 		return "", err
-	}
-	if found && !sessionMatches(stored, s.control) {
-		return "", errors.New("saved login was created for a different authority; log in to the selected server again")
 	}
 	now := time.Now()
 	if found && !s.config.ForceLogin && (!force || usedToken != stored.AccessToken) &&
@@ -305,7 +294,6 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 		if err != nil {
 			return clientstate.ControlSession{}, err
 		}
-		stored.AuthorityEndpoint = s.control.authorityEndpoint
 		return stored, nil
 	}
 	if !authenticationMethodAvailable(discovery, controlv1.LoginToken) {
@@ -326,7 +314,6 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	stored.AuthorityEndpoint = s.control.authorityEndpoint
 	return stored, nil
 }
 
@@ -354,7 +341,6 @@ func refreshSession(
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	refreshed.AuthorityEndpoint = stored.AuthorityEndpoint
 	return refreshed, nil
 }
 
@@ -402,10 +388,6 @@ func authoritySession(
 	return stored, nil
 }
 
-func sessionMatches(stored clientstate.ControlSession, resolved control) bool {
-	return stored.AuthorityEndpoint == resolved.authorityEndpoint
-}
-
 func refreshUsable(session clientstate.ControlSession, now time.Time) bool {
 	return session.RefreshExpiresAt.IsZero() || session.RefreshExpiresAt.After(now)
 }
@@ -435,7 +417,7 @@ func authenticatedClient(base *http.Client, source *tokenSource) *http.Client {
 
 func (t *bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	origin := request.URL.Scheme + "://" + request.URL.Host
-	if origin != t.source.control.serverEndpoint && origin != t.source.control.authorityEndpoint {
+	if origin != t.source.control.serverEndpoint {
 		if request.Body != nil {
 			_ = request.Body.Close()
 		}

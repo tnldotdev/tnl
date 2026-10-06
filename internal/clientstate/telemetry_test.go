@@ -22,7 +22,7 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// an old client.db must not be opened or imported when client-v1.db is absent.
+	// an old client.db must not be opened or imported when client-v2.db is absent.
 	if err := os.WriteFile(filepath.Join(root, "client.db"), []byte("old database"), 0o600); err != nil {
 		t.Fatal(err)
 	}

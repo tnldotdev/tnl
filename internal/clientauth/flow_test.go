@@ -23,7 +23,7 @@ import (
 
 const (
 	testControlOrigin   = "https://control.example"
-	testAuthorityOrigin = "https://authority.example"
+	testAuthorityOrigin = testControlOrigin
 )
 
 // MockInit replaces a process-global keyring. hold this for the entire fixture,
@@ -95,7 +95,7 @@ func issuedSession(t *testing.T) authorityv1.ControlSessionResponse {
 
 func storedSession(issued authorityv1.ControlSessionResponse) clientstate.ControlSession {
 	return clientstate.ControlSession{
-		AuthorityEndpoint: testAuthorityOrigin, SessionID: issued.SessionId,
+		SessionID:   issued.SessionId,
 		AccessToken: issued.AccessToken, RefreshToken: issued.RefreshToken,
 		AccessExpiresAt: issued.AccessExpiresAt, RefreshExpiresAt: issued.RefreshExpiresAt,
 	}
@@ -130,8 +130,7 @@ func newAuthFixture(t *testing.T, respond func(*http.Request) (*http.Response, e
 	transport := &recordingTransport{respond: func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() == testControlOrigin+"/v1/discovery" {
 			return jsonResponse(http.StatusOK, controlv1.ControlDiscovery{
-				AuthorityEndpoint: testAuthorityOrigin,
-				Authentication:    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}},
+				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}},
 			}), nil
 		}
 		return respond(request)
@@ -287,23 +286,30 @@ func TestAuthenticateRejectedRefreshDoesNotRetryItDuringOldSessionRevocation(t *
 	f.assertSession(t, storedSession(issued))
 }
 
-func TestSavedSessionAuthorityMismatchDoesNotSendCredentials(t *testing.T) {
+func TestSavedSessionForAnotherServerDoesNotSendCredentials(t *testing.T) {
 	for _, logout := range []bool{false, true} {
 		t.Run(map[bool]string{false: "authenticate", true: "logout"}[logout], func(t *testing.T) {
 			f := newAuthFixture(t, func(*http.Request) (*http.Response, error) { return nil, errors.New("credentials escaped") })
 			old := storedSession(issuedSession(t))
-			old.AuthorityEndpoint = "https://previous-authority.example"
-			f.save(t, old)
-			var err error
+			other, err := f.config.State.Server(t.Context(), "https://other-control.example")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := other.SaveControlSession(t.Context(), old); err != nil {
+				t.Fatal(err)
+			}
 			if logout {
 				err = Logout(t.Context(), f.config)
 			} else {
 				_, err = Authenticate(t.Context(), f.config)
 			}
-			if err == nil || !strings.Contains(err.Error(), "different authority") || len(f.transport.snapshot()) != 1 {
+			if err == nil || len(f.transport.snapshot()) != 1 {
 				t.Fatalf("mismatch: requests=%d error=%v", len(f.transport.snapshot()), err)
 			}
-			f.assertSession(t, old)
+			got, found, err := other.ControlSession(t.Context())
+			if err != nil || !found || !reflect.DeepEqual(got, old) {
+				t.Fatal("another server's login changed")
+			}
 		})
 	}
 }

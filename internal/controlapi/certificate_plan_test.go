@@ -110,7 +110,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 			cfg := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
 				ManagedDeploymentDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
 			h := testHandler(t, Config{ManagedDeploymentDomain: cfg.ManagedDomain(),
-				AuthorityEndpoint: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)
+				ControlURL: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))
 			var discovery controlv1.ControlDiscovery
@@ -118,7 +118,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.Code != http.StatusOK || discovery.DnsAutomation != test.want ||
-				discovery.ManagedDeploymentDomain != "routes.other.test" || discovery.AuthorityEndpoint != "https://control.infra.example.test" {
+				discovery.ManagedDeploymentDomain != "routes.other.test" {
 				t.Fatalf("discovery status = %d, facts = %#v", response.Code, discovery)
 			}
 		})

@@ -21,7 +21,7 @@ func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != "client-v1.db" {
+	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
 	}
 	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {
@@ -174,9 +174,8 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ControlSession{
-		AuthorityEndpoint: "https://accounts.example",
-		SessionID:         "cs_0123456789abcdefghijkl",
-		AccessToken:       token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		SessionID:   "cs_0123456789abcdefghijkl",
+		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 	}
 	if err := store.SaveControlSession(t.Context(), want); err != nil {
@@ -190,7 +189,7 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		t.Fatalf("client database mode = %o", info.Mode().Perm())
 	}
 	got, found, err := store.ControlSession(t.Context())
-	if err != nil || !found || got.AuthorityEndpoint != want.AuthorityEndpoint || got.SessionID != want.SessionID ||
+	if err != nil || !found || got.SessionID != want.SessionID ||
 		got.AccessToken != want.AccessToken || !got.AccessExpiresAt.Equal(want.AccessExpiresAt) ||
 		got.RefreshToken != want.RefreshToken || !got.RefreshExpiresAt.Equal(want.RefreshExpiresAt) {
 		t.Fatalf("control session = %#v, found = %v, error = %v", got, found, err)

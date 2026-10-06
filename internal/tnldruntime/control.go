@@ -26,7 +26,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 	return controlapi.Config{
 		Role:                    cfg.Role,
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
-		AuthorityEndpoint:       cfg.AuthorityOrigin(),
+		ControlURL:              cfg.ControlOrigin(),
 		LoginToken:              cfg.LoginToken,
 		OIDCIssuer:              cfg.OIDCIssuer,
 		OIDCClientID:            cfg.OIDCClientID,

@@ -148,14 +148,14 @@ func TestBearerTransportDoesNotRefreshOtherResponses(t *testing.T) {
 }
 
 func TestBearerTransportOriginRestrictionsAndExplicitAuthorization(t *testing.T) {
-	for _, origin := range []string{testControlOrigin, testAuthorityOrigin, "https://unrelated.example", "https://control.example.attacker.example", "http://control.example", "https://control.example:444"} {
+	for _, origin := range []string{testControlOrigin, "https://authority.example", "https://unrelated.example", "https://control.example.attacker.example", "http://control.example", "https://control.example:444"} {
 		for _, authorization := range []string{"", "Bearer publish-run-credential"} {
 			t.Run(origin+"/"+map[bool]string{false: "automatic", true: "explicit"}[authorization != ""], func(t *testing.T) {
 				body := &trackedBody{Reader: strings.NewReader("response")}
 				base := &recordingTransport{respond: func(*http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: 401, Header: http.Header{"Www-Authenticate": {"Bearer"}}, Body: body}, nil
 				}}
-				source := &tokenSource{control: control{serverEndpoint: testControlOrigin, authorityEndpoint: testAuthorityOrigin}, explicit: "automatic-access"}
+				source := &tokenSource{control: control{serverEndpoint: testControlOrigin}, explicit: "automatic-access"}
 				// with explicit Authorization, no token lookup or saved state is needed.
 				if authorization != "" {
 					source.explicit = ""
@@ -168,7 +168,7 @@ func TestBearerTransportOriginRestrictionsAndExplicitAuthorization(t *testing.T)
 					request.Header.Set("Authorization", authorization)
 				}
 				response, err := (&bearerTransport{base: base, source: source}).RoundTrip(request)
-				allowed := origin == testControlOrigin || origin == testAuthorityOrigin
+				allowed := origin == testControlOrigin
 				if !allowed {
 					if err == nil || response != nil || len(base.snapshot()) != 0 {
 						t.Fatal("credentials sent to an unexpected origin")

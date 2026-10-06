@@ -19,12 +19,11 @@ const (
 )
 
 type ControlSession struct {
-	AuthorityEndpoint string
-	SessionID         string
-	AccessToken       string
-	AccessExpiresAt   time.Time
-	RefreshToken      string
-	RefreshExpiresAt  time.Time
+	SessionID        string
+	AccessToken      string
+	AccessExpiresAt  time.Time
+	RefreshToken     string
+	RefreshExpiresAt time.Time
 }
 
 func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error) {
@@ -50,7 +49,7 @@ func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error
 		return ControlSession{}, true, err
 	}
 	session := ControlSession{
-		AuthorityEndpoint: stored.AuthorityEndpoint, SessionID: stored.SessionID, AccessToken: string(accessToken),
+		SessionID: stored.SessionID, AccessToken: string(accessToken),
 		AccessExpiresAt: unixNanoTime(stored.AccessExpiresAt), RefreshToken: string(refreshToken),
 		RefreshExpiresAt: unixNanoTime(stored.RefreshExpiresAt),
 	}
@@ -76,7 +75,7 @@ func (s *Store) SaveControlSession(ctx context.Context, session ControlSession) 
 		return err
 	}
 	if err := s.database.queries.UpsertControlSession(ctx, clientstatedb.UpsertControlSessionParams{
-		ServerOrigin: s.controlEndpoint, AuthorityEndpoint: session.AuthorityEndpoint, SessionID: session.SessionID,
+		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID,
 		StoredAccessToken: accessToken, AccessExpiresAt: session.AccessExpiresAt.UTC().UnixNano(),
 		StoredRefreshToken: refreshToken, RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt),
 		UpdatedAt: s.database.now().UTC().UnixNano(),
@@ -87,8 +86,7 @@ func (s *Store) SaveControlSession(ctx context.Context, session ControlSession) 
 }
 
 func (s *Store) validateControlSession(session ControlSession) error {
-	endpoint, err := CanonicalServer(session.AuthorityEndpoint)
-	if err != nil || endpoint != session.AuthorityEndpoint || !validOpaqueValue(session.SessionID, maxSessionIDBytes) ||
+	if !validOpaqueValue(session.SessionID, maxSessionIDBytes) ||
 		!validOpaqueValue(session.AccessToken, maxOpaqueTokenBytes) ||
 		!validOpaqueValue(session.RefreshToken, maxOpaqueTokenBytes) || session.AccessExpiresAt.IsZero() ||
 		session.RefreshExpiresAt.IsZero() || session.AccessExpiresAt.After(session.RefreshExpiresAt) ||
