@@ -25,7 +25,22 @@ import (
 
 type shareCommand struct {
 	Link linkShareCommand `cmd:"" help:"Create and revoke preview links."`
+	Team teamShareCommand `cmd:"" help:"Share the preview with its team."`
 	List shareListCommand `cmd:"" help:"List preview access for the selected team."`
+}
+
+type teamShareCommand struct {
+	Create teamShareCreateCommand `cmd:"" help:"Let current team members visit this preview."`
+	Revoke teamShareRevokeCommand `cmd:"" help:"Stop team-member access to this preview."`
+}
+
+type teamShareCreateCommand struct {
+	scopedTeamFlags `embed:""`
+	URL             string `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
+}
+
+type teamShareRevokeCommand struct {
+	scopedTeamFlags `embed:""`
 }
 
 type linkShareCommand struct {
@@ -193,7 +208,7 @@ func runShareCreate(ctx context.Context, flags shareCreateCommand, project proje
 	return err
 }
 
-func runShareList(ctx context.Context, flags shareListCommand, output, diagnostics io.Writer) error {
+func runShareList(ctx context.Context, flags shareListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	session, err := openTeamSession(ctx, flags.selection(), "tnl share list", diagnostics)
 	if err != nil {
 		return err
@@ -207,11 +222,13 @@ func runShareList(ctx context.Context, flags shareListCommand, output, diagnosti
 	if err != nil {
 		return err
 	}
+	selectedID := ""
 	if flags.URL != "" {
 		routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
 		if err != nil {
 			return err
 		}
+		selectedID = selected.Id
 		selected, err := selectSharePublicURL(flags.URL, routes)
 		if err != nil {
 			return err
@@ -221,6 +238,27 @@ func runShareList(ctx context.Context, flags shareListCommand, output, diagnosti
 		})
 	}
 	blocks := make([]clioutput.Block, 0, len(shares))
+	teamGrant := false
+	if project.Found() && project.Root != "" {
+		id, found, err := session.store.PreviewID(ctx, current.team.Id, project.Root)
+		if err != nil {
+			return err
+		}
+		if found {
+			preview, err := session.authenticated.Control.GetPreview(ctx, id)
+			if err != nil {
+				return err
+			}
+			if preview.TeamId == current.team.Id && preview.TeamAccessEnabled != nil && *preview.TeamAccessEnabled &&
+				(selectedID == "" || slices.Contains(preview.PublicUrlIds, selectedID)) {
+				teamGrant = true
+				blocks = append(blocks, clioutput.Section("team", clioutput.Fields(
+					clioutput.Field{Label: "preview ID", Value: preview.Id},
+					clioutput.Field{Label: "public URLs", Value: strconv.Itoa(len(preview.PublicUrlIds))},
+				)))
+			}
+		}
+	}
 	for _, share := range shares {
 		state := "active"
 		if share.RevokedAt != nil {
@@ -234,7 +272,65 @@ func runShareList(ctx context.Context, flags shareListCommand, output, diagnosti
 			clioutput.Field{Label: "public URLs", Value: strconv.Itoa(len(share.PublicUrlIds))},
 		)))
 	}
-	return writeHumanFrame(output, "tnl share list", countState(len(shares), "share", "shares"), "", blocks...)
+	count := len(shares)
+	if teamGrant {
+		count++
+	}
+	return writeHumanFrame(output, "tnl share list", countState(count, "share", "shares"), "", blocks...)
+}
+
+func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	selected, err := selectSharePublicURL(flags.URL, routes)
+	if err != nil {
+		return err
+	}
+	if session.authenticated.Discovery.Authentication.Oidc == nil {
+		return errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team")
+	}
+	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, preview.Id, true)
+	if err != nil {
+		return err
+	}
+	if updated.Id != preview.Id || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
+		return errors.New("server did not enable this preview's team access")
+	}
+	_, err = fmt.Fprintf(output, "https://%s/\n", selected.CanonicalHostname)
+	return err
+}
+
+func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if !project.Found() || project.Root == "" {
+		return errors.New("select a configured project to revoke this checkout's team access")
+	}
+	session, err := openTeamSession(ctx, flags.selection(), "tnl share team revoke", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.current(ctx)
+	if err != nil {
+		return err
+	}
+	id, found, err := session.store.PreviewID(ctx, current.team.Id, project.Root)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("preview is not saved for this checkout; run tnl dev first")
+	}
+	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, id, false)
+	if err != nil {
+		return err
+	}
+	if updated.Id != id || updated.TeamAccessEnabled == nil || *updated.TeamAccessEnabled {
+		return errors.New("server did not revoke this preview's team access")
+	}
+	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {

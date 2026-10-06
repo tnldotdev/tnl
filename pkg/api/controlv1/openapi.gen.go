@@ -1081,8 +1081,9 @@ type Preview struct {
 	PublicUrlIds []PublicURLID `json:"public_url_ids"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
-	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
-	TeamId        TeamID              `json:"team_id"`
+	SchemaVersion     ReviewSchemaVersion `json:"schema_version"`
+	TeamAccessEnabled *bool               `json:"team_access_enabled,omitempty"`
+	TeamId            TeamID              `json:"team_id"`
 }
 
 // PreviewID defines model for PreviewID.
@@ -1284,6 +1285,11 @@ type ReviewerFeedbackReadRequest struct {
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
+}
+
+// SetPreviewTeamAccessRequest defines model for SetPreviewTeamAccessRequest.
+type SetPreviewTeamAccessRequest struct {
+	Enabled bool `json:"enabled"`
 }
 
 // Share defines model for Share.
@@ -1497,6 +1503,9 @@ type AddPreviewPublicURLJSONRequestBody = AddPreviewPublicURLRequest
 
 // CreateShareJSONRequestBody defines body for CreateShare for application/json ContentType.
 type CreateShareJSONRequestBody = CreateShareRequest
+
+// SetPreviewTeamAccessJSONRequestBody defines body for SetPreviewTeamAccess for application/json ContentType.
+type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -1791,6 +1800,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
 	//
@@ -2535,6 +2558,40 @@ func (c *Client) CreateShareWithBody(ctx context.Context, previewId PreviewID, p
 // Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 func (c *Client) CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateShareRequest(c.Server, previewId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *Client) SetPreviewTeamAccessWithBody(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPreviewTeamAccessRequestWithBody(c.Server, previewId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPreviewTeamAccessRequest(c.Server, previewId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4261,6 +4318,53 @@ func NewCreateShareRequestWithBody(server string, previewId PreviewID, params *C
 	return req, nil
 }
 
+// NewSetPreviewTeamAccessRequest calls the generic SetPreviewTeamAccess builder with application/json body
+func NewSetPreviewTeamAccessRequest(server string, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPreviewTeamAccessRequestWithBody(server, previewId, "application/json", bodyReader)
+}
+
+// NewSetPreviewTeamAccessRequestWithBody constructs an http.Request for the SetPreviewTeamAccess method, with any body, and a specified content type
+func NewSetPreviewTeamAccessRequestWithBody(server string, previewId PreviewID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "preview_id", previewId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews/%s/team-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPublicURLsRequest constructs an http.Request for the ListPublicURLs method
 func NewListPublicURLsRequest(server string, params *ListPublicURLsParams) (*http.Request, error) {
 	var err error
@@ -5833,6 +5937,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShareWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareResponse, error)
 
+	// SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
+
+	// SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
+
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -7247,6 +7365,54 @@ func (r CreateShareResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetPreviewTeamAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Preview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPreviewTeamAccessResponse) GetJSON200() *Preview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetPreviewTeamAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPreviewTeamAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPreviewTeamAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPreviewTeamAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPreviewTeamAccessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8953,6 +9119,32 @@ func (c *ClientWithResponses) CreateShareWithResponse(ctx context.Context, previ
 	return ParseCreateShareResponse(rsp)
 }
 
+// SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *ClientWithResponses) SetPreviewTeamAccessWithBodyWithResponse(ctx context.Context, previewId PreviewID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error) {
+	rsp, err := c.SetPreviewTeamAccessWithBody(ctx, previewId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPreviewTeamAccessResponse(rsp)
+}
+
+// SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
+func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error) {
+	rsp, err := c.SetPreviewTeamAccess(ctx, previewId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPreviewTeamAccessResponse(rsp)
+}
+
 // ListPublicURLsWithResponse List public URLs for one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -10297,6 +10489,39 @@ func ParseCreateShareResponse(rsp *http.Response) (*CreateShareResponse, error) 
 	return response, nil
 }
 
+// ParseSetPreviewTeamAccessResponse parses an HTTP response from a SetPreviewTeamAccessWithResponse call
+func ParseSetPreviewTeamAccessResponse(rsp *http.Response) (*SetPreviewTeamAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPreviewTeamAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
 func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11283,6 +11508,9 @@ type ServerInterface interface {
 	// CreateShare Store one share for a snapshot of authorized public URLs
 	// (POST /v1/previews/{preview_id}/shares)
 	CreateShare(w http.ResponseWriter, r *http.Request, previewId PreviewID, params CreateShareParams)
+	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
+	// (PUT /v1/previews/{preview_id}/team-access)
+	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -12037,6 +12265,32 @@ func (siw *ServerInterfaceWrapper) CreateShare(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateShare(w, r, previewId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPreviewTeamAccess operation middleware
+func (siw *ServerInterfaceWrapper) SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "preview_id" -------------
+	var previewId PreviewID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "preview_id", r.PathValue("preview_id"), &previewId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "preview_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPreviewTeamAccess(w, r, previewId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13138,6 +13392,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/previews/{preview_id}/team-access", wrapper.SetPreviewTeamAccess)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)

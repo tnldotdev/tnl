@@ -444,9 +444,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":
-		return runShareList(ctx, flags.Share.List, stdout, stderr)
+		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
 	case "share link revoke <share-id>":
 		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "share team create <url>":
+		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
+	case "share team revoke":
+		return runShareTeamRevoke(ctx, flags.Share.Team.Revoke, project, stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":
@@ -522,6 +526,8 @@ func canonicalParsedCommand(command string) string {
 		return "publish <service-or-target>"
 	case "share link create":
 		return "share link create <url>"
+	case "share team create":
+		return "share team create <url>"
 	case "share list":
 		return "share list <url>"
 	default:

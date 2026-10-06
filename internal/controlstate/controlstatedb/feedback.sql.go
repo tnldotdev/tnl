@@ -129,7 +129,7 @@ WHERE r.id = $3 AND r.publish_run_number = $4
     AND r.closed_at IS NULL AND r.publisher_expires_at > $2
     AND u.ephemeral AND u.lifecycle_state = 'enabled'
 ON CONFLICT (demo_publish_run_id) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, idempotency_key, created_at, demo_publish_run_id
+RETURNING id, schema_version, team_id, created_by_identity_id, idempotency_key, created_at, demo_publish_run_id, team_access_enabled
 `
 
 type CreatePublishRunPreviewParams struct {
@@ -155,6 +155,7 @@ func (q *Queries) CreatePublishRunPreview(ctx context.Context, arg CreatePublish
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.DemoPublishRunID,
+		&i.TeamAccessEnabled,
 	)
 	return i, err
 }

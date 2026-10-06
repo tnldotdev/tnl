@@ -115,6 +115,12 @@ func (c *Client) GetPreview(ctx context.Context, id string) (controlv1.Preview, 
 	})
 }
 
+func (c *Client) SetPreviewTeamAccess(ctx context.Context, id string, enabled bool) (controlv1.Preview, error) {
+	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetPreviewTeamAccess(ctx, id, controlv1.SetPreviewTeamAccessRequest{Enabled: enabled}, editors...)
+	})
+}
+
 func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string) (controlv1.Preview, error) {
 	return requestWithAccess[controlv1.Preview](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AddPreviewPublicURL(ctx, id, controlv1.AddPreviewPublicURLRequest{PublicUrlId: publicURLID}, editors...)

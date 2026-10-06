@@ -186,6 +186,29 @@ paths:
                 $ref: "#/components/schemas/Preview"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/previews/{preview_id}/team-access:
+    put:
+      operationId: setPreviewTeamAccess
+      summary: Enable or disable team visitor access for this preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PreviewID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPreviewTeamAccessRequest"
+      responses:
+        "200":
+          description: Updated preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/previews/{preview_id}/shares:
     post:
       operationId: createShare
@@ -1506,6 +1529,13 @@ components:
       properties:
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
+    SetPreviewTeamAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
     Preview:
       type: object
       additionalProperties: false
@@ -1522,6 +1552,8 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/PublicURLID"
+        team_access_enabled:
+          type: boolean
         created_at:
           type: string
           format: date-time

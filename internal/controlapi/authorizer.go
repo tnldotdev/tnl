@@ -28,6 +28,7 @@ type localAuthorizer struct {
 
 type publicURLReadPrincipal struct {
 	identityID    string
+	displayName   string
 	teamIDs       map[string]struct{}
 	administrator bool
 }
@@ -56,7 +57,7 @@ func (a localAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToke
 		teamIDs[membership.TeamID] = struct{}{}
 	}
 	return publicURLReadPrincipal{
-		identityID: principal.IdentityID, teamIDs: teamIDs, administrator: principal.Administrator,
+		identityID: principal.IdentityID, displayName: identity.Identity.DisplayName, teamIDs: teamIDs, administrator: principal.Administrator,
 	}, nil
 }
 
@@ -85,12 +86,12 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	if acting.ID == "" {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
-	if request.Operation == authorization.OperationFeedbackManage {
+	if request.Operation == authorization.OperationFeedbackManage || request.Operation == authorization.OperationPreviewVisit {
 		if request.PublicURLID == "" || request.PublicURLMutationRevision == 0 {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
-		if request.PublicURLScope == authorization.PublicURLScopeMember && request.PublicURLMembershipID != acting.ID ||
-			request.PublicURLScope == authorization.PublicURLScopeShared && (request.PublicURLMembershipID != "" || acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner) || !request.PublicURLScope.Valid() {
+		if request.PublicURLScope == authorization.PublicURLScopeMember && (request.PublicURLMembershipID == "" || request.Operation != authorization.OperationPreviewVisit && request.PublicURLMembershipID != acting.ID) ||
+			request.PublicURLScope == authorization.PublicURLScopeShared && (request.PublicURLMembershipID != "" || request.Operation != authorization.OperationPreviewVisit && acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner) || !request.PublicURLScope.Valid() {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 		return authorization.Decision{IdentityID: principal.IdentityID, TeamID: request.TeamID, ActingMembershipID: acting.ID, ActingRole: string(acting.Role), PublicURLMembershipID: request.PublicURLMembershipID,
@@ -187,7 +188,7 @@ func (a hostedAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessTok
 		}
 	}
 	return publicURLReadPrincipal{
-		identityID: identity.Identity.Id, teamIDs: teamIDs,
+		identityID: identity.Identity.Id, displayName: identity.Identity.DisplayName, teamIDs: teamIDs,
 		administrator: identity.Identity.Administrator,
 	}, nil
 }
@@ -265,7 +266,7 @@ func validAuthorizationDecision(request authorization.Request, decision authoriz
 		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
 		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
 		decision.CanonicalHostname != request.CanonicalHostname || !decision.PublicURLScope.Valid() || decision.PublicURLScope != request.PublicURLScope ||
-		request.Operation != authorization.OperationFeedbackManage && strings.TrimSpace(decision.DNSAuthorityReference) == "" {
+		request.Operation != authorization.OperationFeedbackManage && request.Operation != authorization.OperationPreviewVisit && strings.TrimSpace(decision.DNSAuthorityReference) == "" {
 		return false
 	}
 	if request.ActingMembershipID != "" && decision.ActingMembershipID != request.ActingMembershipID ||

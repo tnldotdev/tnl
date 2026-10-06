@@ -262,6 +262,7 @@ type Querier interface {
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
+	LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error)
 	LockPublicURLCreationControl(ctx context.Context) (bool, error)
 	// serialize creators without blocking publish run and audit foreign-key checks.
 	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
@@ -303,6 +304,8 @@ type Querier interface {
 	ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
+	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
+	OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error)
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
 	// and each publish run number's latest revision. concurrent publication can
@@ -363,9 +366,11 @@ type Querier interface {
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
+	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
+	TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
 	// cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)

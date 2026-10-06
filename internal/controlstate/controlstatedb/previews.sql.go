@@ -54,7 +54,7 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, created_at
+RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
 `
 
 type CreatePreviewParams struct {
@@ -71,6 +71,7 @@ type CreatePreviewRow struct {
 	TeamID              string
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
+	TeamAccessEnabled   bool
 }
 
 func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (CreatePreviewRow, error) {
@@ -88,12 +89,13 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
+		&i.TeamAccessEnabled,
 	)
 	return i, err
 }
 
 const getPreview = `-- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at
+SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
 FROM control.previews WHERE id = $1
 `
 
@@ -103,6 +105,7 @@ type GetPreviewRow struct {
 	TeamID              string
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
+	TeamAccessEnabled   bool
 }
 
 func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, error) {
@@ -114,6 +117,7 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
+		&i.TeamAccessEnabled,
 	)
 	return i, err
 }
@@ -141,4 +145,102 @@ func (q *Queries) ListPreviewPublicURLs(ctx context.Context, previewID string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPreviewForTeamAccess = `-- name: LockPreviewForTeamAccess :one
+SELECT id, team_id, created_by_identity_id, team_access_enabled
+FROM control.previews WHERE id = $1 FOR NO KEY UPDATE
+`
+
+type LockPreviewForTeamAccessRow struct {
+	ID                  string
+	TeamID              string
+	CreatedByIdentityID string
+	TeamAccessEnabled   bool
+}
+
+func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error) {
+	row := q.db.QueryRow(ctx, lockPreviewForTeamAccess, id)
+	var i LockPreviewForTeamAccessRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.CreatedByIdentityID,
+		&i.TeamAccessEnabled,
+	)
+	return i, err
+}
+
+const otherPreviewForTeamAccess = `-- name: OtherPreviewForTeamAccess :one
+SELECT other.preview_id FROM control.preview_public_urls AS other
+WHERE other.public_url_id = $1
+  AND other.preview_id <> $2 LIMIT 1
+`
+
+type OtherPreviewForTeamAccessParams struct {
+	PublicURLID string
+	PreviewID   string
+}
+
+func (q *Queries) OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error) {
+	row := q.db.QueryRow(ctx, otherPreviewForTeamAccess, arg.PublicURLID, arg.PreviewID)
+	var preview_id string
+	err := row.Scan(&preview_id)
+	return preview_id, err
+}
+
+const otherTeamAccessForPublicURL = `-- name: OtherTeamAccessForPublicURL :one
+SELECT p.id FROM control.previews AS p
+JOIN control.preview_public_urls AS included ON included.preview_id = p.id
+WHERE included.public_url_id = $1
+  AND p.id <> $2
+  AND p.team_access_enabled = true LIMIT 1
+`
+
+type OtherTeamAccessForPublicURLParams struct {
+	PublicURLID string
+	PreviewID   string
+}
+
+func (q *Queries) OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error) {
+	row := q.db.QueryRow(ctx, otherTeamAccessForPublicURL, arg.PublicURLID, arg.PreviewID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const setPreviewTeamAccess = `-- name: SetPreviewTeamAccess :exec
+UPDATE control.previews SET team_access_enabled = $1
+WHERE id = $2
+`
+
+type SetPreviewTeamAccessParams struct {
+	Enabled   bool
+	PreviewID string
+}
+
+func (q *Queries) SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error {
+	_, err := q.db.Exec(ctx, setPreviewTeamAccess, arg.Enabled, arg.PreviewID)
+	return err
+}
+
+const teamAccessForPublicURL = `-- name: TeamAccessForPublicURL :one
+SELECT p.id AS preview_id, p.team_id, p.team_access_enabled
+FROM control.previews AS p
+JOIN control.preview_public_urls AS included ON included.preview_id = p.id
+WHERE included.public_url_id = $1
+  AND p.team_access_enabled = true LIMIT 1
+`
+
+type TeamAccessForPublicURLRow struct {
+	PreviewID         string
+	TeamID            string
+	TeamAccessEnabled bool
+}
+
+func (q *Queries) TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error) {
+	row := q.db.QueryRow(ctx, teamAccessForPublicURL, publicUrlID)
+	var i TeamAccessForPublicURLRow
+	err := row.Scan(&i.PreviewID, &i.TeamID, &i.TeamAccessEnabled)
+	return i, err
 }

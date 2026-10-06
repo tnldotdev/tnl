@@ -127,6 +127,7 @@ func previewResponse(preview controlstate.Preview) controlv1.Preview {
 	return controlv1.Preview{
 		SchemaVersion: controlv1.ReviewSchemaVersion(preview.SchemaVersion),
 		Id:            preview.ID, TeamId: preview.TeamID, CreatedAt: preview.CreatedAt,
-		PublicUrlIds: preview.PublicURLIDs,
+		PublicUrlIds:      preview.PublicURLIDs,
+		TeamAccessEnabled: &preview.TeamAccessEnabled,
 	}
 }

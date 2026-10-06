@@ -411,6 +411,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Share.List.remoteFlags, true)
 	case "share link revoke <share-id>":
 		apply(&flags.Share.Link.Revoke.remoteFlags, true)
+	case "share team create <url>":
+		apply(&flags.Share.Team.Create.remoteFlags, true)
+	case "share team revoke":
+		apply(&flags.Share.Team.Revoke.remoteFlags, true)
 	case "feedback list":
 		apply(&flags.Feedback.List.remoteFlags, true)
 	case "feedback inspect <feedback-id>":

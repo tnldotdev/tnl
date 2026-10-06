@@ -113,6 +113,10 @@ type PreviewStore interface {
 	AddPreviewPublicURL(context.Context, controlstate.AddPreviewPublicURLRequest, time.Time) (controlstate.Preview, error)
 }
 
+type PreviewTeamAccessStore interface {
+	SetPreviewTeamAccess(context.Context, controlstate.SetPreviewTeamAccessRequest, time.Time) (controlstate.Preview, error)
+}
+
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
@@ -148,17 +152,18 @@ type BuiltinAuthorizationStore interface {
 }
 
 type handler struct {
-	config         Config
-	store          PublicURLStore
-	certificates   CertificateStore
-	dnsAuthorities DNSAuthorityStore
-	revocations    HostedRevocationStore
-	admin          AdminStore
-	previews       PreviewStore
-	shares         ShareStore
-	shareAccess    ShareAccessStore
-	feedback       FeedbackStore
-	guests         interface {
+	config            Config
+	store             PublicURLStore
+	certificates      CertificateStore
+	dnsAuthorities    DNSAuthorityStore
+	revocations       HostedRevocationStore
+	admin             AdminStore
+	previews          PreviewStore
+	previewTeamAccess PreviewTeamAccessStore
+	shares            ShareStore
+	shareAccess       ShareAccessStore
+	feedback          FeedbackStore
+	guests            interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -185,6 +190,9 @@ func NewHandler(
 		revocations: store, admin: store, readiness: readiness}
 	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
+	}
+	if access, ok := store.(PreviewTeamAccessStore); ok {
+		h.previewTeamAccess = access
 	}
 	if shares, ok := store.(ShareStore); ok {
 		h.shares = shares

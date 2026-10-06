@@ -4,11 +4,38 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, created_at;
+RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled;
 
 -- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at
+SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
 FROM control.previews WHERE id = $1;
+
+-- name: LockPreviewForTeamAccess :one
+SELECT id, team_id, created_by_identity_id, team_access_enabled
+FROM control.previews WHERE id = $1 FOR NO KEY UPDATE;
+
+-- name: SetPreviewTeamAccess :exec
+UPDATE control.previews SET team_access_enabled = sqlc.arg(enabled)
+WHERE id = sqlc.arg(preview_id);
+
+-- name: OtherPreviewForTeamAccess :one
+SELECT other.preview_id FROM control.preview_public_urls AS other
+WHERE other.public_url_id = sqlc.arg(public_url_id)
+  AND other.preview_id <> sqlc.arg(preview_id) LIMIT 1;
+
+-- name: TeamAccessForPublicURL :one
+SELECT p.id AS preview_id, p.team_id, p.team_access_enabled
+FROM control.previews AS p
+JOIN control.preview_public_urls AS included ON included.preview_id = p.id
+WHERE included.public_url_id = sqlc.arg(public_url_id)
+  AND p.team_access_enabled = true LIMIT 1;
+
+-- name: OtherTeamAccessForPublicURL :one
+SELECT p.id FROM control.previews AS p
+JOIN control.preview_public_urls AS included ON included.preview_id = p.id
+WHERE included.public_url_id = sqlc.arg(public_url_id)
+  AND p.id <> sqlc.arg(preview_id)
+  AND p.team_access_enabled = true LIMIT 1;
 
 -- name: ListPreviewPublicURLs :many
 SELECT public_url_id FROM control.preview_public_urls

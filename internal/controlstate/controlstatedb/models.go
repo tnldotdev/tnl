@@ -396,6 +396,7 @@ type ControlPreview struct {
 	IdempotencyKey      string
 	CreatedAt           pgtype.Timestamptz
 	DemoPublishRunID    pgtype.Text
+	TeamAccessEnabled   bool
 }
 
 type ControlPreviewPublicUrl struct {
