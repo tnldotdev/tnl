@@ -340,6 +340,13 @@ authority with both operations before switching hosted control from its
 existing `public_url.update` check; both decisions retain the public URL's
 ownership and mutation-revision binding.
 
+Deploy authority support for `preview.visit` and browser OIDC exchange before
+enabling browser sign-in on control. Apply the additive control schema 10 with
+`tnld migrate` before serving the new control processes; schema 9 control and
+standalone processes can continue to serve during that migration. Control
+encrypts browser tokens in PostgreSQL and validates team membership before
+granting access; the publisher never sends tnl browser cookies to the app.
+
 The publisher owns visitor HTTP access checks, local path dispatch, browser
 redemption and feedback endpoints, HTML injection, and the bounded per-browser
 failed-request trail. The feedback toolbar sends submitted feedback through the
