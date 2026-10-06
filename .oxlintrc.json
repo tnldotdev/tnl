@@ -1,4 +1,5 @@
 {
+  "ignorePatterns": ["internal/feedbacktoolbar/toolbar.js", "internal/publisherapi/model.gen.ts"],
   "rules": {
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "fb_0123456789abcdefghijkl",
+  "state": "open",
+  "message_count": 1,
+  "latest_event_cursor": 4,
+  "scope": {
+    "preview_id": "pv_0123456789abcdefghijkl",
+    "public_url_id": "url_0123456789abcdefghijkl",
+    "publish_run_id": "pr_0123456789abcdefghijkl",
+    "publish_run_number": 2,
+    "service": "web",
+    "page_path": "/settings",
+    "page_title": "settings"
+  },
+  "report": {
+    "text": "Save says it worked, but the change disappears after reload.",
+    "author": { "display_name": "Sam", "verified": false },
+    "created_at": "2026-10-06T00:00:00Z"
+  },
+  "evidence": { "schema_version": 1, "actions": [], "failed_requests": [] },
+  "source_at_report": {
+    "schema_version": 1,
+    "head_commit": "",
+    "project_path": "",
+    "branch": "",
+    "changed_files": [],
+    "complete": false
+  }
+}

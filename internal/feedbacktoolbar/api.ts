@@ -1,8 +1,10 @@
-import * as z from "zod/mini";
+import { z } from "zod";
+import { BrowserFeedbackEventRequest, BrowserFeedbackEvidence } from "../publisherapi/model.gen.ts";
 import {
   evidenceSchema,
   eventPageSchema,
   eventSchema,
+  reportInputSchema,
   threadPageSchema,
   threadSchema,
   type BrowserEvent,
@@ -14,17 +16,24 @@ import {
   type ThreadPage,
 } from "./model.ts";
 
+/** same-origin publisher API; wire contract: api/publisher/v1/openapi.yaml. */
 export interface FeedbackAPI {
+  /** hostname-scoped summaries; path omission selects all pages, cursor is a feedback ID. */
   list(
     path: string | undefined,
     cursor: string | undefined,
     signal: AbortSignal,
     state?: "open" | "resolved",
   ): Promise<ThreadPage>;
+  /** immutable report and current state, scoped to this public URL and preview. */
   inspect(id: string, signal: AbortSignal): Promise<Thread>;
+  /** ordered events after a numeric cursor; follow next_cursor until caught up. */
   events(id: string, cursor: number | undefined, signal: AbortSignal): Promise<EventPage>;
+  /** bounded, browser-scoped failures; query strings and request bodies are omitted. */
   evidence(signal: AbortSignal): Promise<Evidence["failed_requests"]>;
+  /** first submission; retries must reuse the same key and frozen input. */
   report(input: ReportInput, key: string, signal: AbortSignal): Promise<Thread>;
+  /** replies require text; resolve/reopen accept an optional note and the same retry key. */
   append(
     id: string,
     type: BrowserEvent,
@@ -37,7 +46,7 @@ export interface FeedbackAPI {
 export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
   async function request<T>(
     path: string,
-    schema: z.ZodMiniType<T>,
+    schema: z.ZodType<T>,
     signal: AbortSignal,
     body?: unknown,
     key?: string,
@@ -88,15 +97,24 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
         signal,
       ),
     evidence: async (signal) =>
-      (await request("/evidence", z.pick(evidenceSchema, { failed_requests: true }), signal))
-        .failed_requests,
-    report: (input, key, signal) => request("", threadSchema, signal, input, key),
+      (
+        await request(
+          "/evidence",
+          BrowserFeedbackEvidence.extend({
+            schema_version: z.literal(1),
+            failed_requests: evidenceSchema.shape.failed_requests,
+          }),
+          signal,
+        )
+      ).failed_requests,
+    report: (input, key, signal) =>
+      request("", threadSchema, signal, reportInputSchema.parse(input), key),
     append: (id, type, text, key, signal) =>
       request(
         "/" + encodeURIComponent(id) + "/events",
         eventSchema,
         signal,
-        { schema_version: 1, type, ...(text ? { text } : {}) },
+        BrowserFeedbackEventRequest.parse({ schema_version: 1, type, ...(text ? { text } : {}) }),
         key,
       ),
   };

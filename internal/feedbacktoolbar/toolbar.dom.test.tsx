@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /** @jsxImportSource preact */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";

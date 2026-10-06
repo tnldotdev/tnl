@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, expect, test, vi } from "vitest";
 import {
   capturePoint,
@@ -15,15 +14,27 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
 });
 
-test("selector alternatives include ID, structural, and class paths with escaped identifiers", () => {
+test("selector examples document the ordered alternatives stored with a report", () => {
   document.body.innerHTML =
     '<div id="pricing:a"><article class="card:a"><h3>One</h3></article><article class="card:b"><h3 class="title">Two</h3></article></div>';
   const heading = document.querySelector("article:last-child h3");
   if (!heading) throw new Error("missing fixture");
-  const selectors = selectorAlternatives(heading);
-  expect(selectors.length).toBeGreaterThan(1);
-  expect(selectors.some((selector) => selector.includes(".title"))).toBe(true);
-  for (const selector of selectors) expect(document.querySelector(selector)).toBe(heading);
+  expect(selectorAlternatives(heading)).toMatchInlineSnapshot(`
+    [
+      "article:nth-of-type(2) > h3",
+      ".title",
+    ]
+  `);
+  document.body.innerHTML =
+    '<main><button id="save:profile" data-testid="save-profile">Save</button><button>Cancel</button></main>';
+  const button = document.querySelector("button");
+  if (!button) throw new Error("missing fixture");
+  expect(selectorAlternatives(button)).toMatchInlineSnapshot(`
+    [
+      "[data-testid="save-profile"]",
+      "#save\\:profile",
+    ]
+  `);
 });
 
 test("relative coordinates and the cached element survive resize and sibling insertion", () => {

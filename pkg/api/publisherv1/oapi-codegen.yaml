@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.8.0/configuration-schema.json
+package: publisherv1
+output: openapi.gen.go
+generate:
+  client: true
+  models: true
+  std-http-server: true
+import-mapping:
+  ../../control/v1/openapi.yaml: github.com/tnldotdev/tnl/pkg/api/controlv1

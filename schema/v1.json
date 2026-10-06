@@ -59,7 +59,7 @@
         },
         "feedback": {
           "type": "boolean",
-          "description": "Show the feedback toolbar on eligible tnl dev HTML responses."
+          "description": "Show the feedback toolbar on development pages."
         },
         "tunnel": {
           "allOf": [

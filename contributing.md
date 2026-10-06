@@ -108,7 +108,7 @@ requires a fresh database rather than an upgrade from an older schema.
 
 | Source                                                                                    | Generated output                                                                           |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Five HTTP OpenAPI contracts under `api/*/v1`                                              | `pkg/api/*`                                                                                |
+| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                    |
 | PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                     |
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                       |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/tnl/src/config.gen.ts` |

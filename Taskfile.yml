@@ -147,8 +147,8 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
-      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/feedbacktoolbar/toolbar.js internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json
-      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/feedbacktoolbar/toolbar.js internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json)"
+      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json
+      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json)"
 
   go:format:
     cmds:
@@ -367,7 +367,7 @@ tasks:
   js:test:browser:
     desc: Test the embedded feedback toolbar in Chromium
     cmds:
-      - pnpm exec vitest run --config vitest.toolbar-browser.config.ts
+      - pnpm exec vitest run --config vitest.browser.config.ts
 
   js:build:
     cmds:

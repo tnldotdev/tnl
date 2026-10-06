@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { expect, test } from "vitest";
 import { captureElement, observeActions } from "./evidence.ts";
 import type { Action } from "./model.ts";

@@ -1,5 +1,17 @@
 import { expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createFeedbackAPI } from "./api.ts";
+import { reportInputSchema } from "./model.ts";
+import {
+  FeedbackThread as WireThread,
+  FeedbackEvent as WireEvent,
+} from "../publisherapi/model.gen.ts";
+
+function fixture(name: string): unknown {
+  return JSON.parse(
+    readFileSync(new URL(`../../api/fixtures/publisher/v1/${name}.json`, import.meta.url), "utf8"),
+  );
+}
 
 test("malformed responses are errors, not a silently empty feedback list", async () => {
   const api = createFeedbackAPI(
@@ -53,4 +65,34 @@ test("browser mutations use same-origin cookies, an idempotency key, and an opti
       body: '{"schema_version":1,"type":"thread.reopened"}',
     }),
   );
+});
+
+test("shared Go wire fixtures produce a readable report and a bounded browser submission", async () => {
+  const wire = WireThread.parse(fixture("thread"));
+  const event = WireEvent.parse(fixture("event"));
+  const input = reportInputSchema.parse(fixture("report-request"));
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(wire));
+  const api = createFeedbackAPI(fetcher);
+  const thread = await api.report(input, "fixture-report", new AbortController().signal);
+  expect(thread.report.text).toBe(input.text);
+  expect(thread.scope.page_path).toBe(input.page_path);
+  expect(thread.report.author?.display_name).toBe("Sam");
+  expect(fetcher).toHaveBeenCalledWith(
+    "/__tnl/feedback",
+    expect.objectContaining({
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "fixture-report" },
+      body: JSON.stringify(input),
+    }),
+  );
+  fetcher.mockResolvedValueOnce(Response.json(event));
+  expect(
+    await api.append(
+      wire.id,
+      "reply",
+      event.text ?? "",
+      "fixture-reply",
+      new AbortController().signal,
+    ),
+  ).toMatchObject({ cursor: 5, type: "reply" });
 });

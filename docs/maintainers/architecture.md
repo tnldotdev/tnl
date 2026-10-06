@@ -202,13 +202,14 @@ namespaces.
 
 ## own each api
 
-| Contract                                                       | Implementer                              | Caller and authentication                                                             |
-| -------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control         | CLI and publisher with access or publish-run credentials                              |
-| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority or external authority | CLI sessions and team/domain operations; control uses the hosted secret when external |
-| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control         | Ingress with cluster authentication, or standalone direct calls                       |
-| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control           | Relay with cluster authentication, or standalone direct calls                         |
-| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                        | Control public URL usage worker with a configured bearer token                        |
+| Contract                                                       | Implementer                               | Caller and authentication                                                             |
+| -------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------- |
+| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                              |
+| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority or external authority  | CLI sessions and team/domain operations; control uses the hosted secret when external |
+| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                       |
+| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                         |
+| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                        |
+| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback through public URL IP policy or a current share cookie   |
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.

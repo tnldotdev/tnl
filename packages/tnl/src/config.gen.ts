@@ -10,7 +10,7 @@ export interface TnlConfig {
    */
   team?: string;
   /**
-   * Show the feedback toolbar on eligible tnl dev HTML responses.
+   * Show the feedback toolbar on development pages.
    */
   feedback?: boolean;
   /**

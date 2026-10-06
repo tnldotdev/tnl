@@ -304,7 +304,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	var thread controlv1.FeedbackThread
 	decodeErr = json.NewDecoder(reported.Body).Decode(&thread)
 	reported.Body.Close()
-	if decodeErr != nil || reported.StatusCode != http.StatusOK || thread.SchemaVersion != 1 || thread.CheckoutAtReport.HeadCommit != "" || len(thread.CheckoutAtReport.ChangedFiles) != 0 {
+	if decodeErr != nil || reported.StatusCode != http.StatusOK || thread.SchemaVersion != 1 || thread.SourceAtReport.Complete || thread.SourceAtReport.HeadCommit != "" || len(thread.SourceAtReport.ChangedFiles) != 0 {
 		t.Fatalf("guest feedback = %d, %+v, %v", reported.StatusCode, thread, decodeErr)
 	}
 	stopIntegrationPublisher(t, handle)
