@@ -63,14 +63,14 @@ separate from database migrations, publish run numbers, and mutation revisions.
 ## share a preview
 
 ```text
-tnl share create
-tnl share create web.example.com --expires-in 7d
+tnl share link create
+tnl share link create web.example.com --expires-in 7d
 tnl share list
 tnl share list web.example.com
-tnl share revoke SHARE_ID
+tnl share link revoke SHARE_ID
 ```
 
-Create captures the IDs of all public URLs configured for the worktree at
+Link creation captures the IDs of all public URLs configured for the worktree at
 that time. The optional argument selects the page the link opens; it accepts
 a public URL ID, bare hostname, or HTTPS origin. With one unambiguous page,
 create can select it from the current project. A newly configured public URL
@@ -78,7 +78,7 @@ gets a new link. A new path on an included public URL follows that URL's
 access. List without a selector shows manageable shares in the selected team;
 an optional URL filters to its preview.
 
-Create prints the complete link and a newline on stdout. List and revoke use
+Link creation prints the complete link and a newline on stdout. List and revoke use
 the shared CLI renderer. The CLI generates a high-entropy secret; control
 stores a share with the secret fingerprint, included public URL IDs, creator,
 and expiry.
