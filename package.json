@@ -16,6 +16,7 @@
     "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project internal/feedbacktoolbar/tsconfig.json && tsc --project tsconfig.json"
   },
   "devDependencies": {
+    "@floating-ui/dom": "1.8.0",
     "@medv/finder": "4.0.2",
     "@tanstack/react-query": "5.104.1",
     "@testing-library/preact": "3.2.4",

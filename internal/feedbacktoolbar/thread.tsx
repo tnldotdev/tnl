@@ -4,6 +4,7 @@ import { mutationKey } from "./async.ts";
 import type { BrowserEvent } from "./model.ts";
 import { supportedAnchor } from "./anchors.ts";
 import { useConversation } from "./queries.ts";
+import { EvidenceView } from "./evidence-view.tsx";
 
 const eventLabels = {
   "thread.created": "reported",
@@ -13,7 +14,7 @@ const eventLabels = {
   "thread.reopened": "reopened",
 };
 
-export function ThreadView({ api, id, back }: { api: FeedbackAPI; id: string; back: () => void }) {
+export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   const [text, setText] = useState("");
   const keys = useRef(mutationKey());
   const { query, append, history } = useConversation(api, id);
@@ -33,14 +34,22 @@ export function ThreadView({ api, id, back }: { api: FeedbackAPI; id: string; ba
   }
   return (
     <section aria-label="Feedback thread">
-      <button type="button" onClick={back}>
-        Back to feedback
-      </button>
       {error && <p role="status">{error.message}</p>}
       {!data ? (
         <p role="status">{query.isPending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (
         <>
+          <div class="comment-meta">
+            <span>
+              {data.thread.report.author?.display_name ?? "anonymous"}
+              {data.thread.report.author && !data.thread.report.author.verified && (
+                <small> · unverified</small>
+              )}
+            </span>
+            <time dateTime={data.thread.report.created_at}>
+              {new Date(data.thread.report.created_at).toLocaleString()}
+            </time>
+          </div>
           <h2>{data.thread.report.text}</h2>
           <p>{data.thread.state}</p>
           {anchor?.selection && (
@@ -52,16 +61,7 @@ export function ThreadView({ api, id, back }: { api: FeedbackAPI; id: string; ba
           {data.thread.anchor && !anchor && (
             <p>this anchor format is not supported; the conversation is still available</p>
           )}
-          <details>
-            <summary>Original evidence</summary>
-            <pre>
-              {JSON.stringify(
-                { anchor: data.thread.anchor, evidence: data.thread.evidence },
-                null,
-                2,
-              )}
-            </pre>
-          </details>
+          <EvidenceView evidence={data.thread.evidence} />
           <ol aria-label="History">
             {data.events.map((event) => (
               <li key={event.cursor}>

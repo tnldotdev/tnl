@@ -1,187 +1,138 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { FeedbackAPI } from "./api.ts";
 import { mutationKey } from "./async.ts";
-import { useMutation } from "@tanstack/react-query";
 import { useViewSignal } from "./queries.ts";
-import { beginPicking, captureSelection, type AnchorTarget } from "./anchors.ts";
-import type { Action, Evidence, ReportInput } from "./model.ts";
+import type { AnchorTarget } from "./anchors.ts";
+import { boundedText } from "./evidence.ts";
+import { EvidenceView } from "./evidence-view.tsx";
+import type { Action, Evidence, ReportInput, Thread } from "./model.ts";
 
 export function ReportForm({
   api,
   path,
-  actions,
   document,
-  host,
+  actions,
+  target,
   saved,
+  cancel,
 }: {
   api: FeedbackAPI;
   path: string;
-  actions: () => Action[];
   document: Document;
-  host: Element;
-  saved: (id: string) => void;
+  actions: () => Action[];
+  target?: AnchorTarget | undefined;
+  saved: (thread: Thread) => void;
+  cancel: () => void;
 }) {
   const [text, setText] = useState("");
   const [name, setName] = useState("");
-  const [target, setTarget] = useState<AnchorTarget>();
-  const [picking, setPicking] = useState(false);
-  const [includeEvidence, setIncludeEvidence] = useState(true);
-  const [preview, setPreview] = useState<ReportInput>();
+  const [includeActivity, setIncludeActivity] = useState(true);
+  const [activity] = useState(() => actions().slice(-20));
+  const [draftKey] = useState(() => crypto.randomUUID());
   const key = useRef(mutationKey());
   const signal = useViewSignal();
-  useEffect(
-    () =>
-      picking
-        ? beginPicking(
-            document,
-            host,
-            (selected) => {
-              setTarget(selected);
-              setPicking(false);
-            },
-            () => setPicking(false),
-          )
-        : undefined,
-    [picking, document, host],
-  );
-
-  const review = useMutation({
-    mutationFn: async () => {
-      if (new TextEncoder().encode(text.trim()).length > 4000)
-        throw new Error("feedback must be at most 4000 bytes");
-      if (new TextEncoder().encode(name.trim()).length > 64)
-        throw new Error("the name must be at most 64 bytes");
-      const evidence: Evidence = includeEvidence
-        ? {
-            schema_version: 1,
-            actions: actions().slice(-20),
-            failed_requests: await api.evidence(signal),
-          }
-        : { schema_version: 1, actions: [], failed_requests: [] };
-      if (target?.element) evidence.element = target.element;
-      if (signal.aborted) throw new DOMException("view closed", "AbortError");
-      return {
-        schema_version: 1,
-        text: text.trim(),
-        display_name: name.trim(),
-        page_path: path,
-        ...(target ? { anchor: target.anchor } : {}),
-        evidence,
-      } satisfies ReportInput;
-    },
-    onSuccess: setPreview,
+  const failures = useQuery({
+    queryKey: ["draft-context", draftKey],
+    queryFn: ({ signal }) => api.evidence(signal),
+    enabled: includeActivity,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
+  const evidence: Evidence = {
+    schema_version: 1,
+    ...(target?.element ? { element: target.element } : {}),
+    actions: includeActivity ? activity : [],
+    failed_requests: includeActivity ? (failures.data ?? []) : [],
+  };
   const send = useMutation({
-    mutationFn: (input: ReportInput) => api.report(input, key.current(input), signal),
+    mutationFn: async (input: ReportInput) => {
+      if (new TextEncoder().encode(input.text).length > 4000)
+        throw new Error("feedback must be at most 4000 bytes");
+      if (new TextEncoder().encode(input.display_name).length > 64)
+        throw new Error("the name must be at most 64 bytes");
+      return api.report(input, key.current(input), signal);
+    },
     onSuccess: (thread) => {
-      if (signal.aborted) return;
-      setText("");
-      setTarget(undefined);
-      setPreview(undefined);
-      key.current = mutationKey();
-      saved(thread.id);
+      if (!signal.aborted) saved(thread);
     },
   });
-  const pending = review.isPending || send.isPending;
-  const error = send.error ?? review.error;
+  function submit(): void {
+    send.mutate({
+      schema_version: 1,
+      text: text.trim(),
+      display_name: name.trim(),
+      page_path: path,
+      page_title: boundedText(document.title, 256),
+      ...(target ? { anchor: target.anchor } : {}),
+      evidence,
+    });
+  }
   return (
     <section aria-label="New feedback">
-      <h2>Leave feedback</h2>
-      {error && <p role="alert">{error.message}</p>}
-      {preview ? (
-        <>
-          <p>{preview.text}</p>
-          <details open>
-            <summary>Evidence to send</summary>
-            <pre>
-              {JSON.stringify({ anchor: preview.anchor, evidence: preview.evidence }, null, 2)}
-            </pre>
-          </details>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setPreview(undefined);
-              send.reset();
-            }}
-          >
-            Edit feedback
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              send.mutate(preview);
-            }}
-          >
-            {pending ? "Sending…" : "Send feedback"}
-          </button>
-        </>
-      ) : (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            review.mutate();
-          }}
-        >
-          <fieldset disabled={pending}>
-            <label>
-              Feedback
-              <textarea
-                required
-                maxLength={4000}
-                value={text}
-                onInput={(event) => setText(event.currentTarget.value)}
-              />
-            </label>
-            <label>
-              Name (optional, unverified)
-              <input
-                maxLength={64}
-                value={name}
-                onInput={(event) => setName(event.currentTarget.value)}
-              />
-            </label>
-            <p>
-              {!target
-                ? "Feedback on this page"
-                : "Pinned: " + (target.element.label || target.element.role)}
-            </p>
-            <button type="button" onClick={() => setPicking(!picking)}>
-              {picking ? "Cancel selection" : "Select an element"}
+      {target?.anchor.selection && (
+        <blockquote>
+          <p>{target.anchor.selection.text}</p>
+        </blockquote>
+      )}
+      {!target && <small>on this page</small>}
+      {send.error && <p role="alert">{send.error.message}</p>}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <fieldset disabled={send.isPending}>
+          <label>
+            <span class="sr-only">Feedback</span>
+            <textarea
+              autoFocus
+              required
+              maxLength={4000}
+              placeholder="Leave feedback…"
+              value={text}
+              onInput={(event) => setText(event.currentTarget.value)}
+            />
+          </label>
+          <label class="display-name">
+            Name (optional, unverified)
+            <input
+              maxLength={64}
+              placeholder="name (optional)"
+              value={name}
+              onInput={(event) => setName(event.currentTarget.value)}
+            />
+          </label>
+          <EvidenceView evidence={evidence} />
+          <label class="activity-choice">
+            <input
+              type="checkbox"
+              checked={includeActivity}
+              onChange={(event) => setIncludeActivity(event.currentTarget.checked)}
+            />
+            Include activity
+          </label>
+          {includeActivity && failures.isPending && <small>loading request context…</small>}
+          {includeActivity && failures.error && (
+            <small>request context unavailable; omit activity to send</small>
+          )}
+          <div class="composer-actions">
+            <button type="button" onClick={cancel}>
+              cancel
             </button>
             <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                const selected = captureSelection(document);
-                if (selected) setTarget(selected);
-              }}
+              type="submit"
+              disabled={
+                !text.trim() || (includeActivity && (failures.isPending || failures.isError))
+              }
             >
-              Use selected text
+              {send.isPending ? "sending…" : "send feedback"}
             </button>
-            {target && (
-              <button type="button" onClick={() => setTarget(undefined)}>
-                Use page instead
-              </button>
-            )}
-            {picking && (
-              <p role="status">Select an element on the page, or press Escape to cancel.</p>
-            )}
-            <label>
-              <input
-                type="checkbox"
-                checked={includeEvidence}
-                onChange={(event) => setIncludeEvidence(event.currentTarget.checked)}
-              />
-              Include recent actions and failed requests
-            </label>
-            <button type="submit" disabled={!text.trim()}>
-              Review feedback
-            </button>
-          </fieldset>
-        </form>
-      )}
+          </div>
+        </fieldset>
+      </form>
     </section>
   );
 }

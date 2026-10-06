@@ -154,13 +154,23 @@ an element while it matches confidently; threads with changed or missing
 elements remain in the page's feedback list with their original evidence.
 There is one toolbar, with no separate implementer mode or browser handoff.
 
+`[ comment ]` starts placement; selecting text offers a small comment indicator
+without interfering with selection or copying. Placement opens an anchored local
+draft. Nothing is stored until the first message is sent. Conversations stay in
+anchored popovers, with previous/next navigation and explicit resolve/reopen.
+Pins show message counts, a short hover/focus preview, and `[x]` for selected
+resolved feedback. The feedback list filters this page or all pages on the
+current hostname, and open, resolved, or all threads. Other-page threads offer a
+page link. Missing targets keep their conversations and original quotes readable.
+The toolbar has no keyboard shortcuts or reattachment tool.
+
 The feedback toolbar keeps a short, in-browser trail of semantic clicks, submits,
 and navigations. At submission it prepares a bounded, sanitized HTML excerpt
 around the selected element, including its role, label, and useful
 identifiers. The publisher keeps a short per-browser trail of failed request
-methods, paths, statuses, and durations. The reviewer sees the evidence
-bundle before posting it. Control retains the submitted bundle with the
-immutable report.
+methods, paths, statuses, and durations. A small disclosure shows the context
+before posting, and the reviewer can omit activity. Control retains the submitted
+bundle with the immutable report.
 
 ## let an agent inspect and follow up
 
@@ -196,11 +206,14 @@ stays in place when an update is appended:
   "schema_version": 1,
   "id": "fb_123",
   "state": "open",
+  "message_count": 2,
+  "latest_event_cursor": 41,
   "scope": {
     "preview_id": "pv_0123456789abcdefghijkl",
     "public_url_id": "url_789",
     "publish_run_number": 12,
     "page_path": "/settings/profile",
+    "page_title": "profile settings",
     "service": "web"
   },
   "report": {

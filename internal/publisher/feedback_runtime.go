@@ -264,12 +264,23 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 
 func (f *feedbackRuntime) list(response http.ResponseWriter, request *http.Request, access controlv1.FeedbackReviewerAccess) {
 	path := request.URL.Query().Get("path")
-	if path == "" || len(path) > 2048 || path[0] != '/' {
+	if len(path) > 2048 || path != "" && path[0] != '/' {
 		http.Error(response, "provide the page path", http.StatusBadRequest)
 		return
 	}
 	input := controlv1.PreviewPageFeedbackRequest{
-		PreviewId: f.previewID, PublishRunNumber: int64(f.version), PagePath: path, Access: access,
+		PreviewId: f.previewID, PublishRunNumber: int64(f.version), Access: access,
+	}
+	if path != "" {
+		input.PagePath = &path
+	}
+	if state := request.URL.Query().Get("state"); state != "" {
+		if state != "open" && state != "resolved" {
+			http.Error(response, "invalid feedback state", http.StatusBadRequest)
+			return
+		}
+		value := controlv1.FeedbackThreadState(state)
+		input.State = &value
 	}
 	if cursor := request.URL.Query().Get("cursor"); cursor != "" {
 		if !opaqueid.Valid(cursor, opaqueid.FeedbackPrefix) {
@@ -288,6 +299,7 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		Text          string                     `json:"text"`
 		DisplayName   string                     `json:"display_name"`
 		PagePath      string                     `json:"page_path"`
+		PageTitle     *string                    `json:"page_title,omitempty"`
 		Anchor        *controlv1.FeedbackAnchor  `json:"anchor,omitempty"`
 		Evidence      controlv1.FeedbackEvidence `json:"evidence"`
 	}
@@ -306,7 +318,8 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		return
 	}
 	body := controlv1.CreateFeedbackReportRequest{
-		Access: access, CheckoutAtReport: marker, Anchor: input.Anchor,
+		PageTitle: input.PageTitle,
+		Access:    access, CheckoutAtReport: marker, Anchor: input.Anchor,
 		Evidence: input.Evidence, PagePath: input.PagePath, PreviewId: f.previewID,
 		PublishRunNumber: int64(f.version), Service: f.service,
 	}

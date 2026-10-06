@@ -15,7 +15,12 @@ import {
 } from "./model.ts";
 
 export interface FeedbackAPI {
-  list(path: string, cursor: string | undefined, signal: AbortSignal): Promise<ThreadPage>;
+  list(
+    path: string | undefined,
+    cursor: string | undefined,
+    signal: AbortSignal,
+    state?: "open" | "resolved",
+  ): Promise<ThreadPage>;
   inspect(id: string, signal: AbortSignal): Promise<Thread>;
   events(id: string, cursor: number | undefined, signal: AbortSignal): Promise<EventPage>;
   evidence(signal: AbortSignal): Promise<Evidence["failed_requests"]>;
@@ -61,9 +66,14 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
     return parsed.data;
   }
   return {
-    list: (path, cursor, signal) =>
+    list: (path, cursor, signal, state) =>
       request(
-        "?" + new URLSearchParams({ path, ...(cursor ? { cursor } : {}) }),
+        "?" +
+          new URLSearchParams({
+            ...(path ? { path } : {}),
+            ...(cursor ? { cursor } : {}),
+            ...(state ? { state } : {}),
+          }),
         threadPageSchema,
         signal,
       ),

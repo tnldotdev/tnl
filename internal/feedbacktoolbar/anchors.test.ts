@@ -109,6 +109,8 @@ test("unsupported anchor versions preserve readable comments and fail only place
         threads: [
           {
             schema_version: 1,
+            message_count: 1,
+            latest_event_cursor: 1,
             id: "fb_0123456789abcdefghijkl",
             state: "open",
             report: { text: "Still readable", created_at: "2026-10-05T00:00:00Z" },

@@ -191,36 +191,3 @@ export function restoreAnchor(
     return { element, textChanged: true };
   }
 }
-
-export function beginPicking(
-  document: Document,
-  host: Element,
-  picked: (target: AnchorTarget) => void,
-  canceled: () => void,
-): () => void {
-  function click(event: MouseEvent): void {
-    if (event.composedPath().includes(host) || !(event.target instanceof Element)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const target = capturePoint(event.target, event.clientX, event.clientY);
-    if (target) {
-      stop();
-      picked(target);
-    }
-  }
-  function key(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      stop();
-      canceled();
-    }
-  }
-  function stop(): void {
-    document.removeEventListener("click", click, true);
-    document.removeEventListener("keydown", key, true);
-  }
-  document.addEventListener("click", click, true);
-  document.addEventListener("keydown", key, true);
-  return stop;
-}

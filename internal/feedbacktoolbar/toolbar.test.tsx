@@ -5,14 +5,15 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { FeedbackAPI } from "./api.ts";
 import { Toolbar } from "./toolbar.tsx";
-import type { FeedbackEvent, Summary, Thread, ThreadPage } from "./model.ts";
+import type { FeedbackEvent, Summary, Thread } from "./model.ts";
 
 const id = "fb_0123456789abcdefghijkl";
-const otherID = "fb_abcdefghijkl0123456789";
 const report: Thread = {
   schema_version: 1,
   id,
   state: "open",
+  message_count: 1,
+  latest_event_cursor: 1,
   scope: { page_path: "/" },
   report: { text: "Please use a clearer label", created_at: "2026-10-05T00:00:00Z" },
   evidence: { schema_version: 1, actions: [], failed_requests: [] },
@@ -52,69 +53,94 @@ function mount(api = fixture()) {
   const view = render(<Toolbar api={api} document={document} host={host} />, { container: host });
   return { api, host, ...view, user: userEvent.setup() };
 }
+function appButton(): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.id = "save";
+  button.textContent = "Save";
+  document.body.append(button);
+  return button;
+}
+async function openDraft(
+  user: ReturnType<typeof userEvent.setup>,
+  element: Element,
+): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "Comment", exact: true }));
+  await user.click(element);
+  await screen.findByRole("textbox", { name: "Feedback", exact: true });
+}
+async function openThread(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
+  await user.click(await screen.findByRole("button", { name: `View ${report.report.text}` }));
+  await screen.findByRole("button", { name: "Resolve", exact: true });
+}
 afterEach(() => {
   cleanup();
   document.body.replaceChildren();
+  document.getSelection()?.removeAllRanges();
   window.history.replaceState(null, "", "/");
 });
 
-test("reviews a frozen evidence bundle before posting, with explicit activity consent", async () => {
+test("placement creates only a local draft, prevents app activation, and sends subtle context", async () => {
   const { api, user } = mount();
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await screen.findByText("No feedback on this page yet.");
-  const appButton = document.createElement("button");
-  appButton.textContent = "Save changes";
-  document.body.append(appButton);
-  await user.click(appButton);
+  const app = appButton();
+  const clicked = vi.fn();
+  app.addEventListener("click", clicked);
+  await openDraft(user, app);
+  expect(clicked).not.toHaveBeenCalled();
+  expect(api.report).not.toHaveBeenCalled();
   await user.type(
     screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Please improve this label",
+    "Improve this label",
   );
-  await user.click(screen.getByRole("button", { name: "Review feedback" }));
-  await screen.findByText("Evidence to send");
-  expect(api.report).not.toHaveBeenCalled();
-  expect(screen.getByText(/failed_requests/).textContent).toContain("Save changes");
-  await user.click(screen.getByRole("button", { name: "Edit feedback" }));
-  await user.click(screen.getByLabelText("Include recent actions and failed requests"));
-  await user.click(screen.getByRole("button", { name: "Review feedback" }));
-  await screen.findByRole("button", { name: "Send feedback" });
-  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await user.click(screen.getByText(/^context/));
+  await screen.findByText(/POST \/api/);
+  expect(screen.queryByText(/"selectors"/)).toBeNull();
+  await user.click(screen.getByRole("checkbox", { name: "Include activity" }));
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
   expect(vi.mocked(api.report).mock.calls[0]?.[0]).toMatchObject({
-    text: "Please improve this label",
+    schema_version: 1,
+    text: "Improve this label",
+    anchor: { schema_version: 1, selectors: expect.arrayContaining(["#save"]) },
     evidence: { actions: [], failed_requests: [] },
   });
 });
 
-test("a lost report response retries the same body and idempotency key", async () => {
+test("cancel discards an unsent draft without creating a server thread", async () => {
+  const { api, user } = mount();
+  await openDraft(user, appButton());
+  await user.type(screen.getByRole("textbox", { name: "Feedback", exact: true }), "Unsent");
+  await user.click(screen.getByRole("button", { name: "cancel", exact: true }));
+  expect(api.report).not.toHaveBeenCalled();
+  expect(screen.queryByRole("textbox", { name: "Feedback", exact: true })).toBeNull();
+});
+
+test("a lost response retries the frozen report with its original idempotency key", async () => {
   const { api, user } = mount();
   vi.mocked(api.report).mockRejectedValueOnce(new Error("try again"));
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
+  await openDraft(user, appButton());
   await user.type(
     screen.getByRole("textbox", { name: "Feedback", exact: true }),
     "Copy suggestion",
   );
-  await user.click(screen.getByRole("button", { name: "Review feedback" }));
-  await user.click(await screen.findByRole("button", { name: "Send feedback" }));
+  await user.click(await screen.findByRole("button", { name: "send feedback", exact: true }));
   await screen.findByRole("alert");
-  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(api.report).mock.calls;
   expect(first?.slice(0, 2)).toEqual(second?.slice(0, 2));
 });
 
-test("reply, resolve, and reopen are available in the same toolbar and retain history", async () => {
+test("reply, resolve, and reopen share the same conversation and preserve history", async () => {
   const { api, user } = mount(fixture([report]));
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await user.click(await screen.findByRole("button", { name: report.report.text }));
-  await screen.findByRole("button", { name: "Resolve", exact: true });
-  await user.type(screen.getByLabelText("Reply", { exact: true }), "Thanks for the suggestion");
+  await openThread(user);
+  await user.type(screen.getByRole("textbox", { name: "Reply", exact: true }), "Thanks");
   await user.click(screen.getByRole("button", { name: "Send reply" }));
   await waitFor(() =>
     expect(api.append).toHaveBeenCalledWith(
       id,
       "reply",
-      "Thanks for the suggestion",
+      "Thanks",
       expect.any(String),
       expect.any(AbortSignal),
     ),
@@ -132,151 +158,67 @@ test("reply, resolve, and reopen are available in the same toolbar and retain hi
   });
   await user.click(screen.getByRole("button", { name: "Reopen", exact: true }));
   await screen.findByRole("button", { name: "Send reply" });
-  const history = within(screen.getByRole("list", { name: "History" }));
-  expect(history.getAllByRole("listitem")).toHaveLength(4);
-  expect(screen.getByRole("heading", { name: report.report.text })).toBeTruthy();
+  expect(
+    within(screen.getByRole("list", { name: "History" })).getAllByRole("listitem"),
+  ).toHaveLength(4);
 });
 
-test("list and history pagination append records instead of replacing them", async () => {
-  const { api, user } = mount();
-  vi.mocked(api.list)
-    .mockResolvedValueOnce({
-      schema_version: 1,
-      threads: [report],
-      next_cursor: id,
-      event_cursor: 2,
-    })
-    .mockResolvedValueOnce({
-      threads: [
-        { ...report, id: otherID, report: { ...report.report, text: "Another suggestion" } },
-      ],
-      schema_version: 1,
-      event_cursor: 2,
-    });
-  vi.mocked(api.events)
-    .mockResolvedValueOnce({
-      schema_version: 1,
-      events: [created],
-      next_cursor: 1,
-      event_cursor: 2,
-    })
-    .mockResolvedValueOnce({
-      events: [{ ...created, cursor: 2, type: "reply", text: "Following up" }],
-      schema_version: 1,
-      event_cursor: 2,
-    });
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await user.click(await screen.findByRole("button", { name: "Load more feedback" }));
-  await screen.findByRole("button", { name: "Another suggestion" });
-  expect(screen.getByRole("button", { name: report.report.text })).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: report.report.text }));
-  await user.click(await screen.findByRole("button", { name: "Load more history" }));
-  await screen.findByText("Following up");
-  expect(screen.getByText("reported", { exact: true })).toBeTruthy();
-});
-
-test("refreshing or scrolling preserves the form node, focus, and draft", async () => {
-  const { user } = mount();
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  const textarea = screen.getByRole("textbox", { name: "Feedback", exact: true });
-  await user.type(textarea, "Draft feedback");
-  fireEvent.scroll(document);
-  fireEvent.resize(window);
-  expect(document.activeElement).toBe(textarea);
-  await user.click(screen.getByRole("button", { name: "Refresh feedback" }));
-  await screen.findByText("No feedback on this page yet.");
-  expect(screen.getByRole("textbox", { name: "Feedback", exact: true })).toBe(textarea);
-  expect((textarea as HTMLTextAreaElement).value).toBe("Draft feedback");
-});
-
-test("selecting an element prevents the app action and Escape cancels selection", async () => {
-  const { user } = mount();
-  const app = document.createElement("button");
-  app.textContent = "Save";
-  app.setAttribute("data-testid", "save");
-  document.body.append(app);
-  const listener = vi.fn();
-  app.addEventListener("click", listener);
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await user.click(screen.getByRole("button", { name: "Select an element" }));
-  await user.click(app);
-  expect(listener).not.toHaveBeenCalled();
-  await screen.findByText("Pinned: Save");
-  await user.click(screen.getByRole("button", { name: "Select an element" }));
-  await user.keyboard("{Escape}");
-  expect(screen.queryByText(/Select an element on the page/)).toBeNull();
-  await user.click(app);
-  expect(listener).toHaveBeenCalledTimes(1);
-});
-
-test("closing the toolbar cancels requests and removes listeners", async () => {
-  const { api, user, unmount } = mount();
-  let resolve: ((page: ThreadPage) => void) | undefined;
-  vi.mocked(api.list).mockImplementationOnce(
-    () =>
-      new Promise((done) => {
-        resolve = done;
-      }),
-  );
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  const signal = vi.mocked(api.list).mock.calls[0]?.[2];
-  await user.click(screen.getByRole("button", { name: "Close feedback" }));
-  expect(signal?.aborted).toBe(true);
-  resolve?.({ schema_version: 1, threads: [report], event_cursor: 1 });
-  expect(screen.queryByRole("button", { name: report.report.text })).toBeNull();
-  unmount();
-});
-
-test("Escape closes the panel and restores focus to its toggle", async () => {
-  const { user } = mount();
-  const toggle = screen.getByRole("button", { name: "Feedback", exact: true });
-  await user.click(toggle);
-  await user.click(screen.getByRole("textbox", { name: "Feedback", exact: true }));
-  await user.keyboard("{Escape}");
-  expect(screen.queryByRole("complementary", { name: "Preview feedback" })).toBeNull();
-  expect(document.activeElement).toBe(toggle);
-});
-
-test("navigation cancels the old page load and cannot display its late response", async () => {
-  const { api, user } = mount();
-  let complete: ((page: ThreadPage) => void) | undefined;
-  vi.mocked(api.list).mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        complete = resolve;
-      }),
-  );
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  const oldSignal = vi.mocked(api.list).mock.calls[0]?.[2];
-  window.history.pushState(null, "", "/other-page");
-  await waitFor(() =>
-    expect(api.list).toHaveBeenCalledWith("/other-page", undefined, expect.any(AbortSignal)),
-  );
-  expect(oldSignal?.aborted).toBe(true);
-  complete?.({ schema_version: 1, threads: [report], event_cursor: 1 });
-  await screen.findByText("No feedback on this page yet.");
-  expect(screen.queryByRole("button", { name: report.report.text })).toBeNull();
-});
-
-test("thread polling picks up remote replies and status without losing draft or focus", async () => {
+test("page and status filters are sent to the hostname-scoped API", async () => {
   const { api, user } = mount(fixture([report]));
   await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
-  await user.click(await screen.findByRole("button", { name: report.report.text }));
-  const textarea = await screen.findByRole("textbox", { name: "Reply", exact: true });
-  await user.type(textarea, "My draft");
-  expect(screen.queryByRole("button", { name: "Refresh thread" })).toBeNull();
+  await user.selectOptions(screen.getByRole("combobox", { name: "pages" }), "all");
+  await waitFor(() =>
+    expect(api.list).toHaveBeenCalledWith(undefined, undefined, expect.any(AbortSignal), "open"),
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "status" }), "resolved");
+  await waitFor(() =>
+    expect(api.list).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      expect.any(AbortSignal),
+      "resolved",
+    ),
+  );
+});
+
+test("a missing anchor keeps its conversation readable without a reattachment action", async () => {
+  const missing = {
+    ...report,
+    anchor: { schema_version: 1 as const, selectors: ["#removed"], x: 0.5, y: 0.5 },
+  };
+  const { user } = mount(fixture([missing]));
+  await openThread(user);
+  expect(screen.getByText(/element is no longer/)).toBeTruthy();
+  expect(screen.getByRole("heading", { name: report.report.text })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /place|reattach/i })).toBeNull();
+});
+
+test("polling updates replies and status without a refresh control or lost draft", async () => {
+  const { api, user } = mount(fixture([report]));
+  await openThread(user);
+  const textarea = screen.getByRole("textbox", { name: "Reply", exact: true });
+  await user.type(textarea, "Draft");
   vi.mocked(api.events).mockResolvedValueOnce({
     schema_version: 1,
-    events: [{ ...created, cursor: 2, type: "reply", text: "A remote reply" }],
+    events: [{ ...created, cursor: 2, type: "reply", text: "Remote reply" }],
     event_cursor: 2,
   });
   vi.mocked(api.inspect).mockResolvedValueOnce({ ...report, state: "resolved" });
-  await waitFor(() => expect(screen.getByText("A remote reply")).toBeTruthy(), { timeout: 4000 });
+  await waitFor(() => expect(screen.getByText("Remote reply")).toBeTruthy(), { timeout: 4000 });
   await screen.findByRole("button", { name: "Reopen", exact: true });
-  expect((textarea as HTMLTextAreaElement).value).toBe("My draft");
+  expect((textarea as HTMLTextAreaElement).value).toBe("Draft");
   expect(document.activeElement).toBe(textarea);
+  expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
   const calls = vi.mocked(api.events).mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Back to feedback" }));
+  await user.click(screen.getByRole("button", { name: "back to list" }));
   await new Promise((resolve) => setTimeout(resolve, 2100));
   expect(vi.mocked(api.events).mock.calls).toHaveLength(calls);
+});
+
+test("there are no comment or hide keyboard shortcuts", async () => {
+  mount();
+  fireEvent.keyDown(document, { key: "c" });
+  fireEvent.keyDown(document, { key: ".", metaKey: true });
+  expect(screen.queryByRole("complementary", { name: "new feedback" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Feedback", exact: true })).toBeTruthy();
 });

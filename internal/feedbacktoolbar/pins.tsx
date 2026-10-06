@@ -1,20 +1,34 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Summary } from "./model.ts";
 import { restoreAnchor, supportedAnchor, type ResolvedAnchor } from "./anchors.ts";
+import { Popover } from "./popover.tsx";
 
 export function Pins({
   document,
   threads,
   select,
+  selectedId,
 }: {
   document: Document;
   threads: Summary[];
   select: (id: string) => void;
+  selectedId?: string | undefined;
 }) {
   const cache = useRef(new Map<string, ResolvedAnchor>());
+  const [preview, setPreview] = useState<string>();
+  const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  function show(id: string): void {
+    clearTimeout(closing.current);
+    setPreview(id);
+  }
+  function hide(): void {
+    clearTimeout(closing.current);
+    closing.current = setTimeout(() => setPreview(undefined), 150);
+  }
+  useEffect(() => () => clearTimeout(closing.current), []);
   const [positions, setPositions] = useState<
     {
-      id: string;
+      thread: Summary;
       top: number;
       left: number;
       changed: boolean;
@@ -24,13 +38,15 @@ export function Pins({
   useEffect(() => {
     const window = document.defaultView;
     if (!window) return;
+    const ids = new Set(threads.map((thread) => thread.id));
+    for (const id of cache.current.keys()) if (!ids.has(id)) cache.current.delete(id);
     let frame = 0;
     const update = (): void => {
       frame = 0;
       setPositions(
         threads.flatMap((thread) => {
           const anchor = supportedAnchor(thread.anchor);
-          if (thread.state === "resolved" || !anchor) return [];
+          if ((thread.state === "resolved" && thread.id !== selectedId) || !anchor) return [];
           const restored = restoreAnchor(document, anchor, cache.current.get(thread.id));
           if (!restored) return [];
           cache.current.set(thread.id, restored);
@@ -49,7 +65,7 @@ export function Pins({
           const point = rectangles[0];
           return [
             {
-              id: thread.id,
+              thread,
               top: point?.top ?? rect.top + anchor.y * rect.height,
               left: point?.left ?? rect.left + anchor.x * rect.width,
               changed: restored.textChanged,
@@ -78,11 +94,11 @@ export function Pins({
       window.removeEventListener("resize", schedule);
       window.cancelAnimationFrame(frame);
     };
-  }, [document, threads]);
+  }, [document, threads, selectedId]);
   return (
     <>
-      {positions.map((position, index) => (
-        <div key={position.id}>
+      {positions.map((position) => (
+        <div key={position.thread.id}>
           {position.rectangles.map((rect, index) => (
             <span
               key={index}
@@ -101,7 +117,8 @@ export function Pins({
           <button
             type="button"
             class="pin"
-            aria-label="Show pinned feedback"
+            aria-label={"Show pinned feedback: " + position.thread.report.text}
+            aria-pressed={position.thread.id === selectedId}
             title={
               position.changed
                 ? "text changed; original quote is in the conversation"
@@ -113,10 +130,48 @@ export function Pins({
                 button.style.left = position.left + "px";
               }
             }}
-            onClick={() => select(position.id)}
+            onMouseEnter={() => show(position.thread.id)}
+            onMouseLeave={hide}
+            onFocus={() => show(position.thread.id)}
+            onBlur={hide}
+            onClick={() => {
+              setPreview(undefined);
+              select(position.thread.id);
+            }}
           >
-            [{index + 1}]
+            [
+            {position.thread.state === "resolved"
+              ? "x"
+              : position.thread.message_count > 9
+                ? "9+"
+                : position.thread.message_count}
+            ]
           </button>
+          {preview === position.thread.id && preview !== selectedId && (
+            <Popover
+              document={document}
+              anchor={position.thread.anchor}
+              fallback={document.body}
+              title="feedback preview"
+              entered={() => show(position.thread.id)}
+              left={hide}
+            >
+              <div class="comment-meta">
+                <span>{position.thread.report.author?.display_name ?? "anonymous"}</span>
+                <span>
+                  {position.thread.message_count}{" "}
+                  {position.thread.message_count === 1 ? "message" : "messages"}
+                </span>
+              </div>
+              <p class="pin-preview-text">{position.thread.report.text}</p>
+              {supportedAnchor(position.thread.anchor)?.selection && (
+                <blockquote class="pin-preview-text">
+                  {supportedAnchor(position.thread.anchor)?.selection?.text}
+                </blockquote>
+              )}
+              {position.changed && <small>text changed; the original quote is still saved</small>}
+            </Popover>
+          )}
         </div>
       ))}
     </>

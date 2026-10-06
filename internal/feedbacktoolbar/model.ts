@@ -53,14 +53,17 @@ export const evidenceSchema = z.object({
 });
 export const summarySchema = z.object({
   schema_version: z.literal(1),
+  message_count: z.int().check(z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
+  latest_event_cursor: cursor(),
   id: feedbackID,
   state: z.enum(["open", "resolved"]),
   report: z.object({
     text: text(4000).check(z.minLength(1)),
     created_at: z.iso.datetime({ offset: true }),
+    author: z.optional(z.object({ display_name: text(64), verified: z.boolean() })),
   }),
   anchor: z.optional(z.union([anchorSchema, unsupportedAnchorSchema])),
-  scope: z.object({ page_path: path() }),
+  scope: z.object({ page_path: path(), page_title: z.optional(text(256)) }),
 });
 export const threadSchema = z.extend(summarySchema, { evidence: evidenceSchema });
 export const eventSchema = z.object({
@@ -102,6 +105,7 @@ export type ReportInput = {
   text: string;
   display_name: string;
   page_path: string;
+  page_title?: string | undefined;
   anchor?: Anchor | undefined;
   evidence: Evidence;
 };

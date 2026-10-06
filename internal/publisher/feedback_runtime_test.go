@@ -16,13 +16,15 @@ import (
 
 type feedbackControlStub struct {
 	event controlv1.AppendReviewerFeedbackEventRequest
+	page  controlv1.PreviewPageFeedbackRequest
 }
 
 func (*feedbackControlStub) CreateFeedbackReport(context.Context, string, string, controlv1.CreateFeedbackReportRequest, credentials.PublishRunToken) (controlv1.FeedbackThread, error) {
 	return controlv1.FeedbackThread{}, nil
 }
 
-func (*feedbackControlStub) ListPreviewPageFeedback(context.Context, string, controlv1.PreviewPageFeedbackRequest, credentials.PublishRunToken) (controlv1.FeedbackThreadPage, error) {
+func (s *feedbackControlStub) ListPreviewPageFeedback(_ context.Context, _ string, body controlv1.PreviewPageFeedbackRequest, _ credentials.PublishRunToken) (controlv1.FeedbackThreadPage, error) {
+	s.page = body
 	return controlv1.FeedbackThreadPage{Threads: []controlv1.FeedbackThreadSummary{}, EventCursor: 0}, nil
 }
 
@@ -132,5 +134,25 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 	runtime.handle(response, request, true)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("missing preview access accepted: %d", response.Code)
+	}
+}
+
+func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
+	for _, path := range []string{"/__tnl/feedback?state=resolved", "/__tnl/feedback?state=resolved&path=%2Fsettings"} {
+		client := &feedbackControlStub{}
+		runtime := &feedbackRuntime{client: client, runID: "pr_run", version: 2, previewID: "pv_0123456789abcdefghijkl"}
+		request := httptest.NewRequest(http.MethodGet, path+"&preview_id=other&public_url_id=other", nil)
+		response := httptest.NewRecorder()
+		runtime.handle(response, request, false)
+		if response.Code != http.StatusOK || client.page.PreviewId != runtime.previewID || client.page.PublishRunNumber != 2 || !client.page.Access.AllowedIp || client.page.State == nil || *client.page.State != controlv1.Resolved {
+			t.Fatalf("feedback list escaped publisher scope: %d, %+v", response.Code, client.page)
+		}
+		if strings.Contains(path, "path=") {
+			if client.page.PagePath == nil || *client.page.PagePath != "/settings" {
+				t.Fatalf("page filter = %v", client.page.PagePath)
+			}
+		} else if client.page.PagePath != nil {
+			t.Fatalf("all-pages filter = %v", client.page.PagePath)
+		}
 	}
 }

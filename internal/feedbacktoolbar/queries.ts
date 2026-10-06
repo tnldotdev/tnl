@@ -9,12 +9,18 @@ export function useViewSignal(): AbortSignal {
   return controller.current.signal;
 }
 
-export function usePageFeedback(api: FeedbackAPI, path: string) {
+export function usePageFeedback(
+  api: FeedbackAPI,
+  path: string | undefined,
+  state?: "open" | "resolved",
+) {
   return useInfiniteQuery({
-    queryKey: ["feedback-page", path],
+    queryKey: ["feedback-page", path ?? "all-pages", state ?? "all-states"],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam, signal }) => {
-      const page = await api.list(path, pageParam, signal);
+      const page = state
+        ? await api.list(path, pageParam, signal, state)
+        : await api.list(path, pageParam, signal);
       if (pageParam && page.next_cursor === pageParam)
         throw new Error("the server repeated a feedback page");
       return page;
@@ -78,11 +84,20 @@ export function useConversation(api: FeedbackAPI, id: string) {
               thread: {
                 ...previous.thread,
                 state:
-                  event.type === "thread.resolved"
-                    ? "resolved"
-                    : event.type === "thread.reopened"
-                      ? "open"
-                      : previous.thread.state,
+                  event.cursor <= previous.thread.latest_event_cursor
+                    ? previous.thread.state
+                    : event.type === "thread.resolved"
+                      ? "resolved"
+                      : event.type === "thread.reopened"
+                        ? "open"
+                        : previous.thread.state,
+                message_count:
+                  previous.thread.message_count +
+                  (event.cursor > previous.thread.latest_event_cursor &&
+                  (event.type === "reply" || event.type === "update")
+                    ? 1
+                    : 0),
+                latest_event_cursor: Math.max(previous.thread.latest_event_cursor, event.cursor),
               },
               events: mergeEvents(previous.events, [event]),
             }
