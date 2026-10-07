@@ -148,7 +148,7 @@ func TestFailedActivationKeepsReadyPublicURLsAndBoundedPublisherErrors(t *testin
 		recorder.Report(0, errors.New("QUIC timeout"))
 	}
 	observed, dropped := recorder.Snapshot()
-	if len(observed) != maxPublisherObservations || dropped != 1 || observed[0].PublicURLID != "public_url_0" || observed[len(observed)-1].Detail != "QUIC timeout" {
+	if len(observed) != maxPublisherObservations || dropped != 1 || observed[0].PublicURLID != "public_url_0" || !strings.Contains(observed[len(observed)-1].Detail, "benchmark could not complete") || strings.Contains(observed[len(observed)-1].Detail, "QUIC timeout") {
 		t.Fatalf("publisher diagnostics: count=%d dropped=%d latest=%+v", len(observed), dropped, observed[len(observed)-1])
 	}
 }

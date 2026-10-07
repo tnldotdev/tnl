@@ -44,7 +44,7 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}
 	if err := requireALPN(connection.ConnectionState().TLS); err != nil {
-		_ = connection.CloseWithError(1, err.Error())
+		_ = connection.CloseWithError(1, "unexpected publisher transport protocol")
 		return nil, err
 	}
 	return &quicSession{connection: connection}, nil
@@ -134,7 +134,7 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 		return nil, normalizeQUICError(err)
 	}
 	if err := requireALPN(connection.ConnectionState().TLS); err != nil {
-		_ = connection.CloseWithError(1, err.Error())
+		_ = connection.CloseWithError(1, "unexpected publisher transport protocol")
 		return nil, err
 	}
 	return &quicSession{connection: connection}, nil

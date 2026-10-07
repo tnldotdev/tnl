@@ -17,6 +17,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
+	"github.com/tnldotdev/tnl/internal/oidcauth"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"golang.org/x/oauth2"
 )
@@ -32,11 +36,16 @@ func validBrowserReturnPath(path string) bool {
 	return err == nil && parsed.Host == "" && !parsed.IsAbs()
 }
 
-func (h *handler) browserOAuthConfig(request *http.Request) (*oauth2.Config, error) {
+func (h *handler) browserHTTPClient() *http.Client {
 	client := h.config.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
+	return httpclient.NoRedirects(client)
+}
+
+func (h *handler) browserOAuthConfig(request *http.Request) (*oauth2.Config, error) {
+	client := h.browserHTTPClient()
 	provider, err := oidc.NewProvider(oidc.ClientContext(request.Context(), client), h.config.OIDCIssuer)
 	if err != nil {
 		return nil, err
@@ -61,30 +70,38 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		return
 	}
 	preview, err := h.previews.GetPreview(request.Context(), params.PreviewId)
-	if err != nil || !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
+	if err != nil {
+		writeControlStateProblem(response, "read browser preview", err)
+		return
+	}
+	if !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "preview not found")
 		return
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), params.PublicUrlId)
-	if err != nil || publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+	if err != nil {
+		writeControlStateProblem(response, "read browser public URL", err)
+		return
+	}
+	if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
 		return
 	}
 	config, err := h.browserOAuthConfig(request)
 	if err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "identity provider is unavailable")
+		writeUnavailableProblem(response, "discover browser identity provider", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
+		writeUnavailableProblem(response, "create browser nonce", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
 		return
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
 	binding := make([]byte, 32)
 	if _, err := rand.Read(binding); err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
+		writeUnavailableProblem(response, "create browser binding", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
 		return
 	}
 	now := time.Now()
@@ -117,22 +134,28 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	}
 	attempt, err := h.browserAccess.ConsumeBrowserLogin(request.Context(), params.State, binding, now)
 	if err != nil {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser sign-in expired")
+		if errors.Is(err, controlstate.ErrPreviewAccess) {
+			writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser sign-in expired")
+		} else {
+			writeControlStateProblem(response, "consume browser sign-in", err)
+		}
 		return
 	}
 	http.SetCookie(response, &http.Cookie{Name: browserLoginCookieName, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	config, err := h.browserOAuthConfig(request)
 	if err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "identity provider is unavailable")
+		writeUnavailableProblem(response, "discover browser identity provider", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
 		return
 	}
-	client := h.config.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := h.browserHTTPClient()
 	result, err := config.Exchange(oidc.ClientContext(request.Context(), client), params.Code, oauth2.VerifierOption(attempt.Verifier))
 	if err != nil {
-		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in failed")
+		var rejected *oauth2.RetrieveError
+		if errors.As(err, &rejected) && (rejected.ErrorCode == "invalid_grant" || rejected.ErrorCode == "access_denied") {
+			writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in failed")
+		} else {
+			writeUnavailableProblem(response, "exchange browser authorization code", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
+		}
 		return
 	}
 	raw, ok := result.Extra("id_token").(string)
@@ -141,18 +164,26 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		return
 	}
 	identity, err := h.browserVerifier.Verify(request.Context(), raw)
+	if errors.Is(err, oidcauth.ErrUnavailable) {
+		writeUnavailableProblem(response, "verify browser identity", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
+		return
+	}
 	if err != nil || subtle.ConstantTimeCompare([]byte(identity.Nonce), []byte(attempt.Nonce)) != 1 {
 		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "invalid browser sign-in")
 		return
 	}
 	issued, err := h.browserAuthority.ExchangeBrowserOIDC(request.Context(), raw)
 	if err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in could not be saved")
+		if errors.Is(err, authorityclient.ErrUnauthenticated) {
+			writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in failed")
+		} else {
+			writeUnavailableProblem(response, "save browser sign-in", "browser sign-in could not be saved", failure.ServerAuthorityUnavailable, err)
+		}
 		return
 	}
 	validated, err := authorityclient.ValidateControlSessionResponse(issued, "", time.Time{})
 	if err != nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authority returned an invalid browser session")
+		writeUnavailableProblem(response, "validate browser session", "authority returned an invalid browser session", failure.ServerAuthorityUnavailable, err)
 		return
 	}
 	retained := false
@@ -160,10 +191,16 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		if !retained {
 			logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 5*time.Second)
 			defer cancel()
-			_ = h.browserAuthority.LogoutWithAccessToken(logoutCtx, credentials.AccessToken(validated.AccessToken))
+			if err := h.browserAuthority.LogoutWithAccessToken(logoutCtx, credentials.AccessToken(validated.AccessToken)); err != nil {
+				operatorlog.Report("discard browser session", failure.ServerAuthorityUnavailable, "", err)
+			}
 		}
 	}()
 	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), validated.AccessToken)
+	if errors.Is(err, authorization.ErrUnavailable) || errors.Is(err, authorityclient.ErrUnavailable) {
+		writeUnavailableProblem(response, "authorize browser identity", "browser authorization is unavailable", failure.ServerAuthorityUnavailable, err)
+		return
+	}
 	if err != nil || principal.identityID != issued.Identity.Identity.Id {
 		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser identity changed")
 		return
@@ -180,7 +217,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	retained = true
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), attempt.PublicURLID)
 	if err != nil {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
+		writeControlStateProblem(response, "read signed-in browser public URL", err)
 		return
 	}
 	http.Redirect(response, request, "https://"+publicURL.CanonicalHostname+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
@@ -197,6 +234,10 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 		return
 	}
 	cookie, path, next, bridge, expires, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth.PublicURLID, body.Token, time.Now())
+	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
+		writeControlStateProblem(response, "redeem browser handoff", err)
+		return
+	}
 	if err != nil || !validBrowserReturnPath(path) {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "browser handoff expired")
 		return
@@ -231,18 +272,27 @@ func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlsta
 		}
 	}
 	principal, err := h.authorizer.AuthorizePublicURLReads(ctxRequest.Context(), session.AccessToken)
-	if err != nil || principal.identityID != session.IdentityID {
+	if err != nil {
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+	}
+	if principal.identityID != session.IdentityID {
 		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, authorization.ErrUnauthenticated
 	}
 	preview, err := h.previews.GetPreview(ctxRequest.Context(), session.PreviewID)
-	if err != nil || !slices.Contains(preview.PublicURLIDs, auth.PublicURLID) {
+	if err != nil {
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+	}
+	if !slices.Contains(preview.PublicURLIDs, auth.PublicURLID) {
 		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, controlstate.ErrPreviewAccess
 	}
 	if !preview.TeamAccessEnabled {
 		return session, principal, false, nil
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(ctxRequest.Context(), auth.PublicURLID)
-	if err != nil || publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+	if err != nil {
+		return session, principal, false, err
+	}
+	if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
 		return session, principal, false, nil
 	}
 	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
@@ -277,7 +327,14 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 	}
 	session, principal, member, err := h.browserSessionAccess(request, auth, body.CookieSecret)
 	if err != nil {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser access expired")
+		switch {
+		case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, authorization.ErrUnauthenticated), errors.Is(err, authorityclient.ErrUnauthenticated):
+			writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser access expired")
+		case errors.Is(err, authorization.ErrUnavailable), errors.Is(err, authorityclient.ErrUnavailable):
+			writeUnavailableProblem(response, "check browser access", "browser access is unavailable", failure.ServerAuthorityUnavailable, err)
+		default:
+			writeControlStateProblem(response, "check browser access", err)
+		}
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.BrowserAccessResponse{

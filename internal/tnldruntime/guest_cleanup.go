@@ -2,10 +2,10 @@ package tnldruntime
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -29,7 +29,7 @@ func runGuestPrivateStateCleanup(ctx context.Context, store guestPrivateStateSto
 	}, func(count int, err error) {
 		metrics.ObserveCleanup("guest_private_state", count, false, err)
 		if err != nil && ctx.Err() == nil {
-			log.Printf("guest private state cleanup: %v", err)
+			logOperationalError("clean up guest private state", failure.ServerWorkerFailed, err)
 		}
 	})
 }

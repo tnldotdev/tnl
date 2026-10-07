@@ -216,7 +216,7 @@ func prepareBandwidthConnection(ctx context.Context, client *http.Client, rawURL
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("bandwidth setup: HTTP %d", response.StatusCode)
+		return &measurementResponseError{operation: "bandwidth setup", status: response.StatusCode}
 	}
 	if response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
 		return errors.New("bandwidth setup: visitor TLS was not verified")
@@ -305,7 +305,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 				observation.LastByteDelay = progress.last.Sub(start)
 			}
 			if err != nil {
-				observation.Error = err.Error()
+				observation.Error = safeMeasurementFailure(err)
 			}
 			results <- transferResult{direction: stream.direction, expected: expected, bytes: transferred, err: err, stream: observation}
 		})
@@ -326,7 +326,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 		if transfer.err != nil {
 			result.Failures++
 			if len(result.FailureSamples) < 8 {
-				result.FailureSamples = append(result.FailureSamples, transfer.err.Error())
+				result.FailureSamples = append(result.FailureSamples, safeMeasurementFailure(transfer.err))
 			}
 		}
 	}
@@ -425,9 +425,9 @@ func (s bandwidthStream) request(ctx context.Context, duration time.Duration, ex
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
 		if paced != nil {
-			return paced.Bytes(), fmt.Errorf("unverified bandwidth response: status %d", response.StatusCode)
+			return paced.Bytes(), &measurementResponseError{operation: "unverified bandwidth response", status: response.StatusCode}
 		}
-		return 0, fmt.Errorf("unverified bandwidth response: status %d", response.StatusCode)
+		return 0, &measurementResponseError{operation: "unverified bandwidth response", status: response.StatusCode}
 	}
 	if response.Header.Get("X-TNL-Bench-Host") != expectedHost {
 		return 0, errors.New("bandwidth response host mismatch")

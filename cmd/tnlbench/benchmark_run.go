@@ -19,13 +19,14 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 	plan, err := c.validate()
 	if err != nil {
-		return err
+		return failure.Wrap("validate benchmark run", failure.BenchmarkInputInvalid, err)
 	}
 	stateDir := c.StateDir
 	if stateDir == "" {
@@ -73,7 +74,7 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 	result.FinishedAt = time.Now().UTC()
 	result.Status = "passed"
 	if runErr != nil {
-		result.Status, result.Error = "failed", runErr.Error()
+		result.Status, result.Error = "failed", failure.SafeMessage(runErr, failure.BenchmarkMeasurementFailed)
 		if ctx.Err() != nil {
 			result.Status = "interrupted"
 		}
@@ -88,6 +89,11 @@ func (c runCommand) run(ctx context.Context, stdout, progress io.Writer) error {
 }
 
 func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir, runID string, progress io.Writer, checkpoint func(benchmarkResult) error) (result benchmarkResult, retErr error) {
+	defer func() {
+		if _, classified := failure.ReasonOf(retErr); retErr != nil && !classified {
+			retErr = failure.Wrap("measure benchmark workload", failure.BenchmarkMeasurementFailed, retErr)
+		}
+	}()
 	result = benchmarkResult{SchemaVersion: 3, RunID: runID, Plan: plan, StartedAt: time.Now().UTC(),
 		Status: "running", CleanupStatus: "not_needed"}
 	defer func() {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 )
@@ -95,7 +96,7 @@ func (r *publisherObservationRecorder) Observe(index int, event publisher.Event)
 }
 
 func (r *publisherObservationRecorder) Report(index int, err error) {
-	r.add(benchmarkPublisherObservation{Index: index, At: time.Now().UTC(), Kind: "error", Detail: err.Error()})
+	r.add(benchmarkPublisherObservation{Index: index, At: time.Now().UTC(), Kind: "error", Detail: failure.SafeMessage(err, failure.BenchmarkMeasurementFailed)})
 }
 
 func (r *publisherObservationRecorder) Snapshot() ([]benchmarkPublisherObservation, int) {
