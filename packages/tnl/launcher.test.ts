@@ -14,6 +14,7 @@ import path from "node:path";
 import { onTestFinished, test } from "vitest";
 import { nativePackageName, resolveNativeBinary } from "./dist/internal/launcher.js";
 import { nativeTargets } from "./dist/internal/native-targets.js";
+import { TnlError } from "./dist/errors.js";
 
 const targets = [
   ["darwin", "arm64", "@tnldotdev/tnl-darwin-arm64"],
@@ -75,16 +76,16 @@ test("native binary resolution preserves installation checks", () => {
   );
   rmSync(manifestPath, { force: true });
   const readError = thrownError(() => resolveNativeBinary(options));
-  assert.match(readError.message, /failed to read @tnldotdev\/tnl-linux-x64 package manifest/);
+  assert.equal(readError.code, "sdk.native_invalid");
   assert(readError.cause instanceof Error);
   writeFileSync(manifestPath, "{");
   const parseError = thrownError(() => resolveNativeBinary(options));
-  assert.match(parseError.message, /tnl-linux-x64 package manifest is not valid JSON/);
+  assert.equal(parseError.code, "sdk.native_invalid");
   assert(parseError.cause instanceof SyntaxError);
   for (const manifest of [null, {}, { version: 1 }]) {
     writeFileSync(manifestPath, JSON.stringify(manifest));
     const shapeError = thrownError(() => resolveNativeBinary(options));
-    assert.match(shapeError.message, /tnl-linux-x64 package manifest has an invalid shape/);
+    assert.equal(shapeError.code, "sdk.native_invalid");
     assert(shapeError.cause instanceof TypeError);
   }
   writeFileSync(manifestPath, JSON.stringify({ version: "1.2.3" }));
@@ -93,7 +94,7 @@ test("native binary resolution preserves installation checks", () => {
   mkdirSync(path.join(directory, "bin"));
   const binary = path.join(directory, "bin", "tnl");
   writeFileSync(binary, "", { mode: 0o600 });
-  assert.throws(() => resolveNativeBinary(options), /does not contain an executable/);
+  assert.throws(() => resolveNativeBinary(options), { code: "sdk.native_invalid" });
   chmodSync(binary, 0o700);
   assert.equal(resolveNativeBinary(options), binary);
 });
@@ -114,6 +115,7 @@ test("launcher emits one safe line for a manifest value containing control chara
     path.join(internalDirectory, "native-targets.js"),
   );
   const launcher = path.join(binDirectory, "tnl.js");
+  cpSync(new URL("./dist/errors.js", import.meta.url), path.join(directory, "dist", "errors.js"));
   cpSync(new URL("./dist/bin/tnl.js", import.meta.url), launcher);
   writeFileSync(
     path.join(directory, "package.json"),
@@ -140,10 +142,7 @@ test("launcher emits one safe line for a manifest value containing control chara
 });
 
 test("rejects unsupported targets", () => {
-  assert.throws(
-    () => nativePackageName("win32", "x64"),
-    /unsupported platform win32-x64; tnl supports macOS and Linux on arm64 and x64/,
-  );
+  assert.throws(() => nativePackageName("win32", "x64"), { code: "sdk.native_unsupported" });
 });
 
 function jsonRecord(serialized: string): Record<string, unknown> {
@@ -152,13 +151,13 @@ function jsonRecord(serialized: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function thrownError(callback: () => unknown): Error {
+function thrownError(callback: () => unknown): TnlError {
   let thrown: unknown;
   try {
     callback();
   } catch (error) {
     thrown = error;
   }
-  assert(thrown instanceof Error);
+  assert(thrown instanceof TnlError);
   return thrown;
 }

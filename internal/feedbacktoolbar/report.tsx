@@ -51,9 +51,9 @@ export function ReportForm({
   const send = useMutation({
     mutationFn: async (input: ReportInput) => {
       if (new TextEncoder().encode(input.text).length > 4000)
-        throw new Error("feedback must be at most 4000 bytes");
+        throw new FeedbackError("text_too_long");
       if (new TextEncoder().encode(input.display_name).length > 64)
-        throw new Error("the name must be at most 64 bytes");
+        throw new FeedbackError("name_too_long");
       return api.report(input, key.current(input), signal);
     },
     onSuccess: (thread) => {
@@ -79,7 +79,7 @@ export function ReportForm({
         </blockquote>
       )}
       {!target && <small>on this page</small>}
-      {send.error && <p role="alert">{send.error.message}</p>}
+      {send.error && <p role="alert">{safeFeedbackMessage(send.error)}</p>}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -142,3 +142,4 @@ export function ReportForm({
     </section>
   );
 }
+import { FeedbackError, safeFeedbackMessage } from "./errors.ts";

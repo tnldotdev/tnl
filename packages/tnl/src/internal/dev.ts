@@ -4,6 +4,7 @@ import * as http from "node:http";
 import { isIP } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { TnlError, classifyTnlError } from "../errors.js";
 import {
   exactKeys,
   parseProjectMetadata,
@@ -67,9 +68,7 @@ export function readDevelopmentContext(
   const protocol = environment.TNL_DEV_PROTOCOL;
   if (protocol !== undefined) {
     if (protocol !== protocolVersion) {
-      throw new Error(
-        `unsupported tnl dev protocol ${JSON.stringify(protocol)}; upgrade tnl and its framework integrations`,
-      );
+      throw new TnlError("sdk.protocol_unsupported");
     }
     return Object.freeze({
       bootstrap: parseBootstrapEnvironment(environment),
@@ -77,9 +76,7 @@ export function readDevelopmentContext(
     });
   }
   if (environment.TNL_DEV_SOCKET !== undefined || environment.TNL_DEV_PORT !== undefined) {
-    throw new Error(
-      `TNL_DEV_PROTOCOL=${protocolVersion} is required with tnl dev bootstrap values`,
-    );
+    throw new TnlError("sdk.configuration_invalid");
   }
 
   const discovery = discoverProject(cwd);
@@ -98,7 +95,7 @@ export async function requestTunnelAssignment(
   bootstrap: TnlDevBootstrap,
 ): Promise<TnlTunnelAssignment> {
   if (!/^[a-z]{1,32}$/.test(framework)) {
-    throw new Error("tnl framework name is invalid");
+    throw new TnlError("sdk.configuration_invalid");
   }
   const body = JSON.stringify({ protocol: 1, framework });
   const response = await sendRequest(
@@ -109,12 +106,16 @@ export async function requestTunnelAssignment(
     200,
     "configuration",
   );
-  return parseAssignment(response, bootstrap, framework);
+  try {
+    return parseAssignment(response, bootstrap, framework);
+  } catch (cause) {
+    throw new TnlError("sdk.response_invalid", { cause });
+  }
 }
 
 export function canonicalLoopbackTarget(host: string, port: number): CanonicalLoopbackTarget {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("tnl listener port must be between 1 and 65535");
+    throw new TnlError("sdk.target_invalid");
   }
   const hostname = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const lowerHostname = hostname.toLowerCase();
@@ -130,7 +131,7 @@ export function canonicalLoopbackTarget(host: string, port: number): CanonicalLo
   if (hostname === "::1") {
     return `http://[::1]:${port}`;
   }
-  throw new Error("tnl development target must listen on localhost or all interfaces");
+  throw new TnlError("sdk.target_invalid");
 }
 
 export async function registerLocalTarget(
@@ -159,7 +160,7 @@ export function discoverProject(cwd: string): ProjectDiscovery | null {
     try {
       const stat = fs.lstatSync(file);
       if (!stat.isFile()) {
-        throw new Error(`${file} must be a regular file`);
+        throw new TnlError("sdk.runtime_invalid");
       }
       const document = parseProjectDocument(readBoundedFile(file), file, directory);
       const service = selectService(document, cwd);
@@ -171,7 +172,7 @@ export function discoverProject(cwd: string): ProjectDiscovery | null {
       });
     } catch (error) {
       if (!isMissing(error)) {
-        throw error;
+        throw classifyTnlError(error, "sdk.project_unavailable");
       }
     }
 
@@ -181,7 +182,7 @@ export function discoverProject(cwd: string): ProjectDiscovery | null {
       fs.lstatSync(path.join(directory, ".git"));
       return null;
     } catch (error) {
-      if (!isMissing(error)) throw error;
+      if (!isMissing(error)) throw classifyTnlError(error, "sdk.project_unavailable");
     }
 
     const parent = path.dirname(directory);
@@ -202,7 +203,7 @@ export function socketIdentity(projectRoot: string, service: string | null): str
 function parseBootstrapEnvironment(environment: TnlDevEnvironment): TnlDevBootstrap {
   const socket = environment.TNL_DEV_SOCKET;
   if (socket === undefined || socket === "") {
-    throw new Error(`TNL_DEV_SOCKET is required by tnl dev protocol ${protocolVersion}`);
+    throw new TnlError("sdk.configuration_invalid");
   }
   const rawPort = environment.TNL_DEV_PORT;
   if (rawPort === undefined) {
@@ -234,7 +235,7 @@ function discoverDevSocket(
     if (isMissing(error)) {
       return null;
     }
-    throw error;
+    throw classifyTnlError(error, "sdk.dev_unavailable");
   }
   if (
     !directoryStat.isDirectory() ||
@@ -244,7 +245,7 @@ function discoverDevSocket(
     socketStat.uid !== getuid() ||
     (socketStat.mode & 0o777) !== 0o600
   ) {
-    throw new Error("tnl dev runtime directory or socket has unsafe ownership or permissions");
+    throw new TnlError("sdk.configuration_invalid");
   }
   return socket;
 }
@@ -261,34 +262,34 @@ function parseAssignment(
     "tnl dev response",
   );
   if (object.protocol !== 1) {
-    throw new Error("tnl dev returned an inconsistent tunnel assignment");
+    throw new TnlError("sdk.response_invalid");
   }
   if (typeof object.tunnelID !== "string" || !/^tun_[A-Za-z0-9]{22}$/.test(object.tunnelID)) {
-    throw new Error("tnl dev returned an invalid tunnel ID");
+    throw new TnlError("sdk.response_invalid");
   }
   if (object.service !== null && !validServiceName(object.service)) {
-    throw new Error("tnl dev returned an invalid service");
+    throw new TnlError("sdk.response_invalid");
   }
   const responseNamespace = requiredHostname(object.namespace, "tnl dev returned namespace");
   const hostname = requiredHostname(object.hostname, "tnl dev returned public hostname");
   const publicURL: `https://${string}` = `https://${hostname}`;
   if (object.publicURL !== publicURL) {
-    throw new Error("tnl dev returned an invalid public URL");
+    throw new TnlError("sdk.response_invalid");
   }
   const project = parseProjectRuntime(object.project, "tnl dev project metadata");
   if (!project.dev) {
-    throw new Error("tnl dev returned project metadata outside tnl dev");
+    throw new TnlError("sdk.response_invalid");
   }
   const projectNamespace =
     object.service === null ? project.namespace : project.services[object.service]?.namespace;
   if (projectNamespace !== responseNamespace) {
-    throw new Error("tnl dev returned inconsistent project metadata");
+    throw new TnlError("sdk.response_invalid");
   }
   if (object.service !== null && project.services[object.service] === undefined) {
-    throw new Error("tnl dev returned inconsistent project metadata");
+    throw new TnlError("sdk.response_invalid");
   }
   if (object.service !== null && project.services[object.service]?.hostname !== hostname) {
-    throw new Error("tnl dev returned inconsistent project metadata");
+    throw new TnlError("sdk.response_invalid");
   }
 
   return Object.freeze({
@@ -312,7 +313,7 @@ function parseProjectDocument(
   try {
     value = JSON.parse(serialized);
   } catch (error) {
-    throw new Error(`${description} is not valid JSON`, { cause: error });
+    throw new TnlError("sdk.runtime_invalid", { cause: error });
   }
   return parseProjectDocumentValue(value, description, projectRoot);
 }
@@ -325,13 +326,13 @@ function parseProjectDocumentValue(
   const object = record(value, description);
   exactKeys(object, ["dev", "namespace", "serviceDirectories", "services", "version"], description);
   if (object.version !== 1) {
-    throw new Error(`${description} has an unsupported version`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   if (typeof object.dev !== "boolean") {
-    throw new Error(`${description} has an invalid dev value`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   if (object.dev) {
-    throw new Error(`${description} cannot be marked as running under tnl dev`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   const project = parseProjectMetadata(
     { namespace: object.namespace, services: object.services },
@@ -343,7 +344,7 @@ function parseProjectDocumentValue(
     Object.keys(directoryValues).length !== names.length ||
     names.some((name) => !Object.hasOwn(directoryValues, name))
   ) {
-    throw new Error(`${description} requires one directory for every service`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   const serviceDirectories: Record<string, string> = {};
   for (const name of names) {
@@ -370,7 +371,7 @@ function selectService(document: ProjectDocument, cwd: string): string | null {
   const canonicalCwd = fs.realpathSync.native(absoluteCwd);
   const canonicalRoot = fs.realpathSync.native(document.projectRoot);
   if (!pathWithin(canonicalCwd, canonicalRoot)) {
-    throw new Error("working directory is outside the discovered tnl project");
+    throw new TnlError("sdk.runtime_invalid");
   }
   const matches = Object.entries(document.serviceDirectories)
     .map(
@@ -380,14 +381,14 @@ function selectService(document: ProjectDocument, cwd: string): string | null {
     .filter(([, directory]) => pathWithin(canonicalCwd, directory))
     .sort((left, right) => right[1].length - left[1].length);
   if (matches.length > 1 && matches[0]?.[1].length === matches[1]?.[1].length) {
-    throw new Error("working directory matches multiple tnl service directories");
+    throw new TnlError("sdk.runtime_invalid");
   }
   return matches[0]?.[0] ?? null;
 }
 
-function relativeDirectory(value: unknown, description: string): string {
+function relativeDirectory(value: unknown, _description: string): string {
   if (typeof value !== "string" || value === "" || value.includes("\0") || path.isAbsolute(value)) {
-    throw new Error(`${description} must be a non-empty relative path`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   const normalized = path.normalize(value);
   if (
@@ -395,18 +396,18 @@ function relativeDirectory(value: unknown, description: string): string {
     normalized.startsWith(`..${path.sep}`) ||
     normalized.split(path.sep).join("/") !== value
   ) {
-    throw new Error(`${description} must be a clean relative path`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   return value;
 }
 
 function sendRequest(
   bootstrap: TnlDevBootstrap,
-  framework: string,
+  _framework: string,
   requestPath: string,
   body: string,
   expectedStatus: number,
-  operation: TnlDevOperation,
+  _operation: TnlDevOperation,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -420,8 +421,8 @@ function sendRequest(
       settled = true;
       reject(error);
     };
-    const failTransport = (phase: "request" | "response", cause: unknown) => {
-      fail(new Error(`tnl dev ${operation} ${phase} failed`, { cause }));
+    const failTransport = (_phase: "request" | "response", cause: unknown) => {
+      fail(new TnlError("sdk.dev_unavailable", { cause }));
     };
 
     let request: http.ClientRequest;
@@ -448,7 +449,7 @@ function sendRequest(
           });
           const declaredLength = Number(response.headers["content-length"]);
           if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
-            fail(new Error("tnl dev returned an oversized response"));
+            fail(new TnlError("sdk.response_invalid"));
             response.destroy();
             return;
           }
@@ -458,7 +459,7 @@ function sendRequest(
             if (settled) return;
             size += chunk.length;
             if (size > maximumResponseBytes) {
-              fail(new Error("tnl dev returned an oversized response"));
+              fail(new TnlError("sdk.response_invalid"));
               response.destroy();
               return;
             }
@@ -472,28 +473,30 @@ function sendRequest(
             const data = Buffer.concat(chunks).toString("utf8").trim();
             if (response.statusCode !== expectedStatus) {
               fail(
-                new Error(
-                  `tnl dev rejected the ${framework} request with status ${response.statusCode}${data ? `: ${data}` : ""}`,
+                new TnlError(
+                  response.statusCode !== undefined && response.statusCode >= 500
+                    ? "sdk.dev_unavailable"
+                    : "sdk.request_rejected",
                 ),
               );
               return;
             }
             if (expectedStatus === 204) {
               if (data !== "") {
-                fail(new Error("tnl dev returned an unexpected target response"));
+                fail(new TnlError("sdk.response_invalid"));
                 return;
               }
               succeed(undefined);
               return;
             }
             if (response.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
-              fail(new Error("tnl dev returned a non-JSON configuration"));
+              fail(new TnlError("sdk.response_invalid"));
               return;
             }
             try {
               succeed(JSON.parse(data));
             } catch (error) {
-              fail(new Error("tnl dev returned an invalid configuration", { cause: error }));
+              fail(new TnlError("sdk.response_invalid", { cause: error }));
             }
           });
         },
@@ -503,7 +506,7 @@ function sendRequest(
       return;
     }
     request.setTimeout(registrationTimeoutMilliseconds, () => {
-      request.destroy(new Error("timed out configuring the target with tnl dev"));
+      request.destroy(new TnlError("sdk.dev_unavailable"));
     });
     request.on("error", (error) => failTransport("request", error));
     try {
@@ -520,7 +523,7 @@ function readBoundedFile(file: string): string {
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) {
-      throw new Error(`${file} must be a regular file`);
+      throw new TnlError("sdk.runtime_invalid");
     }
     const buffer = Buffer.allocUnsafe(maximumDocumentBytes + 1);
     let length = 0;
@@ -532,38 +535,38 @@ function readBoundedFile(file: string): string {
       }
     }
     if (length > maximumDocumentBytes) {
-      throw new Error(`${file} exceeds ${maximumDocumentBytes} bytes`);
+      throw new TnlError("sdk.runtime_invalid");
     }
     try {
       return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, length));
     } catch (error) {
-      throw new Error(`${file} is not valid UTF-8`, { cause: error });
+      throw new TnlError("sdk.runtime_invalid", { cause: error });
     }
   } finally {
     fs.closeSync(descriptor);
   }
 }
 
-function absoluteNormalizedPath(value: unknown, description: string): string {
+function absoluteNormalizedPath(value: unknown, _description: string): string {
   if (
     typeof value !== "string" ||
     value === "" ||
     !path.isAbsolute(value) ||
     path.normalize(value) !== value
   ) {
-    throw new Error(`${description} must be an absolute normalized path`);
+    throw new TnlError("sdk.configuration_invalid");
   }
   return value;
 }
 
 /** Parses a decimal listener port from 1 through 65535. */
-export function parseListenerPort(value: string, source: string): number {
+export function parseListenerPort(value: string, _source: string): number {
   if (!/^[0-9]+$/.test(value)) {
-    throw new Error(`${source} must be a port between 1 and 65535`);
+    throw new TnlError("sdk.target_invalid");
   }
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`${source} must be a port between 1 and 65535`);
+    throw new TnlError("sdk.target_invalid");
   }
   return port;
 }

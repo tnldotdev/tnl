@@ -1,3 +1,4 @@
+import { TnlError } from "../errors.js";
 const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -32,14 +33,14 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
   if (entries.length > maximumServices) {
-    throw new Error(`${description} may contain at most ${maximumServices} services`);
+    throw new TnlError("sdk.runtime_invalid");
   }
 
   const services: Record<string, ProjectServiceMetadata> = Object.create(null);
   const hostnames = new Set<string>();
   for (const [name, value] of entries) {
     if (!validServiceName(name)) {
-      throw new Error(`${description} contains an invalid service name ${JSON.stringify(name)}`);
+      throw new TnlError("sdk.runtime_invalid");
     }
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
@@ -59,10 +60,10 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     );
     const url: `https://${string}` = `https://${hostname}`;
     if (service.url !== url) {
-      throw new Error(`${description} service ${JSON.stringify(name)} has an invalid URL`);
+      throw new TnlError("sdk.runtime_invalid");
     }
     if (hostnames.has(hostname)) {
-      throw new Error(`${description} contains duplicate service hostname ${hostname}`);
+      throw new TnlError("sdk.runtime_invalid");
     }
     hostnames.add(hostname);
     let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
@@ -72,14 +73,12 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
         `${description} service ${JSON.stringify(name)} paths`,
       );
       if (Object.keys(pathsObject).length > 32) {
-        throw new Error(`${description} service ${JSON.stringify(name)} has too many path mounts`);
+        throw new TnlError("sdk.runtime_invalid");
       }
       const parsedPaths: Record<string, ProjectPathMetadata> = Object.create(null);
       for (const [prefix, value] of Object.entries(pathsObject)) {
         if (!validMountPrefix(prefix)) {
-          throw new Error(
-            `${description} service ${JSON.stringify(name)} has an invalid mount path`,
-          );
+          throw new TnlError("sdk.runtime_invalid");
         }
         const mount = record(value, `${description} path mount ${JSON.stringify(prefix)}`);
         exactKeys(
@@ -93,7 +92,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
           mount.url !== `${url}${prefix}` ||
           typeof mount.stripPrefix !== "boolean"
         ) {
-          throw new Error(`${description} path mount ${JSON.stringify(prefix)} is invalid`);
+          throw new TnlError("sdk.runtime_invalid");
         }
         parsedPaths[prefix] = Object.freeze({
           service: mount.service,
@@ -110,10 +109,10 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       ...(paths === undefined ? {} : { paths }),
     });
   }
-  for (const [name, service] of Object.entries(services)) {
+  for (const service of Object.values(services)) {
     for (const mount of Object.values(service.paths ?? {})) {
       if (mount !== undefined && !Object.hasOwn(services, mount.service)) {
-        throw new Error(`${description} service ${JSON.stringify(name)} mounts an unknown service`);
+        throw new TnlError("sdk.runtime_invalid");
       }
     }
   }
@@ -149,14 +148,14 @@ export function parseRuntimePayload(serialized: string | undefined): ProjectRunt
     return undefined;
   }
   if (byteLength(serialized) > maximumRuntimeBytes) {
-    throw new Error(`tnl runtime payload exceeds ${maximumRuntimeBytes} bytes`);
+    throw new TnlError("sdk.runtime_invalid");
   }
 
   let value: unknown;
   try {
     value = JSON.parse(serialized);
   } catch (error) {
-    throw new Error("tnl runtime payload is not valid JSON", { cause: error });
+    throw new TnlError("sdk.runtime_invalid", { cause: error });
   }
   return parseProjectRuntime(value, "tnl runtime payload");
 }
@@ -165,7 +164,7 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
   const object = record(value, description);
   exactKeys(object, ["dev", "namespace", "services"], description);
   if (typeof object.dev !== "boolean") {
-    throw new Error(`${description} has an invalid dev value`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   const project = parseProjectMetadata(
     { namespace: object.namespace, services: object.services },
@@ -184,17 +183,17 @@ export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean):
     services: project.services,
   });
   if (byteLength(serialized) > maximumRuntimeBytes) {
-    throw new Error(`tnl runtime payload exceeds ${maximumRuntimeBytes} bytes`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   return serialized;
 }
 
-export function requiredHostname(value: unknown, description: string): string {
+export function requiredHostname(value: unknown, _description: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 253) {
-    throw new Error(`${description} is invalid`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   if (value !== value.toLowerCase() || value.endsWith(".")) {
-    throw new Error(`${description} is invalid`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   const labels = value.split(".");
   if (
@@ -203,18 +202,18 @@ export function requiredHostname(value: unknown, description: string): string {
         label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
     )
   ) {
-    throw new Error(`${description} is invalid`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   for (const label of labels) {
     if (label.startsWith("xn--") && !validALabel(label)) {
-      throw new Error(`${description} is invalid`);
+      throw new TnlError("sdk.runtime_invalid");
     }
   }
   if (
     labels.length === 4 &&
     labels.every((label) => /^[0-9]+$/.test(label) && Number(label) <= 255)
   ) {
-    throw new Error(`${description} is invalid`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   return value;
 }
@@ -230,7 +229,7 @@ function validALabel(label: string): boolean {
 export function exactKeys(
   object: Record<string, unknown>,
   expected: readonly string[],
-  description: string,
+  _description: string,
 ): void {
   const keys = Object.keys(object).sort();
   const sortedExpected = [...expected].sort();
@@ -238,13 +237,13 @@ export function exactKeys(
     keys.length !== sortedExpected.length ||
     keys.some((key, index) => key !== sortedExpected[index])
   ) {
-    throw new Error(`${description} has an invalid shape`);
+    throw new TnlError("sdk.runtime_invalid");
   }
 }
 
-export function record(value: unknown, description: string): Record<string, unknown> {
+export function record(value: unknown, _description: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${description} must be an object`);
+    throw new TnlError("sdk.runtime_invalid");
   }
   return value as Record<string, unknown>;
 }

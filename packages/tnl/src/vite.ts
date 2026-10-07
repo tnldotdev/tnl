@@ -7,13 +7,14 @@ import {
   type TnlTunnelAssignment,
 } from "./internal/dev.js";
 import type { Plugin } from "vite";
+import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
 /** Configures a Vite development server for `tnl dev` and adds project metadata. */
 export default function tnl(...arguments_: never[]): Plugin {
   if (arguments_.length !== 0) {
-    throw new Error("tnl() does not accept tunnel options; use project configuration");
+    throw new TnlError("sdk.configuration_invalid");
   }
   let assignment: TnlTunnelAssignment | null = null;
   let registeredTarget: string | null = null;
@@ -64,7 +65,7 @@ export default function tnl(...arguments_: never[]): Plugin {
         return;
       }
       if (server.httpServer === null) {
-        throw new Error("Vite middleware mode cannot register a listening target with tnl dev");
+        throw new TnlError("sdk.target_invalid");
       }
       const originalListen = server.listen.bind(server);
       server.listen = async (port, isRestart) => {
@@ -77,12 +78,12 @@ export default function tnl(...arguments_: never[]): Plugin {
         try {
           const address = server.httpServer?.address();
           if (address === null || address === undefined || typeof address === "string") {
-            throw new Error("Vite did not report its listening port to tnl dev");
+            throw new TnlError("sdk.listener_failed");
           }
           const target = canonicalLoopbackTarget(address.address, address.port);
           if (registeredTarget !== null) {
             if (registeredTarget !== target) {
-              throw new Error("Vite listener changed after registration with tnl dev");
+              throw new TnlError("sdk.listener_failed");
             }
             return listening;
           }
@@ -101,13 +102,9 @@ async function closeAfterFailure(close: () => Promise<void>, error: unknown): Pr
   try {
     await close();
   } catch (closeError) {
-    throw new AggregateError(
-      [error, closeError],
-      "Vite listener setup failed and server cleanup also failed",
-      { cause: error },
-    );
+    throw new TnlCleanupError(error, closeError);
   }
-  throw error;
+  throw classifyTnlError(error, "sdk.listener_failed");
 }
 
 function runtimeDefine(payload: string) {
@@ -134,8 +131,6 @@ function validateAllowedHosts(value: string[] | true | undefined): void {
     value !== true &&
     (!Array.isArray(value) || !value.every((host) => typeof host === "string"))
   ) {
-    throw new Error(
-      "Vite server.allowedHosts must be an array of strings or true when used with tnl",
-    );
+    throw new TnlError("sdk.configuration_invalid");
   }
 }

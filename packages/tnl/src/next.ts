@@ -7,6 +7,7 @@ import {
   runtimePayload,
 } from "./internal/dev.js";
 import type { NextConfig } from "next";
+import { TnlError } from "./errors.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
@@ -27,7 +28,7 @@ export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFacto
 /** Configures a Next.js development server for `tnl dev` and adds project metadata. */
 export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextConfigFactory {
   if (extra.length !== 0) {
-    throw new Error("withTnl() does not accept tunnel options; use project configuration");
+    throw new TnlError("sdk.configuration_invalid");
   }
   return async function tnlNextConfig(phase, context) {
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
@@ -49,7 +50,7 @@ export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextCo
       !Array.isArray(allowedDevOrigins) ||
       !allowedDevOrigins.every((origin) => typeof origin === "string")
     ) {
-      throw new Error("Next.js allowedDevOrigins must be an array of strings when used with tnl");
+      throw new TnlError("sdk.configuration_invalid");
     }
     const target = nextTarget(process.env);
     const assignment = await requestTunnelAssignment("next", development.bootstrap);
@@ -79,7 +80,7 @@ function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
   // Next 16.3.4 binds and sets this origin before loading next.config, so it is authoritative.
   const value = environment.__NEXT_PRIVATE_ORIGIN;
   if (value === undefined) {
-    throw new Error("Next.js did not report its bound development listener to tnl dev");
+    throw new TnlError("sdk.target_invalid");
   }
   let origin: URL;
   try {
@@ -93,15 +94,15 @@ function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
       origin.hash !== "" ||
       origin.port === ""
     ) {
-      throw new Error("invalid origin");
+      throw new TnlError("sdk.target_invalid");
     }
   } catch (error) {
-    throw new Error("Next.js reported an invalid development listener", { cause: error });
+    throw new TnlError("sdk.target_invalid", { cause: error });
   }
   const port = parseListenerPort(origin.port, "Next.js listener");
   const reportedPort = environment.PORT;
   if (reportedPort !== undefined && parseListenerPort(reportedPort, "PORT") !== port) {
-    throw new Error("Next.js reported inconsistent development listener ports");
+    throw new TnlError("sdk.target_invalid");
   }
   return canonicalLoopbackTarget(origin.hostname, port);
 }

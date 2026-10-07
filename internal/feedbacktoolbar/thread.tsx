@@ -34,7 +34,7 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   }
   return (
     <section aria-label="Feedback thread">
-      {error && <p role="status">{error.message}</p>}
+      {error && <p role="status">{safeFeedbackMessage(error)}</p>}
       {!data ? (
         <p role="status">{query.isPending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (
@@ -121,3 +121,4 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
     </section>
   );
 }
+import { safeFeedbackMessage } from "./errors.ts";

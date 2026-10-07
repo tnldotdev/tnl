@@ -19,6 +19,20 @@ import { Popover } from "./popover.tsx";
 import { Placement, SelectionHint } from "./placement.tsx";
 import { FeedbackList, type ListFilters } from "./list.tsx";
 import type { FeedbackAPI } from "./api.ts";
+import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+
+async function fetchAccount(
+  document: Document,
+  path: string,
+  options: RequestInit,
+): Promise<Response | undefined> {
+  try {
+    return await document.defaultView?.fetch(path, options);
+  } catch (cause) {
+    if (options.signal?.aborted) throw cause;
+    throw new FeedbackError("unavailable", { cause });
+  }
+}
 
 type Draft = { path: string; target?: AnchorTarget | undefined; key: string };
 type Selected = { thread: Summary; threads: Summary[] };
@@ -49,23 +63,27 @@ function FeedbackLayer({
   const browserStatus = useQuery({
     queryKey: ["feedback-browser-status"],
     queryFn: async ({ signal }) => {
-      const response = await document.defaultView?.fetch("/__tnl/team/session", {
+      const response = await fetchAccount(document, "/__tnl/team/session", {
         credentials: "same-origin",
         signal,
       });
-      if (!response?.ok) throw new Error("account status is unavailable");
-      return browserStatusSchema.parse((await response.json()) as unknown);
+      if (!response?.ok) throw new FeedbackError("unavailable");
+      try {
+        return browserStatusSchema.parse((await response.json()) as unknown);
+      } catch (cause) {
+        throw new FeedbackError("response_invalid", { cause });
+      }
     },
     retry: false,
     refetchInterval: 30_000,
   });
   const signOut = useMutation({
     mutationFn: async () => {
-      const response = await document.defaultView?.fetch("/__tnl/team/logout", {
+      const response = await fetchAccount(document, "/__tnl/team/logout", {
         method: "POST",
         credentials: "same-origin",
       });
-      if (!response?.ok) throw new Error("could not sign out of this preview");
+      if (!response?.ok) throw new FeedbackError("unavailable");
     },
     onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-browser-status"] }),
   });
@@ -141,7 +159,7 @@ function FeedbackLayer({
             [ sign in ]
           </a>
         ) : null}
-        {signOut.error && <small role="status">{signOut.error.message}</small>}
+        {signOut.error && <small role="status">{safeFeedbackMessage(signOut.error)}</small>}
         <button
           type="button"
           aria-label="Comment"

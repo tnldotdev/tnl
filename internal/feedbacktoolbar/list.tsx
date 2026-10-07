@@ -72,7 +72,7 @@ export function FeedbackList({
         </label>
       </div>
       {query.isPending && <p role="status">loading feedback…</p>}
-      {query.error && <p role="status">{query.error.message}</p>}
+      {query.error && <p role="status">{safeFeedbackMessage(query.error)}</p>}
       {!query.isPending && !query.error && !threads.length && (
         <p class="muted">no feedback here yet</p>
       )}
@@ -125,3 +125,4 @@ export function FeedbackList({
     </section>
   );
 }
+import { safeFeedbackMessage } from "./errors.ts";

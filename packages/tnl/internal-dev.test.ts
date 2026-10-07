@@ -15,6 +15,7 @@ import {
   socketIdentity,
 } from "./dist/internal/dev.js";
 import { parseRuntimePayload } from "./dist/internal/runtime.js";
+import { TnlError } from "./dist/errors.js";
 import {
   createProjectFixture,
   temporaryDirectory,
@@ -26,7 +27,8 @@ import { startTestBootstrap } from "./test-helper/bootstrap.js";
 describe("development context", () => {
   test.each(["", "0", "65536", " 80", "+80", "8.0", "8e1", "80\n"])(
     "rejects invalid string listener port %j",
-    (value) => expect(() => parseListenerPort(value, "test")).toThrow(/test must be a port/),
+    (value) =>
+      expect(() => parseListenerPort(value, "test")).toThrow(new TnlError("sdk.target_invalid")),
   );
 
   test.each([
@@ -127,10 +129,10 @@ describe("development context", () => {
       /unsupported tnl dev protocol/,
     );
     expect(() => readDevelopmentContext({ TNL_DEV_SOCKET: "/tmp/tnl.sock" })).toThrow(
-      /TNL_DEV_PROTOCOL=1 is required/,
+      new TnlError("sdk.configuration_invalid"),
     );
     expect(() => readDevelopmentContext({ TNL_DEV_PROTOCOL: "1" })).toThrow(
-      /TNL_DEV_SOCKET is required/,
+      new TnlError("sdk.configuration_invalid"),
     );
     expect(() =>
       readDevelopmentContext({
@@ -138,7 +140,7 @@ describe("development context", () => {
         TNL_DEV_PROTOCOL: "1",
         TNL_DEV_SOCKET: "/tmp/tnl.sock",
       }),
-    ).toThrow(/TNL_DEV_PORT must be a port/);
+    ).toThrow(new TnlError("sdk.target_invalid"));
   });
 
   test("discovers strict generated metadata and its service socket", async () => {
@@ -187,7 +189,7 @@ describe("development context", () => {
     await mkdir(path.join(root, ".tnl"));
     const file = path.join(root, ".tnl", "project.json");
     await writeFile(file, "x".repeat(64 * 1024 + 1));
-    expect(() => discoverProject(root)).toThrow(/exceeds 65536 bytes/);
+    expect(() => discoverProject(root)).toThrow(new TnlError("sdk.runtime_invalid"));
 
     const document = testProjectDocument();
     const service = document.services.api;
@@ -195,10 +197,10 @@ describe("development context", () => {
       Array.from({ length: 33 }, (_, index) => [`s${index}`, service]),
     );
     await writeFile(file, JSON.stringify({ ...document, services }));
-    expect(() => discoverProject(root)).toThrow(/at most 32 services/);
+    expect(() => discoverProject(root)).toThrow(new TnlError("sdk.runtime_invalid"));
 
     await writeFile(file, JSON.stringify({ ...testProjectDocument(), dev: true }));
-    expect(() => discoverProject(root)).toThrow(/cannot be marked as running under tnl dev/);
+    expect(() => discoverProject(root)).toThrow(new TnlError("sdk.runtime_invalid"));
   });
 });
 
@@ -280,7 +282,7 @@ describe("protocol v1", () => {
     const malformedContext = readDevelopmentContext(malformed.environment);
     await expect(
       requestTunnelAssignment("next", requiredBootstrap(malformedContext.bootstrap)),
-    ).rejects.toThrow(/invalid shape/);
+    ).rejects.toMatchObject({ code: "sdk.response_invalid", class: "internal" });
 
     const oversized = await startTestBootstrap({
       responseBody: "x".repeat(64 * 1024 + 1),
@@ -289,7 +291,7 @@ describe("protocol v1", () => {
     const oversizedContext = readDevelopmentContext(oversized.environment);
     await expect(
       requestTunnelAssignment("next", requiredBootstrap(oversizedContext.bootstrap)),
-    ).rejects.toThrow(/oversized response/);
+    ).rejects.toMatchObject({ code: "sdk.response_invalid" });
   });
 
   test("wraps socket connection failures with configuration request context", async () => {
@@ -297,7 +299,11 @@ describe("protocol v1", () => {
     const failure = await rejection(
       requestTunnelAssignment("vite", { socket: path.join(directory, "missing.sock") }),
     );
-    expect(failure.message).toBe("tnl dev configuration request failed");
+    expect(failure).toMatchObject({
+      code: "sdk.dev_unavailable",
+      class: "unavailable",
+      retry: "later",
+    });
     expect(failure.cause).toMatchObject({ code: "ENOENT" });
   });
 
@@ -321,7 +327,7 @@ describe("protocol v1", () => {
     });
 
     const failure = await rejection(requestTunnelAssignment("vite", { socket }));
-    expect(failure.message).toBe("tnl dev configuration response failed");
+    expect(failure).toMatchObject({ code: "sdk.dev_unavailable" });
     expect(failure.cause).toMatchObject({ code: "ECONNRESET" });
   });
 
@@ -350,23 +356,29 @@ describe("protocol v1", () => {
       },
       /inconsistent project metadata/,
     ],
-  ])("rejects an invalid assignment $0", async (_name, replacement, expected) => {
+  ])("rejects an invalid assignment $0", async (_name, replacement, _expected) => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({ ...validAssignmentResponse(), ...replacement }),
     });
     const context = readDevelopmentContext(bootstrap.environment);
     await expect(
       requestTunnelAssignment("vite", requiredBootstrap(context.bootstrap)),
-    ).rejects.toThrow(expected);
+    ).rejects.toMatchObject({ code: "sdk.response_invalid" });
   });
 
   test("validates framework and listener targets before sending", async () => {
     const bootstrap = await startTestBootstrap();
     const context = readDevelopmentContext(bootstrap.environment);
     const connection = requiredBootstrap(context.bootstrap);
-    await expect(requestTunnelAssignment("Next.js", connection)).rejects.toThrow(/framework name/);
-    expect(() => canonicalLoopbackTarget("127.0.0.1", 0)).toThrow(/listener port/);
-    expect(() => canonicalLoopbackTarget("192.0.2.1", 3000)).toThrow(/localhost or all interfaces/);
+    await expect(requestTunnelAssignment("Next.js", connection)).rejects.toMatchObject({
+      code: "sdk.configuration_invalid",
+    });
+    expect(() => canonicalLoopbackTarget("127.0.0.1", 0)).toThrow(
+      new TnlError("sdk.target_invalid"),
+    );
+    expect(() => canonicalLoopbackTarget("192.0.2.1", 3000)).toThrow(
+      new TnlError("sdk.target_invalid"),
+    );
     expect(bootstrap.requests).toHaveLength(0);
   });
 
@@ -505,7 +517,7 @@ test("tnl dev requests and assignment agree with the Go wire fixture", async () 
     requestTunnelAssignment(fixture.invalidConfiguration.framework, {
       socket: bootstrap.environment.TNL_DEV_SOCKET ?? "",
     }),
-  ).rejects.toThrow(/framework name/);
+  ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
   const invalidTarget = new URL(fixture.invalidTarget.target);
   expect(() =>
     canonicalLoopbackTarget(invalidTarget.hostname, Number(invalidTarget.port)),
@@ -517,7 +529,7 @@ test("tnl dev requests and assignment agree with the Go wire fixture", async () 
     requestTunnelAssignment(fixture.configuration.framework, {
       socket: invalidBootstrap.environment.TNL_DEV_SOCKET ?? "",
     }),
-  ).rejects.toThrow(/invalid shape/);
+  ).rejects.toMatchObject({ code: "sdk.response_invalid" });
 });
 
 function validAssignmentResponse() {

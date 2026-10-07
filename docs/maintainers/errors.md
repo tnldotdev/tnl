@@ -51,3 +51,16 @@ observes the original key-set error before the provider library formats it,
 preserves network causes, bounds signing-key responses, and caches keys across
 requests. Browser sign-in keeps these provider failures and storage failures
 separate from expired login state.
+
+The npm package exports browser-safe `TnlError` and `TnlErrorCode` alongside
+`tnl`. Integrations classify configuration, metadata, listener, launcher, and
+private dev-socket failures before handing them to a framework. Messages are
+authored definitions; provider text and invalid metadata values remain outside
+display output. Cleanup failures retain both errors and the original setup
+cause. The npm launcher uses the same safe messages before it can start `tnl`.
+
+The feedback toolbar owns `FeedbackError` and uses its authored message at every
+error view. Queries retry only bounded transient failures, and stop polling
+after expired access, state conflicts, invalid input, or malformed responses.
+Cancellation remains cancellation. Reporting retries retain their existing
+idempotency keys.

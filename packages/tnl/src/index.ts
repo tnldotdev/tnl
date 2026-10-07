@@ -1,6 +1,8 @@
 import { developmentPort } from "./internal/port.js";
 import { parseRuntimePayload, type ProjectMetadata } from "./internal/runtime.js";
 import type { LocalHTTPServer } from "./internal/register.js";
+import { TnlError } from "./errors.js";
+export { TnlError, type TnlErrorCode } from "./errors.js";
 
 /** Extended with service types from the generated `.tnl/project.d.ts` file. */
 export interface TnlProjectMetadata {}
@@ -46,7 +48,7 @@ export const tnl: TnlRuntime = Object.freeze({
   dev: runtime?.dev ?? false,
   async register(server: LocalHTTPServer): Promise<void> {
     if (typeof process === "undefined") {
-      throw new Error("tnl.register is available only on a development server");
+      throw new TnlError("sdk.configuration_invalid");
     }
     const { registerServer } = await import("./internal/register.js");
     await registerServer(server);
