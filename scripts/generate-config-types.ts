@@ -92,5 +92,3 @@ function renameProperties(value: unknown, mappings: Readonly<Record<string, stri
     renameProperties(child, mappings);
   }
 }
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.input_invalid");

@@ -39,5 +39,3 @@ writeFileSync(
     encoding: "utf8",
   }),
 );
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.input_invalid");

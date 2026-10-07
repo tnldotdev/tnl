@@ -5,7 +5,7 @@ import process from "node:process";
 
 const separator = process.argv.indexOf("--", 2);
 if (separator === -1 || separator === process.argv.length - 1) {
-  throw new ToolError("tool.input_invalid");
+  throw new Error("usage: node scripts/run-go-tests-with-postgres.ts -- COMMAND [ARGUMENTS...]");
 }
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -15,7 +15,7 @@ const container = `tnl-test-postgres-${identity}-${randomUUID()}`;
 const image =
   "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
 const command = process.argv[separator + 1];
-if (command === undefined) throw new ToolError("tool.input_invalid");
+if (command === undefined) throw new Error("test command is required");
 const arguments_ = process.argv.slice(separator + 2);
 let testProcess: ChildProcess | undefined;
 let stopping = false;
@@ -63,6 +63,14 @@ try {
   const postgresURL = `postgres://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
   const result = await run(command, [...arguments_, `-tnl-test-postgres-url=${postgresURL}`], true);
   process.exitCode = result;
+} catch (error) {
+  try {
+    const logs = await output("docker", ["logs", container]);
+    if (logs !== "") process.stderr.write(logs);
+  } catch {
+    // the container may have failed before it was created.
+  }
+  throw error;
 } finally {
   await removeContainer();
 }
@@ -119,5 +127,3 @@ function run(
     });
   });
 }
-import { installToolFailureHandler, ToolError } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.process_failed");

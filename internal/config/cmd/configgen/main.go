@@ -13,7 +13,6 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
@@ -269,6 +268,6 @@ func writeFile(path string, data []byte) error {
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "configgen:", failure.SafeMessage(failure.Wrap("generate configuration schema", failure.GeneratorFailed, err), failure.GeneratorFailed))
+	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }

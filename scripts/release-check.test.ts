@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { publicURLID, readyEvent, visit } from "./release-check.ts";
-import { ToolError } from "./errors.ts";
 
 describe("release check CLI events", () => {
   test("accepts a ready event and rejects incomplete or failed publications", () => {
@@ -24,12 +23,12 @@ describe("release check CLI events", () => {
       readyEvent(
         '{"schema_version":1,"type":"ready","url":"https://example.com","tunnel_id":"tunnel_1","publish_run_number":0}',
       ),
-    ).toThrow(new ToolError("tool.input_invalid"));
+    ).toThrow(/ready/);
     expect(() =>
       readyEvent(
         '{"schema_version":1,"type":"ready","url":"https://example.com","tunnel_id":42,"publish_run_number":2}',
       ),
-    ).toThrow(new ToolError("tool.input_invalid"));
+    ).toThrow(/invalid shape/);
     expect(() =>
       readyEvent('{"schema_version":1,"type":"error","code":"TNL_UNAVAILABLE"}'),
     ).toThrow(/TNL_UNAVAILABLE/);
@@ -54,7 +53,7 @@ describe("release check CLI events", () => {
       ),
     ).toThrow(/no public URL ID/);
     expect(() => publicURLID({ tunnels: [{}] }, "target", "https://control.example.test")).toThrow(
-      new ToolError("tool.input_invalid"),
+      /invalid shape/,
     );
   });
 });
@@ -71,9 +70,7 @@ test("visits the ready HTTPS hostname and rejects an unrelated local service", a
   expect(requests).toEqual(["https://check.example.com/release-check/run-1"]);
   await expect(visit("https://wrong.example.com", "run-1")).rejects.toThrow(/wrong local service/);
   vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ host: 42, nonce: "run-1" })));
-  await expect(visit("https://check.example.com", "run-1")).rejects.toMatchObject({
-    code: "tool.input_invalid",
-  });
+  await expect(visit("https://check.example.com", "run-1")).rejects.toThrow(/invalid shape/);
   await expect(visit("http://check.example.com", "run-1")).rejects.toThrow(/invalid public URL/);
 });
 

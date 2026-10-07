@@ -60,5 +60,3 @@ if (typeof modules[3].default !== "function") throw new Error("missing Vite expo
 } finally {
   await rm(directory, { force: true, recursive: true });
 }
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.validation_failed");

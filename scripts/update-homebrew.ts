@@ -75,5 +75,3 @@ if (mode !== "--render-only") {
     ...(sha ? ["-f", `sha=${sha}`] : []),
   ]);
 }
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.input_invalid");

@@ -71,5 +71,3 @@ const formatted = execFileSync("pnpm", ["exec", "oxfmt", "--stdin-filepath", out
   encoding: "utf8",
 });
 writeFileSync(output, formatted);
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.input_invalid");

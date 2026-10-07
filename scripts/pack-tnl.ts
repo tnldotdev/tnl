@@ -324,5 +324,3 @@ async function readJson<Output>(file: string, schema: z.ZodType<Output>): Promis
 async function writeJson(file: string, value: unknown): Promise<void> {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.validation_failed");

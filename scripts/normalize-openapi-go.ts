@@ -11,5 +11,3 @@ const normalized = source.replaceAll(
   'fmt.Errorf("header parameter ',
 );
 await writeFile(file, normalized);
-import { installToolFailureHandler } from "./errors.ts";
-installToolFailureHandler(import.meta, "tool.input_invalid");
