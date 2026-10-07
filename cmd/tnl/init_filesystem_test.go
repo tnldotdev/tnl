@@ -93,37 +93,30 @@ func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	}
 }
 
-func TestInitPreservesGitignore(t *testing.T) {
+func TestInitGitignoreGroupsNewRuleAndPreservesExistingRules(t *testing.T) {
 	for _, test := range []struct {
-		name, before string
+		name, before, want string
+		updated            bool
 	}{
-		{"new", ""},
-		{"existing", "node_modules/"},
-		{"custom", "node_modules/\n.tnl/\n"},
+		{"new", "", "# tnl\n.tnl/\n", true},
+		{"existing", "node_modules/", "node_modules/\n# tnl\n.tnl/\n", true},
+		{"already ignored", "node_modules/\n.tnl/\n", "node_modules/\n.tnl/\n", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := copyInitFixture(t, "vite")
+			root := t.TempDir()
 			path := filepath.Join(root, ".gitignore")
 			if test.name != "new" {
 				if err := os.WriteFile(path, []byte(test.before), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			t.Chdir(root)
 			for run := 0; run < 2; run++ {
-				var output bytes.Buffer
-				if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
-					t.Fatal(err)
-				}
-				if strings.Contains(output.String(), ".gitignore") || strings.Contains(output.String(), "ignored") {
-					t.Fatalf("run %d: output = %s", run, output.String())
+				updated, err := ensureTnlGitignore(root)
+				if err != nil || updated != (run == 0 && test.updated) {
+					t.Fatalf("run %d: updated = %t, err = %v", run, updated, err)
 				}
 				got, err := os.ReadFile(path)
-				if test.name == "new" {
-					if !os.IsNotExist(err) {
-						t.Fatalf("run %d: created gitignore: %q, err = %v", run, got, err)
-					}
-				} else if err != nil || string(got) != test.before {
+				if err != nil || string(got) != test.want {
 					t.Fatalf("run %d: gitignore = %q, err = %v", run, got, err)
 				}
 			}
@@ -147,7 +140,7 @@ func TestInitReportsTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/project.d.ts`) || strings.Contains(output.String(), "ignored") {
+	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/project.d.ts`) || !strings.Contains(output.String(), "ignored") {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

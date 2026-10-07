@@ -122,6 +122,10 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		}
 		serverUpdated = true
 	}
+	gitignoreUpdated, err := ensureTnlGitignore(plan.root)
+	if err != nil {
+		return err
+	}
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
 			Project: projectconfig.Project{
@@ -136,7 +140,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		plan.actions = append(plan.actions, typeActions...)
 	}
 	state := "already configured"
-	if created || configUpdated || installed || frameworkUpdated || serverUpdated {
+	if created || configUpdated || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -159,6 +163,10 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if serverUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: plan.serverPath})
 	}
+	if gitignoreUpdated {
+		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
+	}
+	fields = append(fields, clioutput.Field{Label: "ignored", Value: ".tnl/"})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {
 		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
