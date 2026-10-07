@@ -520,7 +520,7 @@ func (c Config) PrivateControlEndpoint() string {
 
 func (c Config) ManagedDomain() string { return c.ManagedDeploymentDomain }
 
-func (c Config) AuthorityOrigin() string {
+func (c Config) ControlOrigin() string {
 	if hostname := c.ServerHostname(); hostname != "" {
 		return "https://" + hostname
 	}

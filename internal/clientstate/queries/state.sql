@@ -62,7 +62,6 @@ WHERE server_origin = sqlc.arg(server_origin);
 -- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
-    authority_endpoint,
     session_id,
     stored_access_token,
     access_expires_at,
@@ -71,7 +70,6 @@ INSERT INTO control_sessions (
     updated_at
 ) VALUES (
     sqlc.arg(server_origin),
-    sqlc.arg(authority_endpoint),
     sqlc.arg(session_id),
     sqlc.arg(stored_access_token),
     sqlc.arg(access_expires_at),
@@ -80,7 +78,6 @@ INSERT INTO control_sessions (
     sqlc.arg(updated_at)
 )
 ON CONFLICT (server_origin) DO UPDATE SET
-    authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
     stored_access_token = excluded.stored_access_token,
     access_expires_at = excluded.access_expires_at,

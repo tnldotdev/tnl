@@ -21,7 +21,7 @@ import (
 )
 
 // bump this only when the local SQLite schema intentionally starts fresh.
-const databaseFormatVersion = 1
+const databaseFormatVersion = 2
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS

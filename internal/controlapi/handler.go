@@ -29,7 +29,7 @@ type Config struct {
 	Role                        tnldconfig.Role
 	StartedAt                   time.Time
 	ManagedDeploymentDomain     string
-	AuthorityEndpoint           string
+	ControlURL                  string
 	LoginToken                  string
 	OIDCIssuer                  string
 	OIDCClientID                string
@@ -233,7 +233,7 @@ func NewHandler(
 		if err != nil {
 			return nil, err
 		}
-		h.browserAuthority, err = authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
+		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
 			return nil, err
 		}
@@ -325,7 +325,6 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		DnsAutomation:           cfg.DNSAutomation,
 		GuestDemo:               cfg.GuestDemoEnabled,
 		BrowserLoginAvailable:   new(cfg.BrowserOIDCClientID != ""),
-		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}
 	if cfg.LoginToken != "" {

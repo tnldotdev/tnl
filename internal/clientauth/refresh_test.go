@@ -121,7 +121,7 @@ func TestConcurrentRefreshSerializesAndReusesRotatedToken(t *testing.T) {
 			if len(requests) != 2 {
 				t.Fatalf("requests=%d, want discovery and exactly one refresh", len(requests))
 			}
-			assertAuthRequest(t, requests[1], http.MethodPost, testAuthorityOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
+			assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
 		})
 	}
 }

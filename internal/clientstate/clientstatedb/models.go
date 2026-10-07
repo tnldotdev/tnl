@@ -34,7 +34,6 @@ type ClientSetting struct {
 type ControlSession struct {
 	ID                 int64
 	ServerOrigin       string
-	AuthorityEndpoint  string
 	SessionID          string
 	StoredAccessToken  []byte
 	AccessExpiresAt    int64

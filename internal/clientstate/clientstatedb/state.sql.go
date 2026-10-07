@@ -140,7 +140,7 @@ func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificate
 }
 
 const getControlSession = `-- name: GetControlSession :one
-SELECT id, server_origin, authority_endpoint, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at
+SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -151,7 +151,6 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 	err := row.Scan(
 		&i.ID,
 		&i.ServerOrigin,
-		&i.AuthorityEndpoint,
 		&i.SessionID,
 		&i.StoredAccessToken,
 		&i.AccessExpiresAt,
@@ -670,7 +669,6 @@ func (q *Queries) UpsertCertificateMaterial(ctx context.Context, arg UpsertCerti
 const upsertControlSession = `-- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
-    authority_endpoint,
     session_id,
     stored_access_token,
     access_expires_at,
@@ -684,11 +682,9 @@ INSERT INTO control_sessions (
     ?4,
     ?5,
     ?6,
-    ?7,
-    ?8
+    ?7
 )
 ON CONFLICT (server_origin) DO UPDATE SET
-    authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
     stored_access_token = excluded.stored_access_token,
     access_expires_at = excluded.access_expires_at,
@@ -699,7 +695,6 @@ ON CONFLICT (server_origin) DO UPDATE SET
 
 type UpsertControlSessionParams struct {
 	ServerOrigin       string
-	AuthorityEndpoint  string
 	SessionID          string
 	StoredAccessToken  []byte
 	AccessExpiresAt    int64
@@ -711,7 +706,6 @@ type UpsertControlSessionParams struct {
 func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSessionParams) error {
 	_, err := q.db.ExecContext(ctx, upsertControlSession,
 		arg.ServerOrigin,
-		arg.AuthorityEndpoint,
 		arg.SessionID,
 		arg.StoredAccessToken,
 		arg.AccessExpiresAt,

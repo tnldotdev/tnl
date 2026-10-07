@@ -716,8 +716,7 @@ type ConnectionAssignment struct {
 
 // ControlDiscovery defines model for ControlDiscovery.
 type ControlDiscovery struct {
-	Authentication    AuthenticationFacts `json:"authentication"`
-	AuthorityEndpoint string              `json:"authority_endpoint"`
+	Authentication AuthenticationFacts `json:"authentication"`
 
 	// BrowserLoginAvailable Whether visitors can sign in through a browser OIDC client.
 	BrowserLoginAvailable *bool `json:"browser_login_available,omitempty"`
