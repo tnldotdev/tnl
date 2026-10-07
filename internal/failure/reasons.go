@@ -68,6 +68,8 @@ const (
 	ServerOIDCInvalid           Reason = "server.oidc_invalid"
 	ServerDNSConfigInvalid      Reason = "server.dns_config_invalid"
 	ServerUsageConfigInvalid    Reason = "server.usage_config_invalid"
+	ServerEmailConfigInvalid    Reason = "server.email_config_invalid"
+	ServerWebsiteConfigInvalid  Reason = "server.website_config_invalid"
 	ServerClusterSecretInvalid  Reason = "server.cluster_secret_invalid"
 	ServerLoginTokenInvalid     Reason = "server.login_token_invalid"
 	ServerConfigFileInvalid     Reason = "server.config_file_invalid"
@@ -85,6 +87,9 @@ const (
 	ServerDNSFailed             Reason = "server.dns_failed"
 	ServerDNSConflict           Reason = "server.dns_conflict"
 	ServerUsageDeliveryFailed   Reason = "server.usage_delivery_failed"
+	ServerEmailDeliveryFailed   Reason = "server.email_delivery_failed"
+	ServerEmailLeaseStale       Reason = "server.email_lease_stale"
+	ServerStoredStateInvalid    Reason = "server.stored_state_invalid"
 	ServerAPIInternal           Reason = "server.api_internal"
 	Unexpected                  Reason = "internal.unexpected"
 )
@@ -352,6 +357,14 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "public URL usage receiver settings are invalid",
 		Action: "configure both a valid usage URL and token or omit both", Retry: RetryAfterChange,
 	},
+	ServerEmailConfigInvalid: {
+		Class: Invalid, Message: "invitation email settings are incomplete or invalid",
+		Action: "configure an HTTPS TNLD_EMAIL_URL and matching TNLD_WEBHOOK_SECRET or omit both", Retry: RetryAfterChange,
+	},
+	ServerWebsiteConfigInvalid: {
+		Class: Invalid, Message: "website identity settings are incomplete or invalid",
+		Action: "configure TNLD_OIDC_ISSUER and a valid TNLD_WEB_SERVICE_SECRET", Retry: RetryAfterChange,
+	},
 	ServerClusterSecretInvalid: {
 		Class: Invalid, Message: "cluster secret configuration is invalid for this role",
 		Action: "check TNLD_CLUSTER_SECRET and the selected role", Retry: RetryAfterChange,
@@ -423,6 +436,18 @@ var definitions = map[Reason]Definition{
 	ServerUsageDeliveryFailed: {
 		Class: Unavailable, Message: "usage delivery failed",
 		Action: "check the configured usage receiver and retry", Retry: RetryLater,
+	},
+	ServerEmailDeliveryFailed: {
+		Class: Unavailable, Message: "invitation email work failed and will be retried",
+		Action: "check PostgreSQL and the configured mailer, then retry", Retry: RetryLater,
+	},
+	ServerEmailLeaseStale: {
+		Class: Stale, Message: "the invitation email lease is no longer current",
+		Action: "discard this claim and let the current worker complete delivery", Retry: NoRetry,
+	},
+	ServerStoredStateInvalid: {
+		Class: Internal, Message: "control could not use its stored state",
+		Action: "check the storage key and database state before retrying", Retry: RetryAfterChange,
 	},
 	ServerAPIInternal: {
 		Class: Internal, Message: "server API request failed unexpectedly",

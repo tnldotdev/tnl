@@ -311,6 +311,15 @@ operational procedures and current capability limits in
 
 # development workflow
 
+When adding or changing error paths, use an owned error type, sentinel, or
+`failure.Reason` and classify it at the reporting boundary. Reuse existing
+reasons and contract-defined HTTP or tunnel codes when their meaning fits;
+define a specific reason when it does not. Preserve causes through
+`errors.Is` and `errors.As`, use `operatorlog` for operational failures, and
+render only authored messages and approved fields. Do not classify errors by
+matching their text. Test expected failures for their specific classification,
+retry behavior, cause identity, and safe output.
+
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.

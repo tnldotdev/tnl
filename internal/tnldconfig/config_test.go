@@ -304,7 +304,7 @@ func TestConfigStatelessRoleSecretIsolation(t *testing.T) {
 			"storage":          func(c *Config) { c.StorageKey = testStorageKey },
 			"previous_storage": func(c *Config) { c.StorageKeyPrevious = testStorageKey },
 			"website":          func(c *Config) { c.WebServiceSecret = testClusterSecret },
-			"email":            func(c *Config) { c.EmailToken = testClusterSecret },
+			"webhook":          func(c *Config) { c.WebhookSecret = testClusterSecret },
 			"login_token":      func(c *Config) { c.LoginToken = testLoginToken },
 			"managed_zone":     func(c *Config) { c.Route53ManagedZoneID = "ZMANAGED" },
 			"server_zone":      func(c *Config) { c.Route53ServerZoneID = "ZSERVER" },

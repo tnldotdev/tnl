@@ -21,6 +21,7 @@ const (
 	DNSAuthorityPrefix               = "da_"
 	DNSWorkerPrefix                  = "dw_"
 	DomainPrefix                     = "dom_"
+	EmailWorkerPrefix                = "ew_"
 	FeedbackPrefix                   = "fb_"
 	DrainPrefix                      = "dr_"
 	GuestPrefix                      = "gst_"

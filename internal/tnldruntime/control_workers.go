@@ -154,7 +154,7 @@ func (d *daemon) startControlWorkers(
 		d.start("run public URL usage worker", func() error { return worker.Run(lifetime) })
 	}
 	if cfg.EmailURL != "" {
-		worker, err := emaildelivery.New(database, cfg.EmailURL, cfg.EmailToken, nil)
+		worker, err := emaildelivery.New(database, cfg.EmailURL, cfg.WebhookSecret, nil)
 		if err != nil {
 			return err
 		}
