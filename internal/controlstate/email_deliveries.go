@@ -35,7 +35,7 @@ type EmailDelivery struct {
 	Payload  authorityv1.EmailDeliveryRequest
 }
 
-var ErrEmailDeliveryLeaseStale = errors.New("controlstate: email delivery lease is stale")
+var ErrEmailDeliveryLeaseStale = errors.New("email delivery lease is stale")
 
 func (d *Database) ClaimInvitationEmail(ctx context.Context, owner string, now time.Time) (EmailDelivery, error) {
 	queries := controlstatedb.New(d.pool)

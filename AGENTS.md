@@ -316,9 +316,10 @@ When adding or changing error paths, use an owned error type, sentinel, or
 reasons and contract-defined HTTP or tunnel codes when their meaning fits;
 define a specific reason when it does not. Preserve causes through
 `errors.Is` and `errors.As`, use `operatorlog` for operational failures, and
-render only authored messages and approved fields. Do not classify errors by
-matching their text. Test expected failures for their specific classification,
-retry behavior, cause identity, and safe output.
+render only authored messages and approved fields. Error messages must not start
+with the package name; describe the failed operation or condition directly.
+Do not classify errors by matching their text. Test expected failures for their
+specific classification, retry behavior, cause identity, and safe output.
 
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.

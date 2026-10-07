@@ -34,7 +34,7 @@ func New(store Store, origin, secret string, client *http.Client) (*Worker, erro
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || secret == "" || store == nil {
 		return nil, failure.Wrap("configure invitation email worker", failure.ServerEmailConfigInvalid,
-			errors.New("emaildelivery: invalid receiver configuration"))
+			errors.New("invalid email receiver configuration"))
 	}
 	owner, err := opaqueid.New(opaqueid.EmailWorkerPrefix)
 	if err != nil {

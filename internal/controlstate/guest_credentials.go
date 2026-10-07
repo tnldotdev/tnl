@@ -44,7 +44,7 @@ func (d *Database) EnsureGuestPrincipal(ctx context.Context, guestID string, now
 	}
 	if len(key) != 32 {
 		return result, failure.Wrap("read guest retry key", failure.ServerStoredStateInvalid,
-			errors.New("controlstate: invalid guest retry key"))
+			errors.New("invalid guest retry key"))
 	}
 	copy(result[:], key)
 	return result, tx.Commit(ctx)
