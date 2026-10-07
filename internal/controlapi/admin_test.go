@@ -98,7 +98,7 @@ func serveAdminRequest(handler http.Handler, method, path, body string) *httptes
 
 type adminStoreStub struct {
 	Store
-	BuiltinAuthorizationStore
+	AuthorizationStore
 	principal      controlstate.ControlPrincipal
 	counts         controlstate.AdminRuntimeCounts
 	relayPage      controlstate.AdminRelayPage

@@ -122,14 +122,3 @@ func NewHandler(cfg Config, store Store) (*http.ServeMux, error) {
 	mux.HandleFunc("/", notFound)
 	return mux, nil
 }
-
-// AuthorizeServiceOperation belongs to the external authority and is
-// deliberately absent from the built-in authority implementation.
-func (h *handler) AuthorizeServiceOperation(response http.ResponseWriter, _ *http.Request) {
-	notFound(response, nil)
-}
-
-// hosted guest domain lookup is not available through the built-in authority.
-func (h *handler) GetGuestDomain(response http.ResponseWriter, _ *http.Request, _ authorityv1.GetGuestDomainParams) {
-	notFound(response, nil)
-}

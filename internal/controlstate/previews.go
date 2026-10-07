@@ -33,7 +33,6 @@ type AddPreviewPublicURLRequest struct {
 	PublicURLID              string
 	TeamID                   string
 	IdentityID               string
-	AuthorityIssuer          string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
 }
@@ -112,19 +111,12 @@ func (d *Database) AddPreviewPublicURL(ctx context.Context, request AddPreviewPu
 		return Preview{}, ErrPreviewAccess
 	}
 	policyRevision := positive(request.PolicyRevision)
-	if request.AuthorityIssuer == "" {
+	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return Preview{}, ErrPreviewAccess
 		} else if err != nil {
 			return Preview{}, fmt.Errorf("controlstate: lock preview team: %w", err)
 		}
-	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return Preview{}, ErrPublicURLAuthority
-	} else if err != nil {
-		return Preview{}, fmt.Errorf("controlstate: observe preview authority: %w", err)
 	}
 	if _, err := queries.LockPreviewForTeamAccess(ctx, request.PreviewID); err != nil {
 		return Preview{}, fmt.Errorf("controlstate: lock preview: %w", err)
@@ -149,7 +141,7 @@ func (d *Database) AddPreviewPublicURL(ctx context.Context, request AddPreviewPu
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Preview{}, fmt.Errorf("controlstate: check team access: %w", err)
 	}
-	if request.AuthorityIssuer == "" {
+	{
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.IdentityID,
 		})

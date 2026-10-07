@@ -35,7 +35,7 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 				seedControlPublicURL(t, observer, now, suffix)
 				request := PublishRunRequest{
 					PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix, MembershipID: "membership_" + suffix,
-					RequireLocalAuthority: true, RetrySecret: make([]byte, 32), IdempotencyKey: suffix, PolicyRevision: 1, ExpectedMutationRevision: 1,
+					RetrySecret: make([]byte, 32), IdempotencyKey: suffix, PolicyRevision: 1, ExpectedMutationRevision: 1,
 					CertificateCacheKey: suffix, CertificateScope: "route", CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
 				}
 				setup, err := observer.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)

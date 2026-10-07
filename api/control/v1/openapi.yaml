@@ -1057,90 +1057,12 @@ paths:
                 $ref: "#/components/schemas/MaintenanceControl"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/service/revoke:
-    post:
-      operationId: revokeHostedPolicy
-      summary: Apply a policy revision from the external authority and close affected publish runs
-      security:
-        - hostedServiceAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/HostedPolicyRevocation"
-      responses:
-        "204":
-          description: Policy revision committed or replayed
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/service/dns-authorities:
-    post:
-      operationId: createDNSAuthority
-      summary: Create a DNS authority for one claimed domain
-      security:
-        - hostedServiceAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateDNSAuthorityRequest"
-      responses:
-        "201":
-          description: DNS authority created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DNSAuthority"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/service/dns-authorities/{dns_authority_reference}:
-    get:
-      operationId: getDNSAuthority
-      summary: Read a claimed domain's DNS authority
-      security:
-        - hostedServiceAuth: []
-      parameters:
-        - $ref: "#/components/parameters/DNSAuthorityReference"
-      responses:
-        "200":
-          description: DNS authority
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DNSAuthority"
-        default:
-          $ref: "#/components/responses/Problem"
-    delete:
-      operationId: releaseDNSAuthority
-      summary: Begin releasing a claimed domain's DNS authority
-      security:
-        - hostedServiceAuth: []
-      parameters:
-        - $ref: "#/components/parameters/DNSAuthorityReference"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: DNS authority release accepted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DNSAuthority"
-        default:
-          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: tnl access token
-    hostedServiceAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: tnl hosted service secret
     publishRunAuth:
       type: http
       scheme: bearer
@@ -1423,98 +1345,6 @@ components:
             type: string
             minLength: 1
             maxLength: 128
-    HostedPolicyRevocation:
-      type: object
-      additionalProperties: false
-      required: [team_id, policy_revision, all_sessions, membership_ids, domain_ids]
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        policy_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        all_sessions:
-          type: boolean
-        membership_ids:
-          type: array
-          maxItems: 1000
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/MembershipID"
-        domain_ids:
-          type: array
-          maxItems: 1000
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/DomainID"
-    CreateDNSAuthorityRequest:
-      type: object
-      additionalProperties: false
-      required: [team_id, domain_id, canonical_domain]
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        canonical_domain:
-          $ref: "#/components/schemas/CanonicalHostname"
-    DNSAuthorityState:
-      type: string
-      enum: [pending, ready, releasing, released, failed]
-    DNSRecord:
-      type: object
-      additionalProperties: false
-      required: [name, type, value]
-      properties:
-        name:
-          $ref: "#/components/schemas/CanonicalHostname"
-        type:
-          type: string
-          enum: [NS, SOA, TXT, A, AAAA]
-        value:
-          type: string
-          minLength: 1
-          maxLength: 2048
-    DNSAuthority:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          reference,
-          team_id,
-          domain_id,
-          canonical_domain,
-          state,
-          required_records,
-          created_at,
-          updated_at,
-        ]
-      properties:
-        reference:
-          type: string
-          minLength: 1
-          maxLength: 256
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        canonical_domain:
-          $ref: "#/components/schemas/CanonicalHostname"
-        state:
-          $ref: "#/components/schemas/DNSAuthorityState"
-        required_records:
-          type: array
-          items:
-            $ref: "#/components/schemas/DNSRecord"
-        last_error:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
     PublicURLScope:
       type: string
       enum: [member, shared]

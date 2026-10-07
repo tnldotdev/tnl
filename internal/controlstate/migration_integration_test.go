@@ -43,7 +43,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
 	for _, table := range []string{
-		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "authority_revision_states", "runtime_secret", "dns_authorities", "dns_challenge_changes",
+		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "runtime_secret", "dns_authorities", "dns_challenge_changes",
 		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_assignment_totals",
 		"control_tls_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
 		"public_url_usage_configuration", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",

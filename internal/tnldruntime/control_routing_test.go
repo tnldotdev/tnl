@@ -19,17 +19,16 @@ type unusedRelayStore struct{ relayapi.Store }
 
 func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 	for _, test := range []struct {
-		name, authorityEndpoint string
-		identityStatus          int
-		identitySurface         string
-		identityOperation       string
+		name              string
+		identityStatus    int
+		identitySurface   string
+		identityOperation string
 	}{
 		{name: "built-in authority", identityStatus: http.StatusUnauthorized, identitySurface: "authority", identityOperation: "GET /v1/identity"},
-		{name: "external authority", authorityEndpoint: "https://authority.example.test", identityStatus: http.StatusNotFound, identitySurface: "control", identityOperation: "unmatched"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			handler, err := newPublicAPIHandler(tnldconfig.Config{Role: tnldconfig.RoleControl, AuthorityEndpoint: test.authorityEndpoint},
+			handler, err := newPublicAPIHandler(tnldconfig.Config{Role: tnldconfig.RoleControl},
 				time.Now(), &http.Client{}, nil, metrics, &daemon{}, nil)
 			if err != nil {
 				t.Fatal(err)

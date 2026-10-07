@@ -12,10 +12,12 @@ import (
 	"math/big"
 	"net"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
@@ -81,7 +83,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				}
 				setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
 					PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: membership.ID, ActingIdentityID: principal.IdentityID,
-					RequireLocalAuthority: true, RetrySecret: principal.RetrySecret[:], PolicyRevision: uint64(membership.PolicyRevision),
+					RetrySecret: principal.RetrySecret[:], PolicyRevision: uint64(membership.PolicyRevision),
 					IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), ExpectedMutationRevision: route.MutationRevision,
 					CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod,
 				}, now, time.Hour, time.Hour)
@@ -91,7 +93,6 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				authentication = PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 			} else {
 				route, authentication = newExternalPlanSession(t, database, now, "team_external", "api.member."+domain, reference, plan)
-				assertNoBuiltinAuthority(t, database)
 			}
 			work := createPlanIssuanceWork(t, database, now, authentication, plan, false, nil)
 			for _, authorization := range work.Authorizations {
@@ -209,9 +210,8 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 				wantErr = ErrPublishRunStale
 			}
 			if name == "revoked" {
-				applied, closed, err := database.ApplyHostedPolicyRevocation(t.Context(), "https://authority.example.test", route.TeamID, 2, true, nil, nil, now)
-				if err != nil || !applied || closed != 1 {
-					t.Fatalf("revoke current session = %v, applied %v, closed %d", err, applied, closed)
+				if err := database.ClosePublishRun(t.Context(), authentication.PublishRunID, authentication.PublishRunToken, now); err != nil {
+					t.Fatal(err)
 				}
 				wantErr = ErrPublishRunStale
 			}
@@ -250,16 +250,32 @@ func registerCertificatePlanRelays(t *testing.T, database *Database, now time.Ti
 
 func newExternalPlanSession(t *testing.T, database *Database, now time.Time, team, hostname, reference string, plan CertificatePlan) (PublicURL, PublishRunAuthentication) {
 	t.Helper()
-	identity := "identity_" + team
-	if _, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identity, now); err != nil {
+	suffix := strings.TrimPrefix(team, "team_")
+	identity := "identity_" + suffix
+	var exists bool
+	if err := database.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM control.identities WHERE id=$1)`, identity).Scan(&exists); err != nil {
 		t.Fatal(err)
 	}
-	route, err := database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
-		TeamID: team, DomainID: "domain_external", MembershipID: "membership_" + team, ActingIdentityID: identity,
-		IdempotencyKey: hostname, RequestDigest: sha256.Sum256([]byte(hostname)), CanonicalHostname: hostname,
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSPending,
-		DNSAuthorityReference: reference, AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
-	}, now)
+	if !exists {
+		seedControlPublicURL(t, database, now, suffix)
+		if _, err := database.pool.Exec(t.Context(), `DELETE FROM control.public_urls WHERE id=$1`, "public_url_"+suffix); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := database.sealSecret(publicURLRequestDigestContext(id), make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.pool.Exec(t.Context(), `INSERT INTO control.public_urls(id,team_id,domain_id,membership_id,created_by_identity_id,idempotency_key,request_digest_ciphertext,request_digest_storage_key_id,canonical_hostname,target,public_url_scope,policy_revision,ip_policy,lifecycle_state,dns_state,dns_authority_reference,created_at,updated_at,dns_available_at)
+	 VALUES($1,$2,$3,$4,$5,$1,$6,$7,$8,'http://127.0.0.1:3000','member',1,'allow_all','enabled','pending',$9,$10,$10,$10)`, id, team, "domain_"+suffix, "membership_"+suffix, identity, digest, database.storageKey.CurrentID(), hostname, reference, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := database.GetPublicURLForAuthorization(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,15 +290,12 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_"+route.TeamID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	secret := sha256.Sum256([]byte("plan-retry"))
 	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
-		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_" + route.TeamID,
+		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_" + strings.TrimPrefix(route.TeamID, "team_"),
 		RetrySecret: secret[:], IdempotencyKey: key, RequestDigest: sha256.Sum256([]byte(key)), PolicyRevision: 1,
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: slices.Clone(plan.Identifiers),
-		CertificateChallenge: plan.ChallengeMethod, AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: current.MutationRevision,
+		CertificateChallenge: plan.ChallengeMethod, ExpectedMutationRevision: current.MutationRevision,
 	}, now, 48*time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -378,17 +391,6 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 		t.Fatalf("save valid certificate work: %v", err)
 	}
 	return work
-}
-
-func assertNoBuiltinAuthority(t *testing.T, database *Database) {
-	t.Helper()
-	var domains, memberships int
-	if err := database.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM control.domains), (SELECT count(*) FROM control.team_memberships)`).Scan(&domains, &memberships); err != nil {
-		t.Fatal(err)
-	}
-	if domains != 0 || memberships != 0 {
-		t.Fatal("hosted fixture must not seed builtin domains or memberships")
-	}
 }
 
 func TestIntegrationCertificateInstallMaterial(t *testing.T) {

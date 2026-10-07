@@ -73,7 +73,6 @@ type CreatePublicURLRequest struct {
 	AllowedIPPrefixes     []string
 	DNSState              PublicURLDNSState
 	DNSAuthorityReference string
-	AuthorityIssuer       string
 	PolicyRevision        uint64
 	Ephemeral             bool
 }
@@ -84,7 +83,6 @@ type AuthorizedPublicURLUpdateRequest struct {
 	ActingIdentityID         string
 	Target                   string
 	AllowedIPPrefixes        []string
-	AuthorityIssuer          string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
 }
@@ -93,7 +91,7 @@ type AuthorizedPublicURLDeleteRequest struct {
 	PublicURLID              string
 	TeamID                   string
 	ActingIdentityID         string
-	AuthorityIssuer          string
+	GuestID                  string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
 }
@@ -117,7 +115,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	defer rollback(ctx, tx, "create route", &retErr)()
 	queries := controlstatedb.New(tx)
-	if request.AuthorityIssuer == "" {
+	if request.GuestID == "" {
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return PublicURL{}, ErrPublicURLAccess
 		} else if err != nil {
@@ -130,16 +128,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
 	}
 	policyRevision := int64(0)
-	if request.AuthorityIssuer != "" {
+	if request.GuestID != "" {
 		policyRevision = positive(request.PolicyRevision)
-		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-			PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return PublicURL{}, ErrPublicURLAuthority
-		} else if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: create public_url: observe authority revision: %w", err)
-		}
 	}
 
 	existing, err := queries.GetPublicURLByCreatorIdempotency(ctx, controlstatedb.GetPublicURLByCreatorIdempotencyParams{
@@ -202,7 +192,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if !enabled {
 		return PublicURL{}, ErrPublicURLCreationGated
 	}
-	if request.AuthorityIssuer == "" {
+	if request.GuestID == "" {
 		creation, err := queries.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{
 			IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
 		})
@@ -313,19 +303,12 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 	policyRevision := positive(request.PolicyRevision)
-	if request.AuthorityIssuer == "" {
+	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return PublicURL{}, ErrPublicURLAccess
 		} else if err != nil {
 			return PublicURL{}, fmt.Errorf("controlstate: update public_url: lock team: %w", err)
 		}
-	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return PublicURL{}, ErrPublicURLAuthority
-	} else if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: update public_url: observe authority revision: %w", err)
 	}
 	route, err := queries.LockPublicURLForRun(ctx, request.PublicURLID)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil &&
@@ -351,7 +334,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if hasOpenSession {
 		return PublicURL{}, ErrPublishRunOpen
 	}
-	if request.AuthorityIssuer == "" {
+	{
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 		})
@@ -507,16 +490,16 @@ func (d *Database) ListAuthorizedPublicURLs(ctx context.Context, teamID, cursor 
 	if err := d.requireOpen(); err != nil {
 		return PublicURLPage{}, err
 	}
-	rows, err := controlstatedb.New(d.pool).ListExternalAuthorityPublicURLs(
+	rows, err := controlstatedb.New(d.pool).ListAuthorizedPublicURLsData(
 		ctx,
-		controlstatedb.ListExternalAuthorityPublicURLsParams{TeamID: teamID, Cursor: nullableText(cursor)},
+		controlstatedb.ListAuthorizedPublicURLsDataParams{TeamID: teamID, Cursor: nullableText(cursor)},
 	)
 	if err != nil {
 		return PublicURLPage{}, fmt.Errorf("controlstate: list authorized public_urls: %w", err)
 	}
 	page := PublicURLPage{PublicURLs: make([]PublicURL, min(len(rows), publicURLPageSize))}
 	for index := range page.PublicURLs {
-		page.PublicURLs[index] = publicURLFromExternalAuthorityListRow(rows[index])
+		page.PublicURLs[index] = publicURLFromAuthorizedListRow(rows[index])
 		if err := d.restorePublicURLPolicy(&page.PublicURLs[index], rows[index].AllowedIpPolicyStorageKeyID,
 			rows[index].AllowedIpPolicyCiphertext, rows[index].AllowedIpHashes); err != nil {
 			return PublicURLPage{}, err
@@ -547,7 +530,7 @@ func (d *Database) GetAuthorizedPublicURLByHostname(ctx context.Context, teamID,
 	if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: get authorized route by hostname: %w", err)
 	}
-	result := publicURLFromExternalAuthorityListRow(controlstatedb.ListExternalAuthorityPublicURLsRow(row))
+	result := publicURLFromAuthorizedListRow(controlstatedb.ListAuthorizedPublicURLsDataRow(row))
 	if err := d.restorePublicURLPolicy(&result, row.AllowedIpPolicyStorageKeyID, row.AllowedIpPolicyCiphertext, row.AllowedIpHashes); err != nil {
 		return PublicURL{}, err
 	}
@@ -595,7 +578,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	if !validStateText(identityID) || !validStateText(publicURLID) {
 		return ErrPublicURLInvalid
 	}
-	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || !validStateText(request.TeamID) ||
+	if request.GuestID != "" && (!validStateText(request.GuestID) || !validStateText(request.TeamID) ||
 		request.PolicyRevision == 0 || request.ExpectedMutationRevision == 0) {
 		return ErrPublicURLInvalid
 	}
@@ -610,7 +593,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 	var route controlstatedb.ControlPublicUrl
-	if request.AuthorityIssuer == "" {
+	if request.GuestID == "" {
 		if _, err := queries.LockLocalPublicURLTeamForMutation(ctx, publicURLID); errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicURLNotFound
 		} else if err != nil {
@@ -630,15 +613,10 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 		}
 		route = publicURLModelFromDeleteRow(row)
 	} else {
-		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicURLAuthority
-		} else if err != nil {
-			return fmt.Errorf("controlstate: delete public_url: observe authority revision: %w", err)
+		owned, err := queries.GuestOwnsPublicURL(ctx, controlstatedb.GuestOwnsPublicURLParams{GuestID: request.GuestID, PublicURLID: publicURLID})
+		if err != nil || !owned || request.ActingIdentityID != request.GuestID {
+			return ErrPublicURLAccess
 		}
-		var err error
 		route, err = queries.LockPublicURLForRun(ctx, publicURLID)
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && route.TeamID != request.TeamID {
 			return ErrPublicURLNotFound
@@ -897,7 +875,7 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 		request.DNSState != PublicURLDNSUnmanaged && request.DNSState != PublicURLDNSPending {
 		return nil, ErrPublicURLInvalid
 	}
-	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || request.PolicyRevision == 0) {
+	if request.GuestID != "" && (!validStateText(request.GuestID) || request.ActingIdentityID != request.GuestID || request.PolicyRevision == 0) {
 		return nil, ErrPublicURLInvalid
 	}
 	canonical, err := naming.CanonicalizeHostname(request.CanonicalHostname)
@@ -925,7 +903,6 @@ func validateAuthorizedPublicURLUpdateRequest(request AuthorizedPublicURLUpdateR
 		}
 	}
 	if request.PolicyRevision == 0 || request.ExpectedMutationRevision == 0 ||
-		request.AuthorityIssuer != "" && !validStateText(request.AuthorityIssuer) ||
 		authorization.ValidateTarget(request.Target) != nil {
 		return nil, ErrPublicURLInvalid
 	}
@@ -1046,7 +1023,7 @@ func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicUR
 	)
 }
 
-func publicURLFromExternalAuthorityListRow(row controlstatedb.ListExternalAuthorityPublicURLsRow) PublicURL {
+func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsDataRow) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,

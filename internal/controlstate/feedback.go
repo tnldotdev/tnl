@@ -68,7 +68,6 @@ type FeedbackActor struct {
 	ShareID                  string
 	CookieSecret             []byte
 	AllowedIP                bool
-	AuthorityIssuer          string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
 }
@@ -386,22 +385,17 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 		return "", ErrFeedbackAccess
 	}
 	revision := positive(actor.PolicyRevision)
-	if actor.AuthorityIssuer == "" {
+	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, thread.TeamID); err != nil {
 			return "", ErrFeedbackAccess
 		}
-	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-		Issuer: actor.AuthorityIssuer, TeamID: thread.TeamID,
-		PolicyRevision: revision, UpdatedAt: timestamptz(now),
-	}); err != nil {
-		return "", ErrFeedbackAccess
 	}
 	route, err := queries.LockPublicURLForRun(ctx, thread.PublicURLID)
 	if err != nil || route.TeamID != thread.TeamID ||
 		route.MutationRevision != int64(actor.ExpectedMutationRevision) || route.PolicyRevision > revision {
 		return "", ErrFeedbackAccess
 	}
-	if actor.AuthorityIssuer == "" {
+	{
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: thread.TeamID, IdentityID: actor.IdentityID,
 		})

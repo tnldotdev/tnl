@@ -48,7 +48,6 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 	}
 	authorized := make([]controlstate.AuthorizedSharePublicURL, 0, len(ids))
 	var revision uint64
-	issuer := ""
 	for _, id := range ids {
 		route, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
 		if errors.Is(err, controlstate.ErrPublicURLNotFound) {
@@ -78,11 +77,11 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		if decision.IdentityID != principal.identityID || decision.TeamID != preview.TeamID ||
-			revision != 0 && (revision != decision.PolicyRevision || issuer != h.authorityIssuerFor(decision)) {
+			revision != 0 && revision != decision.PolicyRevision {
 			writeProblem(response, http.StatusConflict, controlv1.Conflict, "share authorization changed; retry")
 			return
 		}
-		revision, issuer = decision.PolicyRevision, h.authorityIssuerFor(decision)
+		revision = decision.PolicyRevision
 		authorized = append(authorized, controlstate.AuthorizedSharePublicURL{
 			PublicURLID: id, ExpectedMutationRevision: route.MutationRevision,
 		})
@@ -93,7 +92,7 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 		PreviewID: preview.ID, TeamID: preview.TeamID,
 		ActingIdentityID: principal.identityID, IdempotencyKey: key,
 		SecretFingerprint: secretFingerprint, ExpiresAt: body.ExpiresAt,
-		AuthorityIssuer: issuer, PolicyRevision: revision, PublicURLs: authorized,
+		PolicyRevision: revision, PublicURLs: authorized,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "create share", err)

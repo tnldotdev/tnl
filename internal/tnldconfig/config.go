@@ -84,7 +84,6 @@ type Config struct {
 	OIDCLoginFlow        OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
 	OIDCScopes           []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
 	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Login token for the built-in administrator identity."`
-	AuthorityEndpoint    string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"External authority URL. Defaults to the control URL."`
 	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
 	RefreshTokenLifetime time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 	GuestDemoEnabled     bool          `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
@@ -102,8 +101,6 @@ type Config struct {
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
-	HostedSecret          string `name:"hosted-secret" env:"TNLD_HOSTED_SECRET" help:"Current secret shared by control and the external authority."`
-	HostedSecretPrevious  string `name:"hosted-secret-previous" env:"TNLD_HOSTED_SECRET_PREVIOUS" help:"Previous hosted secret accepted only during rotation."`
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
@@ -165,7 +162,7 @@ func (c Config) Validate() (retErr error) {
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
-		if c.EmailURL != "" || c.EmailToken != "" || c.WebServiceSecret != "" || c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+		if c.EmailURL != "" || c.EmailToken != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
@@ -244,8 +241,8 @@ func (c Config) validateControl() error {
 		}
 	}
 	if c.WebServiceSecret != "" {
-		if c.OIDCIssuer == "" || c.AuthorityEndpoint != "" {
-			return errors.New("website identity operations require built-in authority with an OIDC issuer")
+		if c.OIDCIssuer == "" {
+			return errors.New("website identity operations require an OIDC issuer")
 		}
 		if _, err := serviceapi.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
 			return fmt.Errorf("website service secret: %w", err)
@@ -279,21 +276,10 @@ func (c Config) validateControl() error {
 	} else if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 		return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 	}
-	if c.AuthorityEndpoint == "" {
-		if c.LoginToken == "" {
-			return failure.WrapSetting("validate built-in authority login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken,
-				errors.New("login token is required for the built-in authority"))
-		}
-		if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
-			return failure.WrapSetting("validate built-in authority login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken, err)
-		}
-	} else if c.LoginToken != "" {
-		return errors.New("login token cannot be configured with an external authority")
+	if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
+		return failure.WrapSetting("validate login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken, err)
 	}
 	if err := c.validateOIDC(); err != nil {
-		return err
-	}
-	if err := c.validateExternalAuthority(); err != nil {
 		return err
 	}
 	if _, err := storagekey.New(c.StorageKey, c.StorageKeyPrevious); err != nil {
@@ -477,26 +463,6 @@ func (c Config) validateOIDC() (retErr error) {
 	return nil
 }
 
-func (c Config) validateExternalAuthority() error {
-	if c.AuthorityEndpoint == "" {
-		if c.HostedSecret != "" || c.HostedSecretPrevious != "" {
-			return failure.Wrap("validate hosted secret", failure.ServerHostedSecretInvalid,
-				errors.New("hosted secret requires an external authority endpoint"))
-		}
-		return nil
-	}
-	if err := validateHTTPSOrigin(c.AuthorityEndpoint, "authority endpoint"); err != nil {
-		return err
-	}
-	if !c.OIDCEnabled() {
-		return errors.New("external authority requires OIDC configuration")
-	}
-	if _, err := serviceapi.NewBearerSecrets(c.HostedSecret, c.HostedSecretPrevious); err != nil {
-		return failure.Wrap("validate hosted secret", failure.ServerHostedSecretInvalid, err)
-	}
-	return nil
-}
-
 func (c Config) ACMEEnabled() bool { return c.Role.RunsControl() }
 
 func (c Config) DNSAutomationEnabled() bool {
@@ -555,9 +521,6 @@ func (c Config) PrivateControlEndpoint() string {
 func (c Config) ManagedDomain() string { return c.ManagedDeploymentDomain }
 
 func (c Config) AuthorityOrigin() string {
-	if c.AuthorityEndpoint != "" {
-		return c.AuthorityEndpoint
-	}
 	if hostname := c.ServerHostname(); hostname != "" {
 		return "https://" + hostname
 	}

@@ -165,16 +165,17 @@ only a new assignment identity does.
 
 ## separate the trust boundaries
 
-| Credential or key               | Held by                           | Purpose                                         |
-| ------------------------------- | --------------------------------- | ----------------------------------------------- |
-| Access and refresh tokens       | `tnl` client                      | Authenticate a control session.                 |
-| Publish run token               | Publisher                         | Update one publish run.                         |
-| Publisher connection credential | Publisher and assigned relay      | Authenticate one publisher connection.          |
-| Cluster secret                  | Split control, ingress, and relay | Authenticate private process coordination.      |
-| Login token                     | Built-in authority control        | Recover the built-in administrator identity.    |
-| Hosted secret                   | Control and external authority    | Authenticate control to the external authority. |
-| Storage key                     | Control only                      | Encrypt recoverable secrets in PostgreSQL.      |
-| Relay transport private key     | Current relay process             | Terminate publisher transport TLS.              |
+| Credential or key               | Held by                           | Purpose                                               |
+| ------------------------------- | --------------------------------- | ----------------------------------------------------- |
+| Access and refresh tokens       | `tnl` client                      | Authenticate a control session.                       |
+| Publish run token               | Publisher                         | Update one publish run.                               |
+| Publisher connection credential | Publisher and assigned relay      | Authenticate one publisher connection.                |
+| Cluster secret                  | Split control, ingress, and relay | Authenticate private process coordination.            |
+| Login token                     | Built-in authority control        | Recover the built-in administrator identity.          |
+| Website service credential      | Control and hosted website        | Read identity context and accept browser invitations. |
+| Email delivery credential       | Control and mailer                | Authenticate typed email requests.                    |
+| Storage key                     | Control only                      | Encrypt recoverable secrets in PostgreSQL.            |
+| Relay transport private key     | Current relay process             | Terminate publisher transport TLS.                    |
 
 Only control receives PostgreSQL, storage, DNS, or ACME credentials. A relay can
 retrieve its current relay transport certificate and private key while its lease
@@ -192,12 +193,13 @@ and relay unchanged and terminates in the publisher.
 The authority API owns identities, authentication, teams, memberships,
 invitations, domains, and current authorization decisions.
 
-Control or standalone can serve the built-in authority. It can instead call an
-external authority maintained outside this repository. The control API does not
-become the owner of authority state in that arrangement.
+control and standalone serve the authority API at the control URL.
+OIDC providers prove identity; control owns current memberships and publishing
+decisions. the hosted website uses the narrow
+[hosted integration](hosted-integration.md) for its team picker and invitations.
 
-with the built-in authority, control creates guest trials against its own managed
-domain. it reserves each guest namespace in the managed-label pool in the same
+control creates guest trials against its own managed domain. it reserves each
+guest namespace in the managed-label pool in the same
 transaction as the trial; team creation cannot reuse a guest namespace. managed
 guest DNS uses the configured managed zone, without a claimed DNS authority.
 
@@ -207,17 +209,21 @@ namespaces.
 
 ## own each api
 
-| Contract                                                       | Implementer                               | Caller and authentication                                                             |
-| -------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                              |
-| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority or external authority  | CLI sessions and team/domain operations; control uses the hosted secret when external |
-| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                       |
-| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                         |
-| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                        |
-| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback through public URL IP policy or a current share cookie   |
+| Contract                                                       | Implementer                               | Caller and authentication                                                           |
+| -------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                            |
+| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority on control             | CLI sessions and team/domain operations; scoped website identity and invitations    |
+| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                     |
+| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                       |
+| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                      |
+| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback through public URL IP policy or a current share cookie |
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.
+
+the authority spec defines the HTTP exchanges used by `tnl` and the hosted
+website. it generates the Go server interface and clients as well as the
+website's response schemas.
 
 `pkg/protocol/tunnelv1` is the handwritten tunnel protocol source of truth.
 `internal/muxsession` provides multiplexed byte streams, `internal/tunnel`

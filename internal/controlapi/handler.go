@@ -15,7 +15,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -40,8 +39,6 @@ type Config struct {
 	CertificateIssuance         bool
 	ACMEDirectoryURL            string
 	ServerDomain                string
-	HostedSecret                string
-	HostedSecretPrevious        string
 	HTTPClient                  *http.Client
 	DNSAutomation               bool
 	GuestDemoEnabled            bool
@@ -78,18 +75,6 @@ type CertificateStore interface {
 	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 }
 
-// DNSAuthorityStore owns DNS authority references.
-type DNSAuthorityStore interface {
-	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
-	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
-	ReleaseDNSAuthority(context.Context, string, string, time.Time) (controlstate.DNSAuthority, error)
-}
-
-// HostedRevocationStore applies policy changes from an external authority.
-type HostedRevocationStore interface {
-	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
-}
-
 // AdminStore owns administrator operations.
 type AdminStore interface {
 	AdminRuntimeCounts(context.Context, time.Time) (controlstate.AdminRuntimeCounts, error)
@@ -103,10 +88,7 @@ type AdminStore interface {
 type Store interface {
 	PublicURLStore
 	CertificateStore
-	DNSAuthorityStore
-	HostedRevocationStore
 	AdminStore
-	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
 type PreviewStore interface {
@@ -157,8 +139,8 @@ type FeedbackStore interface {
 	ReviewerFeedbackScope(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (string, string, error)
 }
 
-// BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
-type BuiltinAuthorizationStore interface {
+// AuthorizationStore provides the identity state needed for public URL authorization.
+type AuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
@@ -168,8 +150,6 @@ type handler struct {
 	config            Config
 	store             PublicURLStore
 	certificates      CertificateStore
-	dnsAuthorities    DNSAuthorityStore
-	revocations       HostedRevocationStore
 	admin             AdminStore
 	previews          PreviewStore
 	previewTeamAccess PreviewTeamAccessStore
@@ -180,18 +160,15 @@ type handler struct {
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
 	guests            interface {
-		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
-		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
 		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
 		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 	}
-	guestAuthority *authorityclient.Client
-	readiness      func(context.Context) error
-	authorizer     publicURLAuthorizer
-	hostedSecrets  serviceapi.BearerSecrets
+	readiness  func(context.Context) error
+	authorizer publicURLAuthorizer
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -200,11 +177,10 @@ var _ controlv1.ServerInterface = (*handler)(nil)
 func NewHandler(
 	cfg Config,
 	store Store,
-	builtinAuthorizationStore BuiltinAuthorizationStore,
+	authorizationStore AuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
-	h := &handler{config: cfg, store: store, certificates: store, dnsAuthorities: store,
-		revocations: store, admin: store, readiness: readiness}
+	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
 	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
 	}
@@ -224,8 +200,7 @@ func NewHandler(
 		h.feedback = feedback
 	}
 	if guestStore, ok := store.(interface {
-		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
-		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, string, time.Time) error
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
@@ -245,24 +220,9 @@ func NewHandler(
 		}
 		loginSourceRevision = verifier.SourceRevision()
 	}
-	if builtinAuthorizationStore != nil {
+	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
-			store: builtinAuthorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
-		}
-	}
-	if cfg.HostedSecret != "" || cfg.HostedSecretPrevious != "" {
-		var err error
-		h.hostedSecrets, err = serviceapi.NewBearerSecrets(cfg.HostedSecret, cfg.HostedSecretPrevious)
-		if err != nil {
-			return nil, fmt.Errorf("controlapi: configure hosted secret: %w", err)
-		}
-		client, err := authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
-		if err != nil {
-			return nil, fmt.Errorf("controlapi: configure authority client: %w", err)
-		}
-		if store != nil {
-			h.authorizer = hostedAuthorizer{client: client, secret: cfg.HostedSecret, store: store}
-			h.guestAuthority = client
+			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
 		}
 	}
 	if cfg.BrowserOIDCClientID != "" {

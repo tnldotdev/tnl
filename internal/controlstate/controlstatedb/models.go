@@ -94,16 +94,6 @@ type ControlAdminAuditEvent struct {
 	OccurredAt      pgtype.Timestamptz
 }
 
-type ControlAuthorityRevisionState struct {
-	ID                     int64
-	Issuer                 string
-	TeamID                 string
-	ObservedPolicyRevision int64
-	AppliedPolicyRevision  int64
-	ObservedAt             pgtype.Timestamptz
-	AppliedAt              pgtype.Timestamptz
-}
-
 type ControlBrowserAccessHandoff struct {
 	TokenDigest      []byte
 	SessionDigest    []byte
@@ -716,10 +706,10 @@ type ControlRelayServiceAssignmentTotal struct {
 }
 
 type ControlRuntimeSecret struct {
-	ID                                 int16
-	ExternalRetryMasterKeyCiphertext   []byte
-	ExternalRetryMasterKeyStorageKeyID string
-	CreatedAt                          pgtype.Timestamptz
+	ID                              int16
+	GuestRetryMasterKeyCiphertext   []byte
+	GuestRetryMasterKeyStorageKeyID string
+	CreatedAt                       pgtype.Timestamptz
 }
 
 type ControlShare struct {

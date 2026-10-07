@@ -3,25 +3,20 @@ package controlapi
 import (
 	"context"
 	"errors"
-	"math"
 	"net/http"
-	"slices"
-	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type localAuthorizer struct {
-	store          BuiltinAuthorizationStore
+	store          AuthorizationStore
 	sourceRevision int64
 	dnsAutomation  bool
 }
@@ -155,156 +150,6 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		}
 	}
 	return decision, nil
-}
-
-type hostedAuthorizer struct {
-	client *authorityclient.Client
-	secret string
-	store  externalPrincipalStore
-}
-
-type externalPrincipalStore interface {
-	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
-}
-
-func (a hostedAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
-	identity, err := a.client.IdentityContextWithAccessToken(ctx, credentials.AccessToken(accessToken))
-	if err != nil {
-		return publicURLReadPrincipal{}, hostedAuthorizationError(err)
-	}
-	if identity.Identity.Id == "" {
-		return publicURLReadPrincipal{}, authorization.ErrUnavailable
-	}
-	teamIDs := make(map[string]struct{}, len(identity.Memberships))
-	for _, membership := range identity.Memberships {
-		if membership.TeamId == "" {
-			return publicURLReadPrincipal{}, authorization.ErrUnavailable
-		}
-		teamIDs[membership.TeamId] = struct{}{}
-	}
-	if a.store != nil {
-		if _, err := a.store.EnsureExternalAuthorityPrincipal(ctx, identity.Identity.Id, time.Now()); err != nil {
-			return publicURLReadPrincipal{}, authorization.ErrUnavailable
-		}
-	}
-	return publicURLReadPrincipal{
-		identityID: identity.Identity.Id, displayName: identity.Identity.DisplayName, teamIDs: teamIDs,
-		administrator: identity.Identity.Administrator,
-	}, nil
-}
-
-func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
-	if !request.PublicURLScope.Valid() {
-		return authorization.Decision{}, authorization.ErrForbidden
-	}
-	body := authorityv1.ServiceAuthorizationRequest{
-		AccessToken: request.AccessToken, Operation: authorityv1.AuthorizationOperation(request.Operation),
-		TeamId: request.TeamID, DomainId: request.DomainID, CanonicalHostname: request.CanonicalHostname,
-		PublicUrlScope: authorityv1.PublicURLScope(request.PublicURLScope), Target: request.Target,
-		AllowedIpPrefixes: slices.Clone(request.AllowedIPPrefixes), Ephemeral: request.Ephemeral,
-	}
-	if body.AllowedIpPrefixes == nil {
-		body.AllowedIpPrefixes = []string{}
-	}
-	if request.ActingMembershipID != "" {
-		body.ActingMembershipId = &request.ActingMembershipID
-	}
-	if request.PublicURLMembershipID != "" {
-		body.PublicUrlMembershipId = &request.PublicURLMembershipID
-	}
-	if request.PublicURLID != "" {
-		body.PublicUrlId = &request.PublicURLID
-	}
-	if request.PublishRunNumber != 0 {
-		if request.PublishRunNumber > math.MaxInt64 {
-			return authorization.Decision{}, authorization.ErrForbidden
-		}
-		value := int64(request.PublishRunNumber)
-		body.PublishRunNumber = &value
-	}
-	if request.PublicURLMutationRevision != 0 {
-		if request.PublicURLMutationRevision > math.MaxInt64 {
-			return authorization.Decision{}, authorization.ErrForbidden
-		}
-		value := int64(request.PublicURLMutationRevision)
-		body.PublicUrlMutationRevision = &value
-	}
-	wire, err := a.client.AuthorizeServiceOperation(ctx, a.secret, body)
-	if err != nil {
-		return authorization.Decision{}, hostedAuthorizationError(err)
-	}
-	decision := authorization.Decision{
-		IdentityID: wire.IdentityId, TeamID: wire.TeamId, ActingMembershipID: wire.ActingMembershipId,
-		ActingRole: string(wire.ActingRole), PolicyRevision: uint64(wire.PolicyRevision),
-		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(wire.PublicUrlScope),
-	}
-	if wire.DnsAuthorityReference != nil {
-		decision.DNSAuthorityReference = *wire.DnsAuthorityReference
-	}
-	if wire.PublicUrlMembershipId != nil {
-		decision.PublicURLMembershipID = *wire.PublicUrlMembershipId
-	}
-	if wire.CertificatePlan != nil {
-		decision.CertificatePlan = &authorization.CertificatePlan{
-			CacheKey: wire.CertificatePlan.CacheKey, Scope: wire.CertificatePlan.Scope,
-			Identifiers:     slices.Clone(wire.CertificatePlan.Identifiers),
-			ChallengeMethod: certificateidentity.ChallengeMethod(wire.CertificatePlan.ChallengeMethod),
-		}
-	}
-	if !validAuthorizationDecision(request, decision) {
-		return authorization.Decision{}, authorization.ErrUnavailable
-	}
-	decision.RetrySecret, err = a.store.EnsureExternalAuthorityPrincipal(ctx, decision.IdentityID, time.Now())
-	if err != nil {
-		return authorization.Decision{}, authorization.ErrUnavailable
-	}
-	return decision, nil
-}
-
-func validAuthorizationDecision(request authorization.Request, decision authorization.Decision) bool {
-	if decision.IdentityID == "" || decision.TeamID != request.TeamID || decision.ActingMembershipID == "" ||
-		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
-		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
-		decision.CanonicalHostname != request.CanonicalHostname || !decision.PublicURLScope.Valid() || decision.PublicURLScope != request.PublicURLScope ||
-		request.Operation != authorization.OperationFeedbackManage && request.Operation != authorization.OperationPreviewVisit && strings.TrimSpace(decision.DNSAuthorityReference) == "" {
-		return false
-	}
-	if request.ActingMembershipID != "" && decision.ActingMembershipID != request.ActingMembershipID ||
-		request.PublicURLMembershipID != "" && decision.PublicURLMembershipID != request.PublicURLMembershipID ||
-		request.PublicURLScope == authorization.PublicURLScopeMember && decision.PublicURLMembershipID == "" ||
-		request.PublicURLScope == authorization.PublicURLScopeShared && decision.PublicURLMembershipID != "" {
-		return false
-	}
-	if request.Operation == authorization.OperationPublishRunCreate {
-		return validHostedCertificatePlan(decision.CertificatePlan, decision.CanonicalHostname)
-	}
-	return decision.CertificatePlan == nil
-}
-
-func validHostedCertificatePlan(plan *authorization.CertificatePlan, hostname string) bool {
-	if plan == nil {
-		return false
-	}
-	canonical, err := certificateidentity.CanonicalPlan(controlv1.CertificatePlan{
-		CacheKey: plan.CacheKey, Scope: plan.Scope,
-		Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod),
-	})
-	return err == nil && slices.Equal(canonical.Identifiers, plan.Identifiers) &&
-		certificateidentity.Covers(canonical.Identifiers, hostname)
-}
-
-func hostedAuthorizationError(err error) error {
-	if errors.Is(err, authorityclient.ErrUnauthenticated) {
-		return authorization.ErrUnauthenticated
-	}
-	if errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited) {
-		return authorization.ErrUnavailable
-	}
-	var problem *authorityclient.ProblemError
-	if errors.As(err, &problem) && (problem.Status == http.StatusForbidden || problem.Status == http.StatusNotFound) {
-		return authorization.ErrForbidden
-	}
-	return authorization.ErrUnavailable
 }
 
 func (h *handler) authorizeMutation(

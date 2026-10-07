@@ -58,7 +58,6 @@ mutation counters; public URL counters are publish run numbers.
 | **control API**        | The server HTTP API used by clients and administrators.                                                                                            |
 | **authority API**      | The HTTP API that manages identities, teams, memberships, invitations, domains, authentication, and current authorization decisions.               |
 | **built-in authority** | The authority API served by control or standalone for login, sessions, teams, memberships, invitations, and domains.                               |
-| **external authority** | A separately deployed authority API that makes authentication and authorization decisions for a tnl server.                                        |
 
 ## people and local processes
 
@@ -190,7 +189,8 @@ not _inbox_, for the collection of threads.
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **cluster authentication**      | Authentication with a shared secret for private communication among control, ingress, and relays in one deployment.          |
 | **cluster secret**              | The current secret configured as `TNLD_CLUSTER_SECRET`; split ingress and relay processes use it to authenticate to control. |
-| **hosted secret**               | The secret shared only by control and `tnl.dev` for hosted authorization, revocation, and DNS-authority service calls.       |
+| **website credential**          | The secret the website sends to control for identity and invitation requests.                                                |
+| **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                                         |
 | **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                 |
 | **login token**                 | The credential used to create administrator control sessions through the built-in authority.                                 |
 | **control session**             | A login session that can be revoked and has an access token and refresh token.                                               |

@@ -11,20 +11,21 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
+func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 	database, now := newCertificatePlanDatabase(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	const identity = "identity_concurrent_creator"
-	secret, err := database.EnsureExternalAuthorityPrincipal(ctx, identity, now)
-	if err != nil {
+	seedControlPublicURL(t, database, now, "concurrent_creator")
+	if _, err := database.pool.Exec(ctx, `UPDATE control.domains SET canonical_domain='concurrent-creator.example.test' WHERE id='domain_concurrent_creator'`); err != nil {
 		t.Fatal(err)
 	}
+	secret := sha256.Sum256([]byte("concurrent-retry"))
 	request := CreatePublicURLRequest{
-		TeamID: "team_external", DomainID: "domain_external", MembershipID: "membership_external", ActingIdentityID: identity,
-		IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")), CanonicalHostname: "first.member.example.test",
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSUnmanaged,
-		AuthorityIssuer: "https://authority.example.test", PolicyRevision: 1,
+		TeamID: "team_concurrent_creator", DomainID: "domain_concurrent_creator", ActingIdentityID: identity,
+		IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")), CanonicalHostname: "first.concurrent-creator.example.test",
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, DNSState: PublicURLDNSUnmanaged,
+		PolicyRevision: 1,
 	}
 	first, err := database.CreatePublicURL(ctx, request, now)
 	if err != nil {
@@ -45,9 +46,9 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 	workers.Go(func() {
 		var err error
 		session, err = database.CreatePublishRun(ctx, PublishRunRequest{
-			PublicURLID: first.ID, TeamID: first.TeamID, MembershipID: first.MembershipID, ActingIdentityID: identity,
+			PublicURLID: first.ID, TeamID: first.TeamID, MembershipID: "membership_concurrent_creator", ActingIdentityID: identity,
 			RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
-			PolicyRevision: 1, AuthorityIssuer: request.AuthorityIssuer, ExpectedMutationRevision: first.MutationRevision,
+			PolicyRevision: 1, ExpectedMutationRevision: first.MutationRevision,
 			CertificateCacheKey: first.CanonicalHostname, CertificateScope: first.CanonicalHostname,
 			CertificateIdentifiers: []string{first.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
 		}, now, time.Minute, time.Minute)
@@ -56,7 +57,7 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 	// the publish run holds the authority revision while waiting for the maintenance gate.
 	sessionPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), sessionDone)
 	siblingRequest := request
-	siblingRequest.IdempotencyKey, siblingRequest.CanonicalHostname = "sibling", "sibling.member.example.test"
+	siblingRequest.IdempotencyKey, siblingRequest.CanonicalHostname = "sibling", "sibling.concurrent-creator.example.test"
 	siblingRequest.RequestDigest = sha256.Sum256([]byte("sibling"))
 	var sibling PublicURL
 	creatorDone := make(chan error, 1)
@@ -91,7 +92,7 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 	if err := database.pool.QueryRow(ctx, `
 		SELECT (SELECT count(*) FROM control.public_urls WHERE team_id = $1),
 		       (SELECT count(*) FROM control.publish_runs WHERE team_id = $1)
-	`, request.TeamID).Scan(&routes, &sessions); err != nil || routes != 2 || sessions != 1 {
+	`, request.TeamID).Scan(&routes, &sessions); err != nil || routes != 3 || sessions != 1 {
 		t.Fatalf("persisted routes/sessions = %d/%d, error %v; want 2/1", routes, sessions, err)
 	}
 	if _, err := database.pool.Exec(ctx, `UPDATE control.identities SET disabled_at = $2 WHERE id = $1`, identity, now); err != nil {
@@ -107,9 +108,7 @@ func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	const identity = "identity_creator_lock"
-	if _, err := database.EnsureExternalAuthorityPrincipal(ctx, identity, now); err != nil {
-		t.Fatal(err)
-	}
+	insertAuthorityIdentity(t, database, identity, "", false, now)
 	owner, err := database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

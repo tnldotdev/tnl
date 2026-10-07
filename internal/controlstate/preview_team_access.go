@@ -13,13 +13,12 @@ import (
 )
 
 type SetPreviewTeamAccessRequest struct {
-	PreviewID       string
-	TeamID          string
-	IdentityID      string
-	Enabled         bool
-	AuthorityIssuer string
-	PolicyRevision  uint64
-	PublicURLs      []AuthorizedSharePublicURL
+	PreviewID      string
+	TeamID         string
+	IdentityID     string
+	Enabled        bool
+	PolicyRevision uint64
+	PublicURLs     []AuthorizedSharePublicURL
 }
 
 func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewTeamAccessRequest, now time.Time) (result Preview, retErr error) {
@@ -37,7 +36,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	defer rollback(ctx, tx, "set preview team access", &retErr)()
 	queries := controlstatedb.New(tx)
 	var membership controlstatedb.GetActivePublishRunMembershipRow
-	if request.AuthorityIssuer == "" {
+	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return Preview{}, ErrPreviewAccess
 		} else if err != nil {
@@ -51,15 +50,6 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 		}
 		if err != nil {
 			return Preview{}, fmt.Errorf("controlstate: read membership: %w", err)
-		}
-	} else if request.Enabled {
-		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return Preview{}, ErrPublicURLAuthority
-		} else if err != nil {
-			return Preview{}, fmt.Errorf("controlstate: observe preview authority: %w", err)
 		}
 	}
 	preview, err := queries.LockPreviewForTeamAccess(ctx, request.PreviewID)
@@ -105,9 +95,9 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 				route.MutationRevision != int64(selected.ExpectedMutationRevision) || route.PolicyRevision > positive(request.PolicyRevision) {
 				return Preview{}, ErrPreviewStale
 			}
-			if request.AuthorityIssuer == "" && (route.PublicURLScope == string(PublicURLScopeMember) &&
+			if route.PublicURLScope == string(PublicURLScopeMember) &&
 				(!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-				route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != string(TeamRoleAdmin) && membership.Role != string(TeamRoleOwner)) {
+				route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != string(TeamRoleAdmin) && membership.Role != string(TeamRoleOwner) {
 				return Preview{}, ErrPreviewAccess
 			}
 			if _, err := queries.OtherPreviewForTeamAccess(ctx, controlstatedb.OtherPreviewForTeamAccessParams{

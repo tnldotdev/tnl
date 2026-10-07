@@ -21,9 +21,6 @@ func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
 	if _, err := NewHandler(Config{LoginToken: "invalid"}, nil, nil, nil); err == nil {
 		t.Fatal("invalid login token accepted")
 	}
-	if _, err := NewHandler(Config{HostedSecret: "short", AuthorityEndpoint: "https://authority.example.test"}, &publicURLMutationStoreStub{}, nil, nil); err == nil {
-		t.Fatal("invalid hosted secret accepted")
-	}
 }
 
 func TestGuestDemoIsDisabledInControlDiscoveryAndCreationByDefault(t *testing.T) {

@@ -31,7 +31,7 @@ func (s guestStoreStub) GuestSourceMatches(_ controlstate.GuestTrial, prefix str
 	return prefix == "192.0.2.7/32", nil
 }
 
-func (s guestStoreStub) EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error) {
+func (s guestStoreStub) EnsureGuestPrincipal(context.Context, string, time.Time) ([32]byte, error) {
 	return [32]byte{1}, nil
 }
 

@@ -20,8 +20,8 @@ The two publisher connection slots are stored in
 replaced; `publisher_connection_id` changes with that assignment. Tables use
 `id` as their primary key and retain natural lookup keys as unique constraints.
 Foreign keys cover saved control-owned relationships, including publish run
-usage and certificate orders. External authority IDs and historical process-run
-IDs do not require local authority or current-lease rows.
+usage and certificate orders. guest trials retain their own ownership IDs;
+historical process-run IDs do not require current-lease rows.
 
 Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` when
 an ingress first registers. The encryption migration discards earlier usage

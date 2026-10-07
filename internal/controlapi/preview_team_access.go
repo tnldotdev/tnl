@@ -71,11 +71,11 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 				return
 			}
 			if decision.IdentityID != principal.identityID || decision.TeamID != preview.TeamID ||
-				write.PolicyRevision != 0 && (write.PolicyRevision != decision.PolicyRevision || write.AuthorityIssuer != h.authorityIssuerFor(decision)) {
+				write.PolicyRevision != 0 && write.PolicyRevision != decision.PolicyRevision {
 				writeProblem(response, http.StatusConflict, controlv1.Conflict, "team access authorization changed; retry")
 				return
 			}
-			write.PolicyRevision, write.AuthorityIssuer = decision.PolicyRevision, h.authorityIssuerFor(decision)
+			write.PolicyRevision = decision.PolicyRevision
 			write.PublicURLs = append(write.PublicURLs, controlstate.AuthorizedSharePublicURL{
 				PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
 			})

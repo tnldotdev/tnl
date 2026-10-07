@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -105,19 +106,25 @@ func TestIntegrationBuiltinAuthentication(t *testing.T) {
 	}
 }
 
-func TestIntegrationExternalAuthoritySecret(t *testing.T) {
-	database, _ := newControlStateIntegrationDatabase(t, "external_authority_secret")
-	const identityID = "10000000-0000-4000-8000-000000000001"
-	first, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, time.Now())
+func TestIntegrationGuestRetrySecret(t *testing.T) {
+	database, _ := newControlStateIntegrationDatabase(t, "guest_retry_secret")
+	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, time.Now())
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	first, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, time.Now())
 	if err != nil || first != second || first == ([32]byte{}) {
 		t.Fatalf("external retry master key was not stable: %v", err)
 	}
 	var ciphertext []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT external_retry_master_key_ciphertext FROM control.runtime_secret WHERE id = 1`).Scan(&ciphertext); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT guest_retry_master_key_ciphertext FROM control.runtime_secret WHERE id = 1`).Scan(&ciphertext); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(ciphertext, first[:]) {

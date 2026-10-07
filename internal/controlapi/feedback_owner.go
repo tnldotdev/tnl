@@ -154,7 +154,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	}
 	write.Actor = controlstate.FeedbackActor{
 		Kind: "implementer", IdentityID: decision.IdentityID, DisplayName: principal.displayName,
-		PolicyRevision: decision.PolicyRevision, AuthorityIssuer: h.authorityIssuerFor(decision),
+		PolicyRevision:           decision.PolicyRevision,
 		ExpectedMutationRevision: revision,
 	}
 	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())

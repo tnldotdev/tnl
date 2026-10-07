@@ -328,17 +328,14 @@ The feedback toolbar and CLI project the same state and event history.
 Control owns preview membership, shares, feedback threads, event
 cursors, and authorization in PostgreSQL. Extend the control, authority, and
 ingress OpenAPI sources for their respective operations and projections. The
-built-in authority and hosted external authority both check the existing
+built-in authority checks the existing
 member-owned and team-shared public URL permissions before preview membership,
 share, or feedback mutations. Ingress receives the information it needs to
 admit sharing-enabled visitors; the publisher receives share state through
 authenticated publish-run operations.
 
-Add `share.create` and `feedback.manage` to the authority contract before
-control sends either operation to an external authority. Deploy the hosted
-authority with both operations before switching hosted control from its
-existing `public_url.update` check; both decisions retain the public URL's
-ownership and mutation-revision binding.
+`share.create` and `feedback.manage` use the local authorizer. both decisions
+retain the public URL's ownership and mutation-revision binding.
 
 Deploy authority support for `preview.visit` and browser OIDC exchange before
 enabling browser sign-in on control. Apply the additive control schema 10 with

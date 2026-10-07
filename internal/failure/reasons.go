@@ -70,7 +70,6 @@ const (
 	ServerUsageConfigInvalid    Reason = "server.usage_config_invalid"
 	ServerClusterSecretInvalid  Reason = "server.cluster_secret_invalid"
 	ServerLoginTokenInvalid     Reason = "server.login_token_invalid"
-	ServerHostedSecretInvalid   Reason = "server.hosted_secret_invalid"
 	ServerConfigFileInvalid     Reason = "server.config_file_invalid"
 	ServerCommandInvalid        Reason = "server.command_invalid"
 	DirectDatabaseURLMissing    Reason = "server.direct_database_url_missing"
@@ -359,11 +358,7 @@ var definitions = map[Reason]Definition{
 	},
 	ServerLoginTokenInvalid: {
 		Class: Invalid, Message: "built-in authority login token is missing or invalid",
-		Action: "configure TNLD_LOGIN_TOKEN or select an external authority", Retry: RetryAfterChange,
-	},
-	ServerHostedSecretInvalid: {
-		Class: Invalid, Message: "hosted secret configuration is invalid",
-		Action: "configure TNLD_HOSTED_SECRET with an external authority", Retry: RetryAfterChange,
+		Action: "configure TNLD_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ServerConfigFileInvalid: {
 		Class: Invalid, Message: "tnld could not read the configuration file",

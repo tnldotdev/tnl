@@ -138,9 +138,7 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 	identityID := "00000000-0000-4000-8000-000000000002"
-	if _, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, now); err != nil {
-		t.Fatal(err)
-	}
+	insertAuthorityIdentity(t, database, identityID, "", false, now)
 	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
 		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/",
 	}, BrowserAccessSession{

@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-func TestIntegrationBuiltinGuestReservesNamespaceAndBootstrapsDomain(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "builtin_guest")
+func TestIntegrationGuestReservesNamespaceAndBootstrapsDomain(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "guest_namespace")
 	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	domainID, err := database.CreateBuiltinGuestTrial(t.Context(), guest, "routes.example.test", now)
+	domainID, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now)
 	if err != nil || domainID == "" {
-		t.Fatalf("create builtin guest: %q, %v", domainID, err)
+		t.Fatalf("create guest trial: %q, %v", domainID, err)
 	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
 	if err != nil || stored.DomainID != domainID || stored.DNSAuthorityReference != "" {
@@ -36,8 +36,8 @@ func TestIntegrationBuiltinGuestReservesNamespaceAndBootstrapsDomain(t *testing.
 	}
 }
 
-func TestIntegrationBuiltinGuestNamespaceAllocationIsAtomic(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "builtin_guest_collision")
+func TestIntegrationGuestNamespaceAllocationIsAtomic(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "guest_namespace_collision")
 	const callers = 8
 	results := make(chan error, callers)
 	var workers sync.WaitGroup
@@ -46,7 +46,7 @@ func TestIntegrationBuiltinGuestNamespaceAllocationIsAtomic(t *testing.T) {
 			guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 			if err == nil {
 				guest.NamespaceLabel = "guest-00000000"
-				_, err = database.CreateBuiltinGuestTrial(t.Context(), guest, "routes.example.test", now)
+				_, err = database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now)
 			}
 			results <- err
 		})

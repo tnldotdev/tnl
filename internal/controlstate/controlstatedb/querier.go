@@ -16,7 +16,6 @@ type Querier interface {
 	AddPreviewPublicURL(ctx context.Context, arg AddPreviewPublicURLParams) (string, error)
 	AddPublishRunPreviewURL(ctx context.Context, arg AddPublishRunPreviewURLParams) error
 	AddSharePublicURL(ctx context.Context, arg AddSharePublicURLParams) (string, error)
-	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
 	AdvanceGuestDemoNumber(ctx context.Context, arg AdvanceGuestDemoNumberParams) (int64, error)
 	// commit the retention floor before pruning in another transaction. a crash
 	// between them retains extra rows, never a missing advertised suffix.
@@ -96,8 +95,8 @@ type Querier interface {
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
-	EnsureExternalAuthorityPrincipal(ctx context.Context, arg EnsureExternalAuthorityPrincipalParams) (ControlIdentity, error)
-	EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) (EnsureExternalRetryMasterKeyRow, error)
+	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
+	EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
 	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error)
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
@@ -131,7 +130,6 @@ type Querier interface {
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
-	GetExternalAuthorityPublicURL(ctx context.Context, arg GetExternalAuthorityPublicURLParams) (GetExternalAuthorityPublicURLRow, error)
 	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
@@ -149,6 +147,7 @@ type Querier interface {
 	GetPreview(ctx context.Context, id string) (GetPreviewRow, error)
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
+	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
 	GetPublicURLUsageBucketByID(ctx context.Context, bucketID int64) (ControlPublicUrlUsageBucket, error)
 	GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetPublicURLUsageBucketForUpdateParams) (ControlPublicUrlUsageBucket, error)
 	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
@@ -207,9 +206,9 @@ type Querier interface {
 	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
 	ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error)
 	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
+	ListAuthorizedPublicURLsData(ctx context.Context, arg ListAuthorizedPublicURLsDataParams) ([]ListAuthorizedPublicURLsDataRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
-	ListExternalAuthorityPublicURLs(ctx context.Context, arg ListExternalAuthorityPublicURLsParams) ([]ListExternalAuthorityPublicURLsRow, error)
 	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
@@ -256,7 +255,6 @@ type Querier interface {
 	LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockExpiredPublishRunPublicURLsParams) ([]ControlPublicUrl, error)
 	LockFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
-	LockHostedTeamPublicURLs(ctx context.Context, teamID string) ([]ControlPublicUrl, error)
 	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (LockIdentityForTeamCreationRow, error)
 	LockIdentityPublicURLForDelete(ctx context.Context, arg LockIdentityPublicURLForDeleteParams) (LockIdentityPublicURLForDeleteRow, error)
@@ -316,7 +314,6 @@ type Querier interface {
 	MarkPublishRunReady(ctx context.Context, arg MarkPublishRunReadyParams) (ControlPublishRun, error)
 	// ready is idempotent for the exact claim; a replaced assignment cannot revive.
 	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnectionSlot, error)
-	ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
@@ -368,7 +365,6 @@ type Querier interface {
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)
 	RotateControlSessionRetrySecret(ctx context.Context, arg RotateControlSessionRetrySecretParams) error
 	RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error
-	RotateExternalRetryMasterKey(ctx context.Context, arg RotateExternalRetryMasterKeyParams) error
 	RotateRelayCertificateOrderPrivateKey(ctx context.Context, arg RotateRelayCertificateOrderPrivateKeyParams) error
 	RotateRelayServicePrivateKey(ctx context.Context, arg RotateRelayServicePrivateKeyParams) error
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)

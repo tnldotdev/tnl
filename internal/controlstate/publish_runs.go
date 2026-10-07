@@ -45,7 +45,7 @@ type PublishRunRequest struct {
 	TeamID                   string
 	MembershipID             string
 	ActingIdentityID         string
-	RequireLocalAuthority    bool
+	GuestID                  string
 	RetrySecret              []byte
 	IdempotencyKey           string
 	RequestDigest            [32]byte
@@ -54,7 +54,6 @@ type PublishRunRequest struct {
 	CertificateScope         string
 	CertificateIdentifiers   []string
 	CertificateChallenge     certificateidentity.ChallengeMethod
-	AuthorityIssuer          string
 	ExpectedMutationRevision uint64
 }
 
@@ -145,21 +144,17 @@ func (d *Database) createPublishRun(
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 
-	if request.RequireLocalAuthority {
+	if request.GuestID == "" {
 		if _, err := queries.LockLocalTeamForSession(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
 			return PublishRunSetup{}, ErrPublicURLAuthority
 		} else if err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: lock team: %w", err)
 		}
 	}
-	if request.AuthorityIssuer != "" {
-		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
-		}); errors.Is(err, pgx.ErrNoRows) {
+	if request.GuestID != "" {
+		owned, err := queries.GuestOwnsPublicURL(ctx, controlstatedb.GuestOwnsPublicURLParams{GuestID: request.GuestID, PublicURLID: request.PublicURLID})
+		if err != nil || !owned || request.ActingIdentityID != request.GuestID {
 			return PublishRunSetup{}, ErrPublicURLAuthority
-		} else if err != nil {
-			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: observe authority revision: %w", err)
 		}
 	}
 	route, err := queries.LockPublicURLForRun(ctx, request.PublicURLID)
@@ -175,7 +170,7 @@ func (d *Database) createPublishRun(
 	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
 		return PublishRunSetup{}, ErrPublicURLNotEnabled
 	}
-	if request.RequireLocalAuthority {
+	if request.GuestID == "" {
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 		})
@@ -556,8 +551,8 @@ func validatePublishRunRequest(
 	if request.MembershipID != "" && !validStateText(request.MembershipID) {
 		return errors.New("controlstate: publish-run membership ID is invalid")
 	}
-	if request.AuthorityIssuer != "" && !validStateText(request.AuthorityIssuer) {
-		return errors.New("controlstate: publish-run authority issuer is invalid")
+	if request.GuestID != "" && !validStateText(request.GuestID) {
+		return errors.New("controlstate: publish-run guest ID is invalid")
 	}
 	if len(request.RetrySecret) < 32 {
 		return ErrPublicURLCredential
