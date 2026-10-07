@@ -112,7 +112,7 @@ func (v Visitor) Request(parent context.Context, url string, scheduled time.Time
 		mu.Unlock()
 		result.Duration = time.Since(scheduled)
 		if failure != nil {
-			result.Error = failure.Error()
+			result.Error = safeMeasurementFailure(failure)
 			result.Timeout = errors.Is(failure, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 		}
 	}()
@@ -141,7 +141,7 @@ func (v Visitor) Request(parent context.Context, url string, scheduled time.Time
 		return
 	}
 	if response.StatusCode != http.StatusOK || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
-		failure = fmt.Errorf("unverified visitor response: status %d", response.StatusCode)
+		failure = &measurementResponseError{operation: "unverified visitor response", status: response.StatusCode}
 		return
 	}
 	if response.Header.Get("X-TNL-Bench-Host") != request.URL.Host {

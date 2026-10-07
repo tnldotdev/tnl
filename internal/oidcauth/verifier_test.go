@@ -4,9 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
 func TestVerifierAuthenticatesBoundedAuth0Identity(t *testing.T) {
@@ -177,3 +182,78 @@ func TestNewVerifierRejectsInvalidConfiguration(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestVerifierDistinguishesKeyFetchFailuresFromInvalidSignatures(t *testing.T) {
+	p := newTestProvider(t, "")
+	claims := map[string]any{"iss": p.issuer, "sub": "subject", "aud": "tnl-cli", "exp": time.Now().Add(time.Hour).Unix()}
+	raw := p.signer.Token(t, "key-1", claims)
+	cause := errors.New("private provider credentials must not reach output")
+	for _, test := range []struct {
+		name, body string
+		status     int
+		network    bool
+	}{
+		{name: "transport", network: true},
+		{name: "status", status: http.StatusServiceUnavailable, body: cause.Error()},
+		{name: "malformed JSON", status: http.StatusOK, body: "not JSON"},
+		{name: "invalid signing key", status: http.StatusOK, body: `{"keys":[{"alg":"RS256","kty":"RSA","n":"!","e":"AQAB"}]}`},
+		{name: "oversized response", status: http.StatusOK, body: strings.Repeat(" ", (256<<10)+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := *p.client
+			client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != "/jwks" {
+					return p.client.Transport.RoundTrip(request)
+				}
+				if test.network {
+					return nil, cause
+				}
+				return &http.Response{StatusCode: test.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(test.body))}, nil
+			})
+			verifier, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "tnl-cli", HTTPClient: &client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = verifier.Verify(t.Context(), raw)
+			var fetch *keyFetchError
+			if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnauthenticated) || !errors.As(err, &fetch) || test.network && !errors.Is(err, cause) {
+				t.Fatalf("provider failure lost its classification or cause: %v", err)
+			}
+		})
+	}
+	verifier, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "tnl-cli", HTTPClient: p.client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := oidctest.NewSigner(t).Token(t, "key-1", claims)
+	if _, err := verifier.Verify(t.Context(), wrong); !errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("invalid signature = %v", err)
+	}
+}
+
+func TestVerifierReusesKeysAfterDiscoveryContextEnds(t *testing.T) {
+	p := newTestProvider(t, "")
+	var offline atomic.Bool
+	cause := errors.New("provider is offline")
+	client := *p.client
+	client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if offline.Load() {
+			return nil, cause
+		}
+		return p.client.Transport.RoundTrip(request)
+	})
+	verifier, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "tnl-cli", HTTPClient: &client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := p.signer.Token(t, "key-1", map[string]any{"iss": p.issuer, "sub": "subject", "aud": "tnl-cli", "exp": time.Now().Add(time.Hour).Unix()})
+	ctx, cancel := context.WithCancel(t.Context())
+	if _, err := verifier.Verify(ctx, raw); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	offline.Store(true)
+	if _, err := verifier.Verify(t.Context(), raw); err != nil {
+		t.Fatalf("cached verification depends on ended discovery request: %v", err)
+	}
+}

@@ -144,6 +144,22 @@ func Describe(err error) (Reason, Definition, bool) {
 	return reason, definition, found
 }
 
+// SafeMessage returns authored output; raw provider and database text stays in the cause.
+func SafeMessage(err error, fallback Reason) string {
+	if err == nil {
+		return ""
+	}
+	reason, ok := ReasonOf(err)
+	if !ok {
+		reason = fallback
+	}
+	definition, ok := DefinitionFor(reason)
+	if !ok {
+		definition, _ = DefinitionFor(Unexpected)
+	}
+	return definition.Message + "; " + definition.Action
+}
+
 // ReasonOf also accepts domain errors that carry a typed reason while retaining
 // their own error identities and retry behavior.
 func ReasonOf(err error) (Reason, bool) {

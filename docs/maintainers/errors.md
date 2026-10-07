@@ -39,3 +39,15 @@ untrusted provider, visitor, or database error text. Resolve a stored reason
 through its definition when displaying it. Operator logs likewise use the
 reason and operation; keep unexpected raw causes wrapped for internal error
 identity without writing them to routine logs.
+
+Benchmark results and terminal failures use the same authored definitions. A
+measurement may retain its HTTP status through an owned response error; it must
+not store response bodies, arbitrary headers, or raw transport failures as
+samples. QUIC close reasons likewise contain authored protocol text.
+
+OIDC discovery and signing-key fetch failures mean the provider is unavailable;
+a rejected signature or identity claim means authentication failed. The verifier
+observes the original key-set error before the provider library formats it,
+preserves network causes, bounds signing-key responses, and caches keys across
+requests. Browser sign-in keeps these provider failures and storage failures
+separate from expired login state.

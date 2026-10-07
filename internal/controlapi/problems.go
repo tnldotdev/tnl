@@ -85,6 +85,11 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 	return problemtype.Write(response, status, string(code), title, title)
 }
 
+func writeUnavailableProblem(response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
+	requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, title)
+	operatorlog.Report(operation, reason, requestID, err)
+}
+
 func newRequestID() string { return problemtype.NewRequestID() }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

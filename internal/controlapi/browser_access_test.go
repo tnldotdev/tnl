@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
@@ -197,4 +200,68 @@ func newURLHost(t *testing.T, value string) string {
 		t.Fatal(err)
 	}
 	return parsed.Host
+}
+
+type failingBrowserPreviewStore struct {
+	PreviewStore
+	err error
+}
+
+func (s failingBrowserPreviewStore) GetPreview(context.Context, string) (controlstate.Preview, error) {
+	return controlstate.Preview{}, s.err
+}
+
+type failingBrowserVerifier struct{ err error }
+
+func (v failingBrowserVerifier) Verify(context.Context, string) (oidcauth.Identity, error) {
+	return oidcauth.Identity{}, v.err
+}
+
+func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{controlstate.ErrPreviewNotFound, http.StatusNotFound, "not_found"},
+		{errors.New("database password private-test-secret"), http.StatusInternalServerError, "internal"},
+	} {
+		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserVerifier: failingBrowserVerifier{}, browserAuthority: &authorityclient.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
+		response := httptest.NewRecorder()
+		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: "pv_example", PublicUrlId: "url_example", ReturnPath: "/"})
+		var body struct {
+			Code      string `json:"code"`
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != test.status || body.Code != test.code || !strings.HasPrefix(body.RequestID, "req_") || strings.Contains(response.Body.String(), "private-test-secret") {
+			t.Fatalf("browser failure = %d %s", response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestBrowserSessionPreservesAuthorizationAvailabilityFailure(t *testing.T) {
+	cause := errors.Join(authorization.ErrUnavailable, errors.New("private authority failure"))
+	h := &handler{browserAccess: browserSessionStoreStub{}, authorizer: failingBrowserAuthorizer{err: cause}}
+	_, _, _, err := h.browserSessionAccess(httptest.NewRequest(http.MethodGet, "/", nil), controlstate.PublishRunAuthentication{}, "cookie")
+	if !errors.Is(err, authorization.ErrUnavailable) {
+		t.Fatalf("authorization failure became an expired session: %v", err)
+	}
+}
+
+type browserSessionStoreStub struct{ BrowserAccessStore }
+
+type failingBrowserAuthorizer struct {
+	publicURLAuthorizer
+	err error
+}
+
+func (a failingBrowserAuthorizer) AuthorizePublicURLReads(context.Context, string) (publicURLReadPrincipal, error) {
+	return publicURLReadPrincipal{}, a.err
+}
+
+func (browserSessionStoreStub) BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error) {
+	return controlstate.BrowserAccessSession{AccessExpiresAt: time.Now().Add(time.Hour)}, nil
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -51,6 +50,7 @@ type providerVerifier struct {
 
 	discovery chan struct{}
 	provider  *oidc.Provider
+	keySet    oidc.KeySet
 }
 
 // NewVerifier validates configuration without contacting the provider.
@@ -82,7 +82,7 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, er
 	if err != nil {
 		return Identity{}, err
 	}
-	return verifyToken(oidc.ClientContext(ctx, v.httpClient), provider, v.clientID, raw)
+	return verifyToken(oidc.ClientContext(ctx, v.httpClient), provider, v.clientID, raw, v.keySet)
 }
 
 func (v *providerVerifier) getProvider(ctx context.Context) (*oidc.Provider, error) {
@@ -105,22 +105,38 @@ func (v *providerVerifier) getProvider(ctx context.Context) (*oidc.Provider, err
 		}
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	v.provider = provider
+	keySet, err := providerKeySet(oidc.ClientContext(ctx, v.httpClient), provider)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	v.provider, v.keySet = provider, keySet
 	return provider, nil
 }
 
-func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string) (Identity, error) {
-	token, err := provider.Verifier(&oidc.Config{
+func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string, keySets ...oidc.KeySet) (Identity, error) {
+	var keySet oidc.KeySet
+	if len(keySets) != 0 {
+		keySet = keySets[0]
+	} else {
+		var err error
+		keySet, err = providerKeySet(ctx, provider)
+		if err != nil {
+			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		}
+	}
+	observed := &observedKeySet{KeySet: keySet}
+	token, err := oidc.NewVerifier(providerIssuer(provider), observed, &oidc.Config{
 		ClientID: clientID, SupportedSigningAlgs: []string{"RS256"},
 	}).Verify(ctx, raw)
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil {
 			return Identity{}, cause
 		}
-		if providerFailure(err) {
-			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		var fetchFailure *keyFetchError
+		if errors.As(observed.err, &fetchFailure) {
+			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, observed.err)
 		}
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
 	if !validClaim(token.Issuer, 2048) || !validClaim(token.Subject, 256) || token.Expiry.IsZero() {
 		return Identity{}, ErrUnauthenticated
@@ -157,12 +173,6 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 		NormalizedEmail: email, EmailVerified: claims.EmailVerified, Nonce: claims.Nonce,
 		ExpiresAt: token.Expiry.UTC(), AssertionDigest: sha256.Sum256([]byte(raw)),
 	}, nil
-}
-
-func providerFailure(err error) bool {
-	var networkError net.Error
-	var urlError *url.Error
-	return errors.As(err, &networkError) || errors.As(err, &urlError) || strings.Contains(err.Error(), "fetching keys")
 }
 
 func firstValidClaim(maximum int, values ...string) string {
