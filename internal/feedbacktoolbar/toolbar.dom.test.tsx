@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { FeedbackAPI } from "./api.ts";
@@ -73,7 +73,7 @@ async function openThread(user: ReturnType<typeof userEvent.setup>): Promise<voi
   await screen.findByRole("button", { name: "Resolve", exact: true });
 }
 afterEach(() => {
-  cleanup();
+  act(() => cleanup());
   document.body.replaceChildren();
   document.getSelection()?.removeAllRanges();
   window.history.replaceState(null, "", "/");
