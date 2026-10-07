@@ -58,6 +58,7 @@ func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oid
 		DNSAutomation:           cfg.DNSAutomationEnabled(),
 		OIDCVerifier:            verifier,
 		BrowserOIDCVerifier:     browserVerifier,
+		EmailDelivery:           cfg.EmailURL != "",
 	}
 }
 

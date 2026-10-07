@@ -46,6 +46,7 @@ type CreateInvitationRequest struct {
 	ExpiresAt        time.Time
 	EmailRestriction string
 	RetrySecret      []byte
+	SendEmail        bool
 }
 
 func (d *Database) ListTeamInvitations(
@@ -186,6 +187,11 @@ func (d *Database) CreateTeamInvitation(
 	})
 	if err != nil {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: insert invitation: %w", err)
+	}
+	if request.SendEmail && normalizedEmail != "" {
+		if err := d.queueInvitationEmail(ctx, queries, invitationID, actor.DisplayName, normalizedEmail, token.String(), request.ExpiresAt, now); err != nil {
+			return InvitationSecret{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: commit: %w", err)

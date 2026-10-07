@@ -460,6 +460,14 @@
           "type": "string",
           "description": "Service token for the public URL usage receiver."
         },
+        "email_url": {
+          "type": "string",
+          "description": "HTTPS origin of the typed email receiver."
+        },
+        "email_token": {
+          "type": "string",
+          "description": "Credential used only to deliver email requests."
+        },
         "route53_region": {
           "type": "string",
           "description": "AWS region used to sign Route 53 requests.",

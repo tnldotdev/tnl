@@ -226,6 +226,18 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ControlEmailDelivery struct {
+	DeliveryID        string
+	PayloadCiphertext []byte
+	StorageKeyID      pgtype.Text
+	AvailableAt       pgtype.Timestamptz
+	Attempts          int64
+	LeaseOwner        pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+	LastStatus        int32
+}
+
 type ControlFeedbackEvent struct {
 	Cursor            int64
 	SchemaVersion     int16

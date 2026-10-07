@@ -366,7 +366,7 @@ func (h *handler) CreateTeamInvitation(
 	created, err := h.store.CreateTeamInvitation(request.Context(), controlstate.CreateInvitationRequest{
 		IdentityID: principal.IdentityID, TeamID: string(teamID), IdempotencyKey: params.IdempotencyKey,
 		RequestDigest: digest, MemberSlug: body.MemberSlug, InitialRole: controlstate.TeamRole(body.InitialRole),
-		ExpiresAt: body.ExpiresAt, EmailRestriction: email, RetrySecret: principal.RetrySecret[:],
+		ExpiresAt: body.ExpiresAt, EmailRestriction: email, RetrySecret: principal.RetrySecret[:], SendEmail: h.config.EmailDelivery,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "create team invitation", err)

@@ -543,6 +543,36 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    EmailDeliveryRequest:
+      description: Typed request sent by control to POST /api/internal/tnl/emails on the configured mailer; HTTP 204 acknowledges sending or a previously sent delivery_id.
+      type: object
+      additionalProperties: false
+      required: [delivery_id, type, to, data]
+      properties:
+        delivery_id:
+          $ref: "#/components/schemas/ResourceID"
+        type:
+          type: string
+          enum: [team_invitation]
+        to:
+          type: string
+          format: email
+        data:
+          $ref: "#/components/schemas/TeamInvitationEmail"
+    TeamInvitationEmail:
+      type: object
+      additionalProperties: false
+      required: [team_display_name, secret, expires_at]
+      properties:
+        team_display_name:
+          $ref: "#/components/schemas/CanonicalLabel"
+        secret:
+          type: string
+          minLength: 32
+          maxLength: 4096
+        expires_at:
+          type: string
+          format: date-time
     ServiceIdentity:
       type: object
       additionalProperties: false

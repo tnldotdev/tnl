@@ -141,6 +141,21 @@ func (e DomainState) Valid() bool {
 	}
 }
 
+// Defines values for EmailDeliveryRequestType.
+const (
+	TeamInvitation EmailDeliveryRequestType = "team_invitation"
+)
+
+// Valid indicates whether the value is a known member of the EmailDeliveryRequestType enum.
+func (e EmailDeliveryRequestType) Valid() bool {
+	switch e {
+	case TeamInvitation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvitationState.
 const (
 	InvitationStateAccepted InvitationState = "accepted"
@@ -361,6 +376,17 @@ type DomainPage struct {
 // DomainState defines model for DomainState.
 type DomainState string
 
+// EmailDeliveryRequest Typed request sent by control to POST /api/internal/tnl/emails on the configured mailer; HTTP 204 acknowledges sending or a previously sent delivery_id.
+type EmailDeliveryRequest struct {
+	Data       TeamInvitationEmail      `json:"data"`
+	DeliveryId ResourceID               `json:"delivery_id"`
+	To         openapi_types.Email      `json:"to"`
+	Type       EmailDeliveryRequestType `json:"type"`
+}
+
+// EmailDeliveryRequestType defines model for EmailDeliveryRequest.Type.
+type EmailDeliveryRequestType string
+
 // GuestDomain defines model for GuestDomain.
 type GuestDomain struct {
 	DnsAuthorityReference string   `json:"dns_authority_reference"`
@@ -554,6 +580,13 @@ type Team struct {
 
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
+
+// TeamInvitationEmail defines model for TeamInvitationEmail.
+type TeamInvitationEmail struct {
+	ExpiresAt       time.Time      `json:"expires_at"`
+	Secret          string         `json:"secret"`
+	TeamDisplayName CanonicalLabel `json:"team_display_name"`
+}
 
 // TeamKind defines model for TeamKind.
 type TeamKind string

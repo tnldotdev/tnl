@@ -49,6 +49,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 	err := d.pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM control.control_sessions WHERE retry_secret_storage_key_id = $1) +
+			(SELECT count(*) FROM control.email_deliveries WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.acme_accounts WHERE account_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.control_tls_cache WHERE cache_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
@@ -132,6 +133,19 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 			remaining--
 		}
 		return nil
+	}
+	if err := rotate(`SELECT ctid::text, delivery_id, payload_ciphertext FROM control.email_deliveries
+		WHERE storage_key_id = $1 ORDER BY delivery_id FOR UPDATE SKIP LOCKED LIMIT $2`,
+		func(rows pgx.Rows) (string, string, []byte, error) {
+			var rowID, id string
+			var ciphertext []byte
+			err := rows.Scan(&rowID, &id, &ciphertext)
+			return rowID, emailPayloadContext(id), ciphertext, err
+		}, func(rowID, keyID string, ciphertext []byte) error {
+			_, err := tx.Exec(ctx, `UPDATE control.email_deliveries SET payload_ciphertext=$1, storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, keyID, rowID, previousKeyID)
+			return err
+		}); err != nil {
+		return 0, err
 	}
 
 	if err := rotate(`
