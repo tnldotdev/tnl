@@ -106,6 +106,11 @@ const (
 
 const ServerControlConnectionFailed Reason = "server.control_connection_failed"
 
+const (
+	ServerDatabaseDiagnosticsUnavailable Reason = "server.database_diagnostics_unavailable"
+	ServerDiagnosticsBusy                Reason = "server.diagnostics_busy"
+)
+
 var definitions = map[Reason]Definition{
 	InvalidControlURL: {
 		Class: Invalid, Message: "server must be an HTTPS origin",
@@ -498,6 +503,14 @@ var definitions = map[Reason]Definition{
 	BenchmarkInputInvalid: {
 		Class: Invalid, Message: "benchmark inputs are incomplete or invalid",
 		Action: "check tnlbench --help, the workload plan, and explicit approval inputs", Retry: RetryAfterChange,
+	},
+	ServerDatabaseDiagnosticsUnavailable: {
+		Class: Unavailable, Message: "the database diagnostic snapshot could not be collected",
+		Action: "check PostgreSQL, the pooler, and diagnostic connection access", Retry: RetryLater,
+	},
+	ServerDiagnosticsBusy: {
+		Class: Conflict, Message: "a database diagnostic snapshot is already in progress",
+		Action: "wait for the current snapshot before collecting another", Retry: RetryLater,
 	},
 	BenchmarkMeasurementFailed: {
 		Class: Unavailable, Message: "the benchmark could not complete its measurement",

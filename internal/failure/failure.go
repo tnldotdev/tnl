@@ -1,5 +1,5 @@
-// Package failure describes a failed operation without tying it to a CLI, log,
-// HTTP, or tunnel representation.
+// package failure defines shared error reasons, retry policies, and safe messages.
+// commands, logs, and APIs choose how to present them.
 package failure
 
 import (

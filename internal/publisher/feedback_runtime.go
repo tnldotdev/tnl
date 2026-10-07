@@ -225,10 +225,18 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 		http.Error(response, "feedback requires a current share", http.StatusForbidden)
 		return true
 	}
-	f.handlerOnce.Do(func() { f.handler = publisherv1.Handler(&feedbackHTTP{runtime: f}) })
+	f.handlerOnce.Do(func() { f.handler = newFeedbackHandler(f) })
 	request = request.WithContext(context.WithValue(request.Context(), feedbackAccessContextKey{}, access))
 	f.handler.ServeHTTP(response, request)
 	return true
+}
+
+func newFeedbackHandler(runtime *feedbackRuntime) http.Handler {
+	return publisherv1.HandlerWithOptions(&feedbackHTTP{runtime: runtime}, publisherv1.StdHTTPServerOptions{
+		ErrorHandlerFunc: func(response http.ResponseWriter, _ *http.Request, _ error) {
+			http.Error(response, "invalid feedback parameter", http.StatusBadRequest)
+		},
+	})
 }
 
 func (f *feedbackRuntime) list(response http.ResponseWriter, request *http.Request, access controlv1.FeedbackReviewerAccess, params publisherv1.ListBrowserFeedbackParams) {

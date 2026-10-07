@@ -1,66 +1,101 @@
 # failure boundaries
 
-Represent failures by reason and operation before rendering them for `tnl`,
-`tnld`, or an HTTP client. `internal/failure` owns the reason definitions and
-safe copy. Its wrapped cause remains available through `errors.Is` and
-`errors.As`, but an output boundary must not build a message from `Error()`.
+Give an error a stable meaning where the operation knows what failed. Preserve
+its cause for callers, then render safe text at the CLI, log, API, or browser
+boundary.
 
-Add a new failure by declaring one namespaced reason and its explanation,
-action, class, and retry policy in `internal/failure/reasons.go`. Wrap the
-underlying error at the operation that knows what failed. If the failure needs
-extra data, give its owner a typed field, such as a setting name or retry
-duration; never pass credentials or arbitrary provider text as display fields.
-`failure.WrapSetting` accepts only known `TNLD_*` setting names, not their
-values, and `tnld` names the failing setting in its one-line error.
-Add an adapter only for surfaces where that reason can occur, and cover the
-mapping with a test. The reason ID keeps its meaning once machine output uses
-it; use a new ID for a different failure.
+## 1. choose the classification
 
-`tnl` presents safe text through the shared diagram renderer, and its NDJSON
-events retain machine-readable reasons. `tnld` uses compact single-line
-operational errors and logs, not diagrams. Public and private HTTP APIs own
-their problem responses in the OpenAPI sources. The handwritten tunnel
-protocol owns its error codes. These boundaries may share a reason without
-sharing presentation or exposing an underlying cause.
+Reuse an owned error type, sentinel, `failure.Reason`, or contract code when its
+meaning fits. Use `errors.Is` and `errors.As` in Go and owned codes or types in
+TypeScript. Classify provider errors by structured fields such as SQLSTATE or
+HTTP status; never match their message text.
 
-Start error messages with the failed operation or condition, not the package
-name. Write `email delivery lease is stale`, not
-`controlstate: email delivery lease is stale`. The error type and reason identify
-the owner; wrapping an operation preserves useful context and the original cause.
+`internal/failure/reasons.go` owns each Go reason's class, message, action, and
+retry policy. Add a reason when the operation needs a different meaning. Keep
+IDs stable once machine output exposes them.
 
-Control, built-in authority, private ingress, and private relay use one HTTP
-problem envelope: `type`, `title`, `status`, `code`, `detail`, and `request_id`.
-`code` is chosen from the serving API's OpenAPI source; `detail` is authored
-safe text, and `request_id` correlates an unexpected failure with operator
-logs. The public URL usage receiver is external and owns its own HTTP contract.
+## 2. preserve the cause
 
-Worker failure fields and local tunnel history store the reason ID, not the
-untrusted provider, visitor, or database error text. Resolve a stored reason
-through its definition when displaying it. Operator logs likewise use the
-reason and operation; keep unexpected raw causes wrapped for internal error
-identity without writing them to routine logs.
+Wrap the cause at the operation that can explain it:
 
-Benchmark results and terminal failures use the same authored definitions. A
-measurement may retain its HTTP status through an owned response error; it must
-not store response bodies, arbitrary headers, or raw transport failures as
-samples. QUIC close reasons likewise contain authored protocol text.
+```go
+return failure.Wrap("finish invitation email", failure.ServerEmailLeaseStale,
+    ErrEmailDeliveryLeaseStale)
+```
 
-OIDC discovery and signing-key fetch failures mean the provider is unavailable;
-a rejected signature or identity claim means authentication failed. The verifier
-observes the original key-set error before the provider library formats it,
-preserves network causes, bounds signing-key responses, and caches keys across
-requests. Browser sign-in keeps these provider failures and storage failures
-separate from expired login state.
+The caller can still use `errors.Is(err, ErrEmailDeliveryLeaseStale)`. Internal
+wrappers may add operation context with `%w`; TypeScript wrappers retain
+`ErrorOptions.cause`. Cleanup failures should retain both the setup and cleanup
+causes.
 
-The npm package exports browser-safe `TnlError` and `TnlErrorCode` alongside
-`tnl`. Integrations classify configuration, metadata, listener, launcher, and
-private dev-socket failures before handing them to a framework. Messages are
-authored definitions; provider text and invalid metadata values remain outside
-display output. Cleanup failures retain both errors and the original setup
-cause. The npm launcher uses the same safe messages before it can start `tnl`.
+## 3. write safe messages and fields
 
-The feedback toolbar owns `FeedbackError` and uses its authored message at every
-error view. Queries retry only bounded transient failures, and stop polling
-after expired access, state conflicts, invalid input, or malformed responses.
-Cancellation remains cancellation. Reporting retries retain their existing
-idempotency keys.
+Describe the failed condition directly: `email delivery lease is stale`.
+Do not start with a package-name prefix such as `controlstate:`. Say what failed
+and give a concrete next action when the reader can do something about it.
+
+Output adapters use authored definitions, not raw `Error()` or provider
+messages. Keep credentials, request bodies, database statements, and invalid
+input values out of displayed text. Extra fields must be owned and approved,
+such as a validated SQLSTATE, HTTP status, or retry duration.
+
+Apply this rule to each form of output:
+
+- **Configuration:** `failure.WrapSetting` accepts a declared setting name,
+  without its value.
+- **Stored failures:** worker fields and tunnel history keep the reason ID;
+  resolve its definition when displaying it.
+- **Measurements and protocol closes:** benchmark samples and close reasons use
+  authored text and approved fields.
+
+## 4. choose the retry policy
+
+| Go policy          | when to use it                                                        |
+| ------------------ | --------------------------------------------------------------------- |
+| `NoRetry`          | the current operation cannot make progress, such as an obsolete claim |
+| `RetryLater`       | the same operation can recover after a temporary failure              |
+| `RetryAfterChange` | input, configuration, or state must change first                      |
+
+Distinguish failures that can recover by retrying from those that need changed
+input, configuration, or state. For example, unavailable OIDC signing keys are
+a provider failure; a rejected signature is an authentication failure. Neither
+should become an expired login merely because it happened during sign-in.
+
+Keep cancellation and expected shutdown as control flow. Discard stale work
+when its lease or assignment has been replaced. Bound transient retries and
+retain the operation's idempotency key; do not automatically retry invalid
+input, expired access, or malformed responses.
+
+## 5. report at the boundary
+
+| surface          | owner and output                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `tnl`            | shared diagram renderer for human output; stable diagnostic codes and reasons in JSON or NDJSON |
+| `tnld`           | `operatorlog.Report` with authored copy, approved fields, and request correlation               |
+| HTTP APIs        | serving OpenAPI contract and its problem adapter                                                |
+| tunnel protocol  | `pkg/protocol/tunnelv1` error codes and authored close reasons                                  |
+| npm integrations | `TnlError` codes, definitions, and retry policy                                                 |
+| feedback toolbar | `FeedbackError` codes and `safeFeedbackMessage` for views                                       |
+
+Preserve HTTP status and HTML negotiation. Control, built-in authority, private
+ingress, and private relay use the shared problem envelope: `type`, `title`,
+`status`, `code`, `detail`, and `request_id`. Unexpected failures correlate the
+request ID with operator logs; `detail` contains authored text. External usage
+receivers own their HTTP contract.
+
+Classify and report through the existing operation boundary. Keep helper
+imports free of process-wide error-handler side effects.
+
+## 6. verify the boundary
+
+Use the lowest sufficient test layer to check:
+
+- the specific classification and retry decision;
+- preserved cause identity;
+- safe output that excludes sensitive cause text;
+- expected rejection, transient failure, cancellation, and malformed external
+  data where the boundary handles them.
+
+Keep command fixtures isolated from real client state. Edit generated contracts
+through their authoritative source.

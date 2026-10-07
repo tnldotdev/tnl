@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 // private diagnostic limits are shared with collectors. eight blocker PIDs per
@@ -83,14 +85,14 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 	result.Connections = local.Connections
 	defer func() {
 		if retErr != nil {
-			result.Error = retErr.Error()
+			result.Error = databaseDiagnosticsMessage(retErr)
 		}
 	}()
 	if err := d.requireOpen(); err != nil {
-		return result, err
+		return result, databaseDiagnosticsError(parent, err)
 	}
 	if !d.diagnosticsMu.TryLock() {
-		return result, errors.New("database diagnostics already in progress")
+		return result, failure.Wrap("collect database diagnostics", failure.ServerDiagnosticsBusy, errors.New("database diagnostics already in progress"))
 	}
 	defer d.diagnosticsMu.Unlock()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
@@ -148,12 +150,19 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 }
 
 func databaseDiagnosticsError(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return fmt.Errorf("database diagnostics: %w", ctx.Err())
+	if cause := context.Cause(ctx); cause != nil {
+		err = errors.Join(err, cause)
 	}
+	return failure.Wrap("collect database diagnostics", failure.ServerDatabaseDiagnosticsUnavailable, err)
+}
+
+var diagnosticSQLState = regexp.MustCompile(`^[0-9A-Z]{5}$`)
+
+func databaseDiagnosticsMessage(err error) string {
+	message := failure.SafeMessage(err, failure.ServerDatabaseDiagnosticsUnavailable)
 	var postgresError *pgconn.PgError
-	if errors.As(err, &postgresError) {
-		return fmt.Errorf("database diagnostics: PostgreSQL error %s", postgresError.Code)
+	if errors.As(err, &postgresError) && diagnosticSQLState.MatchString(postgresError.Code) {
+		message += fmt.Sprintf("; PostgreSQL error %s", postgresError.Code)
 	}
-	return errors.New("database diagnostics: connection or query unavailable")
+	return message
 }
