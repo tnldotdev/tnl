@@ -116,8 +116,8 @@ requires a fresh database rather than an upgrade from an older schema.
 | `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                        |
 
 `packages/tnl/dist` is disposable build output. The CLI generates project-local
-`.tnl/project.json` and `.tnl/project.d.ts`; see the
-[framework guide](https://tnl.dev/docs/frameworks) for their use.
+`.tnl/project.json` and `.tnl/project.d.ts`; commit these files with the project.
+See the [framework guide](https://tnl.dev/docs/frameworks) for their use.
 
 ## try the local stack
 

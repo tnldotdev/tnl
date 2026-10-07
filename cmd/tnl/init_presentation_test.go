@@ -43,9 +43,8 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 				if err != nil || !bytes.Equal(config, plan.configData) {
 					t.Fatalf("config = %q, %v", config, err)
 				}
-				gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-				if err != nil || string(gitignore) != "# tnl\n.tnl/\n" {
-					t.Fatalf("gitignore = %q, %v", gitignore, err)
+				if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+					t.Fatalf("created gitignore: %v", err)
 				}
 				if test.framework == "next" && !strings.Contains(stdout.String(), "pnpm add --save-dev") {
 					t.Fatalf("missing installation action: %q", stdout.String())

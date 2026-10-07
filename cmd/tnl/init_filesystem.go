@@ -2,13 +2,10 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 )
 
 const initReadLimit = 1 << 20
@@ -100,32 +97,4 @@ func replaceRecognizedInitFile(path string, expected, replacement []byte) error 
 		return fmt.Errorf("update %s: %w", path, err)
 	}
 	return nil
-}
-
-func ensureTnlGitignore(root string) (bool, error) {
-	path := filepath.Join(root, ".gitignore")
-	data, err := readInitFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := createInitFile(path, []byte("# tnl\n.tnl/\n")); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == ".tnl" || strings.TrimSpace(line) == ".tnl/" {
-			return false, nil
-		}
-	}
-	replacement := slices.Clone(data)
-	if len(replacement) != 0 && replacement[len(replacement)-1] != '\n' {
-		replacement = append(replacement, '\n')
-	}
-	replacement = append(replacement, []byte("# tnl\n.tnl/\n")...)
-	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
-		return false, err
-	}
-	return true, nil
 }
