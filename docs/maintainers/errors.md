@@ -23,6 +23,11 @@ their problem responses in the OpenAPI sources. The handwritten tunnel
 protocol owns its error codes. These boundaries may share a reason without
 sharing presentation or exposing an underlying cause.
 
+Start error messages with the failed operation or condition, not the package
+name. Write `email delivery lease is stale`, not
+`controlstate: email delivery lease is stale`. The error type and reason identify
+the owner; wrapping an operation preserves useful context and the original cause.
+
 Control, built-in authority, private ingress, and private relay use one HTTP
 problem envelope: `type`, `title`, `status`, `code`, `detail`, and `request_id`.
 `code` is chosen from the serving API's OpenAPI source; `detail` is authored

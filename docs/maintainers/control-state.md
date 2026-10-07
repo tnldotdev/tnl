@@ -14,6 +14,16 @@ switching its users, and remove old schema after those users stop. The runtime
 checks a minimum schema version and accepts newer versions; an older
 `tnld migrate` rejects databases newer than its embedded migrations.
 
+`schemaVersion` tracks the newest embedded migration and changes when a migration
+is added. `minimumSchemaVersion` tracks the oldest schema the serving code can
+use safely; it advances only when runtime reads or writes need a newer migration.
+The values can differ while an additive migration is not yet used by serving code.
+
+The guest-domain change requires migration 11 because managed guest trials store
+an empty DNS authority reference that the old constraint rejected. Email delivery
+requires migration 12's queue table, including for storage-key rotation. The
+authority cleanup requires migration 13's renamed guest retry-key columns.
+
 The two publisher connection slots are stored in
 `control.publish_run_connection_slots`. A slot keeps its `id` and
 `(publish_run_id, connection_slot)` identity when its connection assignment is

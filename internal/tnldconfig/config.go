@@ -90,8 +90,8 @@ type Config struct {
 
 	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
 	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
-	EmailURL            string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the typed email receiver."`
-	EmailToken          string `name:"email-token" env:"TNLD_EMAIL_TOKEN" help:"Credential used only to deliver email requests."`
+	EmailURL            string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
+	WebhookSecret       string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."`
@@ -162,7 +162,7 @@ func (c Config) Validate() (retErr error) {
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
-		if c.EmailURL != "" || c.EmailToken != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
@@ -229,23 +229,29 @@ func (c Config) Validate() (retErr error) {
 }
 
 func (c Config) validateControl() error {
-	if (c.EmailURL == "") != (c.EmailToken == "") {
-		return errors.New("email URL and token must be configured together")
+	if (c.EmailURL == "") != (c.WebhookSecret == "") {
+		setting := failure.SettingWebhookSecret
+		if c.EmailURL == "" {
+			setting = failure.SettingEmailURL
+		}
+		return failure.WrapSetting("configure invitation email", failure.ServerEmailConfigInvalid, setting,
+			errors.New("email URL and webhook secret must be configured together"))
 	}
 	if c.EmailURL != "" {
 		if err := validateHTTPSOrigin(c.EmailURL, "email receiver"); err != nil {
-			return err
+			return failure.WrapSetting("configure email receiver", failure.ServerEmailConfigInvalid, failure.SettingEmailURL, err)
 		}
-		if _, err := serviceapi.NewBearerSecrets(c.EmailToken, ""); err != nil {
-			return fmt.Errorf("email token: %w", err)
+		if _, err := serviceapi.NewBearerSecrets(c.WebhookSecret, ""); err != nil {
+			return failure.WrapSetting("configure email webhook", failure.ServerEmailConfigInvalid, failure.SettingWebhookSecret, err)
 		}
 	}
 	if c.WebServiceSecret != "" {
 		if c.OIDCIssuer == "" {
-			return errors.New("website identity operations require an OIDC issuer")
+			return failure.WrapSetting("configure website identity", failure.ServerWebsiteConfigInvalid, failure.SettingOIDCIssuer,
+				errors.New("website identity operations require an OIDC issuer"))
 		}
 		if _, err := serviceapi.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
-			return fmt.Errorf("website service secret: %w", err)
+			return failure.WrapSetting("configure website identity", failure.ServerWebsiteConfigInvalid, failure.SettingWebServiceSecret, err)
 		}
 	}
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {

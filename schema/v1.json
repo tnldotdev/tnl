@@ -458,11 +458,11 @@
         },
         "email_url": {
           "type": "string",
-          "description": "HTTPS origin of the typed email receiver."
+          "description": "HTTPS origin of the invitation email receiver."
         },
-        "email_token": {
+        "webhook_secret": {
           "type": "string",
-          "description": "Credential used only to deliver email requests."
+          "description": "Shared secret for invitation email delivery."
         },
         "route53_region": {
           "type": "string",

@@ -2,8 +2,11 @@ package controlstate
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testing.T) {
@@ -35,6 +38,12 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 	}
 	if other, err := database.ClaimInvitationEmail(t.Context(), "worker-b", now); err != nil || other.ID != "" {
 		t.Fatalf("duplicate claim=%+v, %v", other, err)
+	}
+	stale := job
+	stale.Owner = "not-the-current-worker"
+	err = database.FinishInvitationEmail(t.Context(), stale, 204, now)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerEmailLeaseStale || !errors.Is(err, ErrEmailDeliveryLeaseStale) {
+		t.Fatalf("stale claim error = %v", err)
 	}
 	if err := database.FinishInvitationEmail(t.Context(), job, 503, now); err != nil {
 		t.Fatal(err)

@@ -173,7 +173,7 @@ only a new assignment identity does.
 | Cluster secret                  | Split control, ingress, and relay | Authenticate private process coordination.            |
 | Login token                     | Built-in authority control        | Recover the built-in administrator identity.          |
 | Website service credential      | Control and hosted website        | Read identity context and accept browser invitations. |
-| Email delivery credential       | Control and mailer                | Authenticate typed email requests.                    |
+| Webhook credential              | Control and mailer                | Authenticate invitation email delivery.               |
 | Storage key                     | Control only                      | Encrypt recoverable secrets in PostgreSQL.            |
 | Relay transport private key     | Current relay process             | Terminate publisher transport TLS.                    |
 

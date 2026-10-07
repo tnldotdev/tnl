@@ -497,7 +497,7 @@ components:
             $ref: "#/components/schemas/Problem"
   schemas:
     EmailDeliveryRequest:
-      description: Typed request sent by control to POST /api/internal/tnl/emails on the configured mailer; HTTP 204 acknowledges sending or a previously sent delivery_id.
+      description: Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
       type: object
       additionalProperties: false
       required: [delivery_id, type, to, data]

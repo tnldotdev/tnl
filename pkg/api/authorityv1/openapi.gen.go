@@ -339,7 +339,7 @@ type DomainPage struct {
 // DomainState defines model for DomainState.
 type DomainState string
 
-// EmailDeliveryRequest Typed request sent by control to POST /api/internal/tnl/emails on the configured mailer; HTTP 204 acknowledges sending or a previously sent delivery_id.
+// EmailDeliveryRequest Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
 type EmailDeliveryRequest struct {
 	Data       TeamInvitationEmail      `json:"data"`
 	DeliveryId ResourceID               `json:"delivery_id"`

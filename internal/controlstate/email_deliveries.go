@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -33,6 +34,8 @@ type EmailDelivery struct {
 	Attempts int64
 	Payload  authorityv1.EmailDeliveryRequest
 }
+
+var ErrEmailDeliveryLeaseStale = errors.New("email delivery lease is stale")
 
 func (d *Database) ClaimInvitationEmail(ctx context.Context, owner string, now time.Time) (EmailDelivery, error) {
 	queries := controlstatedb.New(d.pool)
@@ -68,7 +71,7 @@ func (d *Database) FinishInvitationEmail(ctx context.Context, delivery EmailDeli
 		return err
 	}
 	if rows != 1 {
-		return errors.New("controlstate: email delivery lease is stale")
+		return failure.Wrap("finish invitation email", failure.ServerEmailLeaseStale, ErrEmailDeliveryLeaseStale)
 	}
 	return nil
 }
