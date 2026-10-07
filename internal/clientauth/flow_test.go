@@ -21,10 +21,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const (
-	testControlOrigin   = "https://control.example"
-	testAuthorityOrigin = testControlOrigin
-)
+const testControlOrigin = "https://control.example"
 
 // MockInit replaces a process-global keyring. hold this for the entire fixture,
 // including database cleanup and all joined refresh goroutines.
@@ -233,8 +230,8 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 					t.Fatalf("login=%d requests=%d error=%v", logins, len(requests), err)
 				}
 				f.assertSession(t, storedSession(issued))
-				assertAuthRequest(t, requests[2], http.MethodPost, testAuthorityOrigin+"/v1/auth/token", "", authorityv1.LoginTokenExchangeRequest{LoginToken: "login-input"})
-				assertAuthRequest(t, requests[3], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", old.AccessToken, nil)
+				assertAuthRequest(t, requests[2], http.MethodPost, testControlOrigin+"/v1/auth/token", "", authorityv1.LoginTokenExchangeRequest{LoginToken: "login-input"})
+				assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
 			} else {
 				if err == nil || client != nil || logins != 0 || len(requests) != 2 {
 					t.Fatalf("login=%d requests=%d error=%v", logins, len(requests), err)
@@ -245,7 +242,7 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 				f.assertSession(t, old)
 			}
 			assertAuthRequest(t, requests[0], http.MethodGet, testControlOrigin+"/v1/discovery", "", nil)
-			assertAuthRequest(t, requests[1], http.MethodPost, testAuthorityOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
+			assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
 			selected, found, selectErr := f.config.State.SavedServer(t.Context())
 			if selectErr != nil || found != test.login || found && selected != testControlOrigin {
 				t.Fatalf("selected server=%q found=%v error=%v", selected, found, selectErr)
@@ -379,12 +376,12 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 			if len(requests) != wantCount {
 				t.Fatalf("requests=%d want=%d", len(requests), wantCount)
 			}
-			assertAuthRequest(t, requests[1], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", old.AccessToken, nil)
+			assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
 			if test.refresh != 0 {
-				assertAuthRequest(t, requests[2], http.MethodPost, testAuthorityOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
+				assertAuthRequest(t, requests[2], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
 			}
 			if test.last != 0 {
-				assertAuthRequest(t, requests[3], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
+				assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
 			}
 			if test.last == http.StatusServiceUnavailable {
 				// a later invocation must revoke using the saved rotated access
@@ -397,7 +394,7 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 				if len(requests) != 6 {
 					t.Fatalf("recovery requests=%d", len(requests))
 				}
-				assertAuthRequest(t, requests[5], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
+				assertAuthRequest(t, requests[5], http.MethodPost, testControlOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
 				if _, found, err := f.store.ControlSession(t.Context()); found || err != nil {
 					t.Fatalf("recovery retained session: found=%v error=%v", found, err)
 				}
@@ -434,8 +431,8 @@ func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	if len(requests) != 4 {
 		t.Fatalf("requests=%d", len(requests))
 	}
-	assertAuthRequest(t, requests[2], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", old.AccessToken, nil)
-	assertAuthRequest(t, requests[3], http.MethodPost, testAuthorityOrigin+"/v1/auth/logout", issued.AccessToken, nil)
+	assertAuthRequest(t, requests[2], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
+	assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", issued.AccessToken, nil)
 }
 
 func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
@@ -510,7 +507,7 @@ func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
 	f.assertSession(t, old)
 }
 
-func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
+func TestAuthenticateReusesOrRefreshesSavedSessionForControlRequests(t *testing.T) {
 	for _, refresh := range []bool{false, true} {
 		name := "reuse fresh session"
 		if refresh {
@@ -559,9 +556,9 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForBothOrigins(t *testing.T) {
 				t.Fatalf("requests=%d want=%d", len(requests), count)
 			}
 			assertAuthRequest(t, requests[count-2], http.MethodGet, testControlOrigin+"/v1/public-urls/public_url_1", want.AccessToken, nil)
-			assertAuthRequest(t, requests[count-1], http.MethodGet, testAuthorityOrigin+"/v1/identity", want.AccessToken, nil)
+			assertAuthRequest(t, requests[count-1], http.MethodGet, testControlOrigin+"/v1/identity", want.AccessToken, nil)
 			if refresh {
-				assertAuthRequest(t, requests[1], http.MethodPost, testAuthorityOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
+				assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
 			}
 			f.assertSession(t, want)
 			if f.config.HTTPClient.Transport != f.transport {

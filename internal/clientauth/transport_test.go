@@ -130,7 +130,7 @@ func TestBearerTransportDoesNotRefreshOtherResponses(t *testing.T) {
 			if test.explicit {
 				source.explicit = old.AccessToken
 			}
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testAuthorityOrigin+"/v1/identity", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testControlOrigin+"/v1/identity", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
