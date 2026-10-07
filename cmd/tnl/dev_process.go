@@ -8,6 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 type devProcess struct {
@@ -35,7 +37,7 @@ func startDevProcess(command, environment []string, stdin io.Reader, stdout, std
 	process.command.Stderr = stderr
 	process.command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := process.command.Start(); err != nil {
-		return nil, fmt.Errorf("start development server command: %w", err)
+		return nil, failure.Wrap("start development server command", failure.DevProcessFailed, err)
 	}
 	processGroupID := process.command.Process.Pid
 	leaderExited, watcherErr := watchDevProcessExit(processGroupID)
@@ -128,5 +130,5 @@ func childResult(err error) error {
 		}
 		return &childExitError{code: code}
 	}
-	return fmt.Errorf("wait for development server command: %w", err)
+	return failure.Wrap("wait for development server command", failure.DevProcessFailed, err)
 }

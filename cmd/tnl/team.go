@@ -9,6 +9,7 @@ import (
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -185,7 +186,7 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 
 func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagnostics io.Writer) error {
 	if !naming.ValidAuthorityLabel(command.Name) {
-		return errors.New("team name must be one lowercase ASCII DNS label (for example, studio)")
+		return failure.Wrap("validate team name", failure.InvalidCommand, errors.New("team name must be one lowercase ASCII DNS label (for example, studio)"))
 	}
 	session, err := openTeamSession(ctx, command.remoteFlags, "tnl team create", diagnostics)
 	if err != nil {
@@ -193,7 +194,7 @@ func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagn
 	}
 	defer session.Close()
 	if command.MemberSlug != "" && !naming.ValidAuthorityLabel(command.MemberSlug) {
-		return errors.New("member slug must be one lowercase ASCII DNS label")
+		return failure.Wrap("validate member slug", failure.InvalidCommand, errors.New("member slug must be one lowercase ASCII DNS label"))
 	}
 	key, err := randomIdempotencyKey()
 	if err != nil {
@@ -255,7 +256,7 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 
 func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, output, diagnostics io.Writer) error {
 	if command.ExpiresIn <= 0 {
-		return errors.New("invitation lifetime must be positive")
+		return failure.Wrap("validate invitation lifetime", failure.InvalidCommand, errors.New("invitation lifetime must be positive"))
 	}
 	session, err := openTeamSession(ctx, command.selection(), "tnl team invite create", diagnostics)
 	if err != nil {

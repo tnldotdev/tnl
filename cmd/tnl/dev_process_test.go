@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func TestChildResultPreservesExitStatus(t *testing.T) {
@@ -34,7 +36,8 @@ func TestWaitForDevTargetStopsWhenCommandExits(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupDevProcess(t, process)
-	if _, err := waitForDevTarget(ctx, bootstrap, process); err == nil || err.Error() != "development server command exited before target registration" {
+	_, err = waitForDevTarget(ctx, bootstrap, process)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.DevProcessFailed {
 		t.Fatalf("wait error = %v", err)
 	}
 }
