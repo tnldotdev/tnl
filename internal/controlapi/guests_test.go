@@ -26,6 +26,10 @@ type guestCreationStoreStub struct {
 func (s *guestCreationStoreStub) GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error {
 	return nil
 }
+func (s *guestCreationStoreStub) CreateBuiltinGuestTrial(_ context.Context, guest controlstate.NewGuestTrial, _ string, _ time.Time) (string, error) {
+	s.created, s.domain = guest, "dom_guest"
+	return s.domain, nil
+}
 func (s *guestCreationStoreStub) CreateGuestTrial(_ context.Context, guest controlstate.NewGuestTrial, domain, _ string, _ time.Time) error {
 	s.created, s.domain = guest, domain
 	return nil

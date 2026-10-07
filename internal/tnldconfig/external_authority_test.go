@@ -46,8 +46,8 @@ func TestControlAuthorityModesAreExclusive(t *testing.T) {
 		t.Fatalf("built-in authority with OIDC: %v", err)
 	}
 	builtin.GuestDemoEnabled = true
-	if err := builtin.Validate(); err == nil || !strings.Contains(err.Error(), "external authority") {
-		t.Fatalf("guest demo with unsupported built-in authority = %v", err)
+	if err := builtin.Validate(); err != nil {
+		t.Fatalf("built-in guest demo: %v", err)
 	}
 	builtin.GuestDemoEnabled = false
 

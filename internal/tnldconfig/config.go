@@ -229,9 +229,6 @@ func (c Config) Validate() (retErr error) {
 }
 
 func (c Config) validateControl() error {
-	if c.GuestDemoEnabled && c.AuthorityEndpoint == "" {
-		return errors.New("guest demos require an external authority that supports namespace reservations")
-	}
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
 		return failure.WrapSetting("validate pooled database URL", failure.ServerDatabaseURLInvalid, failure.SettingDatabaseURL, err)
 	}
