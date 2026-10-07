@@ -40,7 +40,7 @@ describe("tnl", () => {
   test("takes no arguments and is inert without generated metadata", async () => {
     expect(tnl).toHaveLength(0);
     expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
-    expect(() => tnl({} as never)).toThrow(/does not accept tunnel options/);
+    expect(() => tnl({} as never)).toThrow(/framework configuration is invalid/);
     const directory = await temporaryDirectory("tnl-vite-empty-");
     await withCurrentDirectory(directory, async () => {
       await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toBeUndefined();
@@ -126,7 +126,7 @@ describe("tnl", () => {
         runConfigHook(tnl(), {
           server: { allowedHosts: ["existing.example", 42] as unknown as string[] },
         }),
-      ).rejects.toThrow(/allowedHosts/);
+      ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
     });
     expect(bootstrap.requests).toHaveLength(0);
   });
@@ -153,14 +153,13 @@ describe("tnl", () => {
     configureServer.call({} as never, server as never);
 
     const failure = await rejection(server.listen());
-    expect(failure).toBeInstanceOf(AggregateError);
-    if (!(failure instanceof AggregateError)) return;
-    expect(failure.message).toBe("Vite listener setup failed and server cleanup also failed");
+    expect(failure).toMatchObject({ code: "sdk.cleanup_failed", class: "internal" });
+    if (!("errors" in failure)) return;
     expect(failure.errors).toEqual([
-      expect.objectContaining({ message: "Vite did not report its listening port to tnl dev" }),
+      expect.objectContaining({ code: "sdk.listener_failed" }),
       closeError,
     ]);
-    expect(failure.cause).toBe(failure.errors[0]);
+    expect(failure.cause).toBe((failure.errors as unknown[])[0]);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -183,7 +182,7 @@ describe("tnl", () => {
     await server.listen();
     expect(bootstrap.requests[1]?.body).toMatchObject({ target: "http://127.0.0.1:5200" });
     port = 5201;
-    await expect(server.listen()).rejects.toThrow(/listener changed after registration/);
+    await expect(server.listen()).rejects.toMatchObject({ code: "sdk.listener_failed" });
     expect(close).toHaveBeenCalledOnce();
   });
 });

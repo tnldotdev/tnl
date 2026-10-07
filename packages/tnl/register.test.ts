@@ -61,7 +61,7 @@ test("stops waiting when a Node listener closes before listening", async () => {
         registration,
         new Promise((_, reject) => setTimeout(() => reject(new Error("registration hung")), 250)),
       ]),
-    ).rejects.toThrow(/closed before listening/);
+    ).rejects.toMatchObject({ code: "sdk.listener_failed" });
     expect(bootstrap.requests).toHaveLength(0);
   });
 });
@@ -122,7 +122,7 @@ test("rejects a Bun TLS listener and stops it", async () => {
         url: new URL("https://127.0.0.1:5173"),
         stop,
       }),
-    ).rejects.toThrow(/TCP listening address/);
+    ).rejects.toMatchObject({ code: "sdk.target_invalid" });
     expect(stop).toHaveBeenCalledWith(true);
     expect(bootstrap.requests).toHaveLength(0);
   });

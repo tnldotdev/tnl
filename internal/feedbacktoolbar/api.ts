@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FeedbackError } from "./errors.ts";
 import { BrowserFeedbackEventRequest, BrowserFeedbackEvidence } from "../publisherapi/model.gen.ts";
 import {
   evidenceSchema,
@@ -54,24 +55,37 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (key) headers["Idempotency-Key"] = key;
-    const response = await fetcher("/__tnl/feedback" + path, {
-      method: body === undefined ? "GET" : "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-      signal,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    if (!response.ok) {
-      if (response.status === 403)
-        throw new Error("preview access expired; reopen your share link");
-      if (response.status === 409) throw new Error("feedback changed; refresh and try again");
-      throw new Error("could not save or load feedback; try again");
+    let response: Response;
+    try {
+      response = await fetcher("/__tnl/feedback" + path, {
+        method: body === undefined ? "GET" : "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        signal,
+        headers,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (cause) {
+      if (signal.aborted) throw cause;
+      throw new FeedbackError("unavailable", { cause });
     }
-    const value: unknown = await response.json();
+    if (!response.ok) {
+      if (response.status === 403) throw new FeedbackError("access_expired");
+      if (response.status === 401) throw new FeedbackError("access_expired");
+      if (response.status === 404) throw new FeedbackError("not_found");
+      if (response.status === 400) throw new FeedbackError("input_invalid");
+      if (response.status === 409) throw new FeedbackError("conflict");
+      if (response.status === 429) throw new FeedbackError("rate_limited");
+      throw new FeedbackError("unavailable");
+    }
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch (cause) {
+      throw new FeedbackError("response_invalid", { cause });
+    }
     const parsed = schema.safeParse(value);
-    if (!parsed.success)
-      throw new Error("the server returned invalid feedback; refresh and try again");
+    if (!parsed.success) throw new FeedbackError("response_invalid", { cause: parsed.error });
     return parsed.data;
   }
   return {
@@ -108,14 +122,23 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
         )
       ).failed_requests,
     report: (input, key, signal) =>
-      request("", threadSchema, signal, reportInputSchema.parse(input), key),
+      request("", threadSchema, signal, parseInput(input, reportInputSchema), key),
     append: (id, type, text, key, signal) =>
       request(
         "/" + encodeURIComponent(id) + "/events",
         eventSchema,
         signal,
-        BrowserFeedbackEventRequest.parse({ schema_version: 1, type, ...(text ? { text } : {}) }),
+        parseInput(
+          { schema_version: 1, type, ...(text ? { text } : {}) },
+          BrowserFeedbackEventRequest,
+        ),
         key,
       ),
   };
+}
+
+function parseInput<T>(value: unknown, schema: z.ZodType<T>): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new FeedbackError("input_invalid", { cause: result.error });
+  return result.data;
 }

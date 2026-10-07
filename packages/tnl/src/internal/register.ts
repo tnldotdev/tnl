@@ -1,4 +1,5 @@
 import { Server as HTTPSServer } from "node:https";
+import { TnlError, TnlCleanupError, classifyTnlError } from "../errors.js";
 import {
   canonicalLoopbackTarget,
   readDevelopmentContext,
@@ -43,15 +44,9 @@ export async function registerServer(server: LocalHTTPServer): Promise<void> {
     try {
       await closeServer(server);
     } catch (closeError) {
-      throw new AggregateError(
-        [error, closeError],
-        "tnl target registration and server cleanup failed",
-        {
-          cause: error,
-        },
-      );
+      throw new TnlCleanupError(error, closeError);
     }
-    throw error;
+    throw classifyTnlError(error, "sdk.listener_failed");
   }
 }
 
@@ -64,12 +59,12 @@ async function listeningTarget(server: LocalHTTPServer): Promise<`http://${strin
       !Number.isInteger(server.port) ||
       typeof hostname !== "string"
     ) {
-      throw new Error("Bun did not report a TCP listening address");
+      throw new TnlError("sdk.target_invalid");
     }
     return canonicalLoopbackTarget(hostname, server.port);
   }
   if (server instanceof HTTPSServer) {
-    throw new Error("tnl dev requires a local HTTP listener");
+    throw new TnlError("sdk.target_invalid");
   }
   if (server.address() === null) {
     await new Promise<void>((resolve, reject) => {
@@ -86,18 +81,18 @@ async function listeningTarget(server: LocalHTTPServer): Promise<`http://${strin
       };
       const onError = (error: Error) => {
         cleanup();
-        reject(error);
+        reject(new TnlError("sdk.listener_failed", { cause: error }));
       };
       const onClose = () => {
         cleanup();
-        reject(new Error("Node listener closed before listening"));
+        reject(new TnlError("sdk.listener_failed"));
       };
       server.once("listening", onListening);
       server.once("error", onError);
       server.once("close", onClose);
       timer = setTimeout(() => {
         cleanup();
-        reject(new Error("Node listener did not start before registration timed out"));
+        reject(new TnlError("sdk.listener_failed"));
       }, registrationTimeoutMilliseconds);
     });
   }
@@ -110,7 +105,7 @@ async function listeningTarget(server: LocalHTTPServer): Promise<`http://${strin
     typeof address.address !== "string" ||
     typeof address.port !== "number"
   ) {
-    throw new Error("Node did not report a TCP listening address");
+    throw new TnlError("sdk.target_invalid");
   }
   return canonicalLoopbackTarget(address.address, address.port);
 }

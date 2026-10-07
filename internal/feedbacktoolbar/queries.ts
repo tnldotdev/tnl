@@ -2,6 +2,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FeedbackAPI } from "./api.ts";
 import type { BrowserEvent, FeedbackEvent, Thread } from "./model.ts";
+import { FeedbackError, retryFeedback } from "./errors.ts";
 
 export function useViewSignal(): AbortSignal {
   const controller = useRef(new AbortController());
@@ -21,12 +22,13 @@ export function usePageFeedback(
       const page = state
         ? await api.list(path, pageParam, signal, state)
         : await api.list(path, pageParam, signal);
-      if (pageParam && page.next_cursor === pageParam)
-        throw new Error("the server repeated a feedback page");
+      if (pageParam && page.next_cursor === pageParam) throw new FeedbackError("response_invalid");
       return page;
     },
     getNextPageParam: (page) => page.next_cursor,
-    refetchInterval: 2000,
+    retry: retryFeedback,
+    refetchInterval: (query) =>
+      query.state.error instanceof FeedbackError && !query.state.error.retryable ? false : 2000,
   });
 }
 
@@ -47,9 +49,11 @@ export function useConversation(api: FeedbackAPI, id: string) {
   const client = useQueryClient();
   const key = ["feedback-thread", id];
   const signal = useViewSignal();
-  const query = useQuery({
+  const query = useQuery<Conversation>({
     queryKey: key,
-    refetchInterval: 2000,
+    retry: retryFeedback,
+    refetchInterval: (query) =>
+      query.state.error instanceof FeedbackError && !query.state.error.retryable ? false : 2000,
     queryFn: async ({ signal }) => {
       const cached = client.getQueryData<Conversation>(key);
       const page = await api.events(id, cached?.after, signal);

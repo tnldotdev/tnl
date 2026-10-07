@@ -36,7 +36,7 @@ describe("withTnl", () => {
             developmentPhase,
             context,
           ),
-        ).rejects.toThrow(/allowedDevOrigins/);
+        ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
       },
     );
     expect(bootstrap.requests).toHaveLength(0);
@@ -44,7 +44,7 @@ describe("withTnl", () => {
   test("preserves builds and development without generated metadata", async () => {
     const config = { reactStrictMode: true };
     const wrapped = withTnl(config);
-    expect(() => withTnl({}, {} as never)).toThrow(/does not accept tunnel options/);
+    expect(() => withTnl({}, {} as never)).toThrow(/framework configuration is invalid/);
     await expect(wrapped(productionPhase, context)).resolves.toBe(config);
 
     const directory = await temporaryDirectory("tnl-next-empty-");
@@ -209,11 +209,14 @@ describe("withTnl", () => {
       expected: /inconsistent development listener ports/,
       name: "inconsistent PORT",
     },
-  ])("rejects $name before networking", async ({ environment, expected }) => {
+  ])("rejects $name before networking", async ({ environment }) => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(
       { ...bootstrap.environment, TNL_DEV_PORT: undefined, ...environment },
-      async () => await expect(withTnl()(developmentPhase, context)).rejects.toThrow(expected),
+      async () =>
+        await expect(withTnl()(developmentPhase, context)).rejects.toMatchObject({
+          code: "sdk.target_invalid",
+        }),
     );
     expect(bootstrap.requests).toHaveLength(0);
   });

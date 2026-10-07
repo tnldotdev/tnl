@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { nativeTargets } from "./native-targets.js";
+import { TnlError } from "../errors.js";
 
 const require = createRequire(import.meta.url);
 const launcherManifest = new URL("../../package.json", import.meta.url);
@@ -32,9 +33,7 @@ export function nativePackageName(
 ): string {
   const packageName = nativePackages.get(`${platform}-${architecture}`);
   if (packageName === undefined) {
-    throw new Error(
-      `unsupported platform ${platform}-${architecture}; tnl supports macOS and Linux on arm64 and x64`,
-    );
+    throw new TnlError("sdk.native_unsupported");
   }
   return packageName;
 }
@@ -51,48 +50,43 @@ export function resolveNativeBinary(options: NativeBinaryOptions = {}): string {
     nativeManifestPath = resolve(`${packageName}/package.json`);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "MODULE_NOT_FOUND") {
-      throw new Error(
-        `${packageName} is missing; reinstall @tnldotdev/tnl without disabling optional dependencies`,
-        { cause: error },
-      );
+      throw new TnlError("sdk.native_missing", { cause: error });
     }
-    throw error;
+    throw new TnlError("sdk.native_invalid", { cause: error });
   }
 
   const mainManifest = readManifest(launcherManifest, "@tnldotdev/tnl");
   const nativeManifest = readManifest(nativeManifestPath, packageName);
   if (nativeManifest.version !== mainManifest.version) {
-    throw new Error(
-      `${packageName}@${nativeManifest.version} does not match @tnldotdev/tnl@${mainManifest.version}`,
-    );
+    throw new TnlError("sdk.native_invalid");
   }
 
   const binary = path.join(path.dirname(nativeManifestPath), "bin", "tnl");
   try {
     accessSync(binary, constants.X_OK);
   } catch (error) {
-    throw new Error(`${packageName} does not contain an executable tnl binary`, { cause: error });
+    throw new TnlError("sdk.native_invalid", { cause: error });
   }
   return binary;
 }
 
-function readManifest(file: string | URL, packageName: string): PackageManifest {
+function readManifest(file: string | URL, _packageName: string): PackageManifest {
   let serialized: string;
   try {
     serialized = readFileSync(file, "utf8");
   } catch (error) {
-    throw new Error(`failed to read ${packageName} package manifest`, { cause: error });
+    throw new TnlError("sdk.native_invalid", { cause: error });
   }
   let value: unknown;
   try {
     value = JSON.parse(serialized) as unknown;
   } catch (error) {
-    throw new Error(`${packageName} package manifest is not valid JSON`, { cause: error });
+    throw new TnlError("sdk.native_invalid", { cause: error });
   }
   try {
     return parseManifest(value);
   } catch (error) {
-    throw new Error(`${packageName} package manifest has an invalid shape`, { cause: error });
+    throw new TnlError("sdk.native_invalid", { cause: error });
   }
 }
 

@@ -1,5 +1,7 @@
 import { parseRuntimePayload } from "./internal/runtime.js";
 import type { TnlRuntime } from "./index.js";
+import { TnlError } from "./errors.js";
+export { TnlError, type TnlErrorCode } from "./errors.js";
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 
@@ -13,6 +15,6 @@ export const tnl: TnlRuntime = Object.freeze({
   port: 3000,
   dev: runtime?.dev ?? false,
   async register(): Promise<void> {
-    throw new Error("tnl.register is available only on a development server");
+    throw new TnlError("sdk.configuration_invalid");
   },
 });

@@ -151,7 +151,9 @@ describe("root runtime", () => {
   });
 
   test("rejects an oversized payload before parsing", () => {
-    expect(() => parseRuntimePayload("x".repeat(64 * 1024 + 1))).toThrow(/exceeds 65536 bytes/);
+    expect(() => parseRuntimePayload("x".repeat(64 * 1024 + 1))).toThrow(
+      /project metadata is invalid/,
+    );
   });
 
   test("uses the canonical Go hostname cases for project metadata", async () => {
