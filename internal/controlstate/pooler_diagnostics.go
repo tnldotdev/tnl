@@ -34,7 +34,7 @@ func (d *Database) poolerDiagnostics(parent context.Context) (result *DatabasePo
 	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	connection, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
-		result.Error = databaseDiagnosticsError(ctx, err).Error()
+		result.Error = databaseDiagnosticsMessage(databaseDiagnosticsError(ctx, err))
 		return result
 	}
 	defer func() {
@@ -44,14 +44,14 @@ func (d *Database) poolerDiagnostics(parent context.Context) (result *DatabasePo
 	}()
 	result.Settings, err = readPoolerSettings(ctx, connection)
 	if err != nil {
-		result.Error = "settings: " + databaseDiagnosticsError(ctx, err).Error()
+		result.Error = "settings: " + databaseDiagnosticsMessage(databaseDiagnosticsError(ctx, err))
 	}
 	result.Clients, err = readPoolerClients(ctx, connection)
 	if err != nil {
 		if result.Error != "" {
 			result.Error += "; "
 		}
-		result.Error += "clients: " + databaseDiagnosticsError(ctx, err).Error()
+		result.Error += "clients: " + databaseDiagnosticsMessage(databaseDiagnosticsError(ctx, err))
 	}
 	return result
 }

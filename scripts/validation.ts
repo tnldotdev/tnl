@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { ToolError } from "./errors.ts";
 
 export function parseJSON<Output>(
   serialized: string,
@@ -9,7 +10,7 @@ export function parseJSON<Output>(
   try {
     value = JSON.parse(serialized) as unknown;
   } catch (error) {
-    throw new Error(`${description} is not valid JSON`, { cause: error });
+    throw new ToolError("tool.input_invalid", { cause: error });
   }
   return parseValue(value, schema, description);
 }
@@ -17,11 +18,11 @@ export function parseJSON<Output>(
 export function parseValue<Output>(
   value: unknown,
   schema: z.ZodType<Output>,
-  description: string,
+  _description: string,
 ): Output {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new Error(`${description} has an invalid shape: ${z.prettifyError(result.error)}`);
+    throw new ToolError("tool.input_invalid", { cause: result.error });
   }
   return result.data;
 }

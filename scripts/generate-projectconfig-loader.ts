@@ -23,3 +23,5 @@ try {
 } finally {
   await rm(directory, { force: true, recursive: true });
 }
+import { installToolFailureHandler } from "./errors.ts";
+installToolFailureHandler(import.meta);

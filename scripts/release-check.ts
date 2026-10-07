@@ -335,7 +335,9 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "release check failed");
+    console.error(safeToolMessage(error, "tool.validation_failed"));
     process.exitCode = 1;
   });
 }
+import { installToolFailureHandler, safeToolMessage } from "./errors.ts";
+installToolFailureHandler(import.meta, "tool.validation_failed");

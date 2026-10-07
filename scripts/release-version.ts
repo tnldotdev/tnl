@@ -66,3 +66,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (!tag) throw new Error("usage: node scripts/release-version.ts TAG");
   process.stdout.write(versionFromTag(tag));
 }
+import { installToolFailureHandler } from "./errors.ts";
+installToolFailureHandler(import.meta, "tool.input_invalid");

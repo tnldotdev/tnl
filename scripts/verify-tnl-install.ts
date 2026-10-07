@@ -102,8 +102,10 @@ async function run(command: string, args: readonly string[], cwd: string) {
   } catch (error) {
     if (typeof error === "object" && error !== null) {
       if ("stdout" in error && error.stdout) process.stdout.write(String(error.stdout));
-      if ("stderr" in error && error.stderr) process.stderr.write(String(error.stderr));
+      process.stderr.write(safeToolMessage(error, "tool.validation_failed") + "\n");
     }
     throw error;
   }
 }
+import { installToolFailureHandler, safeToolMessage } from "./errors.ts";
+installToolFailureHandler(import.meta, "tool.validation_failed");

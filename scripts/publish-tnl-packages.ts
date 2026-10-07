@@ -127,3 +127,5 @@ async function registryPackage(
   assert(response.ok, `npm registry returned ${response.status} for ${packageName}`);
   return parseValue(await response.json(), registryPackageSchema, "npm registry response");
 }
+import { installToolFailureHandler } from "./errors.ts";
+installToolFailureHandler(import.meta, "tool.process_failed");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { safeToolMessage, ToolError } from "./errors.ts";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeFileSync } from "node:fs";
@@ -129,7 +130,7 @@ function containerID(containers: ReadonlyMap<string, string>, service: string): 
 async function interruptibleSleep(ms: number): Promise<void> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    if (stopping || interrupted) throw new Error("runtime workload interrupted");
+    if (stopping || interrupted) throw new ToolError("tool.interrupted");
     await sleep(Math.min(250, until - Date.now()));
   }
 }
@@ -160,7 +161,9 @@ try {
       ],
       { stdio: ["ignore", eventLog, "inherit"] },
     );
-    dockerEvents.on("error", (error) => console.error(`docker events: ${error.message}`));
+    dockerEvents.on("error", (error) =>
+      console.error(`docker events: ${safeToolMessage(error, "tool.process_failed")}`),
+    );
   } finally {
     closeSync(eventLog);
   }
@@ -220,7 +223,7 @@ try {
   };
   const deadline = Date.now() + (process.env.HELD_MEASURE === "0s" ? 20 : 30) * 60_000;
   for (;;) {
-    if (interrupted) throw new Error("runtime workload interrupted");
+    if (interrupted) throw new ToolError("tool.interrupted");
     if (faultError) throw faultError;
     if (Date.now() > deadline) throw new Error("runtime workload exceeded watchdog deadline");
     const states = inspect(ids);
@@ -270,7 +273,7 @@ try {
     await sleep(500);
   }
 } catch (error) {
-  console.error(error);
+  console.error(safeToolMessage(error, "tool.process_failed"));
   status = 1;
 } finally {
   stopping = true;
@@ -278,16 +281,14 @@ try {
     dockerEvents.kill("SIGTERM");
   if (faultTask) await faultTask;
   if (faultError) {
-    console.error(faultError);
+    console.error(safeToolMessage(faultError, "tool.validation_failed"));
     status = 1;
   }
   const cleanup = (args: readonly string[]) => {
     try {
       return compose(args, true);
     } catch (error) {
-      console.error(
-        `cleanup ${args.join(" ")}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      console.error(`cleanup: ${safeToolMessage(error, "tool.process_failed")}`);
       status = 1;
       return "";
     }
@@ -297,7 +298,7 @@ try {
     try {
       writeFileSync(join(results, name), snapshot);
     } catch (error) {
-      console.error(`save ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`save snapshot: ${safeToolMessage(error)}`);
       status = 1;
     }
   };

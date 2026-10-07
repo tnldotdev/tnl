@@ -168,3 +168,5 @@ for (const [name, contents] of charts) {
     await writeFile(path, contents);
   }
 }
+import { installToolFailureHandler } from "./errors.ts";
+installToolFailureHandler(import.meta, "tool.validation_failed");
