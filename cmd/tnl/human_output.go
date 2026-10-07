@@ -5,16 +5,17 @@ import (
 	"io"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 )
 
 func writeHumanFrame(output io.Writer, command, state, footer string, blocks ...clioutput.Block) error {
-	return clioutput.Write(output, clioutput.Frame{
+	return failure.Wrap("write command result", failure.OutputUnavailable, clioutput.Write(output, clioutput.Frame{
 		Command: command,
 		State:   state,
 		Blocks:  blocks,
 		Footer:  footer,
-	})
+	}))
 }
 
 func authenticationPrompt(output io.Writer, command string) func(oidcauth.Prompt) error {

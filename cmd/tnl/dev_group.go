@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
@@ -30,7 +31,7 @@ func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags 
 	}
 	slices.Sort(names)
 	if len(names) > 1 && (len(flags.Command) != 0 || flags.Port != 0 || flags.StartupTimeout != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral || flags.AllowAllIPs || flags.AllowIP != nil || flags.AllowProvider != nil || flags.RequestLimit != nil) {
-		return errors.New("select a service when overriding its command, port, or public URL settings")
+		return failure.Wrap("select development services", failure.InvalidTunnelFlags, errors.New("select a service when overriding its command, port, or public URL settings"))
 	}
 	writer := &devMetadataWriter{}
 	targets := newDevGroupTargets(len(names))
@@ -49,7 +50,7 @@ func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags 
 
 func coordinateDev(ctx context.Context, names []string, run func(context.Context, string) error) error {
 	if len(names) == 0 {
-		return errors.New("no configured services to start")
+		return failure.Wrap("select development services", failure.ServiceNotConfigured, errors.New("no configured services to start"))
 	}
 	parent := ctx
 	ctx, cancel := context.WithCancel(parent)
@@ -76,5 +77,5 @@ func coordinateDev(ctx context.Context, names []string, run func(context.Context
 	if len(names) == 1 {
 		return nil
 	}
-	return fmt.Errorf("service %q stopped", first.name)
+	return failure.Wrap("maintain development services", failure.DevProcessFailed, fmt.Errorf("service %q stopped", first.name))
 }

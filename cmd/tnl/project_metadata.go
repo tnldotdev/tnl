@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -25,7 +26,7 @@ func runConfigGenerate(
 	stdout, stderr io.Writer,
 ) error {
 	if !project.Found() {
-		return errors.New("no project configuration file found")
+		return failure.Wrap("generate project metadata", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
 	}
 	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {

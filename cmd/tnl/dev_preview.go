@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -20,7 +21,7 @@ type previewControl interface {
 
 func ensurePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control previewControl, server, teamID, projectRoot string) (string, error) {
 	if teamID == "" || projectRoot == "" || server == "" {
-		return "", errors.New("preview requires one server, team, and project")
+		return "", failure.Wrap("select preview project", failure.ProjectConfigInvalid, errors.New("preview requires one server, team, and project"))
 	}
 	salt, err := state.WorktreeHashSalt(ctx)
 	if err != nil {
@@ -34,12 +35,12 @@ func ensurePreview(ctx context.Context, state *clientstate.Database, store *clie
 		return "", fmt.Errorf("create preview: %w", err)
 	}
 	if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.TeamId != teamID {
-		return "", errors.New("server returned an invalid preview")
+		return "", failure.Wrap("create project preview", failure.ServerResponseInvalid, errors.New("server returned an invalid preview"))
 	}
 	if saved, found, err := store.PreviewID(ctx, teamID, projectRoot); err != nil {
 		return "", err
 	} else if found && saved != preview.Id {
-		return "", errors.New("saved preview differs from the server; check the selected team and client state")
+		return "", failure.Wrap("resolve saved preview", failure.PreviewStateConflict, errors.New("saved preview differs from the server; check the selected team and client state"))
 	}
 	if err := store.SavePreviewID(ctx, teamID, projectRoot, preview.Id); err != nil {
 		return "", err

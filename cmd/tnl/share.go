@@ -18,6 +18,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -70,13 +71,13 @@ func parseShareLifetime(value string) (time.Duration, error) {
 	if days, found := strings.CutSuffix(value, "d"); found {
 		count, parseErr := strconv.ParseUint(days, 10, 8)
 		if parseErr != nil || count == 0 || count > 30 {
-			return 0, errors.New("share lifetime must be greater than zero and at most 30d")
+			return 0, failure.Wrap("validate share lifetime", failure.ShareInputInvalid, errors.New("share lifetime must be greater than zero and at most 30d"))
 		}
 		duration = time.Duration(count) * 24 * time.Hour
 	} else {
 		duration, err = time.ParseDuration(value)
 		if err != nil || duration <= 0 || duration > 30*24*time.Hour {
-			return 0, errors.New("share lifetime must be greater than zero and at most 30d")
+			return 0, failure.Wrap("validate share lifetime", failure.ShareInputInvalid, errors.Join(err, errors.New("share lifetime must be greater than zero and at most 30d")))
 		}
 	}
 	return duration, nil
@@ -87,20 +88,20 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 		if len(routes) == 1 {
 			return routes[0], nil
 		}
-		return controlv1.PublicURL{}, errors.New("select the public URL to open, for example tnl share link create web.example.com")
+		return controlv1.PublicURL{}, failure.Wrap("select share public URL", failure.ShareInputInvalid, errors.New("select the public URL to open, for example tnl share link create web.example.com"))
 	}
 	hostname := selector
 	if strings.HasPrefix(selector, "https://") {
 		parsed, err := url.Parse(selector)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Host != parsed.Hostname() || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
-			return controlv1.PublicURL{}, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")
+			return controlv1.PublicURL{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")))
 		}
 		hostname = parsed.Hostname()
 	}
 	if !opaqueid.Valid(selector, opaqueid.PublicURLPrefix) {
 		canonical, err := naming.CanonicalizeHostname(hostname)
 		if err != nil || canonical != hostname {
-			return controlv1.PublicURL{}, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")
+			return controlv1.PublicURL{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")))
 		}
 	}
 	for _, route := range routes {
@@ -113,7 +114,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 
 func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer) (*teamSession, controlv1.Preview, []controlv1.PublicURL, error) {
 	if !project.Found() || len(project.Config.Services) == 0 {
-		return nil, controlv1.Preview{}, nil, errors.New("select a project with configured services; run tnl dev to publish its preview")
+		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services; run tnl dev to publish its preview"))
 	}
 	session, err := openTeamSession(ctx, flags, command, diagnostics)
 	if err != nil {
@@ -130,7 +131,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		if err != nil {
 			return nil, controlv1.Preview{}, nil, err
 		}
-		return nil, controlv1.Preview{}, nil, errors.New("preview is not saved for this checkout; run tnl dev first")
+		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; run tnl dev first"))
 	}
 	preview, err := session.authenticated.Control.GetPreview(ctx, id)
 	if err != nil || preview.TeamId != current.team.Id || preview.Id != id {
@@ -138,7 +139,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		if err != nil {
 			return nil, controlv1.Preview{}, nil, err
 		}
-		return nil, controlv1.Preview{}, nil, errors.New("server returned a preview for another team")
+		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.ServerResponseInvalid, errors.New("server returned a preview for another team"))
 	}
 	resolver := newProjectMetadataResolver(session.database, project, os.Stdin, diagnostics, command)
 	resolver.Seed(session.authenticated.ServerEndpoint, session.authenticated)
@@ -160,7 +161,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 			if routeErr != nil {
 				return nil, controlv1.Preview{}, nil, fmt.Errorf("service %q: %w", name, routeErr)
 			}
-			return nil, controlv1.Preview{}, nil, fmt.Errorf("service %q is not yet in this preview; run tnl dev again", name)
+			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; run tnl dev again", name))
 		}
 		routes = append(routes, route)
 	}
@@ -202,10 +203,10 @@ func runShareCreate(ctx context.Context, flags shareCreateCommand, project proje
 		return err
 	}
 	if share.Id == "" || share.PreviewId != preview.Id || !slices.Equal(share.PublicUrlIds, ids) {
-		return errors.New("server returned a share with different public URLs")
+		return failure.Wrap("create preview share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
 	}
 	_, err = fmt.Fprintf(output, "https://%s/__tnl/share/%s.%s\n", selected.CanonicalHostname, share.Id, base64.RawURLEncoding.EncodeToString(secret))
-	return err
+	return failure.Wrap("write share URL", failure.OutputUnavailable, err)
 }
 
 func runShareList(ctx context.Context, flags shareListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -290,14 +291,14 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 		return err
 	}
 	if session.authenticated.Discovery.BrowserLoginAvailable == nil || !*session.authenticated.Discovery.BrowserLoginAvailable {
-		return errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team")
+		return failure.Wrap("enable team browser access", failure.ServerOIDCInvalid, errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team"))
 	}
 	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, preview.Id, true)
 	if err != nil {
 		return err
 	}
 	if updated.Id != preview.Id || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
-		return errors.New("server did not enable this preview's team access")
+		return failure.Wrap("enable team browser access", failure.ServerResponseInvalid, errors.New("server did not enable this preview's team access"))
 	}
 	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
 		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
@@ -306,7 +307,7 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	if !project.Found() || project.Root == "" {
-		return errors.New("select a configured project to revoke this checkout's team access")
+		return failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a configured project to revoke this checkout's team access"))
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl share team revoke", diagnostics)
 	if err != nil {
@@ -322,14 +323,14 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 		return err
 	}
 	if !found {
-		return errors.New("preview is not saved for this checkout; run tnl dev first")
+		return failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; run tnl dev first"))
 	}
 	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, id, false)
 	if err != nil {
 		return err
 	}
 	if updated.Id != id || updated.TeamAccessEnabled == nil || *updated.TeamAccessEnabled {
-		return errors.New("server did not revoke this preview's team access")
+		return failure.Wrap("revoke team browser access", failure.ServerResponseInvalid, errors.New("server did not revoke this preview's team access"))
 	}
 	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
 }

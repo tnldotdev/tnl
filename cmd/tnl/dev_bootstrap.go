@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -145,26 +146,26 @@ func newDevBootstrap(ctx context.Context, forcedTarget, projectRoot string, serv
 	if info, statErr := os.Lstat(bootstrap.socket); statErr == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			cleanup()
-			return nil, errors.New("development session socket path is occupied by a non-socket file")
+			return nil, failure.Wrap("open development session socket", failure.DevSocketUnavailable, errors.New("development session socket path is occupied by a non-socket file"))
 		}
 		if err := os.Remove(bootstrap.socket); err != nil {
 			cleanup()
-			return nil, fmt.Errorf("remove stale development session socket: %w", err)
+			return nil, failure.Wrap("remove stale development session socket", failure.DevSocketUnavailable, err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		cleanup()
-		return nil, fmt.Errorf("inspect development session socket: %w", statErr)
+		return nil, failure.Wrap("inspect development session socket", failure.DevSocketUnavailable, statErr)
 	}
 	listener, err := net.Listen("unix", bootstrap.socket)
 	if err != nil {
 		cleanup()
-		return nil, fmt.Errorf("listen on development session socket: %w", err)
+		return nil, failure.Wrap("listen on development session socket", failure.DevSocketUnavailable, err)
 	}
 	if err := os.Chmod(bootstrap.socket, 0o600); err != nil {
 		_ = listener.Close()
 		_ = os.Remove(bootstrap.socket)
 		cleanup()
-		return nil, fmt.Errorf("secure development session socket: %w", err)
+		return nil, failure.Wrap("secure development session socket", failure.DevSocketUnavailable, err)
 	}
 	bootstrap.server = &http.Server{
 		Handler:           http.HandlerFunc(bootstrap.handle),
@@ -199,15 +200,15 @@ func devRuntimeDirectory() (string, error) {
 	}
 	dir := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", fmt.Errorf("create development runtime directory: %w", err)
+		return "", failure.Wrap("create development runtime directory", failure.DevSocketUnavailable, err)
 	}
 	info, err := os.Lstat(dir)
 	if err != nil {
-		return "", fmt.Errorf("inspect development runtime directory: %w", err)
+		return "", failure.Wrap("inspect development runtime directory", failure.DevSocketUnavailable, err)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
-		return "", errors.New("development runtime directory must be a user-owned directory with mode 0700")
+		return "", failure.Wrap("validate development runtime directory", failure.DevSocketUnavailable, errors.New("development runtime directory must be a user-owned directory with mode 0700"))
 	}
 	return dir, nil
 }
@@ -259,9 +260,9 @@ func (b *devBootstrap) Configuration(ctx context.Context) (devConfigurationReque
 		err := b.serveErr
 		b.mu.Unlock()
 		if err == nil {
-			return devConfigurationRequest{}, errors.New("development session socket closed before configuration")
+			return devConfigurationRequest{}, failure.Wrap("read development configuration", failure.DevSocketUnavailable, errors.New("development session socket closed before configuration"))
 		}
-		return devConfigurationRequest{}, fmt.Errorf("serve development session socket: %w", err)
+		return devConfigurationRequest{}, failure.Wrap("read development configuration", failure.DevSocketUnavailable, err)
 	case <-ctx.Done():
 		return devConfigurationRequest{}, ctx.Err()
 	}
@@ -276,9 +277,9 @@ func (b *devBootstrap) Target(ctx context.Context) (devTargetRequest, error) {
 		err := b.serveErr
 		b.mu.Unlock()
 		if err == nil {
-			return devTargetRequest{}, errors.New("development session socket closed before target registration")
+			return devTargetRequest{}, failure.Wrap("read development target", failure.DevSocketUnavailable, errors.New("development session socket closed before target registration"))
 		}
-		return devTargetRequest{}, fmt.Errorf("serve development session socket: %w", err)
+		return devTargetRequest{}, failure.Wrap("read development target", failure.DevSocketUnavailable, err)
 	case <-ctx.Done():
 		return devTargetRequest{}, ctx.Err()
 	}

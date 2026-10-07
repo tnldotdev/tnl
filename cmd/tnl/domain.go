@@ -49,7 +49,7 @@ type domainReleaseCommand struct {
 func runDomainClaim(ctx context.Context, command domainClaimCommand, output, diagnostics io.Writer) error {
 	domain, err := naming.CanonicalizeHostname(command.Domain)
 	if err != nil || domain != command.Domain {
-		return errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")
+		return failure.Wrap("validate claimed domain", failure.InvalidDomainName, errors.Join(err, errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")))
 	}
 	session, err := openTeamSession(ctx, command.selection(), "tnl domain claim", diagnostics)
 	if err != nil {

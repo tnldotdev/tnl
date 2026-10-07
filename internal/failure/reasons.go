@@ -39,6 +39,12 @@ const (
 	InitPackageManager          Reason = "client.init_package_manager"
 	InitFramework               Reason = "client.init_framework"
 	InvalidSetupInput           Reason = "client.invalid_setup_input"
+	FeedbackInputInvalid        Reason = "client.feedback_input_invalid"
+	ShareInputInvalid           Reason = "client.share_input_invalid"
+	PreviewNotSaved             Reason = "client.preview_not_saved"
+	PreviewStateConflict        Reason = "client.preview_state_conflict"
+	DevProcessFailed            Reason = "client.dev_process_failed"
+	DevSocketUnavailable        Reason = "client.dev_socket_unavailable"
 	BrowserOpenFailed           Reason = "client.browser_open_failed"
 	TransportUnavailable        Reason = "client.transport_unavailable"
 	TransportFallback           Reason = "client.transport_fallback"
@@ -240,6 +246,30 @@ var definitions = map[Reason]Definition{
 	InvalidSetupInput: {
 		Class: Invalid, Message: "the entered value is not valid for this prompt",
 		Action: "enter one of the shown values or press enter to skip", Retry: RetryAfterChange,
+	},
+	FeedbackInputInvalid: {
+		Class: Invalid, Message: "feedback ID, cursor, or message is invalid",
+		Action: "use an ID from tnl feedback list, a nonnegative cursor, and a message of at most 4000 bytes", Retry: RetryAfterChange,
+	},
+	ShareInputInvalid: {
+		Class: Invalid, Message: "share URL or lifetime is invalid",
+		Action: "select a public URL ID, hostname, or HTTPS origin and a lifetime greater than zero and at most 30d", Retry: RetryAfterChange,
+	},
+	PreviewNotSaved: {
+		Class: NotFound, Message: "the project does not have a saved preview",
+		Action: "select the configured project and run tnl dev before sharing or reading its feedback", Retry: RetryAfterChange,
+	},
+	PreviewStateConflict: {
+		Class: Conflict, Message: "the saved preview does not match the current project",
+		Action: "check the selected server, team, and project, then run tnl dev again", Retry: RetryAfterChange,
+	},
+	DevProcessFailed: {
+		Class: Unavailable, Message: "the development server command could not start or stopped",
+		Action: "check the command and its child output, then restart tnl dev", Retry: RetryAfterChange,
+	},
+	DevSocketUnavailable: {
+		Class: Unavailable, Message: "tnl could not use its development session socket",
+		Action: "check the local runtime directory and permissions, then restart tnl dev", Retry: RetryAfterChange,
 	},
 	BrowserOpenFailed: {
 		Class: Unavailable, Message: "tnl could not open the public URL in a browser",

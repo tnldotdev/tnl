@@ -89,7 +89,7 @@ func resolveIPPolicyWithSources(
 	}
 	canonical, err := authorization.CanonicalizeIPPrefixes(allowedIPPrefixes)
 	if err != nil {
-		return resolvedIPPolicy{}, fmt.Errorf("invalid allowed IP prefix: %w", err)
+		return resolvedIPPolicy{}, failure.Wrap("validate allowed IP prefixes", failure.InvalidTunnelFlags, err)
 	}
 	sources, err := resolve(ctx, providers)
 	if err != nil {
@@ -113,7 +113,7 @@ func resolveIPPolicyWithSources(
 	}
 	address, err := netip.ParseAddr(current.Ip)
 	if err != nil || address.Zone() != "" {
-		return resolvedIPPolicy{}, errors.New("control returned an invalid current IP")
+		return resolvedIPPolicy{}, failure.Wrap("read current IP", failure.ServerResponseInvalid, errors.Join(err, errors.New("control returned an invalid current IP")))
 	}
 	address = address.Unmap()
 	currentIP := address.String()
@@ -138,7 +138,7 @@ func preparePublisherServices(
 	}
 	discovery := authenticated.Discovery
 	if discovery.ManagedDeploymentDomain == "" {
-		return publisherServices{}, errors.New("control discovery omitted the managed deployment domain")
+		return publisherServices{}, failure.Wrap("read server discovery", failure.ServerResponseInvalid, errors.New("control discovery omitted the managed deployment domain"))
 	}
 	api := teamAPI(authenticated.Authority)
 	identity, err := api.IdentityContext(ctx)
@@ -154,7 +154,7 @@ func preparePublisherServices(
 		return publisherServices{}, err
 	}
 	if current.team.PolicyRevision < 0 {
-		return publisherServices{}, errors.New("authority returned an invalid team policy revision")
+		return publisherServices{}, failure.Wrap("read team policy", failure.ServerResponseInvalid, errors.New("authority returned an invalid team policy revision"))
 	}
 	hostname, domain, publicURLScope, err := resolvePublishHostname(publicURL, name, selectedDomain, current)
 	if err != nil {
@@ -180,7 +180,7 @@ func resolvePublishHostname(
 	current teamContext,
 ) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
 	if publicURL != "" && name != "" {
-		return "", authorityv1.Domain{}, "", errors.New("--public-url and --name are mutually exclusive")
+		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL options", failure.InvalidTunnelFlags, errors.New("--public-url and --name are mutually exclusive"))
 	}
 	var domain authorityv1.Domain
 	var err error
@@ -189,7 +189,7 @@ func resolvePublishHostname(
 		hostname = strings.TrimPrefix(publicURL, "https://")
 		canonical, canonicalErr := naming.CanonicalizeHostname(hostname)
 		if canonicalErr != nil || canonical != hostname || "https://"+hostname != publicURL {
-			return "", authorityv1.Domain{}, "", errors.New("public URL must be an HTTPS origin with a canonical hostname")
+			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL", failure.InvalidTunnelFlags, errors.Join(canonicalErr, errors.New("public URL must be an HTTPS origin with a canonical hostname")))
 		}
 		domain, err = readyDomainForHostname(current.domains, hostname)
 	} else {
@@ -202,7 +202,7 @@ func resolvePublishHostname(
 	if name != "" {
 		canonical, err := naming.CanonicalizeHostname(name)
 		if err != nil || canonical != name || strings.Contains(name, ".") {
-			return "", authorityv1.Domain{}, "", errors.New("name must be one lowercase ASCII DNS label")
+			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL name", failure.InvalidTunnelFlags, errors.Join(err, errors.New("name must be one lowercase ASCII DNS label")))
 		}
 		hostname = name + "." + namespace
 	}
@@ -215,13 +215,13 @@ func resolvePublishHostname(
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
+		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.Join(err, errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")))
 	}
 	publicURLScope := controlv1.Shared
 	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
 		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
-		return "", authorityv1.Domain{}, "", errors.New("shared public URLs require a team administrator or owner")
+		return "", authorityv1.Domain{}, "", failure.Wrap("authorize shared public URL", failure.ServerDenied, errors.New("shared public URLs require a team administrator or owner"))
 	}
 	return hostname, domain, publicURLScope, nil
 }

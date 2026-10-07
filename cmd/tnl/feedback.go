@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/sourcestate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -121,7 +122,7 @@ func feedbackSession(ctx context.Context, flags scopedTeamFlags, project project
 
 func validFeedbackID(id string) error {
 	if !opaqueid.Valid(id, opaqueid.FeedbackPrefix) {
-		return errors.New("provide a feedback thread ID from tnl feedback list")
+		return failure.Wrap("validate feedback ID", failure.FeedbackInputInvalid, errors.New("provide a feedback thread ID from tnl feedback list"))
 	}
 	return nil
 }
@@ -133,7 +134,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return errors.New("preview is not saved for this project; run tnl dev first")
+		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; run tnl dev first"))
 	}
 	threads, cursor, err := session.authenticated.Control.ListFeedbackThreads(ctx, teamID)
 	if err != nil {
@@ -141,7 +142,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	}
 	threads = filterFeedbackPreview(threads, previewID)
 	if flags.Output == feedbackJSON {
-		return json.NewEncoder(output).Encode(feedbackListResult{SchemaVersion: 1, Threads: threads, EventCursor: cursor})
+		return failure.Wrap("write feedback list", failure.OutputUnavailable, json.NewEncoder(output).Encode(feedbackListResult{SchemaVersion: 1, Threads: threads, EventCursor: cursor}))
 	}
 	blocks := make([]clioutput.Block, 0, len(threads)+1)
 	for _, thread := range threads {
@@ -179,20 +180,20 @@ func readFeedbackHistory(ctx context.Context, client feedbackThreadReader, id st
 			return nil, 0, err
 		}
 		if page.SchemaVersion != 1 {
-			return nil, 0, errors.New("feedback history format is not supported by this client")
+			return nil, 0, failure.Wrap("read feedback history", failure.ServerResponseInvalid, errors.New("feedback history format is not supported by this client"))
 		}
 		if watermark == 0 {
 			watermark = uint64(page.EventCursor)
 		}
 		for _, event := range page.Events {
 			if event.SchemaVersion != 1 {
-				return nil, 0, errors.New("feedback event format is not supported by this client")
+				return nil, 0, failure.Wrap("read feedback event", failure.ServerResponseInvalid, errors.New("feedback event format is not supported by this client"))
 			}
 			if uint64(event.Cursor) > watermark {
 				return events, watermark, nil
 			}
 			if uint64(event.Cursor) <= after {
-				return nil, 0, errors.New("server returned repeated feedback events")
+				return nil, 0, failure.Wrap("read feedback events", failure.ServerResponseInvalid, errors.New("server returned repeated feedback events"))
 			}
 			events = append(events, event)
 			after = uint64(event.Cursor)
@@ -201,10 +202,10 @@ func readFeedbackHistory(ctx context.Context, client feedbackThreadReader, id st
 			return events, watermark, nil
 		}
 		if uint64(*page.NextCursor) < after || uint64(*page.NextCursor) > watermark {
-			return nil, 0, errors.New("server returned an invalid feedback cursor")
+			return nil, 0, failure.Wrap("read feedback cursor", failure.ServerResponseInvalid, errors.New("server returned an invalid feedback cursor"))
 		}
 		if uint64(*page.NextCursor) == after && len(page.Events) == 0 {
-			return nil, 0, errors.New("server repeated an empty feedback page")
+			return nil, 0, failure.Wrap("read feedback page", failure.ServerResponseInvalid, errors.New("server repeated an empty feedback page"))
 		}
 		after = uint64(*page.NextCursor)
 	}
@@ -250,7 +251,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 		return err
 	}
 	if thread.SchemaVersion != 1 {
-		return errors.New("feedback format is not supported by this client")
+		return failure.Wrap("inspect feedback", failure.ServerResponseInvalid, errors.New("feedback format is not supported by this client"))
 	}
 	events, cursor, err := readFeedbackHistory(ctx, session.authenticated.Control, flags.FeedbackID)
 	if err != nil {
@@ -258,7 +259,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 	}
 	result := feedbackInspectResult{FeedbackThread: thread, Events: events, EventCursor: cursor, LocalProject: compareFeedbackSource(ctx, project, previewID, thread)}
 	if flags.Output == feedbackJSON {
-		return json.NewEncoder(output).Encode(result)
+		return failure.Wrap("write feedback history", failure.OutputUnavailable, json.NewEncoder(output).Encode(result))
 	}
 	blocks := []clioutput.Block{
 		clioutput.Fields(
@@ -321,15 +322,15 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 		return cursor, false, err
 	}
 	if page.SchemaVersion != 1 {
-		return cursor, false, errors.New("feedback stream format is not supported by this client")
+		return cursor, false, failure.Wrap("watch feedback", failure.ServerResponseInvalid, errors.New("feedback stream format is not supported by this client"))
 	}
 	encoder := json.NewEncoder(output)
 	for _, event := range page.Events {
 		if event.SchemaVersion != 1 {
-			return cursor, false, errors.New("feedback event format is not supported by this client")
+			return cursor, false, failure.Wrap("watch feedback event", failure.ServerResponseInvalid, errors.New("feedback event format is not supported by this client"))
 		}
 		if event.Cursor <= 0 || uint64(event.Cursor) <= cursor {
-			return cursor, false, errors.New("server returned repeated feedback events")
+			return cursor, false, failure.Wrap("watch feedback events", failure.ServerResponseInvalid, errors.New("server returned repeated feedback events"))
 		}
 		if previewID != "" {
 			thread, readErr := client.GetFeedbackThread(ctx, event.FeedbackId)
@@ -356,13 +357,13 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 			))
 		}
 		if err != nil {
-			return cursor, false, err
+			return cursor, false, failure.Wrap("write feedback event", failure.OutputUnavailable, err)
 		}
 		cursor = uint64(event.Cursor)
 	}
 	if page.NextCursor != nil {
 		if *page.NextCursor < 0 || uint64(*page.NextCursor) <= cursor && len(page.Events) == 0 {
-			return cursor, false, errors.New("server returned an invalid feedback cursor")
+			return cursor, false, failure.Wrap("watch feedback cursor", failure.ServerResponseInvalid, errors.New("server returned an invalid feedback cursor"))
 		}
 		return max(cursor, uint64(*page.NextCursor)), true, nil
 	}
@@ -371,7 +372,7 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 
 func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	if flags.After > math.MaxInt64 {
-		return errors.New("feedback cursor is out of range")
+		return failure.Wrap("validate feedback cursor", failure.FeedbackInputInvalid, errors.New("feedback cursor is out of range"))
 	}
 	session, teamID, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback watch", diagnostics)
 	if err != nil {
@@ -379,7 +380,7 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return errors.New("preview is not saved for this project; run tnl dev first")
+		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; run tnl dev first"))
 	}
 	cursor := flags.After
 	for {
@@ -405,10 +406,10 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	}
 	message := strings.TrimSpace(flags.Message)
 	if (kind == "reply" || kind == "update") && message == "" {
-		return errors.New("provide a message for this feedback event")
+		return failure.Wrap("validate feedback message", failure.FeedbackInputInvalid, errors.New("provide a message for this feedback event"))
 	}
 	if len(message) > 4000 {
-		return errors.New("feedback message must be at most 4000 bytes")
+		return failure.Wrap("validate feedback message", failure.FeedbackInputInvalid, errors.New("feedback message must be at most 4000 bytes"))
 	}
 	session, _, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback "+feedbackMutationName(kind), diagnostics)
 	if err != nil {
@@ -425,7 +426,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 			return err
 		}
 		if project.Root == "" || previewID == "" || thread.Scope.PreviewId != previewID {
-			return errors.New("run the update from the project directory that owns this preview")
+			return failure.Wrap("select feedback project", failure.PreviewStateConflict, errors.New("run the update from the project directory that owns this preview"))
 		}
 		source, err := sourcestate.Capture(ctx, project.Root)
 		if err != nil {
@@ -442,7 +443,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 		return err
 	}
 	if flags.Output == feedbackJSON {
-		return json.NewEncoder(output).Encode(event)
+		return failure.Wrap("write feedback event", failure.OutputUnavailable, json.NewEncoder(output).Encode(event))
 	}
 	return writeHumanFrame(output, "tnl feedback "+feedbackMutationName(kind), "saved", "", clioutput.Fields(
 		clioutput.Field{Label: "feedback ID", Value: flags.FeedbackID},

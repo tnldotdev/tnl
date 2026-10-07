@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
@@ -208,7 +209,7 @@ func waitForDevTarget(ctx context.Context, bootstrap *devBootstrap, child *devPr
 		if err := childResult(child.Err()); err != nil {
 			return devTargetRequest{}, err
 		}
-		return devTargetRequest{}, errors.New("development server command exited before target registration")
+		return devTargetRequest{}, failure.Wrap("wait for development listener", failure.DevProcessFailed, errors.New("development server command exited before target registration"))
 	case result := <-targeted:
 		return result.target, result.err
 	case <-ctx.Done():

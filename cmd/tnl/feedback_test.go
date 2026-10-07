@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -16,6 +19,35 @@ type feedbackReadFixture struct {
 	teamPages   map[uint64]controlv1.FeedbackEventPage
 	threads     map[string]controlv1.FeedbackThread
 }
+
+func TestFeedbackValidationHasOwnedReasonBeforeAuthentication(t *testing.T) {
+	var output bytes.Buffer
+	err := run(t.Context(), []string{"--no-config", "feedback", "inspect", "--state-dir", filepath.Join(t.TempDir(), "state"), "not-a-feedback-id"}, &output, io.Discard)
+	reason, definition, ok := failure.Describe(err)
+	if !ok || reason != failure.FeedbackInputInvalid || definition.Class != failure.Invalid || output.Len() != 0 {
+		t.Fatalf("feedback validation reason=%s class=%s output=%q", reason, definition.Class, output.String())
+	}
+}
+
+func TestFeedbackCursorFailureIsAResponseErrorAndKeepsOutputCauses(t *testing.T) {
+	fixture := feedbackReadFixture{teamPages: map[uint64]controlv1.FeedbackEventPage{
+		0: {EventCursor: 1, Events: []controlv1.FeedbackEvent{{Cursor: 0}}},
+	}}
+	_, _, err := pollFeedbackEvents(t.Context(), fixture, "tm_test", "", 0, io.Discard, feedbackNDJSON)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
+		t.Fatalf("invalid cursor classified as %v", err)
+	}
+	fixture.teamPages[0] = controlv1.FeedbackEventPage{EventCursor: 1, Events: []controlv1.FeedbackEvent{{Cursor: 1}}}
+	cause := errors.New("output pipe closed")
+	_, _, err = pollFeedbackEvents(t.Context(), fixture, "tm_test", "", 0, failingFeedbackWriter{cause}, feedbackNDJSON)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.OutputUnavailable || !errors.Is(err, cause) {
+		t.Fatalf("output failure classified as %v", err)
+	}
+}
+
+type failingFeedbackWriter struct{ err error }
+
+func (w failingFeedbackWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func (f feedbackReadFixture) ListFeedbackThreadEvents(_ context.Context, _ string, after uint64) (controlv1.FeedbackEventPage, error) {
 	page, found := f.threadPages[after]

@@ -74,7 +74,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("port must be between 1 and 65535"))
 	}
 	if flags.StartupTimeout <= 0 || flags.StartupTimeout > 10*time.Minute {
-		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
+		return failure.Wrap("validate startup timeout", failure.InvalidStartupTimeout, errors.New("startup timeout must be greater than zero and at most 10 minutes"))
 	}
 
 	forcedTarget := ""
@@ -230,10 +230,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	projectPayload, err := json.Marshal(assignment.Project)
 	if err != nil {
-		return fmt.Errorf("serialize development project metadata: %w", err)
+		return failure.Wrap("serialize development project metadata", failure.ProjectConfigInvalid, err)
 	}
 	if len(projectPayload) > maxDevRuntimeBytes {
-		return fmt.Errorf("development project metadata exceeds %d bytes", maxDevRuntimeBytes)
+		return failure.Wrap("validate development project metadata", failure.ProjectConfigInvalid, fmt.Errorf("development project metadata exceeds %d bytes", maxDevRuntimeBytes))
 	}
 	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port, string(projectPayload)), stdin, stdout, stderr, flags.commandDir)
 	if err != nil {
@@ -301,7 +301,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 					return fmt.Errorf("associate service %q with preview: %w", flags.Service, err)
 				}
 				if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
-					return errors.New("server returned a preview without the assigned public URL")
+					return failure.Wrap("associate preview public URL", failure.ServerResponseInvalid, errors.New("server returned a preview without the assigned public URL"))
 				}
 			}
 			return handlePublisherEvent(publishCtx, tunnel, output, event)

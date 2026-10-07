@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -117,7 +118,7 @@ func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, std
 
 func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, stdout, stderr io.Writer) error {
 	if command.RelayLeaseRevision < 1 || command.Deadline <= 0 {
-		return errors.New("relay lease revision and deadline must be positive")
+		return failure.Wrap("validate relay drain", failure.InvalidCommand, errors.New("relay lease revision and deadline must be positive"))
 	}
 	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays drain", stderr, func(client *controlclient.Client, server string) error {
 		lease, err := client.AdminDrainRelay(ctx, command.RelayID, controlv1.AdminDrainRelayRequest{

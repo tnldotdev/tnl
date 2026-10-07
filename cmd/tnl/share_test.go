@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -19,7 +21,8 @@ func TestShareLifetimeAcceptsDaysAndBoundsExpiration(t *testing.T) {
 		}
 	}
 	for _, input := range []string{"", "0d", "31d", "1.5d", "0s", "721h", "-1h", "1d2h"} {
-		if _, err := parseShareLifetime(input); err == nil {
+		_, err := parseShareLifetime(input)
+		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
 			t.Fatalf("invalid share lifetime %q was accepted", input)
 		}
 	}
@@ -48,8 +51,8 @@ func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 }
 
 func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
-	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--expires-in", "0d"}, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "share lifetime") {
+	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--state-dir", filepath.Join(t.TempDir(), "state"), "--expires-in", "0d"}, io.Discard, io.Discard)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
 		t.Fatalf("share create dispatch error = %v", err)
 	}
 }
@@ -57,8 +60,9 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 func TestTeamShareCommandsSelectAConfiguredPreviewBeforeAuthentication(t *testing.T) {
 	for _, command := range [][]string{{"team", "create"}, {"team", "revoke"}} {
 		arguments := append([]string{"--no-config", "share"}, command...)
+		arguments = append(arguments, "--state-dir", filepath.Join(t.TempDir(), "state"))
 		err := run(t.Context(), arguments, io.Discard, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "project") {
+		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PreviewNotSaved {
 			t.Fatalf("team share command %v selected a preview: %v", arguments, err)
 		}
 	}
