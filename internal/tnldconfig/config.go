@@ -242,7 +242,7 @@ func (c Config) validateControl() error {
 	}
 	if c.WebServiceSecret != "" {
 		if c.OIDCIssuer == "" {
-			return errors.New("website identity operations require built-in authority with an OIDC issuer")
+			return errors.New("website identity operations require an OIDC issuer")
 		}
 		if _, err := serviceapi.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
 			return fmt.Errorf("website service secret: %w", err)
@@ -277,7 +277,7 @@ func (c Config) validateControl() error {
 		return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 	}
 	if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
-		return failure.WrapSetting("validate built-in authority login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken, err)
+		return failure.WrapSetting("validate login token", failure.ServerLoginTokenInvalid, failure.SettingLoginToken, err)
 	}
 	if err := c.validateOIDC(); err != nil {
 		return err

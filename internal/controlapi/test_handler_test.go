@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func testHandler(t *testing.T, cfg Config, store Store, authorization BuiltinAuthorizationStore, readiness func(context.Context) error) *http.ServeMux {
+func testHandler(t *testing.T, cfg Config, store Store, authorization AuthorizationStore, readiness func(context.Context) error) *http.ServeMux {
 	t.Helper()
 	handler, err := NewHandler(cfg, store, authorization, readiness)
 	if err != nil {

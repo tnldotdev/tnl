@@ -189,8 +189,8 @@ not _inbox_, for the collection of threads.
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **cluster authentication**      | Authentication with a shared secret for private communication among control, ingress, and relays in one deployment.          |
 | **cluster secret**              | The current secret configured as `TNLD_CLUSTER_SECRET`; split ingress and relay processes use it to authenticate to control. |
-| **website service credential**  | The credential used only for hosted identity context and browser invitation operations.                                      |
-| **email delivery credential**   | The independent credential control uses to send typed email requests to a mailer.                                            |
+| **website credential**          | The secret the website sends to control for identity and invitation requests.                                                |
+| **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                                         |
 | **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                 |
 | **login token**                 | The credential used to create administrator control sessions through the built-in authority.                                 |
 | **control session**             | A login session that can be revoked and has an access token and refresh token.                                               |

@@ -112,7 +112,7 @@ func TestIntegrationGuestRetrySecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateBuiltinGuestTrial(t.Context(), guest, "routes.example.test", time.Now()); err != nil {
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	first, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, time.Now())

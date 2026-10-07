@@ -18,7 +18,8 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+	domainID, err := database.CreateGuestTrial(t.Context(), guest, "example.test", now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var storedTrial string
@@ -37,12 +38,12 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := CreatePublicURLRequest{
-		GuestID: guest.ID, TeamID: guest.TeamID, DomainID: "dom_guest", MembershipID: guest.MembershipID,
+		GuestID: guest.ID, TeamID: guest.TeamID, DomainID: domainID, MembershipID: guest.MembershipID,
 		ActingIdentityID: guest.ID, IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")),
 		CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".example.test",
 		Target:            "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember,
 		AllowedIPPrefixes: []string{"192.0.2.7/32"}, DNSState: PublicURLDNSPending,
-		DNSAuthorityReference: "da_guest", PolicyRevision: 1, Ephemeral: true,
+		PolicyRevision: 1, Ephemeral: true,
 	}
 	first, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
@@ -112,7 +113,7 @@ func TestIntegrationGuestIssuanceSerializesOneNetwork(t *testing.T) {
 				if index%2 == 1 {
 					owner = other
 				}
-				err = owner.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now)
+				_, err = owner.CreateGuestTrial(t.Context(), guest, "routes.example.test", now)
 			}
 			results <- err
 		}()
@@ -141,7 +142,7 @@ func TestIntegrationGuestTrialMetersReadyTimeAndBothByteDirections(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls (public_url_id, guest_id, created_at) VALUES ($1, $2, $3)`, request.PublicURLID, guest.ID, now); err != nil {
@@ -193,7 +194,7 @@ func TestIntegrationGuestHeartbeatClosesExhaustedTrial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls (public_url_id, guest_id, created_at) VALUES ($1, $2, $3)`, request.PublicURLID, guest.ID, now); err != nil {
@@ -243,7 +244,7 @@ func TestIntegrationGuestExpiryRevokesCredentialAndForgetsIPDigests(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
 		t.Fatal(err)
 	}
 	if number, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(GuestLifetime-time.Second)); err != nil || number != 1 {
@@ -286,7 +287,7 @@ func TestIntegrationGuestExpiryClosesRunWithoutHeartbeat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+			if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls

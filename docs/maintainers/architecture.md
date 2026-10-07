@@ -193,13 +193,13 @@ and relay unchanged and terminates in the publisher.
 The authority API owns identities, authentication, teams, memberships,
 invitations, domains, and current authorization decisions.
 
-control and standalone always serve the built-in authority at the control URL.
+control and standalone serve the authority API at the control URL.
 OIDC providers prove identity; control owns current memberships and publishing
 decisions. the hosted website uses the narrow
 [hosted integration](hosted-integration.md) for its team picker and invitations.
 
-with the built-in authority, control creates guest trials against its own managed
-domain. it reserves each guest namespace in the managed-label pool in the same
+control creates guest trials against its own managed domain. it reserves each
+guest namespace in the managed-label pool in the same
 transaction as the trial; team creation cannot reuse a guest namespace. managed
 guest DNS uses the configured managed zone, without a claimed DNS authority.
 
@@ -220,6 +220,10 @@ namespaces.
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.
+
+the authority spec defines the HTTP exchanges used by `tnl` and the hosted
+website. it generates the Go server interface and clients as well as the
+website's response schemas.
 
 `pkg/protocol/tunnelv1` is the handwritten tunnel protocol source of truth.
 `internal/muxsession` provides multiplexed byte streams, `internal/tunnel`

@@ -29,7 +29,7 @@ the generated types from that source.
 ## email delivery
 
 configure `TNLD_EMAIL_URL` with the mailer's HTTPS origin and `TNLD_EMAIL_TOKEN`
-with an independent delivery credential. control sends `EmailDeliveryRequest`
+with a separate webhook credential. control sends `EmailDeliveryRequest`
 from the authority OpenAPI schemas to `POST /api/internal/tnl/emails`:
 
 ```json

@@ -42,7 +42,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			break
 		}
 		issuedAt := time.Now()
-		domainID, err := h.guests.CreateBuiltinGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
+		domainID, err := h.guests.CreateGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
 		if err != nil {
 			if errors.Is(err, controlstate.ErrGuestIssuance) {
 				response.Header().Set("Retry-After", "3600")

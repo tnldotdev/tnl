@@ -54,7 +54,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateBuiltinGuestTrial(ctx, guest, "routes.example.test", now); err != nil {
+	if _, err := database.CreateGuestTrial(ctx, guest, "routes.example.test", now); err != nil {
 		t.Fatal(err)
 	}
 	masterKey, err := database.EnsureGuestPrincipal(ctx, guest.ID, now)

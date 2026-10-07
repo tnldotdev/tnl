@@ -139,8 +139,8 @@ type FeedbackStore interface {
 	ReviewerFeedbackScope(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (string, string, error)
 }
 
-// BuiltinAuthorizationStore provides the identity state needed for local public URL authorization.
-type BuiltinAuthorizationStore interface {
+// AuthorizationStore provides the identity state needed for public URL authorization.
+type AuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
@@ -160,7 +160,7 @@ type handler struct {
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
 	guests            interface {
-		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
@@ -177,7 +177,7 @@ var _ controlv1.ServerInterface = (*handler)(nil)
 func NewHandler(
 	cfg Config,
 	store Store,
-	builtinAuthorizationStore BuiltinAuthorizationStore,
+	authorizationStore AuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
@@ -200,7 +200,7 @@ func NewHandler(
 		h.feedback = feedback
 	}
 	if guestStore, ok := store.(interface {
-		CreateBuiltinGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
+		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
@@ -220,9 +220,9 @@ func NewHandler(
 		}
 		loginSourceRevision = verifier.SourceRevision()
 	}
-	if builtinAuthorizationStore != nil {
+	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
-			store: builtinAuthorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
+			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
 		}
 	}
 	if cfg.BrowserOIDCClientID != "" {

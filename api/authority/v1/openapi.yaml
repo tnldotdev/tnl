@@ -7,7 +7,7 @@ info:
     identifier: MIT
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
-  - url: https://authority.example
+  - url: https://control.example
 paths:
   /v1/service/identity-context:
     post:

@@ -93,7 +93,7 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CreateGuestTrial(t.Context(), guest, "dom_guest", "da_guest", now); err != nil {
+	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
 		t.Fatal(err)
 	}
 	const oldPublicURLID = "url_guest_replay"

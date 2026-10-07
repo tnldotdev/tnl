@@ -16,7 +16,7 @@ import (
 )
 
 type localAuthorizer struct {
-	store          BuiltinAuthorizationStore
+	store          AuthorizationStore
 	sourceRevision int64
 	dnsAutomation  bool
 }
