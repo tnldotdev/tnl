@@ -16,6 +16,15 @@ JOIN control.team_memberships AS m
 WHERE t.deleted_at IS NULL
 ORDER BY t.created_at, t.id;
 
+-- name: PreviewInvitation :one
+SELECT t.display_name, invitation.initial_role, invitation.expires_at,
+       invitation.state, invitation.normalized_email_restriction,
+       identity.normalized_email, identity.email_verified
+FROM control.team_invitations AS invitation
+JOIN control.teams AS t ON t.id = invitation.team_id AND t.deleted_at IS NULL
+JOIN control.identities AS identity ON identity.id = sqlc.arg(identity_id) AND identity.disabled_at IS NULL
+WHERE invitation.token_digest = sqlc.arg(token_digest);
+
 -- name: GetIdentityTeam :one
 SELECT
     t.id,
