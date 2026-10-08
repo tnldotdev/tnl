@@ -14,6 +14,7 @@ const (
 
 const (
 	ACMEAccountPrefix                = "aa_"
+	AliasPrefix                      = "als_"
 	ACMEAuthorizationPrefix          = "aau_"
 	ACMEPresentationPrefix           = "ap_"
 	ClaimPrefix                      = "cl_"
