@@ -119,13 +119,13 @@ type logoutCommand struct {
 }
 
 type webhookCommand struct {
-	Use     webhookUseCommand    `cmd:"" help:"Use this worktree as an exclusive webhook receiver."`
-	Release webhookChoiceCommand `cmd:"" help:"Release this worktree's exclusive webhook claim."`
+	Use     webhookUseCommand    `cmd:"" help:"Send this webhook to the ready service in this worktree."`
+	Release webhookChoiceCommand `cmd:"" help:"Stop sending this webhook to this worktree."`
 }
 
 type webhookUseCommand struct {
 	webhookChoiceCommand `embed:""`
-	Force                bool `help:"Replace another live worktree's exclusive receiver selection."`
+	Force                bool `help:"Replace the selected receiver even if its tunnel is running."`
 }
 
 type webhookChoiceCommand struct {

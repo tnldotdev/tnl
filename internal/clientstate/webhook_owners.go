@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 )
 
-var ErrWebhookOwned = errors.New("another live worktree owns this webhook")
+var ErrWebhookOwned = errors.New("another running tunnel is selected for this webhook")
 var ErrWebhookReceiverUnavailable = errors.New("selected webhook receiver is not ready")
 var ErrWebhookNotSelected = errors.New("this worktree is not the selected webhook receiver")
 

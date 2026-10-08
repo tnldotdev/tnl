@@ -96,7 +96,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 		Root: otherRoot, Selection: projectconfig.Selection{Path: filepath.Join(otherRoot, "tnl.json")}, Config: project.Config,
 	}}
 	if err := runWebhookChoice(t.Context(), command, otherProject, true, false, &output); err == nil {
-		t.Fatal("ordinary selection displaced another live worktree")
+		t.Fatal("ordinary selection displaced another running tunnel")
 	} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.WebhookOwned || !errors.Is(err, clientstate.ErrWebhookOwned) {
 		t.Fatalf("ownership conflict reason = %v", err)
 	}

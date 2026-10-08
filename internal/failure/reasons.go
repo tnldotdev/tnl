@@ -263,7 +263,7 @@ var definitions = map[Reason]Definition{
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
 	},
 	WebhookOwned: {
-		Class: Conflict, Message: "another live worktree receives this exclusive webhook",
+		Class: Conflict, Message: "another running tunnel is selected for this webhook",
 		Action: "run tnl webhook use NAME --force to switch, or release it from the current worktree", Retry: RetryAfterChange,
 	},
 	WebhookReceiverUnready: {

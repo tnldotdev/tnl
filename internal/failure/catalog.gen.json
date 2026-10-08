@@ -468,7 +468,7 @@
       "code": "TNL_CLIENT_WEBHOOK_OWNED",
       "slug": "webhook-owned",
       "class": "conflict",
-      "message": "another live worktree receives this exclusive webhook",
+      "message": "another running tunnel is selected for this webhook",
       "action": "run tnl webhook use NAME --force to switch, or release it from the current worktree"
     },
     {
