@@ -2,6 +2,8 @@
 package diagnostic
 
 const (
+	AliasUnavailable             Code = "TNL_ALIAS_UNAVAILABLE"
+	MemberHostnameDepthExceeded  Code = "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
 	WebhookUnavailable           Code = "TNL_WEBHOOK_UNAVAILABLE"
 	WebhookDeliveryFailed        Code = "TNL_WEBHOOK_DELIVERY_FAILED"
 	OAuthCallbackUnavailable     Code = "TNL_OAUTH_CALLBACK_UNAVAILABLE"

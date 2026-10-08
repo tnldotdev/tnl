@@ -57,6 +57,7 @@ type Config struct {
 	Service                  string
 	Target                   string
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
+	AdmitRequest             func(*http.Request, PublishRunIdentity) error
 	ObserveResponse          ResponseObserver
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
@@ -100,6 +101,7 @@ type Event struct {
 
 // PublishRunIdentity binds a response observer to the run that served it.
 type PublishRunIdentity struct {
+	Hostname    string
 	PublicURLID string
 	Number      uint64
 }

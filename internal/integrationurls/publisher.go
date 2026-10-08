@@ -27,6 +27,7 @@ type Publisher struct {
 	Server   string
 	Hostname string
 	Prepare  func(context.Context) (Snapshot, error)
+	Eligible func(context.Context) (bool, error)
 	Revision func(context.Context) (string, error)
 	Report   func(publisher.Event, error)
 	// run and interval are substituted only by lifecycle tests.
@@ -40,12 +41,20 @@ func (p Publisher) Maintain(ctx context.Context) {
 		interval = 4 * time.Second
 	}
 	for ctx.Err() == nil {
+		eligible := true
+		var err error
+		if p.Eligible != nil {
+			eligible, err = p.Eligible(ctx)
+		}
 		// keep the lock identity stable across tnl versions sharing client state.
-		lock, err := p.Store.LockHostname("companion:" + p.Hostname)
-		if err == nil {
-			err = p.serve(ctx, interval)
-			// serve joins the publisher and clears readiness before releasing ownership.
-			err = errors.Join(err, lock.Close())
+		if err == nil && eligible {
+			lock, lockErr := p.Store.LockHostname("companion:" + p.Hostname)
+			err = lockErr
+			if err == nil {
+				err = p.serve(ctx, interval)
+				// serve joins the publisher and clears readiness before releasing ownership.
+				err = errors.Join(err, lock.Close())
+			}
 		}
 		if err != nil && !errors.Is(err, clientstate.ErrLocked) && ctx.Err() == nil && p.Report != nil {
 			p.Report(publisher.Event{}, err)
@@ -80,6 +89,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 		return p.State.ClearIntegrationURLReady(cleanup, p.Server, p.Hostname, publisherInstanceID)
 	}
 	config := snapshot.Config
+	observe := config.Observe
 	config.Observe = func(event publisher.Event) error {
 		mu.Lock()
 		defer mu.Unlock()
@@ -92,7 +102,13 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 			ready = false
 			observeErr = clear()
 		default:
+			if observe != nil {
+				return observe(event)
+			}
 			return nil
+		}
+		if observeErr == nil && observe != nil {
+			observeErr = observe(event)
 		}
 		if p.Report != nil && parent.Err() == nil && observeErr == nil {
 			p.Report(event, nil)

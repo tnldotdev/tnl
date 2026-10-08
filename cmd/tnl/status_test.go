@@ -45,7 +45,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.SchemaVersion != 2 || snapshot.Summary.Ready != 1 || len(snapshot.Tunnels) != 1 || len(snapshot.IntegrationURLs) != 0 ||
+	if snapshot.SchemaVersion != 3 || snapshot.Summary.Ready != 1 || len(snapshot.Tunnels) != 1 || len(snapshot.IntegrationURLs) != 0 ||
 		snapshot.Tunnels[0].ID != tunnel.ID() {
 		t.Fatalf("status snapshot = %#v", snapshot)
 	}
@@ -54,7 +54,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	assertJSONKeys(t, payload, "schema_version", "observed_at", "summary", "tunnels", "integration_urls")
+	assertJSONKeys(t, payload, "schema_version", "observed_at", "summary", "tunnels", "integration_urls", "aliases")
 	assertJSONKeys(t, payload["summary"].(map[string]any),
 		"total", "starting", "provisioning", "ready", "draining", "stale")
 	tunnels := payload["tunnels"].([]any)
@@ -106,7 +106,7 @@ func TestStatusJSONStartingAdHocTunnelOmitsUnassignedFields(t *testing.T) {
 	if err := decoder.Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	assertJSONKeys(t, payload, "schema_version", "observed_at", "summary", "tunnels", "integration_urls")
+	assertJSONKeys(t, payload, "schema_version", "observed_at", "summary", "tunnels", "integration_urls", "aliases")
 	tunnels, ok := payload["tunnels"].([]any)
 	if !ok || len(tunnels) != 1 {
 		t.Fatalf("tunnels = %#v", payload["tunnels"])
@@ -269,7 +269,7 @@ func TestStatusShowsIntegrationURLSubscribersAndExclusiveOwner(t *testing.T) {
 		return snapshot, output.String()
 	}
 	snapshot, wire := read()
-	if snapshot.SchemaVersion != 2 || len(snapshot.Tunnels) != 1 || len(snapshot.IntegrationURLs) != 2 {
+	if snapshot.SchemaVersion != 3 || len(snapshot.Tunnels) != 1 || len(snapshot.IntegrationURLs) != 2 {
 		t.Fatalf("project status = %#v", snapshot)
 	}
 	var hooks *clientstate.IntegrationURLInfo
@@ -290,7 +290,7 @@ func TestStatusShowsIntegrationURLSubscribersAndExclusiveOwner(t *testing.T) {
 	if err := json.Unmarshal([]byte(wire), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	assertJSONKeys(t, envelope, "schema_version", "observed_at", "summary", "tunnels", "integration_urls")
+	assertJSONKeys(t, envelope, "schema_version", "observed_at", "summary", "tunnels", "integration_urls", "aliases")
 	for _, raw := range envelope["integration_urls"].([]any) {
 		url := raw.(map[string]any)
 		if url["kind"] != "webhooks" {

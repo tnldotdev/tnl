@@ -26,6 +26,19 @@ func TestAliasDeclarationsArePortableAndServiceScoped(t *testing.T) {
 	}
 }
 
+func TestAliasFingerprintDistinguishesInheritedAndExplicitEmptyVisitorPolicy(t *testing.T) {
+	definition := Alias{Service: "api"}
+	_, inherited, err := definition.DefinitionBytes("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.AllowIP = []string{}
+	_, explicit, err := definition.DefinitionBytes("review")
+	if err != nil || inherited == explicit {
+		t.Fatal("explicit visitor-policy override looked like inheritance")
+	}
+}
+
 func TestInvalidAliasDeclarations(t *testing.T) {
 	for _, test := range []struct{ name, declaration, want string }{
 		{"missing service", `{"review":{"service":"missing"}}`, "not configured"},

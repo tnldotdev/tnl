@@ -65,7 +65,7 @@ WHERE alias.id = sqlc.arg(alias_id) AND t.project_root = alias.selected_project
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 
 -- name: SetAliasSelectedProject :execrows
-UPDATE project_aliases SET selected_project = sqlc.arg(project_root), selection_revision = selection_revision + 1
+UPDATE project_aliases SET selected_project = sqlc.arg(project_root), selection_revision = selection_revision + 1, failure_reason = ''
 WHERE id = sqlc.arg(alias_id) AND selection_revision = sqlc.arg(expected_revision)
     AND selection_revision < 9223372036854775807;
 

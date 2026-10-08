@@ -52,7 +52,7 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 		if !ready {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
-		if err := state.SaveOAuthCallback(ctx, server, hostname, group, query.Get("state"), tunnelID, callback.Path, callback.RawQuery, run.PublicURLID, run.Number); err != nil {
+		if err := state.SaveOAuthCallbackOrigin(ctx, server, hostname, group, query.Get("state"), tunnelID, callback.Path, callback.RawQuery, run.Hostname, run.PublicURLID, run.Number); err != nil {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, err)
 		}
 		return nil

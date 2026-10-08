@@ -2,6 +2,49 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_ALIAS_UNAVAILABLE",
+      "slug": "alias-unavailable",
+      "category": "alias",
+      "title": "alias unavailable",
+      "summary": "the selected worktree is not ready to serve this alias. start its entry service and check tnl status.",
+      "description": "the alias selection or its selected app run changed before this request could be admitted.",
+      "diagram_label": "the selected alias service is unavailable",
+      "surfaces": ["cli", "browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "detail": "selected worktree unavailable", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the selected service stopped or is reprovisioning",
+        "the alias is handing off to another worktree"
+      ],
+      "actions": {
+        "publisher": ["start the entry service in the selected worktree and check tnl status"],
+        "visitor": ["retry after the alias is ready"]
+      }
+    },
+    {
+      "code": "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
+      "slug": "member-hostname-depth-exceeded",
+      "category": "public URL",
+      "title": "alias name is too deeply nested",
+      "summary": "this hostname uses more labels beneath your namespace than the server allows on its managed domain. use a shorter name.",
+      "description": "the server limits the depth of member public URLs on its managed deployment domain; this restriction does not apply to custom domains.",
+      "diagram_label": "the name exceeds this domain's depth limit",
+      "surfaces": ["cli", "browser"],
+      "http_status": 403,
+      "flow": [
+        { "label": "tnl", "detail": "hostname policy", "failure": true },
+        { "label": "control" }
+      ],
+      "causes": [
+        "the alias name contains more DNS labels than this server permits beneath a member namespace"
+      ],
+      "actions": { "publisher": ["use fewer labels beneath your namespace"] }
+    },
+    {
       "code": "TNL_WEBHOOK_UNAVAILABLE",
       "slug": "webhook-unavailable",
       "category": "webhook",

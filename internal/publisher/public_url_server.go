@@ -35,6 +35,7 @@ type PublicURLServerConfig struct {
 	Hostname          string
 	Target            string
 	Handler           http.Handler
+	AdmitRequest      func(*http.Request) error
 	ObserveResponse   func(*http.Response) error
 	Mounts            []localproxy.Mount
 	ShareAccess       *shareAccess
@@ -233,6 +234,16 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code)
 					return
+				}
+				if config.AdmitRequest != nil {
+					if err := config.AdmitRequest(request); err != nil {
+						code, ok := diagnostic.CodeOf(err)
+						if !ok {
+							code = diagnostic.ServerUnavailable
+						}
+						diagnostic.WriteHTTP(response, request, code)
+						return
+					}
 				}
 				denied := request.Context().Value(denialContextKey{}) == true
 				sharePermitted := config.ShareAccess != nil && config.ShareAccess.permits(request)

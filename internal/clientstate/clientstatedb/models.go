@@ -14,6 +14,17 @@ type AliasDeclaration struct {
 	Fingerprint []byte
 }
 
+type AliasPublishRun struct {
+	AliasID                string
+	Owner                  string
+	TunnelID               string
+	SelectionRevision      int64
+	PublicURLID            string
+	PublishRunNumber       int64
+	TargetPublicURLID      string
+	TargetPublishRunNumber int64
+}
+
 type CertificateMaterial struct {
 	ID             int64
 	ServerOrigin   string
@@ -120,16 +131,30 @@ type LocalTunnel struct {
 	IntegrationGroup string
 }
 
-type OauthCallback struct {
+type OauthAliasReturn struct {
 	ServerOrigin     string
 	Hostname         string
 	StateDigest      []byte
-	TunnelID         string
 	CallbackPath     string
-	CallbackQuery    string
 	PublicURLID      string
 	PublishRunNumber int64
 	ExpiresAt        int64
+	Consumed         int64
+}
+
+type OauthCallback struct {
+	ServerOrigin           string
+	Hostname               string
+	StateDigest            []byte
+	TunnelID               string
+	CallbackPath           string
+	CallbackQuery          string
+	PublicURLID            string
+	PublishRunNumber       int64
+	ExpiresAt              int64
+	OriginHostname         string
+	OriginPublicURLID      string
+	OriginPublishRunNumber int64
 }
 
 type Preview struct {
@@ -153,6 +178,7 @@ type ProjectAlias struct {
 	Fingerprint       []byte
 	SelectedProject   string
 	SelectionRevision int64
+	FailureReason     string
 }
 
 type ServerProfile struct {

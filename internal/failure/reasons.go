@@ -41,6 +41,10 @@ const (
 	LoginTokenInvalid                 Reason = "TNL_CLIENT_LOGIN_TOKEN_INVALID"
 	LoginTerminalRequired             Reason = "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED"
 	ProjectConfigInvalid              Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	AliasOwned                        Reason = "TNL_CLIENT_ALIAS_OWNED"
+	AliasReceiverUnready              Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
+	AliasNotSelected                  Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
+	AliasPolicyConflict               Reason = "TNL_CLIENT_ALIAS_POLICY_CONFLICT"
 	WebhookOwned                      Reason = "TNL_CLIENT_WEBHOOK_OWNED"
 	WebhookReceiverUnready            Reason = "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY"
 	WebhookNotSelected                Reason = "TNL_CLIENT_WEBHOOK_NOT_SELECTED"
@@ -267,6 +271,22 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	AliasOwned: {
+		Class: Conflict, Message: "another live worktree owns this alias",
+		Action: "use tnl alias use NAME --force for a deliberate handoff", Retry: RetryAfterChange,
+	},
+	AliasReceiverUnready: {
+		Class: Unavailable, Message: "the selected alias entry service is not ready",
+		Action: "start the entry service in the selected worktree and check tnl status", Retry: RetryAfterChange,
+	},
+	AliasNotSelected: {
+		Class: Conflict, Message: "this worktree is not selected for the alias",
+		Action: "release the alias from its selected worktree or select this one explicitly", Retry: RetryAfterChange,
+	},
+	AliasPolicyConflict: {
+		Class: Conflict, Message: "another running worktree declares a different alias or uses its hostname",
+		Action: "use matching alias definitions across worktrees and choose a distinct public hostname", Retry: RetryAfterChange,
 	},
 	WebhookOwned: {
 		Class: Conflict, Message: "another running tunnel is selected for this webhook",

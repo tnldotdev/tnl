@@ -19,7 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-const tunnelSnapshotSchemaVersion = 2
+const tunnelSnapshotSchemaVersion = 3
 
 const (
 	tunnelLeaseDuration     = 20 * time.Second
@@ -74,6 +74,7 @@ type TunnelSnapshot struct {
 	Summary         TunnelSummary        `json:"summary"`
 	Tunnels         []TunnelInfo         `json:"tunnels"`
 	IntegrationURLs []IntegrationURLInfo `json:"integration_urls"`
+	Aliases         []AliasInfo          `json:"aliases"`
 }
 
 type TunnelSummary struct {
@@ -307,6 +308,10 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 	if err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("read integration URL status: %w", err)
 	}
+	aliases, err := d.snapshotAliases(ctx, tx, projectRoot, observedAt)
+	if err != nil {
+		return TunnelSnapshot{}, fmt.Errorf("read alias status: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: commit tunnel snapshot: %w", err)
 	}
@@ -315,6 +320,7 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		ObservedAt:      observedAt,
 		Tunnels:         make([]TunnelInfo, 0, len(records)),
 		IntegrationURLs: integrationURLs,
+		Aliases:         aliases,
 	}
 	for _, row := range records {
 		state := TunnelState(row.State)

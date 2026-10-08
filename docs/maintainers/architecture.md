@@ -108,6 +108,21 @@ and selection are separate: restarting resumes the chosen worktree; an expired
 lease does not assign a different one. revision and tunnel/run identities fence
 requests prepared against older selections.
 
+the alias publisher reuses the integration URL lifecycle and publishes only
+from the selected ready entry-service tunnel. each request checks the selection
+revision and destination tunnel/run before entering the local proxy. an old
+publisher stops admitting requests immediately after a handoff; already admitted
+requests may finish, and its hostname lock remains held through drain and join.
+alias runs do not inherit preview shares or feedback state.
+
+OAuth callback state records the initiating public URL/run separately from the
+destination app tunnel. an alias-origin callback returns to the alias hostname
+for its host-only cookies. a bounded, expiring single-use return record also
+fences the final browser hop, so a handoff between redirect and app admission
+cannot send that callback to a replacement alias run. app cookies on a stable
+alias hostname can remain in the browser across worktree changes; tnl does not
+rewrite them.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL
