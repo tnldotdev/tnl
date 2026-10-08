@@ -142,9 +142,9 @@ defineConfig({ services: { api: { paths: { "/api": "api" } } } });
 defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
 // @ts-expect-error async factory returns retain service-reference checks.
 defineConfig(async () => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
-// @ts-expect-error factory webhook references must match service keys too.
 defineConfig(() => ({
   services: { api: {} },
+  // @ts-expect-error factory webhook references must match service keys too.
   webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
 }));
 // @ts-expect-error async factory webhook references must match service keys too.
