@@ -292,40 +292,15 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: begin tunnel snapshot: %w", err)
 	}
 	defer tx.Rollback()
-	query := `
-SELECT id, command, process_id, server_origin, project_root, service, hostname,
-       target, framework, public_url_id, publish_run_number, state, started_at, updated_at,
-       heartbeat_at, lease_expires_at, callback_hostname
-FROM local_tunnels
-WHERE stopped_at IS NULL`
-	arguments := []any{}
+	queries := clientstatedb.New(tx)
+	var records []clientstatedb.LocalTunnel
 	if projectRoot != "" {
-		query += " AND project_root = ?"
-		arguments = append(arguments, projectRoot)
+		records, err = queries.ListOpenTunnelsForProject(ctx, projectRoot)
+	} else {
+		records, err = queries.ListOpenTunnels(ctx)
 	}
-	query += " ORDER BY started_at, id"
-	rows, err := tx.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: list tunnels: %w", err)
-	}
-	defer rows.Close()
-	var records []tunnelRecord
-	for rows.Next() {
-		var row tunnelRecord
-		if err := rows.Scan(
-			&row.id, &row.command, &row.processID, &row.server, &row.project, &row.service,
-			&row.hostname, &row.target, &row.framework, &row.publicURLID, &row.publishRunNumber,
-			&row.state, &row.startedAt, &row.updatedAt, &row.heartbeatAt, &row.leaseExpiresAt, &row.callbackHostname,
-		); err != nil {
-			return TunnelSnapshot{}, fmt.Errorf("clientstate: scan tunnel: %w", err)
-		}
-		records = append(records, row)
-	}
-	if err := rows.Err(); err != nil {
-		return TunnelSnapshot{}, fmt.Errorf("clientstate: list tunnels: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return TunnelSnapshot{}, fmt.Errorf("clientstate: close tunnel rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: commit tunnel snapshot: %w", err)
@@ -336,17 +311,17 @@ WHERE stopped_at IS NULL`
 		Tunnels:       make([]TunnelInfo, 0, len(records)),
 	}
 	for _, row := range records {
-		state := TunnelState(row.state)
-		if !unixNanoTime(row.leaseExpiresAt).After(observedAt) {
+		state := TunnelState(row.State)
+		if !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
 			state = TunnelStateStale
 		}
 		info := TunnelInfo{
-			ID: row.id, Command: TunnelCommand(row.command), State: state, ProcessID: int(row.processID),
-			Server: row.server, Project: row.project, Service: row.service,
-			PublicURLID: row.publicURLID, PublishRunNumber: uint64(row.publishRunNumber),
-			Hostname: row.hostname, Target: row.target, Framework: row.framework, CallbackHostname: row.callbackHostname,
-			StartedAt: unixNanoTime(row.startedAt), UpdatedAt: unixNanoTime(row.updatedAt),
-			HeartbeatAt: unixNanoTime(row.heartbeatAt), LeaseExpiresAt: unixNanoTime(row.leaseExpiresAt),
+			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
+			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
+			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
+			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, CallbackHostname: row.CallbackHostname,
+			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
+			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		}
 		if info.Hostname != "" {
 			info.PublicURL = "https://" + info.Hostname
@@ -367,11 +342,6 @@ WHERE stopped_at IS NULL`
 		}
 	}
 	return snapshot, nil
-}
-
-type tunnelRecord struct {
-	id, command, server, project, service, hostname, target, framework, publicURLID, state, callbackHostname string
-	processID, publishRunNumber, startedAt, updatedAt, heartbeatAt, leaseExpiresAt                           int64
 }
 
 func (t *Tunnel) heartbeat(ctx context.Context) {
