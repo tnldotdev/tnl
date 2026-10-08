@@ -191,8 +191,8 @@ func ValidateTNL(config TNL) error {
 	return nil
 }
 
-func validateRequestInspection(value *string) error {
-	if value != nil && *value != "summary" && *value != "detailed" {
+func validateRequestInspection(value *RequestInspectionMode) error {
+	if value != nil && !value.Valid() {
 		return errors.New("must be summary or detailed")
 	}
 	return nil

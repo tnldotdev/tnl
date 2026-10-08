@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -76,7 +77,7 @@ type publishOutput struct {
 	providers             []providerCount
 	allowedPrefixCount    int
 	framework             string
-	inspection            string
+	inspection            config.RequestInspectionMode
 	demo                  bool
 	guestDemo             bool
 	openURL               func(string) error
@@ -232,7 +233,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.framework != "" {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
-			if o.inspection == "detailed" {
+			if o.inspection == config.RequestInspectionDetailed {
 				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
 			}
 			if o.current != "" {
@@ -326,7 +327,7 @@ func (o *publishOutput) setFramework(framework string) {
 	o.mu.Unlock()
 }
 
-func (o *publishOutput) setRequestInspection(mode string) {
+func (o *publishOutput) setRequestInspection(mode config.RequestInspectionMode) {
 	o.mu.Lock()
 	o.inspection = mode
 	o.mu.Unlock()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -57,7 +58,7 @@ type Config struct {
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	ObserveRequest           func(RequestObservation)
-	RequestInspection        string
+	RequestInspection        projectconfig.RequestInspectionMode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
 	State                    *clientstate.Store

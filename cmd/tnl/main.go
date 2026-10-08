@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -51,15 +52,15 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	teamSelectionFlags `embed:""`
-	Domain             string   `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
-	Name               string   `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
-	PublicURL          string   `name:"public-url" help:"Exact HTTPS public URL to publish."`
-	AllowIP            []string `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowProvider      []string `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
-	AllowAllIPs        bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	RequestLimit       *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
-	RequestInspection  string   `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
+	Domain             string                       `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name               string                       `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
+	PublicURL          string                       `name:"public-url" help:"Exact HTTPS public URL to publish."`
+	AllowIP            []string                     `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
+	AllowProvider      []string                     `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
+	AllowAllIPs        bool                         `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Ephemeral          bool                         `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	RequestLimit       *int                         `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
 
 	allowAllIPsFromCLI       bool
 	ephemeralFromCLI         bool

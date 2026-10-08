@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -40,7 +41,7 @@ type PublicURLServerConfig struct {
 	RequestLimit      int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure   func()
 	ObserveRequest    func(RequestObservation)
-	RequestInspection string
+	RequestInspection projectconfig.RequestInspectionMode
 	Certificate       tls.Certificate
 	CertificatePlan   controlv1.CertificatePlan
 }
@@ -109,7 +110,7 @@ type RequestObservation struct {
 	Status      int
 	Duration    time.Duration
 	Origin      string
-	CaptureMode string
+	CaptureMode projectconfig.RequestInspectionMode
 	Detail      *RequestDetail
 }
 
@@ -118,6 +119,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("publisher: public URL hostname must be canonical")
+	}
+	if config.RequestInspection != "" && !config.RequestInspection.Valid() {
+		return nil, errors.New("publisher: request inspection mode must be summary or detailed")
 	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
@@ -161,7 +165,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					tracked := &observedResponseWriter{ResponseWriter: response}
 					var detail *RequestDetail
 					var incoming, outgoing *bodyCapture
-					if config.RequestInspection == "detailed" {
+					if config.RequestInspection == projectconfig.RequestInspectionDetailed {
 						detail = &RequestDetail{}
 						detail.Query, detail.QueryTruncated = boundedRequestText(request.URL.RawQuery, 8<<10)
 						detail.RequestHeaders, detail.RequestHeadersTruncated = boundedRequestHeaders(request.Header, 16<<10)
@@ -185,9 +189,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
-						mode := "summary"
+						mode := projectconfig.RequestInspectionSummary
 						if detail != nil {
-							mode = "detailed"
+							mode = projectconfig.RequestInspectionDetailed
 							detail.RequestBody, detail.ResponseBody = incoming.snapshot(), outgoing.snapshot()
 							if request.ContentLength > incoming.total {
 								detail.RequestBody.Incomplete = true

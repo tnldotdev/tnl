@@ -137,7 +137,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 }
 
 func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
-	rootMode, serviceMode := "detailed", "summary"
+	rootMode, serviceMode := config.RequestInspectionDetailed, config.RequestInspectionSummary
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		RequestInspection: &rootMode, Services: config.Services{"web": {
@@ -146,7 +146,7 @@ func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
 	}}}
 	for _, tc := range []struct {
 		args []string
-		want string
+		want config.RequestInspectionMode
 	}{
 		{[]string{"publish", "web"}, "summary"},
 		{[]string{"publish", "web", "--request-inspection=detailed"}, "detailed"},

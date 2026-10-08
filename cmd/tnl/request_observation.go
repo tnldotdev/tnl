@@ -35,7 +35,7 @@ func requestObservation(recorder *clientstate.RequestRecorder) func(publisher.Re
 		recorder.Observe(clientstate.RequestRecord{
 			ReceivedAt: event.ReceivedAt, Method: event.Method, Path: event.Path,
 			Status: event.Status, DurationMS: event.Duration.Milliseconds(), Origin: event.Origin,
-			CaptureMode: event.CaptureMode, Detail: detail,
+			CaptureMode: string(event.CaptureMode), Detail: detail,
 		})
 	}
 }
