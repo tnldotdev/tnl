@@ -137,6 +137,27 @@ func TestFactoryReceivesRelativeProjectDirectoryAndFrozenLabel(t *testing.T) {
 	}
 }
 
+func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
+	for _, test := range []struct {
+		service string
+		valid   bool
+	}{{"api", true}, {"missing", false}} {
+		directory := t.TempDir()
+		path := filepath.Join(directory, "tnl.config.ts")
+		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, aliases: {review: {service: [%q].join(""), name: "api.shop", allowAllIPs: true}} });`, test.service)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		value, err := loadTypeScript(t.Context(), path, directory, Worktree{Root: directory})
+		if (err == nil) != test.valid {
+			t.Fatalf("computed alias service %q: %v", test.service, err)
+		}
+		if test.valid && (value.Aliases["review"].RelativeName("review") != "api.shop" || value.Aliases["review"].AllowAllIPs == nil || !*value.Aliases["review"].AllowAllIPs) {
+			t.Fatal("TypeScript alias fields were not normalized")
+		}
+	}
+}
+
 func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 	for field, source := range map[string]string{
 		"version":         `export default {version: 1};`,

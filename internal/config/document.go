@@ -54,6 +54,7 @@ type TNL struct {
 	Dev               *Dev                   `json:"dev,omitempty" yaml:"dev,omitempty"`
 	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
 	Webhooks          map[string]Webhook     `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
+	Aliases           map[string]Alias       `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
 
 type Services map[string]Service

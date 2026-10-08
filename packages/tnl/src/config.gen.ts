@@ -170,6 +170,39 @@ export interface TnlConfig {
       | undefined;
   };
   /**
+   * Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree.
+   */
+  aliases?: {
+    [k: string]:
+      | {
+          /**
+           * Configured entry service serving the alias.
+           */
+          service: string;
+          /**
+           * Relative DNS name beneath the member namespace; defaults to the alias key. Nested names require server permission.
+           */
+          name?: string;
+          /**
+           * Ready team domain; otherwise inherit the entry service's domain.
+           */
+          domain?: string;
+          /**
+           * Allow visitors from every IP address.
+           */
+          allowAllIPs?: boolean;
+          /**
+           * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+           */
+          allowIP?: string[];
+          /**
+           * Exact authorized HTTPS public URL; mutually exclusive with name and domain.
+           */
+          publicURL?: string;
+        }
+      | undefined;
+  };
+  /**
    * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
    */
   requestInspection?: "summary" | "detailed";
