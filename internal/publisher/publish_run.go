@@ -173,7 +173,7 @@ func runSession(
 		RequestLimit:      config.RequestLimit,
 		ObserveRequest:    config.ObserveRequest,
 		RequestInspection: config.RequestInspection,
-		Handler: config.Handler,
+		Handler:           config.Handler,
 		ObserveResponse: func(response *http.Response) error {
 			if config.ObserveResponse == nil {
 				return nil

@@ -68,7 +68,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	owner, err := opaqueid.New(opaqueid.InvocationPrefix)
+	publisherInstanceID, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	clear := func() error {
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
 		defer stop()
-		return p.State.ClearIntegrationURLReady(cleanup, p.Server, p.Hostname, owner)
+		return p.State.ClearIntegrationURLReady(cleanup, p.Server, p.Hostname, publisherInstanceID)
 	}
 	config := snapshot.Config
 	config.Observe = func(event publisher.Event) error {
@@ -86,7 +86,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 		var observeErr error
 		switch event.Type {
 		case publisher.EventReady:
-			observeErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, owner)
+			observeErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
 			ready = observeErr == nil
 		case publisher.EventProvisioning, publisher.EventDraining:
 			ready = false
@@ -127,7 +127,7 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 			mu.Lock()
 			var renewErr error
 			if ready {
-				renewErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, owner)
+				renewErr = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID)
 			}
 			mu.Unlock()
 			if renewErr != nil {

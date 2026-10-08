@@ -73,17 +73,7 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 // NewWithMounts shares one hostname check and request limit across the base
 // service and all mounted local services.
 func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
-	return NewWithMountsOptions(target, hostname, requestLimit, mounts, nil, nil, nil, onTargetFailure...)
-}
-
-// NewWithMountsOptions adds publisher-owned HTML response handling and
-// request observations without changing the visitor policy or shared limit.
-func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mount,
-	modifyResponse func(*http.Response) error, observe func(*http.Request, int), onForwarded func(*http.Request), onTargetFailure ...func(),
-) (http.Handler, error) {
-	return NewWithMountsHooks(target, hostname, requestLimit, mounts, ResponseHooks{
-		ModifyHTML: modifyResponse, ObserveStatus: observe, OnForwarded: onForwarded,
-	}, onTargetFailure...)
+	return NewWithMountsHooks(target, hostname, requestLimit, mounts, ResponseHooks{}, onTargetFailure...)
 }
 
 // ResponseHooks separates header observation from body modification. observing

@@ -9,13 +9,13 @@ import (
 )
 
 // MarkIntegrationURLReady renews one locally ready integration URL publisher.
-// only the publisher's owner may remove it on a graceful stop.
-func (d *Database) MarkIntegrationURLReady(ctx context.Context, server, hostname, owner string) error {
-	if server == "" || hostname == "" || owner == "" {
-		return errors.New("integration URL hostname and publisher owner are required")
+// only the publisher instance that marked it ready may clear the lease.
+func (d *Database) MarkIntegrationURLReady(ctx context.Context, server, hostname, publisherInstanceID string) error {
+	if server == "" || hostname == "" || publisherInstanceID == "" {
+		return errors.New("integration URL hostname and publisher instance ID are required")
 	}
 	return d.queries.MarkIntegrationURLReady(ctx, clientstatedb.MarkIntegrationURLReadyParams{
-		ServerOrigin: server, Hostname: hostname, Owner: owner, ExpiresAt: d.now().UTC().Add(12 * time.Second).UnixNano(),
+		ServerOrigin: server, Hostname: hostname, PublisherInstanceID: publisherInstanceID, ExpiresAt: d.now().UTC().Add(12 * time.Second).UnixNano(),
 	})
 }
 
@@ -26,6 +26,6 @@ func (d *Database) IntegrationURLReady(ctx context.Context, server, hostname str
 	return found == 1, err
 }
 
-func (d *Database) ClearIntegrationURLReady(ctx context.Context, server, hostname, owner string) error {
-	return d.queries.ClearIntegrationURLReady(ctx, clientstatedb.ClearIntegrationURLReadyParams{ServerOrigin: server, Hostname: hostname, Owner: owner})
+func (d *Database) ClearIntegrationURLReady(ctx context.Context, server, hostname, publisherInstanceID string) error {
+	return d.queries.ClearIntegrationURLReady(ctx, clientstatedb.ClearIntegrationURLReadyParams{ServerOrigin: server, Hostname: hostname, PublisherInstanceID: publisherInstanceID})
 }

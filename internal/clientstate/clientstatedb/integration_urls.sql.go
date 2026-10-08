@@ -11,17 +11,17 @@ import (
 
 const clearIntegrationURLReady = `-- name: ClearIntegrationURLReady :exec
 DELETE FROM integration_url_publishers WHERE server_origin = ?1
-  AND hostname = ?2 AND owner = ?3
+  AND hostname = ?2 AND publisher_instance_id = ?3
 `
 
 type ClearIntegrationURLReadyParams struct {
-	ServerOrigin string
-	Hostname     string
-	Owner        string
+	ServerOrigin        string
+	Hostname            string
+	PublisherInstanceID string
 }
 
 func (q *Queries) ClearIntegrationURLReady(ctx context.Context, arg ClearIntegrationURLReadyParams) error {
-	_, err := q.db.ExecContext(ctx, clearIntegrationURLReady, arg.ServerOrigin, arg.Hostname, arg.Owner)
+	_, err := q.db.ExecContext(ctx, clearIntegrationURLReady, arg.ServerOrigin, arg.Hostname, arg.PublisherInstanceID)
 	return err
 }
 
@@ -44,23 +44,23 @@ func (q *Queries) IntegrationURLReady(ctx context.Context, arg IntegrationURLRea
 }
 
 const markIntegrationURLReady = `-- name: MarkIntegrationURLReady :exec
-INSERT INTO integration_url_publishers (server_origin, hostname, owner, expires_at)
+INSERT INTO integration_url_publishers (server_origin, hostname, publisher_instance_id, expires_at)
 VALUES (?1, ?2, ?3, ?4)
-ON CONFLICT(server_origin, hostname) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id, expires_at = excluded.expires_at
 `
 
 type MarkIntegrationURLReadyParams struct {
-	ServerOrigin string
-	Hostname     string
-	Owner        string
-	ExpiresAt    int64
+	ServerOrigin        string
+	Hostname            string
+	PublisherInstanceID string
+	ExpiresAt           int64
 }
 
 func (q *Queries) MarkIntegrationURLReady(ctx context.Context, arg MarkIntegrationURLReadyParams) error {
 	_, err := q.db.ExecContext(ctx, markIntegrationURLReady,
 		arg.ServerOrigin,
 		arg.Hostname,
-		arg.Owner,
+		arg.PublisherInstanceID,
 		arg.ExpiresAt,
 	)
 	return err
