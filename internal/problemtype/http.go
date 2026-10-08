@@ -28,8 +28,13 @@ func NewRequestID() string {
 }
 
 // Write sends an authored problem once and returns the ID for operational logs.
-func Write(response http.ResponseWriter, status int, code, title, detail string) string {
+func Write(response http.ResponseWriter, status int, code, title, detail string, caseID ...string) string {
 	requestID := NewRequestID()
+	variant := ""
+	if len(caseID) > 0 {
+		variant = caseID[0]
+	}
+	response.Header().Set("Link", "<"+HelpURL(code, variant)+">; rel=\"help\"")
 	httpjson.WriteProblem(response, status, Problem{
 		Type: URL(code), Title: title, Status: status, Code: code, Detail: detail,
 		RequestID: requestID, Details: map[string]any{},

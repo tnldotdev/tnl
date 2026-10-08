@@ -336,6 +336,7 @@ func TestNDJSONErrorMessageUsesTypedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if event.Message != "tnl could not use the client state" || event.Reason != string(failure.ClientStateUnavailable) ||
+		event.Code != string(failure.ClientStateUnavailable) || event.HelpURL != failure.HelpURL(failure.ClientStateUnavailable, "") ||
 		cause.Error() != "clientstate: saved state is unavailable" ||
 		event.SchemaVersion != 1 || event.Type != publishEventError {
 		t.Fatalf("event = %+v; original cause = %v", event, cause)

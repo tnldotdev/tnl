@@ -25,6 +25,7 @@ type ProblemError struct {
 	Code      string
 	Detail    string
 	RequestID string
+	CaseID    string
 }
 
 func (e *ProblemError) Error() string {
@@ -55,10 +56,15 @@ func DecodeJSON(response http.ResponseWriter, request *http.Request, destination
 	}
 	if err := httpjson.Decode(json.NewDecoder(reader), destination); err != nil {
 		detail := "Request body must be one JSON object matching the service schema"
-		if errors.Is(err, httpjson.ErrTrailingContent) {
+		trailing := errors.Is(err, httpjson.ErrTrailingContent)
+		if trailing {
 			detail = "Request body must contain exactly one JSON value"
 		}
-		WriteProblem(response, http.StatusBadRequest, "invalid_json", detail)
+		caseID := ""
+		if trailing {
+			caseID = "trailing-content"
+		}
+		WriteProblem(response, http.StatusBadRequest, "invalid_json", detail, caseID)
 		return false
 	}
 	return true
@@ -83,12 +89,16 @@ func WriteJSON(response http.ResponseWriter, status int, value any) {
 	httpjson.Write(response, status, value)
 }
 
-func WriteProblem(response http.ResponseWriter, status int, problemType, detail string) {
-	WriteProblemError(response, NewProblemError(status, problemType, detail))
+func WriteProblem(response http.ResponseWriter, status int, problemType, detail string, caseID ...string) {
+	problem := NewProblemError(status, problemType, detail)
+	if len(caseID) > 0 {
+		problem.CaseID = caseID[0]
+	}
+	WriteProblemError(response, problem)
 }
 
 func WriteProblemError(response http.ResponseWriter, problem *ProblemError) {
-	problem.RequestID = problemtype.Write(response, problem.Status, problem.Code, problem.Title, problem.Detail)
+	problem.RequestID = problemtype.Write(response, problem.Status, problem.Code, problem.Title, problem.Detail, problem.CaseID)
 }
 
 // AuthenticateClusterRequest applies the private API's cache and authentication
@@ -99,7 +109,7 @@ func AuthenticateClusterRequest(response http.ResponseWriter, request *http.Requ
 		return true
 	}
 	response.Header().Set("WWW-Authenticate", "Bearer")
-	WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
+	WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required", "cluster-secret")
 	return false
 }
 

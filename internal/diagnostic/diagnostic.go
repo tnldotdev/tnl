@@ -2,6 +2,7 @@
 package diagnostic
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 )
@@ -31,10 +33,18 @@ type definition struct {
 	HTTPStatus   int                  `json:"http_status"`
 	Flow         []clioutput.FlowNode `json:"flow"`
 	Causes       []string             `json:"causes"`
+	Cases        []caseDefinition     `json:"cases"`
 	Actions      struct {
 		Visitor   []string `json:"visitor"`
 		Publisher []string `json:"publisher"`
 	} `json:"actions"`
+}
+
+type caseDefinition struct {
+	ID            string `json:"id"`
+	Description   string `json:"description"`
+	Action        string `json:"action"`
+	DiagramDetail string `json:"diagram_detail"`
 }
 
 //go:embed catalog.json
@@ -59,6 +69,13 @@ func loadCatalog() []definition {
 			panic("diagnostic: incomplete or duplicate catalog entry " + entry.Code)
 		}
 		seenCodes[entry.Code], seenSlugs[entry.Slug] = true, true
+		seenCases := map[string]bool{}
+		for _, variant := range entry.Cases {
+			if variant.ID == "" || variant.Description == "" || variant.Action == "" || variant.DiagramDetail == "" || seenCases[variant.ID] {
+				panic("diagnostic: invalid case for " + entry.Code)
+			}
+			seenCases[variant.ID] = true
+		}
 	}
 	return catalog.Diagnostics
 }
@@ -93,8 +110,46 @@ func CodeOf(err error) (Code, bool) {
 	return diagnosticErr.code, true
 }
 
-func HelpURL(code Code) string {
-	return helpOrigin + "/e/" + definitionFor(code).Slug
+func HelpURL(code Code, caseID ...string) string {
+	result := helpOrigin + "/e/" + definitionFor(code).Slug
+	if len(caseID) > 0 && caseFor(code, caseID[0]) != nil {
+		result += "?case=" + caseID[0]
+	}
+	return result
+}
+
+func HelpURLForError(err error) string {
+	code, ok := CodeOf(err)
+	if !ok {
+		return ""
+	}
+	return HelpURL(code, KnownCase(err))
+}
+
+// KnownCase selects typed error context rather than reading error messages.
+func KnownCase(err error) string {
+	var classified *Error
+	if !errors.As(err, &classified) {
+		return ""
+	}
+	if classified.code == TargetUnavailable {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return "connection-refused"
+		}
+	}
+	return ""
+}
+
+func caseFor(code Code, id string) *caseDefinition {
+	for _, entry := range definitionFor(code).Cases {
+		if entry.ID == id {
+			return &entry
+		}
+	}
+	return nil
 }
 
 func Summary(code Code) string { return definitionFor(code).Summary }
@@ -109,7 +164,7 @@ func Codes() []Code {
 
 func Text(code Code) string {
 	definition := definitionFor(code)
-	return renderText("tnl", code, definition.Summary)
+	return renderText("tnl", code, "", definition.Summary)
 }
 
 func TextForError(err error) (string, bool) {
@@ -135,12 +190,12 @@ func TextForCommandError(command string, err error) (string, bool) {
 	} else {
 		details = append(details, detail)
 	}
-	return renderText(command, code, details...), true
+	return renderText(command, code, KnownCase(err), details...), true
 }
 
 // WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
 func WriteWarning(output io.Writer, command string, code Code) error {
-	text := renderText(command, code, definitionFor(code).Summary) + "\n"
+	text := renderText(command, code, "", definitionFor(code).Summary) + "\n"
 	written, err := io.WriteString(output, text)
 	if err == nil && written != len(text) {
 		err = io.ErrShortWrite
@@ -150,7 +205,7 @@ func WriteWarning(output io.Writer, command string, code Code) error {
 
 // WritePolicyDenial reports aggregate IP policy denials without visitor addresses.
 func WritePolicyDenial(output io.Writer, command string, newlyBlocked, total uint64) error {
-	text := renderText(command, IPPolicyDenied,
+	text := renderText(command, IPPolicyDenied, "",
 		"IP policy blocked visitor connections before they reached the local service.",
 		"newly blocked: "+strconv.FormatUint(newlyBlocked, 10)+"; total blocked: "+strconv.FormatUint(total, 10),
 	) + "\n"
@@ -161,15 +216,19 @@ func WritePolicyDenial(output io.Writer, command string, newlyBlocked, total uin
 	return err
 }
 
-func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code) {
+func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID ...string) {
 	status := definitionFor(code).HTTPStatus
 	if status < 400 || status > 599 {
 		panic("diagnostic: code is not an HTTP failure " + code)
 	}
-	body := Text(code)
+	variant := ""
+	if len(caseID) > 0 && caseFor(code, caseID[0]) != nil {
+		variant = caseID[0]
+	}
+	body := renderText("tnl", code, variant, definitionFor(code).Summary)
 	contentType := "text/plain; charset=utf-8"
 	if acceptsHTML(request.Header.Get("Accept")) {
-		body = renderHTML(code)
+		body = renderHTML(code, variant)
 		contentType = "text/html; charset=utf-8"
 		response.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 		response.Header().Set("Referrer-Policy", "no-referrer")
@@ -186,16 +245,24 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code) {
 	}
 }
 
-func renderText(command string, code Code, details ...string) string {
+func renderText(command string, code Code, caseID string, details ...string) string {
 	definition := definitionFor(code)
 	blocks := make([]clioutput.Block, 0, len(details)+2)
 	for _, detail := range details {
 		blocks = append(blocks, clioutput.Text(detail))
 	}
-	blocks = append(blocks,
-		clioutput.Flow(definition.Flow...),
-		clioutput.Fields(clioutput.Field{Label: "help", Value: HelpURL(code)}),
-	)
+	flow := append([]clioutput.FlowNode(nil), definition.Flow...)
+	if variant := caseFor(code, caseID); variant != nil {
+		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
+		for index := range flow {
+			if flow[index].Failure {
+				flow[index].Detail = variant.DiagramDetail
+				break
+			}
+		}
+	}
+	blocks = append(blocks, clioutput.Flow(flow...),
+		clioutput.Fields(clioutput.Field{Label: "help", Value: HelpURL(code, caseID)}))
 	text, err := clioutput.Render(clioutput.Frame{
 		Command: command,
 		State:   definition.Title,
@@ -208,12 +275,15 @@ func renderText(command string, code Code, details ...string) string {
 	return text
 }
 
-func renderHTML(code Code) string {
+func renderHTML(code Code, caseID string) string {
 	definition := definitionFor(code)
-	url := HelpURL(code)
+	url := HelpURL(code, caseID)
 	action := ""
 	if len(definition.Actions.Visitor) != 0 {
 		action = "<p>" + html.EscapeString(definition.Actions.Visitor[0]) + "</p>"
+	}
+	if variant := caseFor(code, caseID); variant != nil {
+		action += "<p>" + html.EscapeString(variant.Description) + " " + html.EscapeString(variant.Action) + "</p>"
 	}
 	return `<!doctype html>
 <html lang="en">

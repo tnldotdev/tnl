@@ -73,6 +73,20 @@
         "the target points to the wrong port or loopback address",
         "the local service closed the connection or returned an invalid HTTP response"
       ],
+      "cases": [
+        {
+          "id": "connection-refused",
+          "description": "the local service refused the connection on the configured target.",
+          "action": "start the local service and check its listening port",
+          "diagram_detail": "local service refused connection"
+        },
+        {
+          "id": "timeout",
+          "description": "the local service did not respond before the connection timed out.",
+          "action": "check whether the local service is running and accepting requests",
+          "diagram_detail": "local service timed out"
+        }
+      ],
       "actions": {
         "visitor": ["ask the public URL owner to check the local service, then retry"],
         "publisher": [
@@ -205,6 +219,14 @@
       ],
       "causes": [
         "the public url has reached its concurrent request limit, including streams and upgrades"
+      ],
+      "cases": [
+        {
+          "id": "saturated",
+          "description": "all concurrent request slots were in use when this visitor arrived.",
+          "action": "wait for active requests to finish, then retry",
+          "diagram_detail": "all request slots in use"
+        }
       ],
       "actions": {
         "visitor": ["honor `Retry-After: 1` before retrying"],
@@ -507,6 +529,20 @@
       "causes": [
         "certificate authorization or issuance is pending",
         "one or more assigned relay services are unavailable"
+      ],
+      "cases": [
+        {
+          "id": "certificate",
+          "description": "certificate work is still pending for this publish run.",
+          "action": "keep tnl running and check certificate issuance on a self-hosted server",
+          "diagram_detail": "waiting for certificate"
+        },
+        {
+          "id": "relay",
+          "description": "an assigned relay is not ready for this publish run.",
+          "action": "keep tnl running and check relay health on a self-hosted server",
+          "diagram_detail": "waiting for relay"
+        }
       ],
       "actions": {
         "publisher": [

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -50,6 +51,27 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestKnownCaseChangesGuidanceButNotDiagnosticIdentity(t *testing.T) {
+	err := Wrap(TargetUnavailable, syscall.ECONNREFUSED)
+	text, ok := TextForError(err)
+	if !ok || !strings.Contains(text, "x  local service refused connection") ||
+		!strings.Contains(text, "help  https://tnl.dev/e/target?case=connection-refused") ||
+		!strings.Contains(text, string(TargetUnavailable)) {
+		t.Fatalf("contextual diagnostic = %q", text)
+	}
+	if got := HelpURL(TargetUnavailable, "connection-refused&token=secret"); got != HelpURL(TargetUnavailable) {
+		t.Fatalf("untrusted context = %q", got)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://public.example/", nil)
+	request.Header.Set("Accept", "text/html")
+	WriteHTTP(response, request, TargetUnavailable, "connection-refused")
+	if response.Code != 502 || response.Header().Get("Tnl-Error-Code") != string(TargetUnavailable) ||
+		!strings.Contains(response.Body.String(), `href="https://tnl.dev/e/target?case=connection-refused"`) {
+		t.Fatalf("browser diagnostic = %d, %q", response.Code, response.Body.String())
 	}
 }
 

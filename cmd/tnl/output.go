@@ -154,6 +154,8 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over TLS/TCP",
 			clioutput.Fields(
 				clioutput.Field{Label: "transport", Value: "TLS/TCP"},
+				clioutput.Field{Label: "code", Value: string(failure.TransportFallback)},
+				clioutput.Field{Label: "help", Value: failure.HelpURL(failure.TransportFallback, "")},
 			),
 		)
 	}
@@ -161,7 +163,8 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 	definition, _ := failure.DefinitionFor(failure.TransportFallback)
 	return o.emitLocked(publishEvent{
 		Type: publishEventWarning, Message: definition.Message,
-		Reason:    string(failure.TransportFallback),
+		Reason: string(failure.TransportFallback),
+		Code:   string(failure.TransportFallback), HelpURL: failure.HelpURL(failure.TransportFallback, ""),
 		Retryable: &retryable, PublishRunNumber: publishRunNumber, Transport: transport,
 	})
 }
@@ -270,6 +273,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 						clioutput.Field{Label: "URL", Value: url},
 						clioutput.Field{Label: "reason", Value: presented.message},
 						clioutput.Field{Label: "next step", Value: presented.action},
+						clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
+						clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
 					),
 				)
 			}
@@ -286,6 +291,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 					clioutput.Field{Label: "URL", Value: url},
 					clioutput.Field{Label: "reason", Value: presented.message},
 					clioutput.Field{Label: "next step", Value: presented.action},
+					clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
+					clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
 				),
 			)
 		}
@@ -360,7 +367,11 @@ func (o *publishOutput) logf(format string, arguments ...any) {
 	defer o.mu.Unlock()
 	cause := fmt.Errorf(format, arguments...)
 	presented := presentFailure(failure.Wrap("maintain publisher connection", failure.TransportUnavailable, cause))
-	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(presented.message))
+	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting",
+		clioutput.Text(presented.message),
+		clioutput.Fields(clioutput.Field{Label: "code", Value: string(failure.TransportUnavailable)},
+			clioutput.Field{Label: "help", Value: failure.HelpURL(failure.TransportUnavailable, "")}),
+	)
 }
 
 func (o *publishOutput) integrationURLMessage(state, footer string, blocks ...clioutput.Block) error {
@@ -379,7 +390,10 @@ func (o *publishOutput) failed(err error) error {
 	event := publishEvent{Type: publishEventError, Message: boundedOutputError(err), Reason: string(presented.reason), Retryable: &retryable}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		event.Code = string(code)
-		event.HelpURL = diagnostic.HelpURL(code)
+		event.HelpURL = diagnostic.HelpURLForError(err)
+	} else if helpURL := failure.HelpURL(presented.reason, failure.KnownCase(err)); helpURL != "" {
+		event.Code = string(presented.reason)
+		event.HelpURL = helpURL
 	}
 	var limited *controlclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {

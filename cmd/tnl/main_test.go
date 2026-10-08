@@ -570,7 +570,8 @@ func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	var output bytes.Buffer
 	writeCommandError(&output, clioutput.WrapCommand("tnl team use", failure.Wrap("select team", failure.TeamNotFound, errors.New("team not found"))))
 	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
-		!strings.Contains(got, "team not found") || !strings.HasSuffix(got, "\n\n") {
+		!strings.Contains(got, "team not found") || !strings.Contains(got, "TNL_CLIENT_TEAM_NOT_FOUND") ||
+		!strings.Contains(got, "https://tnl.dev/c/team-not-found") || !strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("error output = %q", got)
 	}
 	output.Reset()
@@ -578,6 +579,26 @@ func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- local service unavailable ") ||
 		!strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("classified error output = %q", got)
+	}
+}
+
+func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
+	for _, entry := range failure.ClientReasons() {
+		var output bytes.Buffer
+		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
+		text := output.String()
+		if !strings.Contains(text, failure.HelpURL(entry.Code, "")) {
+			// each client error must be reachable even when its internal cause is not.
+			t.Fatalf("missing help for %s: %q", entry.Code, text)
+		}
+		if !strings.Contains(text, string(entry.Code)) || strings.Contains(text, "secret-token") {
+			t.Fatalf("unsafe output for %s: %q", entry.Code, text)
+		}
+		for _, line := range strings.Split(text, "\n") {
+			if len(line) > 72 {
+				t.Fatalf("output line exceeds 72 columns for %s: %q", entry.Code, line)
+			}
+		}
 	}
 }
 

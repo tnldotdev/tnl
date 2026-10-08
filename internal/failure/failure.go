@@ -81,6 +81,15 @@ type Definition struct {
 	Message string
 	Action  string
 	Retry   Retry
+	Cases   []Case
+}
+
+// Case is authored, non-sensitive guidance for an identified failure condition.
+type Case struct {
+	ID            string `json:"id"`
+	Description   string `json:"description"`
+	Action        string `json:"action"`
+	DiagramDetail string `json:"diagram_detail"`
 }
 
 // Error keeps internal operation context and the original cause. presentation
