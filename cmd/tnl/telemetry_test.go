@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/demo"
@@ -239,5 +240,67 @@ func TestTypedTelemetryKeepsWireValues(t *testing.T) {
 	}
 	if _, ok := wire["failure_stage"]; ok {
 		t.Fatal("ready report included failure stage")
+	}
+}
+
+func TestIntegrationTelemetryIsTypedPrivateAndOncePerInvocation(t *testing.T) {
+	var mu sync.Mutex
+	var events []telemetryPayload
+	reporter := telemetryReporterFunc(func(event telemetryPayload) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	})
+	invocation, err := newTelemetryInvocation(reporter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			for _, event := range []telemetryPayload{
+				newIntegrationTelemetry(telemetryOAuthReady, ""),
+				newIntegrationTelemetry(telemetryOAuthRedirected, ""),
+				newIntegrationTelemetry(telemetryWebhookReady, telemetryExclusive),
+				newIntegrationTelemetry(telemetryWebhookReached, telemetryFanout),
+			} {
+				invocation.Report(event)
+			}
+		})
+	}
+	workers.Wait()
+	if len(events) != 4 {
+		t.Fatalf("integration events = %d, want four once-only types", len(events))
+	}
+	want := map[telemetryEventName]string{
+		telemetryOAuthReady: "oauth.callback_url.ready", telemetryOAuthRedirected: "oauth.callback.redirected",
+		telemetryWebhookReady: "webhook.endpoint.ready", telemetryWebhookReached: "webhook.delivery.reached_receiver",
+	}
+	for _, event := range events {
+		encoded, err := json.Marshal(event.wireEvent("tev_0123456789abcdefghijkl"))
+		if err != nil || bytes.Contains(encoded, []byte("secret-code")) || bytes.Contains(encoded, []byte("secret-state")) || bytes.Contains(encoded, []byte("stripe")) || bytes.Contains(encoded, []byte("https://")) {
+			t.Fatalf("integration event exposed request data: %s, %v", encoded, err)
+		}
+		var body struct {
+			Name    string          `json:"name"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(encoded, &body); err != nil || body.Name != want[event.Event] {
+			t.Fatalf("integration event = %s, %v", encoded, err)
+		}
+		if event.Event == telemetryOAuthReady || event.Event == telemetryOAuthRedirected {
+			if string(body.Payload) != "{}" {
+				t.Fatalf("OAuth payload = %s", body.Payload)
+			}
+		} else if string(body.Payload) != `{"delivery":"`+string(event.Delivery)+`"}` {
+			t.Fatalf("webhook payload = %s", body.Payload)
+		}
+		if event.InvocationID != invocation.id {
+			t.Fatal("integration event used another invocation ID")
+		}
+		delete(want, event.Event)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing integration events: %v", want)
 	}
 }

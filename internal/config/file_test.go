@@ -206,10 +206,26 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 	}
 }
 
+func TestRequestInspectionModeValid(t *testing.T) {
+	for _, test := range []struct {
+		mode  RequestInspectionMode
+		valid bool
+	}{
+		{RequestInspectionSummary, true},
+		{RequestInspectionDetailed, true},
+		{RequestInspectionMode("all"), false},
+		{"", false},
+	} {
+		if got := test.mode.Valid(); got != test.valid {
+			t.Errorf("mode %q valid = %t, want %t", test.mode, got, test.valid)
+		}
+	}
+}
+
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
-		"yml":  "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
+		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
+		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)

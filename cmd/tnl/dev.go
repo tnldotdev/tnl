@@ -310,11 +310,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishCtx, cancelPublish := context.WithCancel(ctx)
 	defer cancelPublish()
 	if oauth != nil {
-		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, *oauth, tunnel, output)
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, *oauth, tunnel, output, telemetry)
 		defer stopCallbacks()
 	}
 	if len(flags.project.Config.Webhooks) > 0 {
-		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output)
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
 	publishDone := make(chan error, 1)
