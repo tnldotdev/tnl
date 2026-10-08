@@ -53,7 +53,7 @@ type BeginTunnelOptions struct {
 	Target           string
 	Project          string
 	Service          string
-	CallbackHostname string
+	IntegrationGroup string
 }
 
 // Tunnel is the write handle for one local publish or dev invocation.
@@ -98,7 +98,7 @@ type TunnelInfo struct {
 	PublicURL        string        `json:"public_url,omitempty"`
 	Target           string        `json:"target,omitempty"`
 	Framework        string        `json:"framework,omitempty"`
-	CallbackHostname string        `json:"-"`
+	IntegrationGroup string        `json:"-"`
 	StartedAt        time.Time     `json:"started_at"`
 	UpdatedAt        time.Time     `json:"updated_at"`
 	HeartbeatAt      time.Time     `json:"heartbeat_at"`
@@ -130,11 +130,8 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if options.Service != "" && !naming.ValidServiceName(options.Service) {
 		return nil, errors.New("clientstate: invalid tunnel service")
 	}
-	if options.CallbackHostname != "" {
-		canonical, err := naming.CanonicalizeHostname(options.CallbackHostname)
-		if err != nil || canonical != options.CallbackHostname {
-			return nil, failure.Wrap("validate OAuth callback hostname", failure.ProjectConfigInvalid, errors.New("hostname must be canonical"))
-		}
+	if len(options.IntegrationGroup) > 1024 {
+		return nil, failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("integration group exceeds limit"))
 	}
 	if _, err := d.Server(ctx, server); err != nil {
 		return nil, err
@@ -153,7 +150,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
 		ProjectRoot: options.Project, Service: options.Service, Target: options.Target,
-		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(), CallbackHostname: options.CallbackHostname,
+		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(), IntegrationGroup: options.IntegrationGroup,
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
 	}
@@ -165,20 +162,19 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 
 func (t *Tunnel) ID() string { return t.id }
 
-// SetCallbackHostname joins this tunnel to its machine-local callback group.
-func (t *Tunnel) SetCallbackHostname(ctx context.Context, hostname string) error {
-	canonical, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || canonical != hostname {
-		return failure.Wrap("validate OAuth callback hostname", failure.ProjectConfigInvalid, errors.New("hostname must be canonical"))
+// SetIntegrationGroup joins this tunnel to its machine-local project group.
+func (t *Tunnel) SetIntegrationGroup(ctx context.Context, group string) error {
+	if group == "" || len(group) > 1024 {
+		return failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("group must be nonempty and within 1024 bytes"))
 	}
-	count, err := t.database.queries.SetTunnelCallbackHostname(ctx, clientstatedb.SetTunnelCallbackHostnameParams{
-		Hostname: hostname, TunnelID: t.id,
+	count, err := t.database.queries.SetTunnelIntegrationGroup(ctx, clientstatedb.SetTunnelIntegrationGroupParams{
+		IntegrationGroup: group, TunnelID: t.id,
 	})
 	if err != nil {
-		return failure.Wrap("register OAuth callback hostname", failure.ClientStateUnavailable, err)
+		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, err)
 	}
 	if count != 1 {
-		return failure.Wrap("register OAuth callback hostname", failure.ClientStateUnavailable, errors.New("tunnel stopped before callback registration"))
+		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, errors.New("tunnel stopped before registration"))
 	}
 	return nil
 }
@@ -319,7 +315,7 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
 			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
-			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, CallbackHostname: row.CallbackHostname,
+			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, IntegrationGroup: row.IntegrationGroup,
 			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		}

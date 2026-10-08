@@ -65,13 +65,13 @@ tnl:
 	}
 }
 
-func TestServiceProviderOverridesAndAllowAllIPs(t *testing.T) {
+func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
 	all := true
 	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{AllowProviders: []string{"stripe"}, AllowIP: []string{"192.0.2.1"}},
+		Tunnel: &config.Tunnel{AllowIP: []string{"192.0.2.1"}},
 		Services: config.Services{
-			"api":    {Tunnel: &config.Tunnel{AllowProviders: []string{"github"}}},
-			"none":   {Tunnel: &config.Tunnel{AllowProviders: []string{}}},
+			"api":    {Tunnel: &config.Tunnel{AllowIP: []string{"198.51.100.1"}}},
+			"none":   {Tunnel: &config.Tunnel{AllowIP: []string{}}},
 			"public": {Tunnel: &config.Tunnel{AllowAllIPs: &all}},
 		},
 	}}
@@ -80,13 +80,13 @@ func TestServiceProviderOverridesAndAllowAllIPs(t *testing.T) {
 		want []string
 		all  bool
 	}{
-		{"api", []string{"github"}, false},
+		{"api", []string{"198.51.100.1"}, false},
 		{"none", []string{}, false},
 		{"public", nil, true},
 	} {
 		effective, err := project.EffectiveService(test.name)
-		if err != nil || effective.Tunnel == nil || !slices.Equal(effective.Tunnel.AllowProviders, test.want) ||
-			(effective.Tunnel.AllowProviders == nil) != (test.want == nil) ||
+		if err != nil || effective.Tunnel == nil || !slices.Equal(effective.Tunnel.AllowIP, test.want) ||
+			(effective.Tunnel.AllowIP == nil) != (test.want == nil) ||
 			(effective.Tunnel.AllowAllIPs != nil && *effective.Tunnel.AllowAllIPs) != test.all {
 			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
 		}

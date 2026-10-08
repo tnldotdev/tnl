@@ -251,7 +251,7 @@
       "slug": "invalid-tunnel-flags",
       "class": "invalid",
       "message": "tunnel options conflict or contain an invalid value",
-      "action": "check --public-url, --name, --allow-ip, --allow-provider, and --request-limit"
+      "action": "check --public-url, --name, --allow-ip, and --request-limit"
     },
     {
       "code": "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED",

@@ -61,7 +61,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		t.Cleanup(target.Close)
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 			Command: clientstate.TunnelCommandPublish, Server: server, Project: project,
-			Service: name, Target: target.URL, CallbackHostname: oauthHost,
+			Service: name, Target: target.URL, IntegrationGroup: oauthHost,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +69,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
 		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 		config.Hostname = hostname
-		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, tunnel.ID())
+		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, oauthHost, tunnel.ID())
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:

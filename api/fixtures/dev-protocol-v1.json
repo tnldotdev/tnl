@@ -15,6 +15,15 @@
     "project": {
       "namespace": "member.example",
       "dev": true,
+      "webhooks": {
+        "stripe": {
+          "hostname": "hooks-shop-ab1234.member.example",
+          "url": "https://hooks-shop-ab1234.member.example/api/webhooks/stripe",
+          "service": "api",
+          "path": "/api/webhooks/stripe",
+          "methods": ["POST"]
+        }
+      },
       "oauth": {
         "hostname": "oauth-shop-ab1234.member.example",
         "url": "https://oauth-shop-ab1234.member.example"

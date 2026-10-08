@@ -20,7 +20,16 @@ export interface ProjectMetadata {
   readonly namespace: string;
   readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
   readonly oauth?: IntegrationOrigin;
+  readonly webhooks?: Readonly<Record<string, WebhookMetadata | undefined>>;
 }
+
+export interface WebhookMetadata extends IntegrationOrigin {
+  readonly service: string;
+  readonly path: string;
+  readonly methods: readonly WebhookMethod[];
+}
+
+export type WebhookMethod = "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface IntegrationOrigin {
   readonly hostname: string;
@@ -126,15 +135,72 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     oauth = parseIntegrationOrigin(object.oauth, `${description} oauth`);
   }
 
+  let webhooks: Readonly<Record<string, WebhookMetadata | undefined>> | undefined;
+  if (object.webhooks !== undefined) {
+    const values = record(object.webhooks, `${description} webhooks`);
+    if (Object.keys(values).length > 32) throw new TnlError("sdk.runtime_invalid");
+    const parsed: Record<string, WebhookMetadata> = Object.create(null);
+    for (const [name, raw] of Object.entries(values)) {
+      const endpoint = record(raw, `${description} webhook ${name}`);
+      exactKeys(
+        endpoint,
+        ["hostname", "url", "service", "path", "methods"],
+        `${description} webhook ${name}`,
+      );
+      const hostname = requiredHostname(
+        endpoint.hostname,
+        `${description} webhook ${name} hostname`,
+      );
+      if (
+        !validServiceName(name) ||
+        typeof endpoint.path !== "string" ||
+        !validMountPrefix(endpoint.path) ||
+        endpoint.url !== `https://${hostname}${endpoint.path}` ||
+        !(
+          (endpoint.service === "" && entries.length === 0) ||
+          (validServiceName(endpoint.service) && Object.hasOwn(services, endpoint.service))
+        ) ||
+        !Array.isArray(endpoint.methods) ||
+        endpoint.methods.length === 0 ||
+        endpoint.methods.length > 7 ||
+        endpoint.methods.some((value: unknown) => !isWebhookMethod(value)) ||
+        new Set(endpoint.methods).size !== endpoint.methods.length
+      ) {
+        throw new TnlError("sdk.runtime_invalid");
+      }
+      parsed[name] = Object.freeze({
+        hostname,
+        url: endpoint.url as `https://${string}`,
+        path: endpoint.path,
+        service: endpoint.service,
+        methods: Object.freeze(endpoint.methods as WebhookMethod[]),
+      });
+    }
+    webhooks = Object.freeze(parsed);
+  }
+
   return Object.freeze({
     namespace: projectNamespace,
     services: Object.freeze(services),
     ...(oauth === undefined ? {} : { oauth }),
+    ...(webhooks === undefined ? {} : { webhooks }),
   });
 }
 
+function isWebhookMethod(value: unknown): value is WebhookMethod {
+  return (
+    value === "GET" ||
+    value === "HEAD" ||
+    value === "OPTIONS" ||
+    value === "POST" ||
+    value === "PUT" ||
+    value === "PATCH" ||
+    value === "DELETE"
+  );
+}
+
 function optionalCallbackKeys(value: Record<string, unknown>): string[] {
-  return ["oauth"].filter((key) => Object.hasOwn(value, key));
+  return ["oauth", "webhooks"].filter((key) => Object.hasOwn(value, key));
 }
 
 function parseIntegrationOrigin(raw: unknown, description: string): IntegrationOrigin {
@@ -193,6 +259,7 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
       namespace: object.namespace,
       services: object.services,
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
+      ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
     },
     description,
   );
@@ -208,6 +275,7 @@ export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean):
     dev,
     services: project.services,
     ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
+    ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
   });
   if (byteLength(serialized) > maximumRuntimeBytes) {
     throw new TnlError("sdk.runtime_invalid");

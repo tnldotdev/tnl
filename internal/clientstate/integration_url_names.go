@@ -12,28 +12,28 @@ import (
 // IntegrationURLHostname preserves each registered origin across label changes.
 func (d *Database) IntegrationURLHostname(ctx context.Context, server, projectKey, namespace, purpose, proposed string) (string, error) {
 	if projectKey == "" || namespace == "" || !naming.ValidServiceName(purpose) {
-		return "", errors.New("clientstate: callback project, namespace, and purpose are required")
+		return "", errors.New("integration URL project, namespace, and purpose are required")
 	}
 	store, err := d.Server(ctx, server)
 	if err != nil {
 		return "", err
 	}
 	if !validIntegrationURLHostname(proposed, namespace) {
-		return "", errors.New("clientstate: invalid callback hostname")
+		return "", errors.New("invalid integration URL hostname")
 	}
-	if err := d.queries.SaveCallbackHostname(ctx, clientstatedb.SaveCallbackHostnameParams{
+	if err := d.queries.SaveIntegrationURLHostname(ctx, clientstatedb.SaveIntegrationURLHostnameParams{
 		ServerOrigin: store.controlEndpoint, ProjectKey: projectKey, Namespace: namespace, Purpose: purpose, Hostname: proposed,
 	}); err != nil {
-		return "", fmt.Errorf("clientstate: save callback hostname: %w", err)
+		return "", fmt.Errorf("save integration URL hostname: %w", err)
 	}
-	hostname, err := d.queries.GetCallbackHostname(ctx, clientstatedb.GetCallbackHostnameParams{
+	hostname, err := d.queries.GetIntegrationURLHostname(ctx, clientstatedb.GetIntegrationURLHostnameParams{
 		ServerOrigin: store.controlEndpoint, ProjectKey: projectKey, Namespace: namespace, Purpose: purpose,
 	})
 	if err != nil {
-		return "", fmt.Errorf("clientstate: read callback hostname: %w", err)
+		return "", fmt.Errorf("read integration URL hostname: %w", err)
 	}
 	if !validIntegrationURLHostname(hostname, namespace) {
-		return "", errors.New("clientstate: saved callback hostname is invalid")
+		return "", errors.New("saved integration URL hostname is invalid")
 	}
 	return hostname, nil
 }

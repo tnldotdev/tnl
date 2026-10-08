@@ -159,7 +159,7 @@ INSERT INTO local_tunnels (
     heartbeat_at,
     lease_expires_at,
     last_error,
-    callback_hostname
+    integration_group
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(command),
@@ -178,7 +178,7 @@ INSERT INTO local_tunnels (
     sqlc.arg(now),
     sqlc.arg(lease_expires_at),
     '',
-    sqlc.arg(callback_hostname)
+    sqlc.arg(integration_group)
 );
 
 -- name: SetTunnelDevTarget :execrows

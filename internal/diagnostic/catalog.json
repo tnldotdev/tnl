@@ -2,6 +2,58 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_WEBHOOK_UNAVAILABLE",
+      "slug": "webhook-unavailable",
+      "category": "webhook",
+      "title": "webhook receiver unavailable",
+      "summary": "this webhook has no matching ready receiver. start the declared service in a worktree with the same endpoint policy.",
+      "description": "tnl could not select a current local service for the declared webhook endpoint.",
+      "diagram_label": "the webhook has no ready local receiver",
+      "surfaces": ["cli", "browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "provider" },
+        { "label": "tnl", "detail": "no ready receivers", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the declared service is stopped, starting, or no longer has a live tunnel",
+        "worktrees use conflicting endpoint policies"
+      ],
+      "actions": {
+        "publisher": [
+          "start the configured service and check webhook readiness",
+          "use matching path, method, and source-policy declarations across worktrees"
+        ]
+      }
+    },
+    {
+      "code": "TNL_WEBHOOK_DELIVERY_FAILED",
+      "slug": "webhook-delivery-failed",
+      "category": "webhook",
+      "title": "webhook delivery failed",
+      "summary": "a selected webhook receiver failed or timed out. check the worktree's handler before requesting provider redelivery.",
+      "description": "tnl could not obtain successful acknowledgments from every selected webhook receiver.",
+      "diagram_label": "a webhook receiver did not succeed",
+      "surfaces": ["cli", "browser"],
+      "http_status": 502,
+      "flow": [
+        { "label": "provider" },
+        { "label": "tnl", "detail": "receiver did not succeed", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "a selected local service returned a non-2xx response or stopped",
+        "a receiver timed out or returned a conflicting verification response"
+      ],
+      "actions": {
+        "publisher": [
+          "check each selected worktree's webhook handler and signature verification",
+          "handle duplicate event IDs because provider retries can revisit successful receivers"
+        ]
+      }
+    },
+    {
       "code": "TNL_OAUTH_CALLBACK_UNAVAILABLE",
       "slug": "oauth-callback-unavailable",
       "category": "oauth callback",

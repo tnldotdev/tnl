@@ -106,6 +106,7 @@ mutation counters; public URL counters are publish run numbers.
 | **integration URL**              | A project-level public URL for OAuth callbacks or declared webhooks.                                        |
 | **integration URL publisher**    | The elected publisher worker inside a running `tnl` process that serves one integration URL.                |
 | **OAuth callback URL**           | The project's opt-in integration URL registered with OAuth providers for authorization-code callbacks.      |
+| **webhook endpoint**             | A declared exact path, method set, and source policy on a project's webhook integration URL.                |
 | **publish run**                  | One active publication of a public URL, including its number and publisher connections.                     |
 | **publish run number**           | An ever-increasing number for one public URL; each new publish run receives the next number.                |
 | **ephemeral public URL**         | A public URL removed after its tunnel stops instead of remaining available for a later publish run.         |

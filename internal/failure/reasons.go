@@ -171,7 +171,7 @@ var definitions = map[Reason]Definition{
 	},
 	InvalidTunnelFlags: {
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
-		Action: "check --public-url, --name, --allow-ip, --allow-provider, and --request-limit", Retry: RetryAfterChange,
+		Action: "check --public-url, --name, --allow-ip, and --request-limit", Retry: RetryAfterChange,
 	},
 	DemoTargetNotAllowed: {
 		Class: Invalid, Message: "the built-in demo starts its own local service",

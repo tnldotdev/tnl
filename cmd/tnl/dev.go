@@ -172,7 +172,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			flags.PublicURL = service.URL
 		}
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
+	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
 	}
@@ -193,15 +193,23 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	var oauth *projectmeta.IntegrationOrigin
 	var oauthServices publisherServices
-	callbackHostname := ""
 	if flags.project.Config.OAuth {
 		origin, selected, selectErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if selectErr != nil {
 			return selectErr
 		}
 		oauth, oauthServices = &origin, selected
-		callbackHostname = origin.Hostname
 		metadata.OAuth = oauth
+	}
+	integrationGroup := ""
+	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 {
+		integrationGroup = projectIntegrationGroup(flags.project.Project, services.namespace)
+	}
+	if partialReason != "" || metadataErr != nil {
+		metadata.Webhooks, err = projectWebhookMetadata(ctx, state, flags.project.Project, serverURL, metadata)
+		if err != nil {
+			return err
+		}
 	}
 	if flags.project.Found() {
 		write := func() error { return projectmeta.Write(ctx, flags.project.Root, metadata) }
@@ -214,7 +222,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: forcedTarget,
-		Project: flags.projectRoot, Service: flags.Service, CallbackHostname: callbackHostname,
+		Project: flags.projectRoot, Service: flags.Service, IntegrationGroup: integrationGroup,
 	})
 	if err != nil {
 		return err
@@ -287,7 +295,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	output.setFramework(framework)
 	output.setRequestInspection(flags.RequestInspection)
-	output.setIPPolicy(policy)
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
@@ -302,6 +309,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, *oauth, output)
 		defer stopCallbacks()
 	}
+	if len(flags.project.Config.Webhooks) > 0 {
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output)
+		defer stopWebhooks()
+	}
 	publishDone := make(chan error, 1)
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
@@ -313,7 +324,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		publisherConfig.ObserveRequest = requestObservation(recorder)
 		publisherConfig.RequestInspection = flags.RequestInspection
 		if oauth != nil {
-			publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauth.Hostname, tunnel.ID())
+			publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauth.Hostname, integrationGroup, tunnel.ID())
 		}
 		publisherConfig.ControlURL = authenticated.ServerEndpoint
 		publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable

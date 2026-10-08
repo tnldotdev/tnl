@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -30,6 +36,10 @@ func projectIntegrationOrigin(ctx context.Context, state *clientstate.Database, 
 		return projectmeta.IntegrationOrigin{}, err
 	}
 	return projectmeta.IntegrationOrigin{Hostname: hostname, URL: "https://" + hostname}, nil
+}
+
+func projectIntegrationGroup(project projectconfig.Project, namespace string) string {
+	return projectconfig.SharedProjectIdentity(project.Worktree, project.Root) + "\x00" + namespace
 }
 
 // projectOAuthPublisher selects the project domain even when the app service
@@ -80,4 +90,103 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	}
 	go func() { defer close(done); integrationURLPublisher.Maintain(ctx) }()
 	return func() { cancel(); <-done }
+}
+
+func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project projectconfig.Project, tunnel *clientstate.Tunnel, service, group string, output *publishOutput) func() {
+	if len(project.Config.Webhooks) == 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	names := make([]string, 0, len(project.Config.Webhooks))
+	for name, definition := range project.Config.Webhooks {
+		if definition.Service == service {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		cancel()
+		return func() {}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		encoded, _, err := integrationurls.DefinitionBytes(project.Config.Webhooks[name])
+		if err == nil {
+			err = tunnel.RegisterWebhookEndpoint(ctx, name, encoded)
+		}
+		if err != nil {
+			state := "webhook unavailable"
+			message := "webhook " + name + " could not register"
+			if errors.Is(err, clientstate.ErrWebhookPolicyConflict) {
+				state = "webhook policy conflict"
+				message = "webhook " + name + " conflicts with another worktree's endpoint policy"
+			}
+			_ = output.integrationURLMessage(state, "app tunnel continues", clioutput.Text(message))
+		}
+	}
+	hooks, err := projectIntegrationOrigin(ctx, state, project, services.authenticated.ServerEndpoint, services.namespace, "hooks")
+	if err != nil {
+		_ = output.integrationURLMessage("webhooks unavailable", "app tunnel continues", clioutput.Text("the stable webhook origin could not be selected"))
+		cancel()
+		return func() {}
+	}
+	done := make(chan struct{})
+	worker := webhookURLPublisher(state, services, group, hooks, output)
+	go func() { defer close(done); worker.Maintain(ctx) }()
+	return func() { cancel(); <-done }
+}
+
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, output *publishOutput) integrationurls.Publisher {
+	var reportMu sync.Mutex
+	lastReport := time.Time{}
+	failure := func(message string) {
+		reportMu.Lock()
+		defer reportMu.Unlock()
+		if time.Since(lastReport) >= 30*time.Second {
+			lastReport = time.Now()
+			_ = output.integrationURLMessage("webhook unavailable", "app tunnel continues", clioutput.Text(message))
+		}
+	}
+	definitionsAt := func(ctx context.Context) (map[string]config.Webhook, string, error) {
+		definitions, err := state.ActiveWebhookDefinitions(ctx, services.authenticated.ServerEndpoint, group)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(definitions) == 0 {
+			return nil, "", errors.New("no active webhook declarations")
+		}
+		encoded, err := json.Marshal(definitions)
+		if err != nil {
+			return nil, "", err
+		}
+		digest := sha256.Sum256(encoded)
+		return definitions, hex.EncodeToString(digest[:]), nil
+	}
+	return integrationurls.Publisher{
+		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: origin.Hostname,
+		Prepare: func(ctx context.Context) (integrationurls.Snapshot, error) {
+			definitions, revision, err := definitionsAt(ctx)
+			if err != nil {
+				return integrationurls.Snapshot{}, err
+			}
+			handler, prefixes, err := integrationurls.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, origin.Hostname, definitions,
+				func(endpoint, receiver, reason string) { failure(endpoint + " to " + receiver + ": " + reason) })
+			if err != nil {
+				return integrationurls.Snapshot{}, err
+			}
+			config := integrationURLConfig(services, origin.Hostname)
+			config.Handler, config.AllowedIPPrefixes = handler, prefixes
+			return integrationurls.Snapshot{Config: config, Revision: revision}, nil
+		},
+		Revision: func(ctx context.Context) (string, error) {
+			_, revision, err := definitionsAt(ctx)
+			return revision, err
+		},
+		Report: func(event publisher.Event, err error) {
+			if err != nil {
+				failure("the stable webhook publisher could not become ready")
+			} else if event.Type == publisher.EventReady {
+				_ = output.integrationURLMessage("webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: origin.URL}))
+			}
+		},
+	}
 }

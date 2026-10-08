@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +18,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
   requestInspection: "detailed",
-  tunnel: {domain: "routes.example.test", requestLimit: 750, allowProviders: ["stripe", "github"]},
+  tunnel: {domain: "routes.example.test", requestLimit: 750},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {
@@ -46,7 +45,6 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
 		value.Services["site"].Paths["/api"].Service != "api" || !value.Services["site"].Paths["/v1"].StripPrefix ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
-		!slices.Equal(value.Tunnel.AllowProviders, []string{"stripe", "github"}) ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
 		value.Dev == nil || value.Dev.StartupTimeout == nil || value.Dev.StartupTimeout.Value() != 30*time.Second ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||

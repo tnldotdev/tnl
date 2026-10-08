@@ -1,7 +1,7 @@
 {
   "allow_all_ips": "allowAllIPs",
+  "allow_from": "allowFrom",
   "allow_ip": "allowIP",
-  "allow_providers": "allowProviders",
   "public_url": "publicURL",
   "request_inspection": "requestInspection",
   "request_limit": "requestLimit",

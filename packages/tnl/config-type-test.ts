@@ -41,6 +41,20 @@ const mountedServices = {
     api: {},
   },
 } satisfies TnlConfig;
+const integrationConfig = defineConfig({
+  oauth: true,
+  services: { api: {} },
+  webhooks: {
+    payments: {
+      service: "api",
+      path: "/api/webhooks/payments",
+      allowFrom: { providers: ["stripe"], ips: ["198.51.100.0/24"] },
+    },
+    unknownProvider: { service: "api", path: "/hooks/other", allowFrom: "*" },
+  },
+} as const);
+integrationConfig.oauth satisfies true;
+integrationConfig.webhooks.unknownProvider.allowFrom satisfies "*";
 // @ts-expect-error server belongs to the project, not a service.
 ({ server: "https://control.example" }) satisfies NonNullable<TnlConfig["services"]>[string];
 // @ts-expect-error team belongs to the project, not a service.
@@ -65,6 +79,7 @@ defineConfig({ tnld: { role: "relay" } });
 export {
   dynamicConfig,
   exactConfig,
+  integrationConfig,
   literalConfig,
   mountedServices,
   projectScopedSettings,

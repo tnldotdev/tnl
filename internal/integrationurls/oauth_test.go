@@ -36,7 +36,7 @@ func readyTunnel(t *testing.T, state *clientstate.Database, target, hostname str
 	t.Helper()
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: testServer, Target: target,
-		Project: t.TempDir(), Service: "api", CallbackHostname: testOAuthHost,
+		Project: t.TempDir(), Service: "api", IntegrationGroup: testOAuthHost,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 	}
 	for _, label := range []string{"main", "feature"} {
 		tunnel, run := readyTunnel(t, state, "3000", label+".example.test")
-		observer := Observer(state, testServer, testOAuthHost, tunnel.ID())
+		observer := Observer(state, testServer, testOAuthHost, testOAuthHost, tunnel.ID())
 		// the provider returns the existing redirect-URI query followed by its
 		// authorization response; the dispatcher must not duplicate that query.
 		if err := observer(authorizationResponse(label+"-state", "%3Fflow%3Dgithub"), run); err != nil {
@@ -101,7 +101,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 	state, _ := callbackState(t)
 	tunnel, run := readyTunnel(t, state, "3000", "feature.example.test")
-	observe := Observer(state, testServer, testOAuthHost, tunnel.ID())
+	observe := Observer(state, testServer, testOAuthHost, testOAuthHost, tunnel.ID())
 	if err := observe(authorizationResponse("one", ""), run); err == nil {
 		t.Fatal("unready integration URL publisher accepted a login")
 	}
@@ -134,7 +134,7 @@ func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testi
 	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
 		t.Fatal(err)
 	}
-	observe := Observer(state, testServer, testOAuthHost, tunnel.ID())
+	observe := Observer(state, testServer, testOAuthHost, testOAuthHost, tunnel.ID())
 	withoutResponseType := authorizationResponse("provider-without-response-type", "")
 	withoutResponseType.Header.Set("Location", strings.Replace(withoutResponseType.Header.Get("Location"), "response_type=code&", "", 1))
 	if err := observe(withoutResponseType, run); err != nil {
@@ -170,7 +170,7 @@ func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Observer(state, testServer, testOAuthHost, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
+	if err := Observer(state, testServer, testOAuthHost, testOAuthHost, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=one", nil)

@@ -127,7 +127,7 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	base := p.Config
 	result := config.TNL{
 		Server: base.Server, Team: base.Team, RequestInspection: base.RequestInspection,
-		Tunnel: cloneTunnel(base.Tunnel), Publish: clonePublish(base.Publish), Dev: cloneDev(base.Dev),
+		Webhooks: base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: clonePublish(base.Publish), Dev: cloneDev(base.Dev),
 	}
 	if name == "" {
 		return result, nil
@@ -169,15 +169,10 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 		result.AllowIP = slices.Clone(override.AllowIP)
 		result.AllowAllIPs = nil
 	}
-	if override.AllowProviders != nil {
-		result.AllowProviders = slices.Clone(override.AllowProviders)
-		result.AllowAllIPs = nil
-	}
 	if override.AllowAllIPs != nil {
 		result.AllowAllIPs = override.AllowAllIPs
 		if *override.AllowAllIPs {
 			result.AllowIP = nil
-			result.AllowProviders = nil
 		}
 	}
 	if override.Ephemeral != nil {
@@ -229,7 +224,6 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	}
 	result := *value
 	result.AllowIP = slices.Clone(value.AllowIP)
-	result.AllowProviders = slices.Clone(value.AllowProviders)
 	return &result
 }
 

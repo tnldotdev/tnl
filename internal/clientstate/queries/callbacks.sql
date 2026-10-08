@@ -1,15 +1,15 @@
--- name: SaveCallbackHostname :exec
-INSERT INTO callback_hostnames (server_origin, project_key, namespace, purpose, hostname)
+-- name: SaveIntegrationURLHostname :exec
+INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname)
 VALUES (sqlc.arg(server_origin), sqlc.arg(project_key), sqlc.arg(namespace), sqlc.arg(purpose), sqlc.arg(hostname))
 ON CONFLICT DO NOTHING;
 
--- name: GetCallbackHostname :one
-SELECT hostname FROM callback_hostnames
+-- name: GetIntegrationURLHostname :one
+SELECT hostname FROM integration_url_hostnames
 WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
   AND namespace = sqlc.arg(namespace) AND purpose = sqlc.arg(purpose);
 
--- name: SetTunnelCallbackHostname :execrows
-UPDATE local_tunnels SET callback_hostname = sqlc.arg(hostname)
+-- name: SetTunnelIntegrationGroup :execrows
+UPDATE local_tunnels SET integration_group = sqlc.arg(integration_group)
 WHERE id = sqlc.arg(tunnel_id) AND stopped_at IS NULL;
 
 -- name: ExpireOAuthCallbacks :exec
@@ -25,7 +25,7 @@ SELECT t.server_origin, sqlc.arg(hostname), sqlc.arg(state_digest), t.id,
     t.public_url_id, t.publish_run_number
 FROM local_tunnels t
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-  AND t.callback_hostname = sqlc.arg(hostname) AND t.state = 'ready'
+  AND t.integration_group = sqlc.arg(integration_group) AND t.state = 'ready'
   AND t.public_url_id = sqlc.arg(public_url_id) AND t.publish_run_number = sqlc.arg(publish_run_number)
   AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
   AND (SELECT count(*) FROM oauth_callbacks WHERE server_origin = sqlc.arg(server_origin)

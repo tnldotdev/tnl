@@ -37,31 +37,6 @@ func (q *Queries) ExpireOAuthCallbacks(ctx context.Context, now int64) error {
 	return err
 }
 
-const getCallbackHostname = `-- name: GetCallbackHostname :one
-SELECT hostname FROM callback_hostnames
-WHERE server_origin = ?1 AND project_key = ?2
-  AND namespace = ?3 AND purpose = ?4
-`
-
-type GetCallbackHostnameParams struct {
-	ServerOrigin string
-	ProjectKey   string
-	Namespace    string
-	Purpose      string
-}
-
-func (q *Queries) GetCallbackHostname(ctx context.Context, arg GetCallbackHostnameParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getCallbackHostname,
-		arg.ServerOrigin,
-		arg.ProjectKey,
-		arg.Namespace,
-		arg.Purpose,
-	)
-	var hostname string
-	err := row.Scan(&hostname)
-	return hostname, err
-}
-
 const getCurrentOAuthCallback = `-- name: GetCurrentOAuthCallback :one
 SELECT c.callback_path, c.callback_query, t.id AS tunnel_id, t.hostname, t.public_url_id, t.publish_run_number
 FROM oauth_callbacks c JOIN local_tunnels t ON t.id = c.tunnel_id
@@ -109,13 +84,38 @@ func (q *Queries) GetCurrentOAuthCallback(ctx context.Context, arg GetCurrentOAu
 	return i, err
 }
 
-const saveCallbackHostname = `-- name: SaveCallbackHostname :exec
-INSERT INTO callback_hostnames (server_origin, project_key, namespace, purpose, hostname)
+const getIntegrationURLHostname = `-- name: GetIntegrationURLHostname :one
+SELECT hostname FROM integration_url_hostnames
+WHERE server_origin = ?1 AND project_key = ?2
+  AND namespace = ?3 AND purpose = ?4
+`
+
+type GetIntegrationURLHostnameParams struct {
+	ServerOrigin string
+	ProjectKey   string
+	Namespace    string
+	Purpose      string
+}
+
+func (q *Queries) GetIntegrationURLHostname(ctx context.Context, arg GetIntegrationURLHostnameParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getIntegrationURLHostname,
+		arg.ServerOrigin,
+		arg.ProjectKey,
+		arg.Namespace,
+		arg.Purpose,
+	)
+	var hostname string
+	err := row.Scan(&hostname)
+	return hostname, err
+}
+
+const saveIntegrationURLHostname = `-- name: SaveIntegrationURLHostname :exec
+INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname)
 VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT DO NOTHING
 `
 
-type SaveCallbackHostnameParams struct {
+type SaveIntegrationURLHostnameParams struct {
 	ServerOrigin string
 	ProjectKey   string
 	Namespace    string
@@ -123,8 +123,8 @@ type SaveCallbackHostnameParams struct {
 	Hostname     string
 }
 
-func (q *Queries) SaveCallbackHostname(ctx context.Context, arg SaveCallbackHostnameParams) error {
-	_, err := q.db.ExecContext(ctx, saveCallbackHostname,
+func (q *Queries) SaveIntegrationURLHostname(ctx context.Context, arg SaveIntegrationURLHostnameParams) error {
+	_, err := q.db.ExecContext(ctx, saveIntegrationURLHostname,
 		arg.ServerOrigin,
 		arg.ProjectKey,
 		arg.Namespace,
@@ -144,9 +144,9 @@ SELECT t.server_origin, ?1, ?2, t.id,
     t.public_url_id, t.publish_run_number
 FROM local_tunnels t
 WHERE t.id = ?6 AND t.server_origin = ?7
-  AND t.callback_hostname = ?1 AND t.state = 'ready'
-  AND t.public_url_id = ?8 AND t.publish_run_number = ?9
-  AND t.stopped_at IS NULL AND t.lease_expires_at > ?10
+  AND t.integration_group = ?8 AND t.state = 'ready'
+  AND t.public_url_id = ?9 AND t.publish_run_number = ?10
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?11
   AND (SELECT count(*) FROM oauth_callbacks WHERE server_origin = ?7
        AND hostname = ?1) < 1024
 ON CONFLICT DO NOTHING
@@ -160,6 +160,7 @@ type SaveOAuthCallbackParams struct {
 	ExpiresAt        int64
 	TunnelID         string
 	ServerOrigin     string
+	IntegrationGroup string
 	PublicURLID      string
 	PublishRunNumber int64
 	Now              int64
@@ -174,6 +175,7 @@ func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackPa
 		arg.ExpiresAt,
 		arg.TunnelID,
 		arg.ServerOrigin,
+		arg.IntegrationGroup,
 		arg.PublicURLID,
 		arg.PublishRunNumber,
 		arg.Now,
@@ -184,18 +186,18 @@ func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackPa
 	return result.RowsAffected()
 }
 
-const setTunnelCallbackHostname = `-- name: SetTunnelCallbackHostname :execrows
-UPDATE local_tunnels SET callback_hostname = ?1
+const setTunnelIntegrationGroup = `-- name: SetTunnelIntegrationGroup :execrows
+UPDATE local_tunnels SET integration_group = ?1
 WHERE id = ?2 AND stopped_at IS NULL
 `
 
-type SetTunnelCallbackHostnameParams struct {
-	Hostname string
-	TunnelID string
+type SetTunnelIntegrationGroupParams struct {
+	IntegrationGroup string
+	TunnelID         string
 }
 
-func (q *Queries) SetTunnelCallbackHostname(ctx context.Context, arg SetTunnelCallbackHostnameParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelCallbackHostname, arg.Hostname, arg.TunnelID)
+func (q *Queries) SetTunnelIntegrationGroup(ctx context.Context, arg SetTunnelIntegrationGroupParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setTunnelIntegrationGroup, arg.IntegrationGroup, arg.TunnelID)
 	if err != nil {
 		return 0, err
 	}

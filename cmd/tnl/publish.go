@@ -123,11 +123,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowProvider, flags.AllowAllIPs)
+	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
 	}
-	output.setIPPolicy(policy)
 	if policy.current != "" {
 		if err := output.currentIP(policy.current); err != nil {
 			return err
@@ -151,7 +150,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if !flags.Demo && flags.project.Config.OAuth {
+	integrationGroup := ""
+	if !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0) {
 		if flags.project.Root == "" {
 			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 			if resolveErr != nil {
@@ -159,16 +159,23 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			}
 			flags.project.Project = projectconfig.Project{Root: flags.projectRoot, Worktree: worktree}
 		}
+		integrationGroup = projectIntegrationGroup(flags.project.Project, services.namespace)
+		if err := tunnel.SetIntegrationGroup(ctx, integrationGroup); err != nil {
+			return err
+		}
+	}
+	if !flags.Demo && flags.project.Config.OAuth {
 		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if err := tunnel.SetCallbackHostname(ctx, oauth.Hostname); err != nil {
-			return err
-		}
 		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, output)
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
+	}
+	if !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output)
+		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
@@ -179,7 +186,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.ObserveRequest = requestObservation(recorder)
 	publisherConfig.RequestInspection = flags.RequestInspection
 	if oauthHostname != "" {
-		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, tunnel.ID())
+		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
 	}
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable

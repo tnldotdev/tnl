@@ -160,6 +160,26 @@ func renderDeclarations(metadata Metadata) []byte {
 	if metadata.OAuth != nil {
 		writeOriginDeclaration(&output, "    ", *metadata.OAuth)
 	}
+	if len(metadata.Webhooks) != 0 {
+		output.WriteString("    readonly webhooks: {\n")
+		names := make([]string, 0, len(metadata.Webhooks))
+		for name := range metadata.Webhooks {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			endpoint := metadata.Webhooks[name]
+			output.WriteString("      readonly " + typeScriptPropertyName(name) + ": { readonly hostname: " + typeScriptString(endpoint.Hostname) + "; readonly url: " + typeScriptString(endpoint.URL) + "; readonly service: " + typeScriptString(endpoint.Service) + "; readonly path: " + typeScriptString(endpoint.Path) + "; readonly methods: readonly [")
+			for index, method := range endpoint.Methods {
+				if index != 0 {
+					output.WriteString(", ")
+				}
+				output.WriteString(typeScriptString(method))
+			}
+			output.WriteString("]; };\n")
+		}
+		output.WriteString("    };\n")
+	}
 	output.WriteString("  }\n}\n")
 	return []byte(output.String())
 }

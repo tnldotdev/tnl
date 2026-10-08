@@ -2,6 +2,84 @@
   "version": 1,
   "cases": [
     {
+      "name": "stable webhook origin with exact path",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 1,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks-shop-ab1234.member.example",
+            "url": "https://hooks-shop-ab1234.member.example/api/webhooks/stripe",
+            "service": "api",
+            "path": "/api/webhooks/stripe",
+            "methods": ["POST"]
+          }
+        }
+      }
+    },
+    {
+      "name": "webhook URL differs from hostname",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 1,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks-shop-ab1234.member.example",
+            "url": "https://other.example/api/webhooks/stripe",
+            "service": "api",
+            "path": "/api/webhooks/stripe",
+            "methods": ["POST"]
+          }
+        }
+      }
+    },
+    {
+      "name": "webhook methods are unique",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 1,
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks-shop-ab1234.member.example",
+            "url": "https://hooks-shop-ab1234.member.example/api/webhooks/stripe",
+            "service": "api",
+            "path": "/api/webhooks/stripe",
+            "methods": ["POST", "POST"]
+          }
+        }
+      }
+    },
+    {
       "name": "shared oauth origin and service context",
       "valid": true,
       "metadata": {

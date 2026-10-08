@@ -1,9 +1,9 @@
 -- +goose Up
-ALTER TABLE local_tunnels ADD COLUMN callback_hostname TEXT NOT NULL DEFAULT '';
-CREATE INDEX local_tunnels_callback_idx ON local_tunnels (callback_hostname, lease_expires_at)
+ALTER TABLE local_tunnels ADD COLUMN integration_group TEXT NOT NULL DEFAULT '';
+CREATE INDEX local_tunnels_integration_group_idx ON local_tunnels (integration_group, lease_expires_at)
     WHERE stopped_at IS NULL;
 
-CREATE TABLE callback_hostnames (
+CREATE TABLE integration_url_hostnames (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     project_key TEXT NOT NULL,
     namespace TEXT NOT NULL,
@@ -28,6 +28,6 @@ CREATE INDEX oauth_callbacks_expiry_idx ON oauth_callbacks (expires_at);
 
 -- +goose Down
 DROP TABLE oauth_callbacks;
-DROP TABLE callback_hostnames;
-DROP INDEX local_tunnels_callback_idx;
-ALTER TABLE local_tunnels DROP COLUMN callback_hostname;
+DROP TABLE integration_url_hostnames;
+DROP INDEX local_tunnels_integration_group_idx;
+ALTER TABLE local_tunnels DROP COLUMN integration_group;

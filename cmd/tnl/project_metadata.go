@@ -164,10 +164,38 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		}
 		metadata.ServiceDirectories[name] = relative
 	}
+	metadata.Webhooks, err = projectWebhookMetadata(ctx, r.state, r.project.Project, server, metadata)
+	if err != nil {
+		return projectmeta.Metadata{}, err
+	}
 	if err := metadata.Validate(); err != nil {
 		return projectmeta.Metadata{}, err
 	}
 	return metadata, nil
+}
+
+func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server string, metadata projectmeta.Metadata) (map[string]projectmeta.Webhook, error) {
+	result := map[string]projectmeta.Webhook{}
+	for name, definition := range project.Config.Webhooks {
+		namespace := metadata.Namespace
+		if definition.Service != "" {
+			service, found := metadata.Services[definition.Service]
+			if !found {
+				continue
+			}
+			namespace = service.Namespace
+		}
+		origin, err := projectIntegrationOrigin(ctx, state, project, server, namespace, "hooks")
+		if err != nil {
+			return nil, err
+		}
+		methods := slices.Clone(definition.Methods)
+		if len(methods) == 0 {
+			methods = []string{"POST"}
+		}
+		result[name] = projectmeta.Webhook{Hostname: origin.Hostname, URL: origin.URL + definition.Path, Service: definition.Service, Path: definition.Path, Methods: methods}
+	}
+	return result, nil
 }
 
 func configuredProjectService(

@@ -332,7 +332,7 @@ function parseProjectDocumentValue(
       "serviceDirectories",
       "services",
       "version",
-      ...["oauth"].filter((key) => Object.hasOwn(object, key)),
+      ...["oauth", "webhooks"].filter((key) => Object.hasOwn(object, key)),
     ],
     description,
   );
@@ -350,6 +350,7 @@ function parseProjectDocumentValue(
       namespace: object.namespace,
       services: object.services,
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
+      ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
     },
     description,
   );
@@ -382,6 +383,7 @@ function projectMetadata(document: ProjectDocument): ProjectMetadata {
     namespace: document.namespace,
     services: document.services,
     ...(document.oauth === undefined ? {} : { oauth: document.oauth }),
+    ...(document.webhooks === undefined ? {} : { webhooks: document.webhooks }),
   });
 }
 

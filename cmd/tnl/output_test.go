@@ -15,7 +15,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 func TestPublishOutputNDJSONLifecycle(t *testing.T) {
@@ -24,7 +23,6 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output.setIPPolicy(resolvedIPPolicy{prefixes: []string{"192.0.2.1/32"}, sources: []webhookips.Source{{Name: "github", Prefixes: []string{"192.0.2.1/32"}}}})
 	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
@@ -209,44 +207,6 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 		!strings.Contains(stderr.String(), "tnl login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
-	}
-}
-
-func TestPublishOutputSummarizesLargeProviderPolicy(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	output, err := newPublishOutput("human", "tnl dev", &stdout, &stderr, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output.setIPPolicy(resolvedIPPolicy{
-		prefixes: make([]string, 12345),
-		sources: []webhookips.Source{
-			{Name: "github", Prefixes: make([]string, 1024)},
-			{Name: "stripe", Prefixes: make([]string, 15)},
-		},
-	})
-	if err := output.starting("tunnel_123", "http://127.0.0.1:3000"); err != nil {
-		t.Fatal(err)
-	}
-	if err := output.currentIP("192.0.2.1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := output.ready("https://example.test", 1); err != nil {
-		t.Fatal(err)
-	}
-	got := stderr.String()
-	for _, value := range []string{"github webhook IPs", "1024 prefixes", "stripe webhook IPs", "15 prefixes", "allowed IP prefixes", "12345"} {
-		if !strings.Contains(got, value) {
-			t.Fatalf("ready frame omitted %q: %s", value, got)
-		}
-	}
-	if len(strings.Split(got, "\n")) > 25 || stdout.Len() != 0 {
-		t.Fatalf("provider summary was not compact: %s", got)
-	}
-	for _, line := range strings.Split(got, "\n") {
-		if len(line) > 72 {
-			t.Fatalf("ready frame line is %d columns: %q", len(line), line)
-		}
 	}
 }
 
