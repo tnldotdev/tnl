@@ -98,46 +98,6 @@ type telemetryReporter interface {
 
 type telemetryReporterFactory func(string) telemetryReporter
 
-type telemetryEventID string
-
-type telemetryWireEvent struct {
-	EventID      telemetryEventID `json:"event_id"`
-	InvocationID string           `json:"invocation_id"`
-	OccurredAt   time.Time        `json:"occurred_at"`
-	Name         string           `json:"name"`
-	EventVersion int              `json:"event_version"`
-	Payload      any              `json:"payload"`
-}
-
-func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEvent {
-	event := telemetryWireEvent{EventID: id, InvocationID: payload.InvocationID,
-		OccurredAt: time.Now().UTC(), EventVersion: 1}
-	switch payload.Event {
-	case telemetryCommandStarted, telemetryCommandCompleted, telemetryCommandFailed:
-		event.Name = "command." + strings.TrimPrefix(string(payload.Event), "command_")
-		command := struct {
-			Command        telemetryTrackedCommand `json:"command"`
-			FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
-			DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
-		}{payload.Command, payload.FailureStage, payload.DiagnosticCode}
-		event.Payload = command
-	case telemetryPublishRunStarted:
-		event.Name = "tunnel.ready"
-		event.Payload = struct {
-			Source      telemetryTrackedCommand `json:"source"`
-			ServerKind  telemetryServerKind     `json:"server_kind"`
-			Framework   telemetryFrameworkName  `json:"framework,omitempty"`
-			PublishMode telemetryPublishMode    `json:"publish_mode,omitempty"`
-		}{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}
-	case telemetryDemoPingReceived:
-		event.Name = "demo.first_ping"
-		event.Payload = struct {
-			PublishMode telemetryPublishMode `json:"publish_mode"`
-		}{telemetryPublishDemo}
-	}
-	return event
-}
-
 type telemetryInvocation struct {
 	reporter telemetryReporter
 	id       string
@@ -232,7 +192,7 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 		return
 	}
 	event := payload.wireEvent(telemetryEventID(id))
-	if event.Name == "" {
+	if event == nil {
 		return
 	}
 	encoded, err := json.Marshal(event)
@@ -285,22 +245,9 @@ func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 	for _, item := range pending {
 		events = append(events, item.JSON)
 	}
-	body, err := json.Marshal(struct {
-		SchemaVersion  int    `json:"schema_version"`
-		InstallationID string `json:"installation_id"`
-		Client         struct {
-			Version string `json:"version"`
-			OS      string `json:"os"`
-			Arch    string `json:"arch"`
-			CI      bool   `json:"ci"`
-		} `json:"client"`
-		Events []json.RawMessage `json:"events"`
-	}{1, installationID, struct {
-		Version string `json:"version"`
-		OS      string `json:"os"`
-		Arch    string `json:"arch"`
-		CI      bool   `json:"ci"`
-	}{buildinfo.Version, runtime.GOOS, runtime.GOARCH, os.Getenv("CI") != ""}, events})
+	body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
+		Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
+		Events: events})
 	if err != nil {
 		return
 	}
@@ -309,7 +256,7 @@ func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "")
+	request.Header.Set("User-Agent", "tnl")
 	response, err := r.client.Do(request)
 	if err == nil {
 		_ = response.Body.Close()
