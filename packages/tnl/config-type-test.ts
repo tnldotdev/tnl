@@ -3,6 +3,7 @@ import {
   type TnlConfig,
   type TnlConfigContext,
   type TnlConfigInput,
+  type TnlConfigForServices,
 } from "@tnldotdev/tnl/config";
 
 const staticConfig = {
@@ -81,6 +82,49 @@ const aliasFactory = defineConfig(async ({ worktree }) => ({
   },
   aliases: { review: { service: "web" } },
 }));
+type AliasFactoryResult = Awaited<ReturnType<typeof aliasFactory>>;
+declare const aliasFactoryResult: AliasFactoryResult;
+if (aliasFactoryResult.aliases?.review) {
+  aliasFactoryResult.aliases.review.service satisfies "api" | "web";
+}
+
+// the generated TnlConfig describes the file shape. provide known names when
+// checking a plain object without defineConfig's service-key inference.
+const explicitServices = {
+  services: { api: {}, web: { paths: { "/api": "api" } } },
+  aliases: { review: { service: "web" } },
+  webhooks: { hook: { service: "api", path: "/hook", allowFrom: "*" } },
+} satisfies TnlConfigForServices<"api" | "web">;
+({
+  services: { api: {} },
+  aliases: {
+    review: {
+      // @ts-expect-error "missing" is not assignable to configured service "api".
+      service: "missing",
+    },
+  },
+}) satisfies TnlConfigForServices<"api">;
+({
+  services: { api: {} },
+  webhooks: {
+    hook: {
+      // @ts-expect-error "missing" is not assignable to configured service "api".
+      service: "missing",
+      path: "/hook",
+      allowFrom: "*",
+    },
+  },
+}) satisfies TnlConfigForServices<"api">;
+({
+  services: {
+    api: {
+      paths: {
+        // @ts-expect-error "missing" is not assignable to configured service "api".
+        "/other": "missing",
+      },
+    },
+  },
+}) satisfies TnlConfigForServices<"api">;
 // @ts-expect-error aliases reference a configured entry service.
 defineConfig({ services: { api: {} }, aliases: { review: { service: "missing" } } });
 defineConfig({
@@ -98,6 +142,16 @@ defineConfig({ services: { api: { paths: { "/api": "api" } } } });
 defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
 // @ts-expect-error async factory returns retain service-reference checks.
 defineConfig(async () => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
+// @ts-expect-error factory webhook references must match service keys too.
+defineConfig(() => ({
+  services: { api: {} },
+  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+}));
+// @ts-expect-error async factory webhook references must match service keys too.
+defineConfig(async () => ({
+  services: { api: {} },
+  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+}));
 // @ts-expect-error factory string mounts retain service-reference checks.
 defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": "missing" } } } }));
 // @ts-expect-error factory object mounts retain service-reference checks.
@@ -129,6 +183,7 @@ export {
   dynamicConfig,
   exactConfig,
   integrationConfig,
+  explicitServices,
   literalConfig,
   mountedServices,
   projectScopedSettings,

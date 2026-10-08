@@ -6,16 +6,13 @@ type ServiceNames<Config> = Config extends { readonly services: infer Services }
   ? Extract<keyof Services, string>
   : never;
 
-type ObjectReference<Names> = { readonly service: Names };
+type ObjectReference<Names extends string> = { readonly service: Names };
+type WebhookService<Names extends string> = [Names] extends [never] ? "" : Names;
 
 type TargetReferences<Config> = {
   [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
     [Name in keyof Config[Field]]: ObjectReference<
-      Field extends "webhooks"
-        ? [ServiceNames<Config>] extends [never]
-          ? ""
-          : ServiceNames<Config>
-        : ServiceNames<Config>
+      Field extends "webhooks" ? WebhookService<ServiceNames<Config>> : ServiceNames<Config>
     >;
   };
 } & {
@@ -36,9 +33,15 @@ type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
 
-// infer names from service keys only, then contextually type factory references.
-// this avoids widening a returned literal service name to an unchecked string.
-type FactoryConfig<Names extends string> = Omit<TnlConfig, "services" | "aliases" | "webhooks"> & {
+/**
+ * project configuration whose service references are restricted to Names.
+ * the generated TnlConfig describes the file shape, so its service fields are
+ * strings; use defineConfig to infer Names from the configured service keys.
+ */
+export type TnlConfigForServices<Names extends string> = Omit<
+  TnlConfig,
+  "services" | "aliases" | "webhooks"
+> & {
   services?: {
     [Name in Names]: Omit<Service, "paths"> & {
       paths?: Record<
@@ -52,19 +55,20 @@ type FactoryConfig<Names extends string> = Omit<TnlConfig, "services" | "aliases
     };
   };
   aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
-  webhooks?: Record<
-    string,
-    Omit<Webhook, "service"> & { service: NoInfer<Names> | ([Names] extends [never] ? "" : never) }
-  >;
+  webhooks?: Record<string, Omit<Webhook, "service"> & { service: NoInfer<WebhookService<Names>> }>;
 };
 
-/** checks literal service references while preserving the config or factory type. */
+/** infer service keys and reject unknown alias, webhook, or path-mount references. */
 export function defineConfig<const Config extends TnlConfig>(
   config: Config & NoInfer<TargetReferences<Config>>,
 ): Config;
 export function defineConfig<const Names extends string = never>(
-  config: (context: TnlConfigContext) => FactoryConfig<Names> | Promise<FactoryConfig<Names>>,
-): (context: TnlConfigContext) => FactoryConfig<Names> | Promise<FactoryConfig<Names>>;
+  config: (
+    context: TnlConfigContext,
+  ) => TnlConfigForServices<Names> | Promise<TnlConfigForServices<Names>>,
+): (
+  context: TnlConfigContext,
+) => TnlConfigForServices<Names> | Promise<TnlConfigForServices<Names>>;
 export function defineConfig(config: TnlConfigInput): TnlConfigInput {
   return config;
 }
