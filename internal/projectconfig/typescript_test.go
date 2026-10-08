@@ -53,6 +53,63 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesProjectImportsAndTsconfigPaths(t *testing.T) {
+	root := t.TempDir()
+	api := filepath.Join(root, "apps", "api")
+	for _, directory := range []string{
+		filepath.Join(api, "src", "api"),
+		filepath.Join(api, "node_modules", "nested-package"),
+		filepath.Join(root, "node_modules", "example-package"),
+	} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, source := range map[string]string{
+		filepath.Join(root, "tnl.config.ts"):                                 `import {server} from "./apps/api/settings.ts"; export default {server};`,
+		filepath.Join(api, "settings.ts"):                                    `import {domain} from "@/api/errors"; import {origin} from "example-package"; import {subdomain} from "nested-package"; export const server: string = origin + subdomain + domain;`,
+		filepath.Join(api, "src", "api", "errors.ts"):                        `export const domain = "example.com";`,
+		filepath.Join(api, "node_modules", "nested-package", "package.json"): `{"name":"nested-package","version":"1.0.0","type":"module","exports":"./index.js"}`,
+		filepath.Join(api, "node_modules", "nested-package", "index.js"):     `export const subdomain = "api.";`,
+		filepath.Join(root, "tsconfig.json"):                                 `{"compilerOptions":{"strict":true}}`,
+		filepath.Join(root, "tsconfig.base.json"): `{// paths are relative to this file
+  "compilerOptions":{"baseUrl":".","paths":{"@/*":["./apps/api/src/*",],}},}`,
+		filepath.Join(api, "tsconfig.json"):                                    `{"extends":"../../tsconfig.base.json"}`,
+		filepath.Join(root, "node_modules", "example-package", "package.json"): `{"name":"example-package","version":"1.0.0","type":"module","exports":"./index.js"}`,
+		filepath.Join(root, "node_modules", "example-package", "index.js"):     `export const origin = "https://";`,
+	} {
+		if err := os.WriteFile(name, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	value, err := loadTypeScript(t.Context(), filepath.Join(root, "tnl.config.ts"), root, Worktree{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Server == nil || *value.Server != "https://api.example.com" {
+		t.Fatalf("server = %v", value.Server)
+	}
+	if outputs, err := filepath.Glob(filepath.Join(root, ".tnl-config-*.mjs")); err != nil || len(outputs) != 0 {
+		t.Fatalf("temporary bundles after loading: %v, %v", outputs, err)
+	}
+}
+
+func TestLoadDoesNotExposeBuildErrors(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tnl.config.ts")
+	const secret = "PROJECT_CONFIG_SECRET_SENTINEL"
+	if err := os.WriteFile(path, []byte(`import {value} from "./`+secret+`.ts"; export default {server: value};`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadTypeScript(t.Context(), path, root, Worktree{})
+	if err == nil || !strings.Contains(err.Error(), "failed to import tnl.config.ts") || strings.Contains(err.Error(), secret) {
+		t.Fatalf("build error = %v", err)
+	}
+	if outputs, err := filepath.Glob(filepath.Join(root, ".tnl-config-*.mjs")); err != nil || len(outputs) != 0 {
+		t.Fatalf("temporary bundles after build failure: %v, %v", outputs, err)
+	}
+}
+
 func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 	for field, source := range map[string]string{
 		"version":         `export default {version: 1};`,
