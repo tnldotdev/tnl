@@ -102,7 +102,7 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 }
 
 func (m *Metrics) ObserveCertificateOrder(domainKind, plan string) {
-	if m == nil || domainKind != "managed" && domainKind != "claimed" || plan != "exact" && plan != "wildcard" {
+	if m == nil || domainKind != "managed" && domainKind != "custom" || plan != "exact" && plan != "wildcard" {
 		return
 	}
 	m.certificateOrders.WithLabelValues(domainKind, plan).Inc()

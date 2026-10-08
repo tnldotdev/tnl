@@ -113,7 +113,7 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	}
 	managedDomain, err := queries.FindManagedDomain(ctx)
 	if err != nil {
-		return Team{}, fmt.Errorf("controlstate: create team: read managed deployment domain: %w", err)
+		return Team{}, fmt.Errorf("controlstate: create team: read managed domain: %w", err)
 	}
 	// reserve the team name in the generated-label pool so a future personal
 	// team cannot receive the same name.

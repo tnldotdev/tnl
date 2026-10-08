@@ -40,7 +40,7 @@ type teamUseCommand struct {
 type teamCreateCommand struct {
 	remoteFlags `embed:""`
 	Name        string `arg:"" name:"name" required:"" help:"Unique, permanent lowercase DNS label for the team."`
-	MemberSlug  string `name:"member-slug" help:"Creator's immutable claimed-domain label; defaults to one derived from your identity name."`
+	MemberSlug  string `name:"member-slug" help:"Creator's immutable custom-domain label; defaults to one derived from your identity name."`
 }
 
 type teamMembersCommand struct {

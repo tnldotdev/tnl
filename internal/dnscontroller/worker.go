@@ -31,7 +31,7 @@ type Zone struct {
 type PublicURLRecord struct {
 	ZoneID               string
 	ZoneDomain           string
-	ClaimedZone          bool
+	CustomZone           bool
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
@@ -43,8 +43,8 @@ type PublicURLRecord struct {
 }
 
 type Provider interface {
-	EnsureClaimedZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
-	ReleaseClaimedZone(context.Context, controlstate.DNSAuthorityWork) error
+	EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
+	ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error
 	PublishPublicURL(context.Context, PublicURLRecord) (Zone, error)
 	RemovePublicURL(context.Context, PublicURLRecord) (Zone, error)
 }

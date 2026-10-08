@@ -203,31 +203,28 @@ not _inbox_, for the collection of threads.
 
 ## teams and domains
 
-| Term                               | Definition                                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **team**                           | The stored ownership and authorization boundary for domains and public URLs.                                     |
-| **team name**                      | A stable, server-unique lowercase DNS label that selects a team in project configuration and the CLI.            |
-| **personal team**                  | The permanent, single-owner team created for each identity.                                                      |
-| **organization team**              | A team created for collaboration among multiple identities.                                                      |
-| **membership**                     | The relationship between an identity and a team, including team role and immutable member slug.                  |
-| **invitation**                     | A time-limited offer to create a membership with a reserved member slug and initial team role.                   |
-| **member slug**                    | A team-unique, immutable DNS label chosen or derived when a membership is created and used with claimed domains. |
-| **managed label**                  | A server-generated, immutable DNS label used with the managed deployment domain.                                 |
-| **namespace**                      | A complete hostname built from a membership and domain.                                                          |
-| **managed deployment domain**      | A server-controlled domain beneath which namespaces are generated.                                               |
-| **custom domain**                  | A domain added by a team and assigned exclusively to it after DNS authority verification.                        |
-| **team domain**                    | A managed deployment domain or claimed domain available to one team.                                             |
-| **default domain**                 | The ready team domain used when a command does not select another domain.                                        |
-| **DNS authority**                  | State control uses to manage public URL DNS beneath one claimed domain.                                          |
-| **shared public URL**              | A team-owned public URL outside individual namespaces.                                                           |
-| **public URL scope**               | Whether a public URL belongs to one membership or to the team collectively.                                      |
-| **maintenance control**            | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance.         |
-| **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                         |
+| Term                               | Definition                                                                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **team**                           | The stored ownership and authorization boundary for domains and public URLs.                                    |
+| **team name**                      | A stable, server-unique lowercase DNS label that selects a team in project configuration and the CLI.           |
+| **personal team**                  | The permanent, single-owner team created for each identity.                                                     |
+| **organization team**              | A team created for collaboration among multiple identities.                                                     |
+| **membership**                     | The relationship between an identity and a team, including team role and immutable member slug.                 |
+| **invitation**                     | A time-limited offer to create a membership with a reserved member slug and initial team role.                  |
+| **member slug**                    | A team-unique, immutable DNS label chosen or derived when a membership is created and used with custom domains. |
+| **managed label**                  | A server-generated, immutable DNS label used with the managed domain.                                           |
+| **namespace**                      | A complete hostname built from a membership and domain.                                                         |
+| **managed domain**                 | A server-controlled domain beneath which namespaces are generated.                                              |
+| **custom domain**                  | A domain added by a team and assigned exclusively to it after DNS authority verification.                       |
+| **team domain**                    | A managed domain or custom domain available to one team.                                                        |
+| **default domain**                 | The ready team domain used when a command does not select another domain.                                       |
+| **DNS authority**                  | State control uses to manage public URL DNS beneath one custom domain.                                          |
+| **shared public URL**              | A team-owned public URL outside individual namespaces.                                                          |
+| **public URL scope**               | Whether a public URL belongs to one membership or to the team collectively.                                     |
+| **maintenance control**            | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance.        |
+| **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                        |
 
 ## public url usage
-
-Use **custom domain** in CLI help, diagnostics, and public guides. Preserve
-`claimed` in existing domain-kind machine values and internal identifiers.
 
 | Term                          | Definition                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |

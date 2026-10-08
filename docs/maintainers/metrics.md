@@ -56,7 +56,7 @@ The API `surface` distinguishes control, built-in authority, and private
 ingress and relay requests. A histogram's `_count` is its completed attempt
 count. Certificate availability is not publisher installation. Usage results
 count different kinds of items; do not sum them as one backlog.
-certificate orders use fixed `managed|claimed` domain kinds and `exact|wildcard`
+certificate orders use fixed `managed|custom` domain kinds and `exact|wildcard`
 plans. sum their rates across control replicas. idempotent retries and cached
 certificate reuse do not increment the counter; a committed order can fail
 before the CA issues a certificate. the counter does not measure the CA's

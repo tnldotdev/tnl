@@ -25,12 +25,12 @@ const hostedManagedAuthorityReference = "da_0123456789ABCDEFGHIJKL"
 
 func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 	database, sql, _ := challengeDatabase(t)
-	for _, claimed := range []bool{false, true} {
+	for _, custom := range []bool{false, true} {
 		name, domain, reference := "managed_opaque_reference", "tunnels.example.test", hostedManagedAuthorityReference
-		if claimed {
-			name, domain = "claimed", "claimed.example.test"
+		if custom {
+			name, domain = "custom", "custom.example.test"
 			authority, err := database.CreateDNSAuthority(t.Context(), controlstate.CreateDNSAuthorityRequest{
-				TeamID: "external_team", DomainID: "external_domain_claimed", CanonicalDomain: domain,
+				TeamID: "external_team", DomainID: "external_domain_custom", CanonicalDomain: domain,
 				IdempotencyKey: "claim", RequestDigest: sha256.Sum256([]byte("claim")),
 			}, time.Now())
 			if err != nil {
@@ -43,7 +43,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			seedHostedChallenge(t, database, sql, name, domain, reference)
-			if !claimed {
+			if !custom {
 				challenge, err := database.GetDNSChallengeContext(t.Context(), "public_url_"+name, "authorization_"+name)
 				if err != nil || challenge.CanonicalDomain != "" || challenge.DNSAuthorityReference != reference {
 					t.Fatalf("hosted managed context = %#v, error %v", challenge, err)
@@ -60,7 +60,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if err := manager.Present(t.Context(), "public_url_"+name, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if provider.record.ClaimedZone != claimed || provider.record.ZoneDomain != domain || provider.record.RecordName != "_acme-challenge.member."+domain {
+			if provider.record.CustomZone != custom || provider.record.ZoneDomain != domain || provider.record.RecordName != "_acme-challenge.member."+domain {
 				t.Fatalf("hosted challenge %#v", provider.record)
 			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'presented' WHERE id = $1`, "authorization_"+name); err != nil {
@@ -69,7 +69,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if valid, err := manager.Verify(t.Context(), "public_url_"+name, "authorization_"+name); err != nil || !valid {
 				t.Fatalf("verify = %v, %v", valid, err)
 			}
-			if claimed {
+			if custom {
 				if _, err := sql.Exec(t.Context(), `UPDATE control.dns_authorities SET state = 'releasing' WHERE authority_reference = $1`, reference); err != nil {
 					t.Fatal(err)
 				}

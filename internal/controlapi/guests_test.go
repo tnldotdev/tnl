@@ -74,7 +74,7 @@ func TestGuestDemoNumberRejectsAChangedIPBeforeAllocation(t *testing.T) {
 func TestGuestCreationUsesTrustedClientIPAndManagedDomain(t *testing.T) {
 	store := new(guestCreationStoreStub)
 	h := &handler{
-		config: Config{GuestDemoEnabled: true, ManagedDeploymentDomain: "tnl.wtf"},
+		config: Config{GuestDemoEnabled: true, ManagedDomain: "tnl.wtf"},
 		guests: store,
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/guest-demo", nil)

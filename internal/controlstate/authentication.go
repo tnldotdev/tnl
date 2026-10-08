@@ -22,7 +22,7 @@ const oidcAuthenticationMethod = "oidc"
 var (
 	ErrControlAuthentication = errors.New("controlstate: invalid control credential")
 	ErrControlIdentity       = errors.New("controlstate: identity is unavailable")
-	ErrManagedDomainMismatch = errors.New("controlstate: configured managed deployment domain changed")
+	ErrManagedDomainMismatch = errors.New("controlstate: configured managed domain changed")
 	ErrOIDCAssertionReplay   = errors.New("controlstate: OIDC assertion was already exchanged")
 )
 
@@ -114,7 +114,7 @@ func (d *Database) CreateBuiltinControlSession(
 	}
 	domain, err := queries.FindManagedDomain(ctx)
 	if err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: read managed deployment domain: %w", err)
+		return ControlSession{}, fmt.Errorf("controlstate: read managed domain: %w", err)
 	}
 	if domain.CanonicalDomain != managedDomain {
 		return ControlSession{}, ErrManagedDomainMismatch
@@ -348,11 +348,11 @@ func ensureManagedDomain(
 		if err := queries.CreateManagedDomain(ctx, controlstatedb.CreateManagedDomainParams{
 			ID: domainID, CanonicalDomain: managedDomain, CreatedAt: timestamp(now),
 		}); err != nil {
-			return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: create managed deployment domain: %w", err)
+			return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: create managed domain: %w", err)
 		}
 		domain.ID, domain.CanonicalDomain = domainID, managedDomain
 	} else if err != nil {
-		return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: read managed deployment domain: %w", err)
+		return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: read managed domain: %w", err)
 	} else if domain.CanonicalDomain != managedDomain {
 		return controlstatedb.ControlDomain{}, ErrManagedDomainMismatch
 	}

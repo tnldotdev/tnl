@@ -16,7 +16,7 @@ import (
 type ChallengeRecord struct {
 	ZoneID                string
 	ZoneDomain            string
-	ClaimedZone           bool
+	CustomZone            bool
 	AuthorityReference    string
 	TeamID                string
 	DomainID              string
@@ -229,7 +229,7 @@ func (m *ChallengeManager) challengeRecord(
 			baseIdentifier != authority.CanonicalDomain && !strings.HasSuffix(baseIdentifier, "."+authority.CanonicalDomain) {
 			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", terminalf("DNS challenge authority is not available")
 		}
-		record.ZoneID, record.ClaimedZone = authority.ProviderZoneID, true
+		record.ZoneID, record.CustomZone = authority.ProviderZoneID, true
 		record.AuthorityReference = authority.Reference
 	}
 	record.DesiredOwnedValues, record.PreviouslyOwnedValues = challengeTXTValues(challenge.Presentations)

@@ -25,7 +25,7 @@ import (
 func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
 	return controlapi.Config{
 		Role:                              cfg.Role,
-		ManagedDeploymentDomain:           cfg.ManagedDomain(),
+		ManagedDomain:                     cfg.ManagedDomain,
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		ControlURL:                        cfg.ControlOrigin(),
@@ -47,15 +47,15 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oidcauth.Verifier) authorityapi.Config {
 	return authorityapi.Config{
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
-		ManagedDeploymentDomain: cfg.ManagedDomain(),
-		CustomDomainsEnabled:    cfg.CustomDomainsEnabled,
-		LoginToken:              cfg.LoginToken,
-		AccessTokenLifetime:     cfg.AccessTokenLifetime,
-		RefreshTokenLifetime:    cfg.RefreshTokenLifetime,
-		DNSAutomation:           cfg.DNSAutomationEnabled(),
-		OIDCVerifier:            verifier,
-		BrowserOIDCVerifier:     browserVerifier,
-		EmailDelivery:           cfg.EmailURL != "",
+		ManagedDomain:        cfg.ManagedDomain,
+		CustomDomainsEnabled: cfg.CustomDomainsEnabled,
+		LoginToken:           cfg.LoginToken,
+		AccessTokenLifetime:  cfg.AccessTokenLifetime,
+		RefreshTokenLifetime: cfg.RefreshTokenLifetime,
+		DNSAutomation:        cfg.DNSAutomationEnabled(),
+		OIDCVerifier:         verifier,
+		BrowserOIDCVerifier:  browserVerifier,
+		EmailDelivery:        cfg.EmailURL != "",
 	}
 }
 

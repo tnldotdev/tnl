@@ -30,7 +30,7 @@ func (s *certificateOrderStore) CreateCertificateIssuance(context.Context, contr
 }
 
 func TestCertificateOrderMetricExcludesIdempotentRetries(t *testing.T) {
-	for _, kind := range []controlstate.DomainKind{controlstate.DomainKindManaged, controlstate.DomainKindClaimed} {
+	for _, kind := range []controlstate.DomainKind{controlstate.DomainKindManaged, controlstate.DomainKindCustom} {
 		for _, plan := range []string{"exact", "wildcard"} {
 			t.Run(string(kind)+"/"+plan, func(t *testing.T) {
 				identifiers := []string{"api.member.example.test"}

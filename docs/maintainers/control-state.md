@@ -122,7 +122,7 @@ mutations still conflict.
 
 ## publish member namespace dns
 
-For a member public URL one label beneath a managed or claimed namespace,
+For a member public URL one label beneath a managed or custom namespace,
 control's DNS worker ensures an A/AAAA wildcard at `*.member.example` rather
 than exact address and `_tnl-owner` records for each public URL. One
 `_tnl-wildcard.member.example` TXT record identifies the namespace wildcard;
@@ -133,7 +133,7 @@ becoming ready. Ingress still requires an exact saved public URL hostname.
 
 The wildcard belongs to the member namespace. Deleting or suspending one
 public URL advances its DNS work to `removed` without deleting that shared
-record. On claimed-domain release, control removes its owned namespace
+record. On custom-domain release, control removes its owned namespace
 wildcards before deleting the Route 53 zone. Member namespace apexes and
 shared public URLs retain exact-name DNS. Old exact A/AAAA and `_tnl-owner`
 records can coexist with the wildcard until they are removed together; an
@@ -142,7 +142,7 @@ that hostname.
 
 Route 53 lists a wildcard label as `\052`, not `*`. Normalize that name when
 comparing listed records or pagination cursors, while retaining the returned
-record set for an exact delete during claimed-domain release.
+record set for an exact delete during custom-domain release.
 
 For every DNS-managed public URL, publish run readiness waits for the DNS
 worker's authoritative verification. `tnl dev` and `tnl publish --open` also

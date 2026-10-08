@@ -41,7 +41,7 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	}
 	slices.Sort(wantValues)
 	if provider.record.RecordName != "_acme-challenge.member.tunnels.example.test" ||
-		!slices.Equal(provider.record.DesiredOwnedValues, wantValues) || provider.record.ClaimedZone {
+		!slices.Equal(provider.record.DesiredOwnedValues, wantValues) || provider.record.CustomZone {
 		t.Fatalf("presented challenge record = %#v", provider.record)
 	}
 	store.challenge.State = "presented"
@@ -164,7 +164,7 @@ func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
 	}
 }
 
-func TestChallengeManagerUsesOwnedClaimedZone(t *testing.T) {
+func TestChallengeManagerUsesOwnedCustomZone(t *testing.T) {
 	for _, phase := range []string{"presenting", "presented", "cleaning"} {
 		t.Run(phase, func(t *testing.T) {
 			store := claimedChallengeStore()
@@ -194,7 +194,7 @@ func TestChallengeManagerUsesOwnedClaimedZone(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if provider.calls != 1 || !provider.record.ClaimedZone || provider.record.ZoneID != "ZCLAIMED" ||
+			if provider.calls != 1 || !provider.record.CustomZone || provider.record.ZoneID != "ZCLAIMED" ||
 				provider.record.AuthorityReference != "dns_authority_1" || len(provider.record.PreviouslyOwnedValues) != 1 ||
 				(phase == "cleaning" && len(provider.record.DesiredOwnedValues) != 0) {
 				t.Fatalf("claimed challenge record = %#v, calls %d", provider.record, provider.calls)
@@ -351,7 +351,7 @@ func TestChallengeManagerResolvesHostedManagedContext(t *testing.T) {
 			}
 			err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
 			if test.valid {
-				if err != nil || store.authorityCalls != 0 || provider.calls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ZoneDomain != "tunnels.example.test" || provider.record.ClaimedZone {
+				if err != nil || store.authorityCalls != 0 || provider.calls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ZoneDomain != "tunnels.example.test" || provider.record.CustomZone {
 					t.Fatalf("managed context: error %v, provider %#v", err, provider)
 				}
 			} else if err == nil || provider.calls != 0 {

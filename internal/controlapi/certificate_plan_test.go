@@ -18,21 +18,21 @@ import (
 func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, scope string
-		dns               bool
+		dnsAutomation     bool
 		nested            bool
-		limit             int
-		denied            bool
+		maxChildLabels    int
+		expectDepthDenied bool
 	}{
-		{"managed_member_dns", "managed", "member", true, false, 1, false},
-		{"claimed_member_dns", "claimed", "member", true, false, 1, false},
-		{"managed_member_no_dns", "managed", "member", false, false, 0, false},
-		{"claimed_member_no_dns", "claimed", "member", false, false, 0, false},
-		{"shared_dns", "managed", "shared", true, false, 1, false},
-		{"shared_no_dns", "claimed", "shared", false, false, 0, false},
-		{"nested_managed_dns", "managed", "member", true, true, 0, false},
-		{"nested_managed_manual_dns", "managed", "member", false, true, 0, false},
-		{"nested_custom_domain", "claimed", "member", true, true, 1, false},
-		{"nested_managed_limited", "managed", "member", true, true, 1, true},
+		{name: "managed_member_dns", kind: "managed", scope: "member", dnsAutomation: true, maxChildLabels: 1},
+		{name: "custom_member_dns", kind: "custom", scope: "member", dnsAutomation: true, maxChildLabels: 1},
+		{name: "managed_member_no_dns", kind: "managed", scope: "member"},
+		{name: "custom_member_no_dns", kind: "custom", scope: "member"},
+		{name: "shared_dns", kind: "managed", scope: "shared", dnsAutomation: true, maxChildLabels: 1},
+		{name: "shared_no_dns", kind: "custom", scope: "shared"},
+		{name: "nested_managed_dns", kind: "managed", scope: "member", dnsAutomation: true, nested: true},
+		{name: "nested_managed_manual_dns", kind: "managed", scope: "member", nested: true},
+		{name: "nested_custom_domain", kind: "custom", scope: "member", dnsAutomation: true, nested: true, maxChildLabels: 1},
+		{name: "nested_managed_limited", kind: "managed", scope: "member", dnsAutomation: true, nested: true, maxChildLabels: 1, expectDepthDenied: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			namespace := "member.routes.example.test"
@@ -66,13 +66,13 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}
-			h := testHandler(t, Config{DNSAutomation: test.dns, ManagedDomainMaxMemberChildLabels: test.limit}, store, store, nil)
+			h := testHandler(t, Config{DNSAutomation: test.dnsAutomation, ManagedDomainMaxMemberChildLabels: test.maxChildLabels}, store, store, nil)
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			request.Header.Set("Idempotency-Key", "session-plan")
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
-			if test.denied {
+			if test.expectDepthDenied {
 				var problem controlv1.Problem
 				if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusForbidden || problem.Code != controlv1.MemberHostnameDepthExceeded || store.sessions != 0 {
 					t.Fatalf("nested hostname was not rejected before creating a run: %d %s", response.Code, response.Body.String())
@@ -87,7 +87,7 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantScope, wantIDs := hostname, []string{hostname}
-			if test.dns && test.scope == "member" && !test.nested {
+			if test.dnsAutomation && test.scope == "member" && !test.nested {
 				wantScope, wantIDs = namespace, []string{namespace, "*." + namespace}
 			}
 			plan := setup.CertificatePlan
@@ -100,13 +100,13 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				t.Errorf("persisted plan = %q, %q, %q; want %q, %q", store.sessionRequest.CertificateCacheKey,
 					store.sessionRequest.CertificateScope, store.sessionRequest.CertificateIdentifiers, wantScope, wantIDs)
 			}
-			if test.dns && plan.ChallengeMethod != controlv1.Dns01 {
+			if test.dnsAutomation && plan.ChallengeMethod != controlv1.Dns01 {
 				t.Errorf("DNS challenge method = %q; want dns-01", plan.ChallengeMethod)
 			}
 			if string(store.sessionRequest.CertificateChallenge) != string(plan.ChallengeMethod) {
 				t.Errorf("stored challenge method = %q; API returned %q", store.sessionRequest.CertificateChallenge, plan.ChallengeMethod)
 			}
-			if !test.dns && plan.ChallengeMethod != controlv1.TlsAlpn01 {
+			if !test.dnsAutomation && plan.ChallengeMethod != controlv1.TlsAlpn01 {
 				t.Errorf("no-DNS challenge method = %q; want tls-alpn-01", plan.ChallengeMethod)
 			}
 		})
@@ -125,8 +125,8 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
-				ManagedDeploymentDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
-			h := testHandler(t, Config{ManagedDeploymentDomain: cfg.ManagedDomain(),
+				ManagedDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
+			h := testHandler(t, Config{ManagedDomain: cfg.ManagedDomain,
 				ControlURL: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))
@@ -135,7 +135,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.Code != http.StatusOK || discovery.DnsAutomation != test.want ||
-				discovery.ManagedDeploymentDomain != "routes.other.test" {
+				discovery.ManagedDomain != "routes.other.test" {
 				t.Fatalf("discovery status = %d, facts = %#v", response.Code, discovery)
 			}
 		})

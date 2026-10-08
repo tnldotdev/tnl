@@ -36,14 +36,14 @@ func TestRoute53ReleaseFindsZoneCreatedBeforeAuthoritySave(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tagged {
-				if _, err := provider.EnsureClaimedZone(t.Context(), work); err != nil {
+				if _, err := provider.EnsureCustomZone(t.Context(), work); err != nil {
 					t.Fatal(err)
 				}
 				client.tags = ownedRoute53Tags(work)
 			}
 			// release begins after a crash, before the returned ID was saved.
 			work.State = "releasing"
-			if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil {
+			if err := provider.ReleaseCustomZone(t.Context(), work); err != nil {
 				t.Fatal(err)
 			}
 			if client.deletedZoneID != "Z123" {

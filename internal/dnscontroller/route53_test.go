@@ -31,7 +31,7 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := provider.EnsureClaimedZone(t.Context(), work)
+	result, err := provider.EnsureCustomZone(t.Context(), work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,12 +57,12 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 		client.recordSets[dnsName(work.CanonicalDomain)][index] = *change.ResourceRecordSet
 	}
 	client.changes = nil
-	if _, err := provider.EnsureClaimedZone(t.Context(), work); err != nil || len(client.changes) != 0 {
-		t.Fatalf("unchanged claimed zone: changes %#v, error %v", client.changes, err)
+	if _, err := provider.EnsureCustomZone(t.Context(), work); err != nil || len(client.changes) != 0 {
+		t.Fatalf("unchanged custom zone: changes %#v, error %v", client.changes, err)
 	}
 	client.tags = ownedRoute53Tags(work)
 	work.ProviderZoneID = result.ID
-	if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil {
+	if err := provider.ReleaseCustomZone(t.Context(), work); err != nil {
 		t.Fatal(err)
 	}
 	if client.deletedZoneID != "Z123" {
@@ -70,7 +70,7 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 	}
 }
 
-func TestRoute53ProviderPreservesClaimedZoneSOAFields(t *testing.T) {
+func TestRoute53ProviderPreservesCustomZoneSOAFields(t *testing.T) {
 	work := testDNSWork(time.Now().UTC())
 	client, provider := route53TestProvider(t, work.CanonicalDomain)
 	client.get.HostedZone.CallerReference = aws.String(work.Reference)
@@ -78,24 +78,24 @@ func TestRoute53ProviderPreservesClaimedZoneSOAFields(t *testing.T) {
 	soa := &client.recordSets[dnsName(work.CanonicalDomain)][1]
 	soa.TTL = aws.Int64(30)
 	soa.ResourceRecords[0].Value = aws.String("ns-1.example.test. hostmaster.example.test. 42 1800 300 604800 86400")
-	if _, err := provider.EnsureClaimedZone(t.Context(), work); err != nil {
+	if _, err := provider.EnsureCustomZone(t.Context(), work); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 2 || client.changes[1].ResourceRecordSet.Type != types.RRTypeSoa ||
 		aws.ToInt64(client.changes[1].ResourceRecordSet.TTL) != 30 ||
 		aws.ToString(client.changes[1].ResourceRecordSet.ResourceRecords[0].Value) !=
 			"ns-1.example.test. hostmaster.example.test. 42 1800 300 604800 60" {
-		t.Fatalf("claimed zone apex changes = %#v", client.changes)
+		t.Fatalf("custom zone apex changes = %#v", client.changes)
 	}
 }
 
-func TestRoute53ProviderRejectsChangedClaimedZoneNameservers(t *testing.T) {
+func TestRoute53ProviderRejectsChangedCustomZoneNameservers(t *testing.T) {
 	work := testDNSWork(time.Now().UTC())
 	client, provider := route53TestProvider(t, work.CanonicalDomain)
 	client.get.HostedZone.CallerReference = aws.String(work.Reference)
 	client.created = client.get.HostedZone
 	client.recordSets[dnsName(work.CanonicalDomain)][0].ResourceRecords[0].Value = aws.String("ns-foreign.example.test.")
-	if _, err := provider.EnsureClaimedZone(t.Context(), work); err == nil || len(client.changes) != 0 {
+	if _, err := provider.EnsureCustomZone(t.Context(), work); err == nil || len(client.changes) != 0 {
 		t.Fatalf("changed nameservers: changes %#v, error %v", client.changes, err)
 	}
 }
@@ -245,7 +245,7 @@ func TestRoute53ProviderReleasesOnlyOwnedClaimedMemberWildcards(t *testing.T) {
 		t.Errorf("unexpected DNS listing from %#v", input)
 		return &route53.ListResourceRecordSetsOutput{}, nil
 	}
-	if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil {
+	if err := provider.ReleaseCustomZone(t.Context(), work); err != nil {
 		t.Fatal(err)
 	}
 	if client.deletedZoneID != "Z123" || len(client.changes) != 2 ||

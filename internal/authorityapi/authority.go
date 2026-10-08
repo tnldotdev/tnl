@@ -32,7 +32,7 @@ func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http
 		return
 	}
 	issued, err := h.store.CreateBuiltinControlSession(
-		request.Context(), h.config.ManagedDeploymentDomain, h.loginSourceRevision,
+		request.Context(), h.config.ManagedDomain, h.loginSourceRevision,
 		h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now(),
 	)
 	if err != nil {
@@ -70,7 +70,7 @@ func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.
 		operatorlog.Report("verify OIDC token", failure.ServerAPIInternal, requestID, err)
 		return
 	}
-	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDeploymentDomain, controlstate.OIDCIdentity{
+	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDomain, controlstate.OIDCIdentity{
 		Issuer: identity.Issuer, Subject: identity.Subject, DisplayName: identity.DisplayName,
 		NormalizedEmail: identity.NormalizedEmail, EmailVerified: identity.EmailVerified,
 		AssertionDigest: identity.AssertionDigest, AssertionExpiry: identity.ExpiresAt,
@@ -113,7 +113,7 @@ func (h *handler) ExchangeBrowserOIDCToken(response http.ResponseWriter, request
 		writeAuthenticationUnavailable(response, "verify browser OIDC token", err)
 		return
 	}
-	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDeploymentDomain, controlstate.OIDCIdentity{
+	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDomain, controlstate.OIDCIdentity{
 		Issuer: identity.Issuer, Subject: identity.Subject, DisplayName: identity.DisplayName,
 		NormalizedEmail: identity.NormalizedEmail, EmailVerified: identity.EmailVerified,
 		AssertionDigest: identity.AssertionDigest, AssertionExpiry: identity.ExpiresAt,

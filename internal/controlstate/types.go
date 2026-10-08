@@ -26,7 +26,7 @@ const (
 	PublicURLLifecycleDeleted   PublicURLLifecycleState = "deleted"
 )
 
-// DNSAuthorityState is the stored state of a claimed-domain DNS authority.
+// DNSAuthorityState is the stored state of a custom-domain DNS authority.
 type DNSAuthorityState string
 
 const (

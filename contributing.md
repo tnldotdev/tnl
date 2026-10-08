@@ -43,7 +43,7 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 | Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                             |
 | npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                               |
 | Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                             |
-| Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready claimed domain             |
+| Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain              |
 
 Use `RUN` to select an integration test, for example:
 

@@ -22,7 +22,7 @@ func TestRoute53ProviderRecoversLostZoneCreateResponseAcrossPages(t *testing.T) 
 	client, provider := route53TestProvider(t, "claimed.example.test")
 	client.get.HostedZone.CallerReference = aws.String(work.Reference)
 	client.created, client.createErr = client.get.HostedZone, io.ErrUnexpectedEOF
-	if _, err := provider.EnsureClaimedZone(t.Context(), work); !errors.Is(err, io.ErrUnexpectedEOF) {
+	if _, err := provider.EnsureCustomZone(t.Context(), work); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("lost create response = %v", err)
 	}
 	if client.createCalls != 1 || len(client.addedTags) != 0 {
@@ -49,7 +49,7 @@ func TestRoute53ProviderRecoversLostZoneCreateResponseAcrossPages(t *testing.T) 
 		}
 		return &route53.ListHostedZonesByNameOutput{HostedZones: []types.HostedZone{*client.created}}, nil
 	}
-	zone, err := provider.EnsureClaimedZone(t.Context(), work)
+	zone, err := provider.EnsureCustomZone(t.Context(), work)
 	if err != nil || zone.ID != "Z123" || pages != 2 || client.createCalls != 1 || len(client.addedTags) != 4 {
 		t.Fatalf("recovered zone %#v, error %v, pages %d, creates %d, tags %#v", zone, err, pages, client.createCalls, client.addedTags)
 	}
@@ -102,7 +102,7 @@ func TestRoute53ProviderRejectsConflictsBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestRoute53ProviderChecksClaimedZoneIdentityAndTags(t *testing.T) {
+func TestRoute53ProviderChecksCustomZoneIdentityAndTags(t *testing.T) {
 	for _, mismatch := range []string{"caller", "name", "private", "linked", managedByTagKey, authorityReferenceTagKey, domainIDTagKey, teamIDTagKey} {
 		for _, operation := range []string{"publish", "challenge", "release"} {
 			t.Run(mismatch+"/"+operation, func(t *testing.T) {
@@ -127,15 +127,15 @@ func TestRoute53ProviderChecksClaimedZoneIdentityAndTags(t *testing.T) {
 						}
 					}
 				}
-				record := PublicURLRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, ClaimedZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, PublicURLID: "public_url_1", CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
+				record := PublicURLRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, CustomZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, PublicURLID: "public_url_1", CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
 				var err error
 				switch operation {
 				case "publish":
 					_, err = provider.PublishPublicURL(t.Context(), record)
 				case "challenge":
-					_, err = provider.ReconcileChallenge(t.Context(), ChallengeRecord{ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, ClaimedZone: true, AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID, RecordName: "_acme-challenge." + record.CanonicalHostname, DesiredOwnedValues: []string{"owned"}})
+					_, err = provider.ReconcileChallenge(t.Context(), ChallengeRecord{ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, CustomZone: true, AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID, RecordName: "_acme-challenge." + record.CanonicalHostname, DesiredOwnedValues: []string{"owned"}})
 				case "release":
-					err = provider.ReleaseClaimedZone(t.Context(), work)
+					err = provider.ReleaseCustomZone(t.Context(), work)
 				}
 				var terminal *terminalError
 				if !errors.As(err, &terminal) || len(client.changes) != 0 || client.deletedZoneID != "" {
@@ -295,7 +295,7 @@ func TestRoute53ProviderReleaseHTTPResponseRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = provider.ReleaseClaimedZone(t.Context(), work)
+			err = provider.ReleaseCustomZone(t.Context(), work)
 			switch mode {
 			case "absent":
 				if err != nil || deletes.Load() != 0 || tagReads.Load() != 0 {
@@ -310,7 +310,7 @@ func TestRoute53ProviderReleaseHTTPResponseRecovery(t *testing.T) {
 				if err == nil || !absent.Load() || deletes.Load() != 1 {
 					t.Fatalf("lost response: error %v, deleted %v, calls %d", err, absent.Load(), deletes.Load())
 				}
-				if err := provider.ReleaseClaimedZone(t.Context(), work); err != nil || deletes.Load() != 1 || tagReads.Load() != 1 {
+				if err := provider.ReleaseCustomZone(t.Context(), work); err != nil || deletes.Load() != 1 || tagReads.Load() != 1 {
 					t.Fatalf("release retry: error %v, deletes %d, tags %d", err, deletes.Load(), tagReads.Load())
 				}
 			}

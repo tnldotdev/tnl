@@ -147,9 +147,9 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
-	managedDomain := auth.Discovery.ManagedDeploymentDomain
+	managedDomain := auth.Discovery.ManagedDomain
 	if managedDomain == "" {
-		return nil, errors.New("server has no managed deployment domain for benchmark public URLs")
+		return nil, errors.New("server has no managed domain for benchmark public URLs")
 	}
 	if config.Domain != "" && managedDomain != config.Domain {
 		return nil, errors.New("configured domain differs from control discovery")

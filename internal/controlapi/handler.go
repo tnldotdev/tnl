@@ -28,7 +28,7 @@ const (
 type Config struct {
 	Role                              tnldconfig.Role
 	StartedAt                         time.Time
-	ManagedDeploymentDomain           string
+	ManagedDomain                     string
 	ManagedDomainMaxMemberChildLabels int
 	CustomDomainsEnabled              bool
 	ControlURL                        string
@@ -244,7 +244,7 @@ func NewHandler(
 	if cfg.GuestDemoEnabled && h.guests != nil && h.authorizer != nil {
 		if guestStore, ok := store.(guestAuthorizationStore); ok {
 			h.authorizer = guestAuthorizer{
-				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDeploymentDomain,
+				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDomain,
 				dnsAutomation: cfg.DNSAutomation,
 			}
 		}
@@ -324,7 +324,7 @@ func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Reques
 
 func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
-		ManagedDeploymentDomain:           cfg.ManagedDeploymentDomain,
+		ManagedDomain:                     cfg.ManagedDomain,
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		DnsAutomation:                     cfg.DNSAutomation,

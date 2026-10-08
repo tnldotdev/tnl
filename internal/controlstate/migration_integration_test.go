@@ -3,11 +3,15 @@ package controlstate
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
@@ -83,6 +87,61 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	newer.Close()
 }
 
+func TestIntegrationCustomDomainMigrationConvertsExistingRows(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "custom_domain_migration")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 13); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	now := time.Now().UTC()
+	for _, statement := range []string{
+		`INSERT INTO control.identities (id, kind, display_name, created_at, updated_at)
+			VALUES ('identity_custom_upgrade', 'authority', 'Test', $1, $1)`,
+		`INSERT INTO control.managed_label_reservations (label, created_at) VALUES ('team-custom-upgrade', $1)`,
+		`INSERT INTO control.teams (id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at)
+			VALUES ('team_custom_upgrade', 'personal', 'Test', 'team-custom-upgrade', 'identity_custom_upgrade', $1, $1)`,
+		`INSERT INTO control.domains (id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id, created_at, updated_at)
+			VALUES ('domain_custom_upgrade', 'claimed', 'team_custom_upgrade', 'custom.example.test', 'ready', 1, 'identity_custom_upgrade', $1, $1)`,
+	} {
+		if _, err := pool.Exec(ctx, statement, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	var kind string
+	if err := pool.QueryRow(ctx, `SELECT kind FROM control.domains WHERE id = 'domain_custom_upgrade'`).Scan(&kind); err != nil || kind != "custom" {
+		t.Fatalf("migrated domain kind = %q, %v", kind, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE control.domains SET kind = 'claimed' WHERE id = 'domain_custom_upgrade'`); err == nil {
+		t.Fatal("legacy domain kind was still writable")
+	}
+}
+
 func TestIntegrationScopedForeignKeys(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "scoped_foreign_keys")
 	seedControlPublicURL(t, database, now, "owner_a")
@@ -129,7 +188,7 @@ func TestIntegrationScopedForeignKeys(t *testing.T) {
 		})
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET default_domain_id = 'domain_owner_b' WHERE id = 'team_owner_a'`); err == nil {
-		t.Fatal("another team's claimed domain became the default")
+		t.Fatal("another team's custom domain became the default")
 	}
 }
 

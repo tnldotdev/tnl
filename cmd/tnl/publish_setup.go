@@ -137,8 +137,8 @@ func preparePublisherServices(
 		return publisherServices{}, err
 	}
 	discovery := authenticated.Discovery
-	if discovery.ManagedDeploymentDomain == "" {
-		return publisherServices{}, failure.Wrap("read server discovery", failure.ServerResponseInvalid, errors.New("control discovery omitted the managed deployment domain"))
+	if discovery.ManagedDomain == "" {
+		return publisherServices{}, failure.Wrap("read server discovery", failure.ServerResponseInvalid, errors.New("control discovery omitted the managed domain"))
 	}
 	api := teamAPI(authenticated.Authority)
 	identity, err := api.IdentityContext(ctx)

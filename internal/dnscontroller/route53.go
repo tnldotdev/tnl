@@ -225,7 +225,7 @@ func (p *Route53Provider) RefreshChallenge(ctx context.Context, record Challenge
 
 func (p *Route53Provider) reconcileChallenge(ctx context.Context, record ChallengeRecord, force bool) (Zone, error) {
 	zoneRecord := PublicURLRecord{
-		ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, ClaimedZone: record.ClaimedZone,
+		ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, CustomZone: record.CustomZone,
 		AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
 		CanonicalHostname: record.RecordName,
 	}
@@ -337,8 +337,8 @@ func NewRoute53Provider(client route53API) (*Route53Provider, error) {
 	return &Route53Provider{client: client}, nil
 }
 
-func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlstate.DNSAuthorityWork) (Zone, error) {
-	hostedZone, err := p.findClaimedZone(ctx, work)
+func (p *Route53Provider) EnsureCustomZone(ctx context.Context, work controlstate.DNSAuthorityWork) (Zone, error) {
+	hostedZone, err := p.findCustomZone(ctx, work)
 	if err != nil {
 		return Zone{}, err
 	}
@@ -381,7 +381,7 @@ func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlsta
 	if err != nil {
 		return Zone{}, err
 	}
-	if err := p.reconcileClaimedZoneTTL(ctx, zoneID, work.CanonicalDomain, nameservers); err != nil {
+	if err := p.reconcileCustomZoneTTL(ctx, zoneID, work.CanonicalDomain, nameservers); err != nil {
 		return Zone{}, err
 	}
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
@@ -389,7 +389,7 @@ func (p *Route53Provider) EnsureClaimedZone(ctx context.Context, work controlsta
 
 // Route 53 creates apex NS and SOA records with long TTLs. preserve their
 // contents and lower only the caching values, including SOA negative caching.
-func (p *Route53Provider) reconcileClaimedZoneTTL(ctx context.Context, zoneID, domain string, nameservers []string) error {
+func (p *Route53Provider) reconcileCustomZoneTTL(ctx context.Context, zoneID, domain string, nameservers []string) error {
 	sets, err := p.listRecordSets(ctx, zoneID, domain)
 	if err != nil {
 		return err
@@ -399,34 +399,34 @@ func (p *Route53Provider) reconcileClaimedZoneTTL(ctx context.Context, zoneID, d
 		switch sets[index].Type {
 		case types.RRTypeNs:
 			if ns != nil {
-				return terminalf("claimed zone has multiple apex NS record sets")
+				return terminalf("custom zone has multiple apex NS record sets")
 			}
 			ns = &sets[index]
 		case types.RRTypeSoa:
 			if soa != nil {
-				return terminalf("claimed zone has multiple apex SOA record sets")
+				return terminalf("custom zone has multiple apex SOA record sets")
 			}
 			soa = &sets[index]
 		}
 	}
 	if !plainRecordSet(ns) || !plainRecordSet(soa) || len(soa.ResourceRecords) != 1 {
-		return terminalf("claimed zone has invalid apex NS or SOA records")
+		return terminalf("custom zone has invalid apex NS or SOA records")
 	}
 	actualNameservers, err := canonicalNameserversFromRecords(ns.ResourceRecords)
 	if err != nil || !slices.Equal(actualNameservers, nameservers) {
-		return terminalf("claimed zone apex NS records do not match its delegation set")
+		return terminalf("custom zone apex NS records do not match its delegation set")
 	}
 	fields := strings.Fields(aws.ToString(soa.ResourceRecords[0].Value))
 	if len(fields) != 7 || !slices.Contains(nameservers, strings.TrimSuffix(strings.ToLower(fields[0]), ".")) {
-		return terminalf("claimed zone has invalid apex SOA record")
+		return terminalf("custom zone has invalid apex SOA record")
 	}
 	minimum, err := strconv.ParseUint(fields[6], 10, 32)
 	if err != nil {
-		return terminalf("claimed zone has invalid SOA negative-cache minimum")
+		return terminalf("custom zone has invalid SOA negative-cache minimum")
 	}
 	changes := make([]types.Change, 0, 2)
 	if ns.TTL == nil || soa.TTL == nil {
-		return terminalf("claimed zone has apex records without TTLs")
+		return terminalf("custom zone has apex records without TTLs")
 	}
 	if *ns.TTL > 60 {
 		updated := *ns
@@ -449,9 +449,9 @@ func (p *Route53Provider) reconcileClaimedZoneTTL(ctx context.Context, zoneID, d
 	}
 	if _, err := p.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
-		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("limit tnl claimed-zone DNS caching to 60 seconds"), Changes: changes},
+		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("limit tnl custom-zone DNS caching to 60 seconds"), Changes: changes},
 	}); err != nil {
-		return fmt.Errorf("dnscontroller: set Route 53 claimed-zone TTLs: %w", err)
+		return fmt.Errorf("dnscontroller: set Route 53 custom-zone TTLs: %w", err)
 	}
 	return nil
 }
@@ -464,13 +464,13 @@ func canonicalNameserversFromRecords(records []types.ResourceRecord) ([]string, 
 	return canonicalNameservers(values)
 }
 
-func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlstate.DNSAuthorityWork) error {
+func (p *Route53Provider) ReleaseCustomZone(ctx context.Context, work controlstate.DNSAuthorityWork) error {
 	zoneID := canonicalZoneID(work.ProviderZoneID)
 	recovered := zoneID == ""
 	if recovered {
 		// creation can succeed before the worker saves the zone ID. release
 		// must still find that zone after a crash or a failed persistence step.
-		zone, err := p.findClaimedZone(ctx, work)
+		zone, err := p.findCustomZone(ctx, work)
 		if err != nil {
 			return err
 		}
@@ -505,7 +505,7 @@ func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlst
 	if !ownedTags(tags, work) && !(recovered && untagged) {
 		return terminalf("Route 53 hosted zone ownership tags do not match")
 	}
-	if err := p.removeClaimedMemberWildcards(ctx, zoneID, work); err != nil {
+	if err := p.removeCustomMemberWildcards(ctx, zoneID, work); err != nil {
 		return err
 	}
 	if _, err := p.client.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)}); err != nil &&
@@ -515,7 +515,7 @@ func (p *Route53Provider) ReleaseClaimedZone(ctx context.Context, work controlst
 	return nil
 }
 
-func (p *Route53Provider) removeClaimedMemberWildcards(ctx context.Context, zoneID string, work controlstate.DNSAuthorityWork) error {
+func (p *Route53Provider) removeCustomMemberWildcards(ctx context.Context, zoneID string, work controlstate.DNSAuthorityWork) error {
 	input := &route53.ListResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
 	type ownedWildcard struct {
 		owner    types.ResourceRecordSet
@@ -525,7 +525,7 @@ func (p *Route53Provider) removeClaimedMemberWildcards(ctx context.Context, zone
 	for {
 		output, err := p.client.ListResourceRecordSets(ctx, input)
 		if err != nil {
-			return fmt.Errorf("dnscontroller: list claimed-zone wildcard owners: %w", err)
+			return fmt.Errorf("dnscontroller: list custom-zone wildcard owners: %w", err)
 		}
 		for _, set := range output.ResourceRecordSets {
 			if set.Type != types.RRTypeTxt {
@@ -544,7 +544,7 @@ func (p *Route53Provider) removeClaimedMemberWildcards(ctx context.Context, zone
 			break
 		}
 		if aws.ToString(output.NextRecordName) == "" {
-			return errors.New("dnscontroller: claimed-zone record page has no cursor")
+			return errors.New("dnscontroller: custom-zone record page has no cursor")
 		}
 		input.StartRecordName, input.StartRecordType, input.StartRecordIdentifier =
 			output.NextRecordName, output.NextRecordType, output.NextRecordIdentifier
@@ -558,7 +558,7 @@ func (p *Route53Provider) removeClaimedMemberWildcards(ctx context.Context, zone
 		for index := range sets {
 			set := &sets[index]
 			if set.Type != types.RRTypeA && set.Type != types.RRTypeAaaa || !plainRecordSet(set) {
-				return terminalf("claimed member wildcard has conflicting records during release")
+				return terminalf("custom member wildcard has conflicting records during release")
 			}
 			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: set})
 		}
@@ -567,13 +567,13 @@ func (p *Route53Provider) removeClaimedMemberWildcards(ctx context.Context, zone
 			HostedZoneId: aws.String(zoneID),
 			ChangeBatch:  &types.ChangeBatch{Comment: aws.String("release tnl member wildcard " + owned.hostname), Changes: changes},
 		}); err != nil {
-			return fmt.Errorf("dnscontroller: release claimed member wildcard: %w", err)
+			return fmt.Errorf("dnscontroller: release custom member wildcard: %w", err)
 		}
 	}
 	return nil
 }
 
-func (p *Route53Provider) findClaimedZone(ctx context.Context, work controlstate.DNSAuthorityWork) (*types.HostedZone, error) {
+func (p *Route53Provider) findCustomZone(ctx context.Context, work controlstate.DNSAuthorityWork) (*types.HostedZone, error) {
 	dnsName := work.CanonicalDomain + "."
 	input := &route53.ListHostedZonesByNameInput{DNSName: aws.String(dnsName), MaxItems: aws.Int32(100)}
 	for {
@@ -615,7 +615,7 @@ func (p *Route53Provider) publicURLZone(ctx context.Context, record PublicURLRec
 		record.CanonicalHostname != zoneDomain && !strings.HasSuffix(record.CanonicalHostname, "."+zoneDomain) {
 		return Zone{}, terminalf("route Route 53 hosted zone identity does not match")
 	}
-	if record.ClaimedZone {
+	if record.CustomZone {
 		work := controlstate.DNSAuthorityWork{DNSAuthority: controlstate.DNSAuthority{
 			Reference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
 			CanonicalDomain: record.ZoneDomain,
@@ -627,10 +627,10 @@ func (p *Route53Provider) publicURLZone(ctx context.Context, record PublicURLRec
 			ResourceId: aws.String(zoneID), ResourceType: types.TagResourceTypeHostedzone,
 		})
 		if err != nil {
-			return Zone{}, fmt.Errorf("dnscontroller: read claimed route hosted-zone tags: %w", err)
+			return Zone{}, fmt.Errorf("dnscontroller: read custom-domain public URL hosted-zone tags: %w", err)
 		}
 		if !ownedTags(tags, work) {
-			return Zone{}, terminalf("claimed route hosted-zone ownership tags do not match")
+			return Zone{}, terminalf("custom-domain public URL hosted-zone ownership tags do not match")
 		}
 	}
 	if output.DelegationSet == nil {

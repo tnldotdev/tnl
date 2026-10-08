@@ -117,17 +117,12 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
-member-owned URLs may use any valid descendant of the acting member's namespace.
-control can limit the number of child labels on the managed deployment domain;
-that operator setting does not apply to custom domains. nested descendants stay
-member-owned and cannot be treated as team-shared URLs to bypass the policy.
-one-label names reuse namespace wildcard DNS and certificates when automation
-is configured. deeper names use exact records and exact-host certificates.
-
-new custom-domain claims are disabled by default and require an explicit
-operator opt-in alongside DNS automation. configuring Route 53 alone does not
-grant teams permission to add domains. disabling new claims does not disable
-existing custom domains or domain release.
+control owns hostname policy: a member may publish any valid descendant of
+their namespace, subject to the managed domain's configured depth limit.
+one-label names use namespace wildcard DNS and certificates when automation
+is configured; deeper names use exact records and certificates. new custom
+domains require an explicit opt-in and DNS automation. disabling new claims
+does not affect existing custom domains or their release.
 
 ```text
 public URL
@@ -216,7 +211,7 @@ transaction as the trial; team creation cannot reuse a guest namespace. managed
 guest DNS uses the configured managed zone, without a claimed DNS authority.
 
 `TNLD_SERVER_DOMAIN` names server infrastructure. It is independent from
-`TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which provides managed public URL
+`TNLD_MANAGED_DOMAIN`, which provides managed public URL
 namespaces.
 
 ## own each api

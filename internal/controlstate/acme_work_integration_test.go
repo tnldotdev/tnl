@@ -46,7 +46,7 @@ func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !issuance.NewOrder || issuance.DomainKind != DomainKindClaimed {
+	if !issuance.NewOrder || issuance.DomainKind != DomainKindCustom {
 		t.Fatal("new committed order did not identify its domain kind")
 	}
 	// creation facts are not part of the durable issuance returned on replay.

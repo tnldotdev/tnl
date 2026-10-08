@@ -35,7 +35,7 @@ func TestRelayChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	}
 	slices.Sort(wantValues)
 	if provider.record.RecordName != "_acme-challenge.relay-a.tnl.example.test" || provider.record.ZoneID != "ZSERVER" ||
-		!slices.Equal(provider.record.DesiredOwnedValues, wantValues) || provider.record.ClaimedZone {
+		!slices.Equal(provider.record.DesiredOwnedValues, wantValues) || provider.record.CustomZone {
 		t.Fatalf("presented relay challenge = %#v", provider.record)
 	}
 	store.challenge.State = "presented"

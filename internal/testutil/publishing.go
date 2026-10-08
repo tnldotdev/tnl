@@ -141,7 +141,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/discovery", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, controlv1.ControlDiscovery{ManagedDeploymentDomain: "routes.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}}})
+		writeJSON(w, controlv1.ControlDiscovery{ManagedDomain: "routes.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}}})
 	})
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, authorityv1.ControlSessionResponse{AccessToken: fixture.AccessToken, Identity: identity, AccessExpiresAt: now.Add(time.Hour)})

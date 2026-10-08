@@ -31,12 +31,12 @@ const (
 	InvitationExpired  InvitationState = "expired"
 )
 
-// DomainKind distinguishes managed and claimed team domains.
+// DomainKind distinguishes managed and custom team domains.
 type DomainKind string
 
 const (
 	DomainKindManaged DomainKind = "managed"
-	DomainKindClaimed DomainKind = "claimed"
+	DomainKindCustom  DomainKind = "custom"
 )
 
 // DomainState is the stored state of a team domain, including released domains.

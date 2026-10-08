@@ -729,10 +729,10 @@ type ControlDiscovery struct {
 	DnsAutomation        bool `json:"dns_automation"`
 
 	// GuestDemo Whether this server accepts limited anonymous demo publishers.
-	GuestDemo               bool              `json:"guest_demo"`
-	ManagedDeploymentDomain CanonicalHostname `json:"managed_deployment_domain"`
+	GuestDemo     bool              `json:"guest_demo"`
+	ManagedDomain CanonicalHostname `json:"managed_domain"`
 
-	// ManagedDomainMaxMemberChildLabels Maximum labels beneath a member namespace on the managed deployment domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
+	// ManagedDomainMaxMemberChildLabels Maximum labels beneath a member namespace on the managed domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
 	ManagedDomainMaxMemberChildLabels int `json:"managed_domain_max_member_child_labels"`
 }
 

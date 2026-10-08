@@ -27,7 +27,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: "127.0.0.1:1",
-		ServerDomain: "tnl.test", ManagedDeploymentDomain: "tunnels.test",
+		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
 		ControlTLSCertificateFile: controlCertificate.certificateFile,
 		ControlTLSPrivateKeyFile:  controlCertificate.privateKeyFile,
 		RelayTLSCertificateFile:   relayCertificate.certificateFile,
@@ -139,7 +139,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlConfig.PrivateControlListen = privateControlAddress
 	controlConfig.ClusterSecret = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
-	controlConfig.ManagedDeploymentDomain = "tunnels.test"
+	controlConfig.ManagedDomain = "tunnels.test"
 	controlConfig.ControlTLSCertificateFile = controlCertificate.certificateFile
 	controlConfig.ControlTLSPrivateKeyFile = controlCertificate.privateKeyFile
 	controlConfig.ACMEDirectoryURL = acmeServer.URL + "/directory"

@@ -8,7 +8,7 @@ import (
 )
 
 func TestMemberURLDescendantsRetainMembershipOwnership(t *testing.T) {
-	for _, kind := range []string{"managed", "claimed"} {
+	for _, kind := range []string{"managed", "custom"} {
 		t.Run(kind, func(t *testing.T) {
 			context := controlstatedb.GetPublicURLCreationContextRow{
 				DomainState: "ready", DomainKind: kind, CanonicalDomain: "example.test",
@@ -34,7 +34,7 @@ func TestMemberURLDescendantsRetainMembershipOwnership(t *testing.T) {
 					t.Fatalf("foreign namespace %q authorized: %v", hostname, err)
 				}
 			}
-			if kind == "claimed" {
+			if kind == "custom" {
 				request.MembershipID, request.PublicURLScope, request.CanonicalHostname = "", PublicURLScopeShared, "api.shop.other.example.test"
 				labels := []controlstatedb.ListTeamNamespaceLabelsRow{{MemberSlug: "other"}}
 				if err := authorizeRouteCreation(request, context, labels); !errors.Is(err, ErrPublicURLAccess) {

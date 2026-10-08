@@ -22,7 +22,7 @@ func TestIntegrationWebsiteIdentityDoesNotIssuePublishingCredentials(t *testing.
 	}
 	t.Cleanup(database.Close)
 	const secret = "website-secret-01234567890123456789"
-	h, err := authorityapi.NewHandler(authorityapi.Config{ManagedDeploymentDomain: "routes.example.test", OIDCIssuer: "https://account.example", WebServiceSecret: secret}, database)
+	h, err := authorityapi.NewHandler(authorityapi.Config{ManagedDomain: "routes.example.test", OIDCIssuer: "https://account.example", WebServiceSecret: secret}, database)
 	if err != nil {
 		t.Fatal(err)
 	}

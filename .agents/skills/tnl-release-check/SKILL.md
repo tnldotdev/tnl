@@ -21,14 +21,14 @@ benchmark. Follow [deployed release checks](../../../docs/maintainers/release-ch
    ready before checking public URLs. An existing saved login may be used with
    that team; prefer a separate identity and state directory when available.
    Do not claim an unprovided domain or change DNS delegation. Without a ready
-   claimed domain, run the managed-only checks and report that the shared custom
+   custom domain, run the managed-only checks and report that the shared custom
    URL was not tested.
 3. Preview the selected server and fixture:
 
    ```console
    mise exec -- task release:check:plan SERVER=<url> TEAM=<id> \
      STATE_DIR=<absolute-path> TNL_BINARY=<absolute-path> VERSION=<version> \
-     CLAIMED_DOMAIN=<domain>
+     CUSTOM_DOMAIN=<domain>
    ```
 
    `release:check:plan` is read-only. `release:check:run` is **not**: it creates
@@ -41,8 +41,8 @@ benchmark. Follow [deployed release checks](../../../docs/maintainers/release-ch
    for that server, including after a failed run.
 5. Require staging to pass before production promotion and check production
    after deployment. Report the version, both results, and any omitted
-   claimed-domain coverage. A managed-only run does not qualify shared custom
+   custom-domain coverage. A managed-only run does not qualify shared custom
    public URLs.
 
-Omit `CLAIMED_DOMAIN` for managed-only checks. Keep release-signing approvals
+Omit `CUSTOM_DOMAIN` for managed-only checks. Keep release-signing approvals
 in `tnl-release` and obtain separate approval for deployed benchmarks.

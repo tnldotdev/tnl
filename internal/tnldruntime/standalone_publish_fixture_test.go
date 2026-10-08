@@ -57,7 +57,7 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
-		ServerDomain: serverDomain, ManagedDeploymentDomain: "routes." + serverDomain,
+		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		PublicURLCertificateWorkers: 4,
 		LoginToken:                  testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,

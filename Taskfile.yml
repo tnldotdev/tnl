@@ -326,14 +326,14 @@ tasks:
     requires:
       vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
     cmds:
-      - node scripts/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --claimed-domain "{{.CLAIMED_DOMAIN}}"
+      - node scripts/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
 
   release:check:run:
     desc: Publish test-owned public URLs on an explicit server
     requires:
       vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
     cmds:
-      - node scripts/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --claimed-domain "{{.CLAIMED_DOMAIN}}"
+      - node scripts/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
 
   go:build:
     cmds:

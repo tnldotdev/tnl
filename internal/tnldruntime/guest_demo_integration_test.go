@@ -32,8 +32,8 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	}
 	defer state.Close()
 	h, err := controlapi.NewHandler(controlapi.Config{
-		ManagedDeploymentDomain: "tnl.wtf",
-		GuestDemoEnabled:        true, DNSAutomation: true,
+		ManagedDomain:    "tnl.wtf",
+		GuestDemoEnabled: true, DNSAutomation: true,
 	}, state, state, state.Readiness)
 	if err != nil {
 		t.Fatal(err)

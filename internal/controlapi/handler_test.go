@@ -24,7 +24,7 @@ func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
 }
 
 func TestGuestDemoIsDisabledInControlDiscoveryAndCreationByDefault(t *testing.T) {
-	handler := testHandler(t, Config{ManagedDeploymentDomain: "example.test"}, nil, nil, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{ManagedDomain: "example.test"}, nil, nil, func(context.Context) error { return nil })
 	discovery := httptest.NewRecorder()
 	handler.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/v1/discovery", nil))
 	var facts controlv1.ControlDiscovery
@@ -40,7 +40,7 @@ func TestGuestDemoIsDisabledInControlDiscoveryAndCreationByDefault(t *testing.T)
 
 func TestHealthAndReadiness(t *testing.T) {
 	cfg := Config{
-		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		ServerDomain: "example.com", ManagedDomain: "example.com",
 		ControlReadiness: func() error { return nil },
 	}
 	ready := new(bool)
@@ -147,7 +147,7 @@ func TestReadinessRequiresControlCheck(t *testing.T) {
 func TestReadinessReportsRoute53CredentialFailure(t *testing.T) {
 	credentialsReady := false
 	cfg := Config{
-		ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		ServerDomain: "example.com", ManagedDomain: "example.com",
 		ControlReadiness: func() error { return nil },
 		Route53CredentialsReadiness: func(context.Context) error {
 			if !credentialsReady {
@@ -179,7 +179,7 @@ func TestReadinessReportsRoute53CredentialFailure(t *testing.T) {
 }
 
 func TestUnknownOperationsReturnNotFound(t *testing.T) {
-	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
 	for _, path := range []string{"/v1/teams", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -190,7 +190,7 @@ func TestUnknownOperationsReturnNotFound(t *testing.T) {
 }
 
 func TestAdminOperationsRequireAuthentication(t *testing.T) {
-	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil))
 	if response.Code != http.StatusUnauthorized {
@@ -224,10 +224,10 @@ func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T)
 
 func TestControlDiscoveryAdvertisesAuthenticationFacts(t *testing.T) {
 	result := controlDiscovery(Config{
-		ManagedDeploymentDomain: "example",
-		LoginToken:              testLoginToken,
+		ManagedDomain: "example",
+		LoginToken:    testLoginToken,
 	})
-	if result.ManagedDeploymentDomain != "example" || result.DnsAutomation {
+	if result.ManagedDomain != "example" || result.DnsAutomation {
 		t.Fatalf("discovery = %#v", result)
 	}
 	if len(result.Authentication.Methods) != 1 || result.Authentication.Methods[0] != controlv1.LoginToken {

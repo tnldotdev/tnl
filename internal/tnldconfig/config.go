@@ -60,12 +60,12 @@ type Config struct {
 	RelayTCPListen       string `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
 	RelayUDPListen       string `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
 	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
-	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify claimed domains. Defaults to the system resolver."`
+	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
 
 	ServerDomain                      string `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname                   string `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
 	PrivateControlAddress             string `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
-	ManagedDeploymentDomain           string `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for namespaces."`
+	ManagedDomain                     string `name:"managed-domain" env:"TNLD_MANAGED_DOMAIN" help:"Server-controlled domain used for namespaces."`
 	ManagedDomainMaxMemberChildLabels int    `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
 	CustomDomainsEnabled              bool   `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
@@ -96,7 +96,7 @@ type Config struct {
 	WebhookSecret       string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
-	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."`
+	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
 	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned public URL records; repeat for each address."`
 	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned public URL records; repeat for each address."`
@@ -273,7 +273,7 @@ func (c Config) validateControl() error {
 	if err := validateCanonicalHostname(c.ServerDomain, "server domain"); err != nil {
 		return err
 	}
-	if err := validateCanonicalHostname(c.ManagedDeploymentDomain, "managed deployment domain"); err != nil {
+	if err := validateCanonicalHostname(c.ManagedDomain, "managed domain"); err != nil {
 		return err
 	}
 	if c.ControlHostname != "" || c.PrivateControlAddress != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
@@ -534,8 +534,6 @@ func (c Config) PrivateControlEndpoint() string {
 	}
 	return ""
 }
-
-func (c Config) ManagedDomain() string { return c.ManagedDeploymentDomain }
 
 func (c Config) ControlOrigin() string {
 	if hostname := c.ServerHostname(); hostname != "" {

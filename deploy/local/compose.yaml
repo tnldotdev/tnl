@@ -77,7 +77,7 @@ services:
       TNLD_DATABASE_URL: postgresql://tnl:tnl@postgres/${TNL_LOCAL_DATABASE:-tnl}?sslmode=disable
       TNLD_INGRESS_LISTEN: :8443
       TNLD_LOGIN_TOKEN: ${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}
-      TNLD_MANAGED_DEPLOYMENT_DOMAIN: 127.0.0.1.nip.io
+      TNLD_MANAGED_DOMAIN: 127.0.0.1.nip.io
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: standalone
       TNLD_RELAY_UDP_LISTEN: :8443

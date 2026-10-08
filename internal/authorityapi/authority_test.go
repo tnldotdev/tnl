@@ -169,7 +169,7 @@ func TestExchangeOIDCTokenCreatesLocalSession(t *testing.T) {
 	}
 	store := &authorityMutationStoreStub{}
 	handler := testHandler(t, Config{
-		ManagedDeploymentDomain: "example.test", OIDCVerifier: oidcVerifierStub{identity: verified},
+		ManagedDomain: "example.test", OIDCVerifier: oidcVerifierStub{identity: verified},
 		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour,
 	}, store)
 	request := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc", strings.NewReader(`{"id_token":"id-token"}`))

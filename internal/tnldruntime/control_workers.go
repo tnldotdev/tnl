@@ -58,7 +58,7 @@ func (d *daemon) startControlWorkers(
 	var routeDNSChallenges certificates.PublicURLDNSChallenges
 	var relayDNSChallenges certificates.RelayDNSChallenges
 	dnsConfig := dnscontroller.Config{
-		ManagedDomain: cfg.ManagedDomain(), ManagedZoneID: cfg.Route53ManagedZoneID,
+		ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID,
 		IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
 		Observer: metrics,
 	}

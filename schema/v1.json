@@ -357,7 +357,7 @@
         },
         "dns_server": {
           "type": "string",
-          "description": "DNS resolver used to verify claimed domains. Defaults to the system resolver."
+          "description": "DNS resolver used to verify custom domains. Defaults to the system resolver."
         },
         "server_domain": {
           "type": "string",
@@ -371,7 +371,7 @@
           "type": "string",
           "description": "Optional private control host and port dialed by ingress and relay processes."
         },
-        "managed_deployment_domain": {
+        "managed_domain": {
           "type": "string",
           "description": "Server-controlled domain used for namespaces."
         },
@@ -490,7 +490,7 @@
         },
         "route53_managed_zone_id": {
           "type": "string",
-          "description": "Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."
+          "description": "Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."
         },
         "route53_server_zone_id": {
           "type": "string",

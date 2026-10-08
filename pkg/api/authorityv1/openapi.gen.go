@@ -67,14 +67,14 @@ func (e DNSRecordType) Valid() bool {
 
 // Defines values for DomainKind.
 const (
-	Claimed DomainKind = "claimed"
+	Custom  DomainKind = "custom"
 	Managed DomainKind = "managed"
 )
 
 // Valid indicates whether the value is a known member of the DomainKind enum.
 func (e DomainKind) Valid() bool {
 	switch e {
-	case Claimed:
+	case Custom:
 		return true
 	case Managed:
 		return true
@@ -821,7 +821,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomain(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseTeamDomain Release one claimed domain
+	// ReleaseTeamDomain Release one custom domain
 	//
 	// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 	ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1295,7 +1295,7 @@ func (c *Client) ClaimTeamDomain(ctx context.Context, teamId TeamID, params *Cla
 	return c.Client.Do(req)
 }
 
-// ReleaseTeamDomain Release one claimed domain
+// ReleaseTeamDomain Release one custom domain
 //
 // Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 func (c *Client) ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2600,7 +2600,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomainWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error)
 
-	// ReleaseTeamDomainWithResponse Release one claimed domain
+	// ReleaseTeamDomainWithResponse Release one custom domain
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4093,7 +4093,7 @@ func (c *ClientWithResponses) ClaimTeamDomainWithResponse(ctx context.Context, t
 	return ParseClaimTeamDomainResponse(rsp)
 }
 
-// ReleaseTeamDomainWithResponse Release one claimed domain
+// ReleaseTeamDomainWithResponse Release one custom domain
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -5052,7 +5052,7 @@ type ServerInterface interface {
 	// ClaimTeamDomain Begin claiming one domain
 	// (POST /v1/teams/{team_id}/domains)
 	ClaimTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, params ClaimTeamDomainParams)
-	// ReleaseTeamDomain Release one claimed domain
+	// ReleaseTeamDomain Release one custom domain
 	// (DELETE /v1/teams/{team_id}/domains/{domain_id})
 	ReleaseTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
 	// SetTeamDefaultDomain Select a ready default domain

@@ -68,7 +68,7 @@ func TestDomainClaimCanonicalDefaultAndIdempotency(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &domainClaimStore{authorityAuthenticationStub: newAuthorityAuthenticationStub(), result: controlstate.Domain{
-				ID: "domain_result", TeamID: "team_path", Kind: "claimed", CanonicalDomain: "claim.example.test", State: "pending", AuthorityRevision: 8,
+				ID: "domain_result", TeamID: "team_path", Kind: "custom", CanonicalDomain: "claim.example.test", State: "pending", AuthorityRevision: 8,
 				RequiredRecords: []controlstate.DNSRecord{{Name: "claim.example.test", Type: "NS", Value: "ns.example.test"}},
 			}}
 			response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true, LoginToken: testLoginToken}, store), http.MethodPost, "/v1/teams/team_path/domains", test.body, "Bearer exact-access-token", "domain-idempotency")

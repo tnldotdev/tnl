@@ -52,13 +52,13 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 	case controlstate.DNSAuthorityPending:
 		if work.ProviderZoneID == "" {
 			started := time.Now()
-			zone, err := w.provider.EnsureClaimedZone(ctx, *work)
+			zone, err := w.provider.EnsureCustomZone(ctx, *work)
 			observeDNS(w.config.Observer, "authority", "provider", started, true, err)
 			if err != nil {
 				return err
 			}
 			if zone.ID == "" || len(zone.Nameservers) < 2 {
-				return terminalf("provider returned incomplete claimed-zone state")
+				return terminalf("provider returned incomplete custom-zone state")
 			}
 			// save the zone before verifying delegation on the next claim.
 			work.ProviderZoneID = zone.ID
@@ -89,7 +89,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 			return nil
 		}
 		started := time.Now()
-		err = w.provider.ReleaseClaimedZone(ctx, *work)
+		err = w.provider.ReleaseCustomZone(ctx, *work)
 		observeDNS(w.config.Observer, "authority", "provider", started, true, err)
 		if err != nil {
 			return err
