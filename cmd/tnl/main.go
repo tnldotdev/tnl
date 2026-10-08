@@ -41,6 +41,7 @@ type cli struct {
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for an exclusive webhook." group:"manage"`
+	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
 	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
@@ -131,6 +132,21 @@ type webhookUseCommand struct {
 type webhookChoiceCommand struct {
 	remoteFlags `embed:""`
 	Endpoint    string `arg:"" name:"endpoint" help:"Configured webhook endpoint name."`
+}
+
+type aliasCommand struct {
+	Use     aliasUseCommand    `cmd:"" help:"Use this worktree for an alias."`
+	Release aliasChoiceCommand `cmd:"" help:"Return the alias to the primary checkout."`
+}
+
+type aliasUseCommand struct {
+	aliasChoiceCommand `embed:""`
+	Force              bool `help:"Deliberately replace another live worktree's selection."`
+}
+
+type aliasChoiceCommand struct {
+	scopedTeamFlags `embed:""`
+	Name            string `arg:"" name:"name" help:"Configured project alias name."`
 }
 
 func main() {
@@ -384,6 +400,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	default:
 		if projectSensitiveCommand(parsedCommand) {
+			if strings.HasPrefix(parsedCommand, "alias ") {
+				selection, _, selectErr := selectProjectConfiguration(ctx, flags)
+				if selectErr != nil {
+					return selectErr
+				}
+				if selection.Path == "" {
+					return failure.Wrap("select alias", failure.ProjectConfigMissing, errors.New("project configuration with an alias is required"))
+				}
+			}
 			projectStateRoot, err = commandStateRoot(parsed)
 			if err != nil {
 				return err
@@ -448,6 +473,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runWebhookChoice(ctx, flags.Webhook.Use.webhookChoiceCommand, project, true, flags.Webhook.Use.Force, stdout)
 	case "webhook release <endpoint>":
 		return runWebhookChoice(ctx, flags.Webhook.Release, project, false, false, stdout)
+	case "alias use <name>":
+		return runAliasChoice(ctx, flags.Alias.Use.aliasChoiceCommand, project, true, flags.Alias.Use.Force, stdout, stderr)
+	case "alias release <name>":
+		return runAliasChoice(ctx, flags.Alias.Release, project, false, false, stdout, stderr)
 	case "team current":
 		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
 	case "team list":

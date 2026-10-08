@@ -20,12 +20,33 @@ import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { withProcessEnvironment } from "./test-helper/environment.js";
 import { startFrameworkFixture } from "./test-helper/framework.js";
 import { withTnl, type NextConfigContext } from "@tnldotdev/tnl/next";
+import { testAliasAssignment } from "./test-helper/project.js";
 
 const productionPhase = "phase-production-build";
 const developmentPhase = "phase-development-server";
 const context: NextConfigContext = { defaultConfig: {} };
 
 describe("withTnl", () => {
+  test("allows entry and mounted service aliases in development", async () => {
+    const bootstrap = await startTestBootstrap({
+      responseBody: JSON.stringify(testAliasAssignment()),
+    });
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+      async () => {
+        const result = await withTnl({ allowedDevOrigins: ["existing.example"] })(
+          developmentPhase,
+          context,
+        );
+        expect(result.allowedDevOrigins).toEqual([
+          "existing.example",
+          "api.member.example",
+          "review-api.member.example",
+          "review-web.member.example",
+        ]);
+      },
+    );
+  });
   test("rejects non-string development origins before requesting an assignment", async () => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(

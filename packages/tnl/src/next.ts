@@ -5,6 +5,7 @@ import {
   registerLocalTarget,
   requestTunnelAssignment,
   runtimePayload,
+  serviceHostnames,
 } from "./internal/dev.js";
 import type { NextConfig } from "next";
 import { TnlError } from "./errors.js";
@@ -59,7 +60,7 @@ export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextCo
     return injectRuntime(
       {
         ...nextConfig,
-        allowedDevOrigins: unique([...allowedDevOrigins, assignment.hostname]),
+        allowedDevOrigins: unique([...allowedDevOrigins, ...serviceHostnames(assignment)]),
       },
       runtimePayload(assignment.project, true),
     );

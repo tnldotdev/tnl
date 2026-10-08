@@ -171,10 +171,49 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	if err != nil {
 		return projectmeta.Metadata{}, err
 	}
+	metadata.Aliases, err = projectAliasMetadata(ctx, r, metadata)
+	if err != nil {
+		return projectmeta.Metadata{}, err
+	}
 	if err := metadata.Validate(); err != nil {
 		return projectmeta.Metadata{}, err
 	}
 	return metadata, nil
+}
+
+func projectAliasMetadata(ctx context.Context, resolver *projectMetadataResolver, metadata projectmeta.Metadata) (map[string]projectmeta.Alias, error) {
+	aliases := make(map[string]projectmeta.Alias)
+	for name, definition := range resolver.project.Config.Aliases {
+		if _, included := metadata.Services[definition.Service]; !included {
+			continue
+		}
+		effective, err := resolver.project.EffectiveService(definition.Service)
+		if err != nil {
+			return nil, err
+		}
+		_, current, err := resolver.resolveContext(ctx, effective)
+		if err != nil {
+			return nil, err
+		}
+		domainName := aliasDomainName(definition, effective)
+		publicURL := ""
+		if definition.PublicURL != nil {
+			publicURL = *definition.PublicURL
+		}
+		nameFlag := name
+		if publicURL != "" {
+			nameFlag = ""
+		}
+		hostname, domain, _, err := resolvePublishHostname(publicURL, nameFlag, domainName, current)
+		if err != nil {
+			return nil, err
+		}
+		if definition.PublicURL == nil {
+			hostname = definition.RelativeName(name) + "." + namespaceForMembership(current.membership, domain)
+		}
+		aliases[name] = projectmeta.Alias{Hostname: hostname, URL: "https://" + hostname, Service: definition.Service}
+	}
+	return aliases, nil
 }
 
 func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server string, metadata projectmeta.Metadata) (map[string]projectmeta.Webhook, error) {

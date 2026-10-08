@@ -60,7 +60,7 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 }
 
 // OAuthHandler returns the browser to the same path on the originating worktree.
-func OAuthHandler(state *clientstate.Database, server, hostname string) http.Handler {
+func OAuthHandler(state *clientstate.Database, server, hostname string, onRedirect ...func()) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Referrer-Policy", "no-referrer")
@@ -87,5 +87,8 @@ func OAuthHandler(state *clientstate.Database, server, hostname string) http.Han
 		// providers already retain static redirect-URI query parameters. preserve
 		// their response exactly instead of appending the static query a second time.
 		http.Redirect(response, request, origin.PublicURL+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
+		if len(onRedirect) != 0 && onRedirect[0] != nil {
+			onRedirect[0]()
+		}
 	})
 }

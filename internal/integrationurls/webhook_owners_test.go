@@ -68,6 +68,13 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var responses atomic.Int32
+	handler.OnReceiverResponse = func(mode string) {
+		if mode != "exclusive" {
+			t.Errorf("delivery mode = %q", mode)
+		}
+		responses.Add(1)
+	}
 	send := func(wantStatus int, wantBody string) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPost, "https://hooks.project.example.test/hooks/respond", strings.NewReader("signed-body"))
@@ -90,7 +97,7 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 	}
 	// the sole receiver's HTTP error is meaningful to the provider too.
 	send(http.StatusBadRequest, "<second/>")
-	if calls[1].Load() != 1 {
+	if calls[1].Load() != 1 || responses.Load() != 2 {
 		t.Fatal("successor did not receive the request")
 	}
 }

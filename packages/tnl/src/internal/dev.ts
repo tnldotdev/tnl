@@ -332,7 +332,7 @@ function parseProjectDocumentValue(
       "serviceDirectories",
       "services",
       "version",
-      ...["oauth", "webhooks", "worktree"].filter((key) => Object.hasOwn(object, key)),
+      ...["oauth", "webhooks", "worktree", "aliases"].filter((key) => Object.hasOwn(object, key)),
     ],
     description,
   );
@@ -352,6 +352,7 @@ function parseProjectDocumentValue(
       ...(Object.hasOwn(object, "worktree") ? { worktree: object.worktree } : {}),
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
       ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
+      ...(Object.hasOwn(object, "aliases") ? { aliases: object.aliases } : {}),
     },
     description,
   );
@@ -386,7 +387,25 @@ function projectMetadata(document: ProjectDocument): ProjectMetadata {
     ...(document.worktree === undefined ? {} : { worktree: document.worktree }),
     ...(document.oauth === undefined ? {} : { oauth: document.oauth }),
     ...(document.webhooks === undefined ? {} : { webhooks: document.webhooks }),
+    ...(document.aliases === undefined ? {} : { aliases: document.aliases }),
   });
+}
+
+/** returns only the public hostnames that can reach this service in development. */
+export function serviceHostnames(assignment: TnlTunnelAssignment): string[] {
+  const hostnames = new Set([assignment.hostname]);
+  for (const alias of Object.values(assignment.project.aliases ?? {})) {
+    if (
+      alias !== undefined &&
+      (alias.service === assignment.service ||
+        Object.values(assignment.project.services[alias.service]?.paths ?? {}).some(
+          (mount) => mount?.service === assignment.service,
+        ))
+    ) {
+      hostnames.add(alias.hostname);
+    }
+  }
+  return [...hostnames];
 }
 
 function selectService(document: ProjectDocument, cwd: string): string | null {

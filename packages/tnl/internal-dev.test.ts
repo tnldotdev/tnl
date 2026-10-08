@@ -13,6 +13,7 @@ import {
   requestTunnelAssignment,
   runtimePayload,
   socketIdentity,
+  serviceHostnames,
 } from "./dist/internal/dev.js";
 import { parseRuntimePayload } from "./dist/internal/runtime.js";
 import { TnlError } from "./dist/errors.js";
@@ -21,10 +22,28 @@ import {
   temporaryDirectory,
   testProjectDocument,
   testPublicProject,
+  testAliasAssignment,
 } from "./test-helper/project.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 
 describe("development context", () => {
+  test("alias metadata admits only entry-service and mounted-service hostnames", async () => {
+    const expected = testAliasAssignment();
+    const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(expected) });
+    const context = readDevelopmentContext(bootstrap.environment);
+    if (context.bootstrap === null) throw new Error("missing test bootstrap");
+    const assignment = await requestTunnelAssignment("vite", context.bootstrap);
+    expect(assignment.project.aliases).toEqual(expected.project.aliases);
+    expect(Object.isFrozen(assignment.project.aliases)).toBe(true);
+    expect(serviceHostnames(assignment)).toEqual([
+      "api.member.example",
+      "review-api.member.example",
+      "review-web.member.example",
+    ]);
+    expect(parseRuntimePayload(runtimePayload(assignment.project, true))?.aliases).toEqual(
+      expected.project.aliases,
+    );
+  });
   test.each(["", "0", "65536", " 80", "+80", "8.0", "8e1", "80\n"])(
     "rejects invalid string listener port %j",
     (value) =>

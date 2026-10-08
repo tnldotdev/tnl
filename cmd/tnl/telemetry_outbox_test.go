@@ -17,9 +17,21 @@ type telemetryTransportFunc func(*http.Request) (*http.Response, error)
 
 func (f telemetryTransportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestTelemetryBatchKeepsEventsUntilAcknowledged(t *testing.T) {
+func preparedTelemetryReporter(t *testing.T) (string, *asyncTelemetryReporter) {
+	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
-	reporter := newTelemetryReporter(root)
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return root, newTelemetryReporter(root)
+}
+
+func TestTelemetryBatchKeepsEventsUntilAcknowledged(t *testing.T) {
+	root, reporter := preparedTelemetryReporter(t)
 	var received []byte
 	status := http.StatusServiceUnavailable
 	reporter.client.Transport = telemetryTransportFunc(func(request *http.Request) (*http.Response, error) {
@@ -73,8 +85,7 @@ func TestTelemetryBatchKeepsEventsUntilAcknowledged(t *testing.T) {
 }
 
 func TestReadyFlushesStartedAndReadyTogether(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "state")
-	reporter := newTelemetryReporter(root)
+	_, reporter := preparedTelemetryReporter(t)
 	var received []byte
 	reporter.client.Transport = telemetryTransportFunc(func(request *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(request.Body)

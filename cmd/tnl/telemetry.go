@@ -33,6 +33,10 @@ const (
 	telemetryCommandFailed     telemetryEventName = "command_failed"
 	telemetryPublishRunStarted telemetryEventName = "publish_run_started"
 	telemetryDemoPingReceived  telemetryEventName = "demo_ping_received"
+	telemetryOAuthReady        telemetryEventName = "oauth_callback_url_ready"
+	telemetryOAuthRedirected   telemetryEventName = "oauth_callback_redirected"
+	telemetryWebhookReady      telemetryEventName = "webhook_endpoint_ready"
+	telemetryWebhookReached    telemetryEventName = "webhook_delivery_reached_receiver"
 )
 
 type telemetryTrackedCommand string
@@ -72,6 +76,12 @@ const (
 )
 
 type telemetryPublishMode string
+type telemetryWebhookDelivery string
+
+const (
+	telemetryFanout    telemetryWebhookDelivery = "fanout"
+	telemetryExclusive telemetryWebhookDelivery = "exclusive"
+)
 
 const (
 	telemetryPublishApp  telemetryPublishMode = "app"
@@ -79,20 +89,21 @@ const (
 )
 
 type telemetryPayload struct {
-	InstallationID string                  `json:"installation_id"`
-	InvocationID   string                  `json:"invocation_id"`
-	Event          telemetryEventName      `json:"event"`
-	Command        telemetryTrackedCommand `json:"command"`
-	Action         telemetryCommandAction  `json:"action,omitempty"`
-	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
-	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
-	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
-	PublishMode    telemetryPublishMode    `json:"publish_mode,omitempty"`
-	Framework      telemetryFrameworkName  `json:"framework,omitempty"`
-	Version        string                  `json:"version"`
-	OS             string                  `json:"os"`
-	Arch           string                  `json:"arch"`
-	CI             bool                    `json:"ci"`
+	InstallationID string                   `json:"installation_id"`
+	InvocationID   string                   `json:"invocation_id"`
+	Event          telemetryEventName       `json:"event"`
+	Command        telemetryTrackedCommand  `json:"command"`
+	Action         telemetryCommandAction   `json:"action,omitempty"`
+	FailureStage   telemetryFailureStage    `json:"failure_stage,omitempty"`
+	DiagnosticCode diagnostic.Code          `json:"diagnostic_code,omitempty"`
+	ServerKind     telemetryServerKind      `json:"server_kind,omitempty"`
+	PublishMode    telemetryPublishMode     `json:"publish_mode,omitempty"`
+	Framework      telemetryFrameworkName   `json:"framework,omitempty"`
+	Delivery       telemetryWebhookDelivery `json:"delivery,omitempty"`
+	Version        string                   `json:"version"`
+	OS             string                   `json:"os"`
+	Arch           string                   `json:"arch"`
+	CI             bool                     `json:"ci"`
 }
 
 type telemetryReporter interface {
@@ -102,12 +113,13 @@ type telemetryReporter interface {
 type telemetryReporterFactory func(string) telemetryReporter
 
 type telemetryInvocation struct {
-	reporter telemetryReporter
-	id       string
-	ready    atomic.Bool
-	modeMu   sync.RWMutex
-	mode     telemetryPublishMode
-	action   telemetryCommandAction
+	reporter        telemetryReporter
+	id              string
+	ready           atomic.Bool
+	integrationOnce [4]atomic.Bool
+	modeMu          sync.RWMutex
+	mode            telemetryPublishMode
+	action          telemetryCommandAction
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
@@ -119,6 +131,20 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 }
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
+	var once *atomic.Bool
+	switch payload.Event {
+	case telemetryOAuthReady:
+		once = &i.integrationOnce[0]
+	case telemetryOAuthRedirected:
+		once = &i.integrationOnce[1]
+	case telemetryWebhookReady:
+		once = &i.integrationOnce[2]
+	case telemetryWebhookReached:
+		once = &i.integrationOnce[3]
+	}
+	if once != nil && !once.CompareAndSwap(false, true) {
+		return
+	}
 	payload.InvocationID = i.id
 	payload.Action = i.action
 	if payload.Command == telemetryPublish {
@@ -330,6 +356,10 @@ func newTelemetryDemoPing() telemetryPayload {
 	payload.Event = telemetryDemoPingReceived
 	payload.PublishMode = telemetryPublishDemo
 	return payload
+}
+
+func newIntegrationTelemetry(name telemetryEventName, delivery telemetryWebhookDelivery) telemetryPayload {
+	return telemetryPayload{Event: name, Delivery: delivery}
 }
 
 func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, telemetryCommandAction, bool) {

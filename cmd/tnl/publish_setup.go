@@ -24,17 +24,19 @@ import (
 )
 
 type publisherServices struct {
-	authenticated  *clientauth.Client
-	state          *clientstate.Store
-	hostname       string
-	namespace      string
-	teamID         string
-	membershipID   string
-	domainID       string
-	publicURLScope controlv1.PublicURLScope
-	policyRevision uint64
-	ephemeral      bool
-	routes         *controlclient.Client
+	authenticated         *clientauth.Client
+	state                 *clientstate.Store
+	hostname              string
+	namespace             string
+	teamID                string
+	membershipID          string
+	domainID              string
+	publicURLScope        controlv1.PublicURLScope
+	domainKind            authorityv1.DomainKind
+	customDomainAvailable bool
+	policyRevision        uint64
+	ephemeral             bool
+	routes                *controlclient.Client
 }
 
 type clientIPLookup interface {
@@ -135,7 +137,11 @@ func preparePublisherServices(
 	if err != nil {
 		return publisherServices{}, err
 	}
+	customAvailable := slices.ContainsFunc(current.domains, func(domain authorityv1.Domain) bool {
+		return domain.Kind == authorityv1.Custom && domain.State == authorityv1.DomainStateReady
+	})
 	return publisherServices{
+		domainKind: domain.Kind, customDomainAvailable: customAvailable,
 		authenticated:  authenticated,
 		state:          publisherState,
 		hostname:       hostname,

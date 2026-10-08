@@ -4,6 +4,7 @@ import {
   registerLocalTarget,
   requestTunnelAssignment,
   runtimePayload,
+  serviceHostnames,
   type TnlTunnelAssignment,
 } from "./internal/dev.js";
 import type { Plugin } from "vite";
@@ -43,7 +44,10 @@ export default function tnl(...arguments_: never[]): Plugin {
       const result = {
         ...runtimeDefine(runtimePayload(assignment.project, true)),
         server: {
-          allowedHosts: addAllowedHost(server.allowedHosts, assignment.hostname),
+          allowedHosts: serviceHostnames(assignment).reduce<string[] | true>(
+            (hosts, hostname) => addAllowedHost(hosts, hostname),
+            server.allowedHosts ?? [],
+          ),
         },
       };
       if (development.bootstrap.port === undefined) {

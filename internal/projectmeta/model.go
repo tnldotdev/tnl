@@ -47,6 +47,12 @@ type Webhook struct {
 	Methods  []string `json:"methods"`
 }
 
+type Alias struct {
+	Hostname string `json:"hostname"`
+	URL      string `json:"url"`
+	Service  string `json:"service"`
+}
+
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
@@ -57,6 +63,7 @@ type Metadata struct {
 	Services           map[string]Service `json:"services"`
 	OAuth              *IntegrationOrigin `json:"oauth,omitempty"`
 	Webhooks           map[string]Webhook `json:"webhooks,omitempty"`
+	Aliases            map[string]Alias   `json:"aliases,omitempty"`
 	Version            int                `json:"version"`
 }
 
@@ -67,6 +74,7 @@ type PublicMetadata struct {
 	Services  map[string]Service `json:"services"`
 	OAuth     *IntegrationOrigin `json:"oauth,omitempty"`
 	Webhooks  map[string]Webhook `json:"webhooks,omitempty"`
+	Aliases   map[string]Alias   `json:"aliases,omitempty"`
 	Dev       bool               `json:"dev"`
 }
 
@@ -84,7 +92,7 @@ func (m Metadata) Public(dev bool) PublicMetadata {
 	}
 	return PublicMetadata{
 		Worktree:  m.Worktree,
-		Namespace: m.Namespace, Services: services, OAuth: m.OAuth, Webhooks: m.Webhooks,
+		Namespace: m.Namespace, Services: services, OAuth: m.OAuth, Webhooks: m.Webhooks, Aliases: m.Aliases,
 		Dev: dev,
 	}
 }
@@ -211,6 +219,24 @@ func (m Metadata) Validate() error {
 		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.ToSlash(clean) != directory {
 			return fmt.Errorf("service %q directory must be a clean relative path", name)
 		}
+	}
+	if len(m.Aliases) > 32 {
+		return errors.New("project metadata may contain at most 32 aliases")
+	}
+	for name, alias := range m.Aliases {
+		if !naming.ValidServiceName(name) || alias.URL != "https://"+alias.Hostname {
+			return fmt.Errorf("invalid alias %q", name)
+		}
+		if _, found := m.Services[alias.Service]; !found {
+			return fmt.Errorf("alias %q names an unknown service", name)
+		}
+		if err := canonicalHostname("alias "+name+" hostname", alias.Hostname); err != nil {
+			return err
+		}
+		if previous, found := seenHostnames[alias.Hostname]; found {
+			return fmt.Errorf("alias %q hostname is also used by %s", name, previous)
+		}
+		seenHostnames[alias.Hostname] = "alias " + name
 	}
 	return nil
 }

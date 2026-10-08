@@ -16,6 +16,10 @@ const (
 	wireCommandFailed    telemetryWireEventName = "command.failed"
 	wireTunnelReady      telemetryWireEventName = "tunnel.ready"
 	wireDemoFirstPing    telemetryWireEventName = "demo.first_ping"
+	wireOAuthReady       telemetryWireEventName = "oauth.callback_url.ready"
+	wireOAuthRedirected  telemetryWireEventName = "oauth.callback.redirected"
+	wireWebhookReady     telemetryWireEventName = "webhook.endpoint.ready"
+	wireWebhookReached   telemetryWireEventName = "webhook.delivery.reached_receiver"
 )
 
 type telemetryEventCommon struct {
@@ -50,6 +54,10 @@ type telemetryDemoWirePayload struct {
 	PublishMode telemetryPublishMode `json:"publish_mode"`
 }
 
+type telemetryWebhookWirePayload struct {
+	Delivery telemetryWebhookDelivery `json:"delivery"`
+}
+
 type telemetryCommandWireEvent struct {
 	telemetryEventCommon
 	Name    telemetryWireEventName      `json:"name"`
@@ -74,10 +82,24 @@ type telemetryDemoWireEvent struct {
 	Payload telemetryDemoWirePayload `json:"payload"`
 }
 
+type telemetryOAuthWireEvent struct {
+	telemetryEventCommon
+	Name    telemetryWireEventName `json:"name"`
+	Payload struct{}               `json:"payload"`
+}
+
+type telemetryWebhookWireEvent struct {
+	telemetryEventCommon
+	Name    telemetryWireEventName      `json:"name"`
+	Payload telemetryWebhookWirePayload `json:"payload"`
+}
+
 func (telemetryCommandWireEvent) isTelemetryWireEvent() {}
 func (telemetryFailureWireEvent) isTelemetryWireEvent() {}
 func (telemetryTunnelWireEvent) isTelemetryWireEvent()  {}
 func (telemetryDemoWireEvent) isTelemetryWireEvent()    {}
+func (telemetryOAuthWireEvent) isTelemetryWireEvent()   {}
+func (telemetryWebhookWireEvent) isTelemetryWireEvent() {}
 
 func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEvent {
 	common := telemetryEventCommon{EventID: id, InvocationID: payload.InvocationID, OccurredAt: time.Now().UTC(), EventVersion: 1}
@@ -92,6 +114,14 @@ func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEven
 		return telemetryTunnelWireEvent{common, wireTunnelReady, telemetryTunnelWirePayload{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}}
 	case telemetryDemoPingReceived:
 		return telemetryDemoWireEvent{common, wireDemoFirstPing, telemetryDemoWirePayload{telemetryPublishDemo}}
+	case telemetryOAuthReady:
+		return telemetryOAuthWireEvent{telemetryEventCommon: common, Name: wireOAuthReady}
+	case telemetryOAuthRedirected:
+		return telemetryOAuthWireEvent{telemetryEventCommon: common, Name: wireOAuthRedirected}
+	case telemetryWebhookReady:
+		return telemetryWebhookWireEvent{common, wireWebhookReady, telemetryWebhookWirePayload{payload.Delivery}}
+	case telemetryWebhookReached:
+		return telemetryWebhookWireEvent{common, wireWebhookReached, telemetryWebhookWirePayload{payload.Delivery}}
 	default:
 		return nil
 	}

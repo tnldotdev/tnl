@@ -75,6 +75,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 	if err := leader.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
 		t.Fatal(err)
 	}
+	redirects := 0
 	for _, label := range []string{"main", "feature"} {
 		tunnel, run := readyTunnel(t, state, "3000", label+".example.test")
 		observer := Observer(state, testServer, testOAuthHost, testOAuthHost, tunnel.ID())
@@ -85,16 +86,19 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 		}
 		request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?flow=github&code=opaque&state="+label+"-state", nil)
 		response := httptest.NewRecorder()
-		OAuthHandler(leader, testServer, testOAuthHost).ServeHTTP(response, request)
+		OAuthHandler(leader, testServer, testOAuthHost, func() { redirects++ }).ServeHTTP(response, request)
 		want := "https://" + label + ".example.test/api/auth/callback/github?flow=github&code=opaque&state=" + label + "-state"
 		if response.Code != http.StatusSeeOther || response.Header().Get("Location") != want {
 			t.Fatalf("callback = %d %q, want %q", response.Code, response.Header().Get("Location"), want)
 		}
 		response = httptest.NewRecorder()
-		OAuthHandler(leader, testServer, testOAuthHost).ServeHTTP(response, request)
+		OAuthHandler(leader, testServer, testOAuthHost, func() { redirects++ }).ServeHTTP(response, request)
 		if response.Code != http.StatusGone {
 			t.Fatalf("state was replayed: %d", response.Code)
 		}
+	}
+	if redirects != 2 {
+		t.Fatalf("redirect events = %d, want one per successful dispatch", redirects)
 	}
 }
 

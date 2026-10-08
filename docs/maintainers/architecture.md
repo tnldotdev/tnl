@@ -123,6 +123,13 @@ cannot send that callback to a replacement alias run. app cookies on a stable
 alias hostname can remain in the browser across worktree changes; tnl does not
 rewrite them.
 
+alias commands resolve the entry service's team/domain context and check the
+advertised hostname policy before changing local selection. a rejected nested
+name leaves the previous owner intact. generated alias metadata is declarative,
+not a readiness claim; framework integrations admit only aliases that reach
+their entry or mounted service. alias workers join before the parent tunnel
+reports completion and closes client state.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL

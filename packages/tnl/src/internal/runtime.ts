@@ -23,9 +23,14 @@ export interface ProjectMetadata {
   readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
   readonly oauth?: IntegrationOrigin;
   readonly webhooks?: Readonly<Record<string, WebhookMetadata | undefined>>;
+  readonly aliases?: Readonly<Record<string, AliasMetadata | undefined>>;
 }
 
 export type WorktreeLabel = TnlWorktreeLabel;
+
+export interface AliasMetadata extends IntegrationOrigin {
+  readonly service: string;
+}
 
 export interface WebhookMetadata extends IntegrationOrigin {
   readonly service: string;
@@ -184,12 +189,39 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     webhooks = Object.freeze(parsed);
   }
 
+  let aliases: Readonly<Record<string, AliasMetadata | undefined>> | undefined;
+  if (object.aliases !== undefined) {
+    const values = record(object.aliases, `${description} aliases`);
+    if (Object.keys(values).length > 32) throw new TnlError("sdk.runtime_invalid");
+    const parsed: Record<string, AliasMetadata> = Object.create(null);
+    for (const [name, raw] of Object.entries(values)) {
+      const alias = record(raw, `${description} alias ${name}`);
+      exactKeys(alias, ["hostname", "url", "service"], `${description} alias ${name}`);
+      const origin = parseIntegrationOrigin(
+        { hostname: alias.hostname, url: alias.url },
+        `${description} alias ${name}`,
+      );
+      if (
+        !validServiceName(name) ||
+        !validServiceName(alias.service) ||
+        !Object.hasOwn(services, alias.service) ||
+        hostnames.has(origin.hostname)
+      ) {
+        throw new TnlError("sdk.runtime_invalid");
+      }
+      hostnames.add(origin.hostname);
+      parsed[name] = Object.freeze({ ...origin, service: alias.service });
+    }
+    aliases = Object.freeze(parsed);
+  }
+
   return Object.freeze({
     namespace: projectNamespace,
     ...(worktree === undefined ? {} : { worktree }),
     services: Object.freeze(services),
     ...(oauth === undefined ? {} : { oauth }),
     ...(webhooks === undefined ? {} : { webhooks }),
+    ...(aliases === undefined ? {} : { aliases }),
   });
 }
 
@@ -206,7 +238,7 @@ function isWebhookMethod(value: unknown): value is WebhookMethod {
 }
 
 function optionalProjectKeys(value: Record<string, unknown>): string[] {
-  return ["oauth", "webhooks", "worktree"].filter((key) => Object.hasOwn(value, key));
+  return ["oauth", "webhooks", "worktree", "aliases"].filter((key) => Object.hasOwn(value, key));
 }
 
 function parseWorktree(raw: unknown): { readonly label: WorktreeLabel } {
@@ -299,6 +331,7 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
       ...(Object.hasOwn(object, "worktree") ? { worktree: object.worktree } : {}),
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
       ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
+      ...(Object.hasOwn(object, "aliases") ? { aliases: object.aliases } : {}),
     },
     description,
   );
@@ -316,6 +349,7 @@ export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean):
     ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
     ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
     ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
+    ...(project.aliases === undefined ? {} : { aliases: project.aliases }),
   });
   if (byteLength(serialized) > maximumRuntimeBytes) {
     throw new TnlError("sdk.runtime_invalid");

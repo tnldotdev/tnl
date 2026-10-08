@@ -54,6 +54,13 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	var received atomic.Int32
+	handler.OnReceiverResponse = func(mode string) {
+		if mode != "fanout" {
+			t.Errorf("delivery mode = %q", mode)
+		}
+		received.Add(1)
+	}
 	send := func(ip, method, path string, want int) {
 		t.Helper()
 		request := httptest.NewRequest(method, "https://hooks.project.example.test"+path, strings.NewReader(body))
@@ -74,17 +81,17 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	}
 	send("198.51.100.1", http.MethodPost, "/api/webhooks/stripe", http.StatusForbidden)
 	send("192.0.2.1", http.MethodGet, "/api/webhooks/stripe", http.StatusForbidden)
-	if calls.Load() != 0 {
+	if calls.Load() != 0 || received.Load() != 0 {
 		t.Fatal("denied requests reached a worktree")
 	}
 	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusNoContent)
-	if calls.Load() != 2 {
-		t.Fatalf("fanout delivered %d requests", calls.Load())
+	if calls.Load() != 2 || received.Load() != 2 {
+		t.Fatalf("fanout delivered %d requests, observed %d responses", calls.Load(), received.Load())
 	}
 	failed.Store(true)
 	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusBadGateway)
-	if calls.Load() != 4 {
-		t.Fatalf("failure skipped another receiver: %d calls", calls.Load())
+	if calls.Load() != 4 || received.Load() != 4 {
+		t.Fatalf("failure skipped another receiver: %d calls, %d responses", calls.Load(), received.Load())
 	}
 }
 

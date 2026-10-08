@@ -151,7 +151,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	integrationGroup := ""
-	if !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0) {
+	if !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		if flags.project.Root == "" {
 			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 			if resolveErr != nil {
@@ -169,12 +169,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if resolveErr != nil {
 			return resolveErr
 		}
-		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output)
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output, telemetry)
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
 	}
 	if !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
-		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output)
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
@@ -204,6 +204,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
+	if !flags.Demo && len(flags.project.Config.Aliases) != 0 {
+		stopAliases := startProjectAliases(ctx, state, flags.project, flags.Service, flags.selectedTeam, services, publisherConfig, integrationGroup, tunnel, output)
+		defer stopAliases()
+	}
 	err = publisher.Run(ctx, publisherConfig)
 	if cause := context.Cause(ctx); cause != nil {
 		return cause

@@ -8,7 +8,10 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/integrationurls"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 func TestIntegrationURLProgressFailureStopsTheTunnelWithItsCause(t *testing.T) {
@@ -39,5 +42,80 @@ func TestIntegrationURLProgressFailureStopsTheTunnelWithItsCause(t *testing.T) {
 	definition, _ := failure.DefinitionFor(failure.OutputUnavailable)
 	if definition.Message == "" || definition.Action == "" {
 		t.Fatal("output error did not have safe presentation")
+	}
+}
+
+func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing.T) {
+	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	const server = "https://control.example.test"
+	const group = "project\x00member.example.test"
+	const hostname = "hooks.member.example.test"
+	if _, err := state.Server(t.Context(), server); err != nil {
+		t.Fatal(err)
+	}
+	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationGroup: group,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	definition := config.Webhook{Service: "api", Path: "/hooks/event", Delivery: "exclusive", AllowFrom: config.AnyWebhookSources()}
+	encoded, digest, err := integrationurls.DefinitionBytes(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "event", encoded); err != nil {
+		t.Fatal(err)
+	}
+	fanout := config.Webhook{Service: "api", Path: "/hooks/fanout", AllowFrom: config.AnyWebhookSources()}
+	fanoutBytes, _, err := integrationurls.DefinitionBytes(fanout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "fanout", fanoutBytes); err != nil {
+		t.Fatal(err)
+	}
+	definitions := map[string]config.Webhook{"event": definition}
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
+		t.Fatalf("unpublished URL reported ready: %q", mode)
+	}
+	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetPublicURL(t.Context(), id, "api.member.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetReady(t.Context(), "https://api.member.example.test", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.MarkIntegrationURLReady(t.Context(), server, hostname, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, map[string]config.Webhook{"fanout": fanout}); mode != telemetryFanout {
+		t.Fatalf("ready fanout endpoint = %q", mode)
+	}
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
+		t.Fatalf("exclusive endpoint without owner reported ready: %q", mode)
+	}
+	if err := state.ClaimWebhookReceiver(t.Context(), server, group, "event", tunnel.ID(), digest, false); err != nil {
+		t.Fatal(err)
+	}
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != telemetryExclusive {
+		t.Fatalf("ready exclusive endpoint = %q", mode)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 2); err != nil {
+		t.Fatal(err)
+	}
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
+		t.Fatalf("reprovisioning receiver reported ready: %q", mode)
 	}
 }
