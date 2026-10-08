@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -26,6 +28,18 @@ func (a Alias) RelativeName(key string) string {
 		return *a.Name
 	}
 	return key
+}
+
+// DefinitionBytes normalizes equivalent relative names and IP ordering for
+// agreement between live worktrees. local targets are not alias declarations.
+func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
+	if a.PublicURL == nil {
+		name := a.RelativeName(key)
+		a.Name = &name
+	}
+	a.AllowIP = slices.Sorted(slices.Values(a.AllowIP))
+	encoded, err := json.Marshal(a)
+	return encoded, sha256.Sum256(encoded), err
 }
 
 // ValidateAliases validates local declarations without resolving a member

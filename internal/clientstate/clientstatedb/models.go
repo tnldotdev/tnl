@@ -8,6 +8,12 @@ import (
 	"database/sql"
 )
 
+type AliasDeclaration struct {
+	AliasID     string
+	TunnelID    string
+	Fingerprint []byte
+}
+
 type CertificateMaterial struct {
 	ID             int64
 	ServerOrigin   string
@@ -132,6 +138,21 @@ type Preview struct {
 	ProjectRoot  string
 	PreviewID    string
 	UpdatedAt    int64
+}
+
+type ProjectAlias struct {
+	ID                string
+	ServerOrigin      string
+	ProjectKey        string
+	TeamID            string
+	MembershipID      string
+	Namespace         string
+	Name              string
+	Hostname          string
+	Service           string
+	Fingerprint       []byte
+	SelectedProject   string
+	SelectionRevision int64
 }
 
 type ServerProfile struct {

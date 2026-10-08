@@ -99,6 +99,15 @@ configuration validation does not consult server policy or publish a URL.
 TypeScript config helpers check service references in aliases, webhooks, and
 path mounts; Go validation also checks computed values and static configuration.
 
+aliases keep a persistent selected project directory in client state, initially
+the corresponding project in the primary checkout. registration never takes an
+explicit selection back. `use` requires a ready entry service and preserves a
+different live owner unless takeover is forced. `release` returns an override
+to the primary checkout, even when its service is stopped. receiver readiness
+and selection are separate: restarting resumes the chosen worktree; an expired
+lease does not assign a different one. revision and tunnel/run identities fence
+requests prepared against older selections.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL
