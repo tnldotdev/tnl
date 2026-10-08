@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -22,6 +23,9 @@ func TestTelemetryBatchKeepsEventsUntilAcknowledged(t *testing.T) {
 	var received []byte
 	status := http.StatusServiceUnavailable
 	reporter.client.Transport = telemetryTransportFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.Header.Get("User-Agent"); got != "tnl" {
+			t.Errorf("telemetry User-Agent = %q", got)
+		}
 		body, err := io.ReadAll(request.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -98,6 +102,34 @@ func TestReadyFlushesStartedAndReadyTogether(t *testing.T) {
 	if err := json.Unmarshal(received, &batch); err != nil || len(batch.Events) != 2 ||
 		batch.Events[0].Name != "command.started" || batch.Events[1].Name != "tunnel.ready" {
 		t.Fatalf("ready batch = %+v, %v", batch, err)
+	}
+}
+
+func TestTypedFailureEventKeepsBoundedFields(t *testing.T) {
+	payload := newTelemetryBase(telemetryLogin)
+	payload.Event = telemetryCommandFailed
+	payload.InvocationID = "ivk_0123456789abcdefghijkl"
+	payload.FailureStage = telemetryAuthenticationStage
+	payload.DiagnosticCode = diagnostic.AuthenticationRequired
+	event := payload.wireEvent("tev_0123456789abcdefghijkl")
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Name    string `json:"name"`
+		Payload struct {
+			Command        string `json:"command"`
+			FailureStage   string `json:"failure_stage"`
+			DiagnosticCode string `json:"diagnostic_code"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Name != "command.failed" || decoded.Payload.Command != "login" ||
+		decoded.Payload.FailureStage != "authentication" || decoded.Payload.DiagnosticCode != "TNL_AUTHENTICATION_REQUIRED" {
+		t.Fatalf("failure wire event = %s", encoded)
 	}
 }
 

@@ -36,6 +36,7 @@ const (
 )
 
 type telemetryTrackedCommand string
+type telemetryCommandAction string
 
 const (
 	telemetryInit     telemetryTrackedCommand = "init"
@@ -82,7 +83,7 @@ type telemetryPayload struct {
 	InvocationID   string                  `json:"invocation_id"`
 	Event          telemetryEventName      `json:"event"`
 	Command        telemetryTrackedCommand `json:"command"`
-	Action         string                  `json:"action,omitempty"`
+	Action         telemetryCommandAction  `json:"action,omitempty"`
 	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
 	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
 	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
@@ -100,54 +101,13 @@ type telemetryReporter interface {
 
 type telemetryReporterFactory func(string) telemetryReporter
 
-type telemetryEventID string
-
-type telemetryWireEvent struct {
-	EventID      telemetryEventID `json:"event_id"`
-	InvocationID string           `json:"invocation_id"`
-	OccurredAt   time.Time        `json:"occurred_at"`
-	Name         string           `json:"name"`
-	EventVersion int              `json:"event_version"`
-	Payload      any              `json:"payload"`
-}
-
-func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEvent {
-	event := telemetryWireEvent{EventID: id, InvocationID: payload.InvocationID,
-		OccurredAt: time.Now().UTC(), EventVersion: 1}
-	switch payload.Event {
-	case telemetryCommandStarted, telemetryCommandCompleted, telemetryCommandFailed:
-		event.Name = "command." + strings.TrimPrefix(string(payload.Event), "command_")
-		command := struct {
-			Command        telemetryTrackedCommand `json:"command"`
-			Action         string                  `json:"action,omitempty"`
-			FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
-			DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
-		}{payload.Command, payload.Action, payload.FailureStage, payload.DiagnosticCode}
-		event.Payload = command
-	case telemetryPublishRunStarted:
-		event.Name = "tunnel.ready"
-		event.Payload = struct {
-			Source      telemetryTrackedCommand `json:"source"`
-			ServerKind  telemetryServerKind     `json:"server_kind"`
-			Framework   telemetryFrameworkName  `json:"framework,omitempty"`
-			PublishMode telemetryPublishMode    `json:"publish_mode,omitempty"`
-		}{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}
-	case telemetryDemoPingReceived:
-		event.Name = "demo.first_ping"
-		event.Payload = struct {
-			PublishMode telemetryPublishMode `json:"publish_mode"`
-		}{telemetryPublishDemo}
-	}
-	return event
-}
-
 type telemetryInvocation struct {
 	reporter telemetryReporter
 	id       string
 	ready    atomic.Bool
 	modeMu   sync.RWMutex
 	mode     telemetryPublishMode
-	action   string
+	action   telemetryCommandAction
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
@@ -237,7 +197,7 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 		return
 	}
 	event := payload.wireEvent(telemetryEventID(id))
-	if event.Name == "" {
+	if event == nil {
 		return
 	}
 	encoded, err := json.Marshal(event)
@@ -290,22 +250,9 @@ func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 	for _, item := range pending {
 		events = append(events, item.JSON)
 	}
-	body, err := json.Marshal(struct {
-		SchemaVersion  int    `json:"schema_version"`
-		InstallationID string `json:"installation_id"`
-		Client         struct {
-			Version string `json:"version"`
-			OS      string `json:"os"`
-			Arch    string `json:"arch"`
-			CI      bool   `json:"ci"`
-		} `json:"client"`
-		Events []json.RawMessage `json:"events"`
-	}{1, installationID, struct {
-		Version string `json:"version"`
-		OS      string `json:"os"`
-		Arch    string `json:"arch"`
-		CI      bool   `json:"ci"`
-	}{buildinfo.Version, runtime.GOOS, runtime.GOARCH, os.Getenv("CI") != ""}, events})
+	body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
+		Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
+		Events: events})
 	if err != nil {
 		return
 	}
@@ -314,7 +261,7 @@ func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "")
+	request.Header.Set("User-Agent", "tnl")
 	response, err := r.client.Do(request)
 	if err == nil {
 		_ = response.Body.Close()
@@ -385,31 +332,26 @@ func newTelemetryDemoPing() telemetryPayload {
 	return payload
 }
 
-func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, string, bool) {
+func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, telemetryCommandAction, bool) {
 	var command []string
 	for _, element := range parsed.Path {
 		if element.Command != nil && element.Command.Type == kong.CommandNode {
 			command = append(command, element.Command.Name)
 		}
 	}
-	if !trackedCommandPaths[strings.Join(command, " ")] {
+	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" {
 		return "", "", false
 	}
 	if len(command) == 1 {
-		return telemetryTrackedCommand(command[0]), "", true
+		switch command[0] {
+		case "init", "login", "logout", "dev", "publish", "status":
+			return telemetryTrackedCommand(command[0]), "", true
+		default:
+			return "", "", false
+		}
 	}
-	return telemetryTrackedCommand(strings.Join(command[:len(command)-1], " ")), command[len(command)-1], true
+	return telemetryTrackedCommand(strings.Join(command[:len(command)-1], " ")), telemetryCommandAction(command[len(command)-1]), true
 }
-
-// only literal command nodes enter this set. arguments and flags do not.
-var trackedCommandPaths = func() map[string]bool {
-	paths := `init|login|logout|dev|publish|status|requests list|requests show|config path|config check|config generate|team current|team list|team use|team create|team members|team invite create|team invite list|team invite revoke|team join|team member set-role|team member remove|domain claim|domain default|domain list|domain status|domain release|url list|url delete|share link create|share list|share link revoke|share team create|share team revoke|feedback list|feedback inspect|feedback watch|feedback reply|feedback update|feedback resolve|feedback reopen|admin server status|admin relays list|admin relays drain|admin maintenance list|admin maintenance allow|admin maintenance block`
-	result := make(map[string]bool)
-	for _, path := range strings.Split(paths, "|") {
-		result[path] = true
-	}
-	return result
-}()
 
 func commandStateRoot(parsed *kong.Context) (string, error) {
 	stateDir := os.Getenv("TNL_STATE_DIR")
