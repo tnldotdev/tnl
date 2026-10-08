@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { Console } from "node:console";
+import { readFileSync, writeSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 type LoaderErrorCode =
@@ -10,12 +11,14 @@ type LoaderErrorCode =
   | "unsupported_node";
 
 const [configPath] = process.argv.slice(1);
+// keep project logging off the response channel.
+globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
 try {
   if (configPath === undefined) {
     exitWithError("invalid_arguments");
   }
-  const context = deepFreeze(JSON.parse(readFileSync(4, "utf8")) as unknown);
+  const context = deepFreeze(JSON.parse(readFileSync(0, "utf8")) as unknown);
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split(".").map(Number);
   if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 18)) {
     exitWithError("unsupported_node");
@@ -43,7 +46,7 @@ try {
   if (result === undefined) {
     exitWithError("evaluation_failed");
   }
-  writeFileSync(3, result, { encoding: "utf8" });
+  writeSync(1, `R${result}`);
   process.exit(0);
 } catch {
   exitWithError("evaluation_failed");
@@ -51,7 +54,7 @@ try {
 
 function exitWithError(error: LoaderErrorCode): never {
   try {
-    writeFileSync(5, JSON.stringify({ error }), { encoding: "utf8" });
+    writeSync(1, `E${JSON.stringify({ error })}`);
   } finally {
     process.exit(1);
   }

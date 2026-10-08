@@ -1,8 +1,10 @@
 package projectconfig
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	stdjson "encoding/json"
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -49,67 +51,19 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: create result pipe: %w", err)
-	}
-	defer reader.Close()
-	errorReader, errorWriter, err := os.Pipe()
-	if err != nil {
-		writer.Close()
-		return config.TNL{}, fmt.Errorf("load TypeScript config: create error pipe: %w", err)
-	}
-	defer errorReader.Close()
 	command := exec.CommandContext(loadCtx, node, "--input-type=module", "--eval", loaderSource, absolutePath, absoluteCWD)
 	command.Dir = filepath.Dir(absolutePath)
 	environment, contextEnvironment := sanitizedEnvironment(os.Environ())
 	command.Env = environment
-	contextReader, contextWriter, err := os.Pipe()
-	if err != nil {
-		writer.Close()
-		errorWriter.Close()
-		return config.TNL{}, fmt.Errorf("load TypeScript config: create context pipe: %w", err)
-	}
-	defer contextWriter.Close()
 	contextData, err := json.Marshal(loaderContext{CWD: absoluteCWD, Env: contextEnvironment, Worktree: worktree})
 	if err != nil {
-		writer.Close()
-		errorWriter.Close()
-		contextReader.Close()
 		return config.TNL{}, fmt.Errorf("load TypeScript config: encode context: %w", err)
 	}
-	command.ExtraFiles = []*os.File{writer, contextReader, errorWriter}
-	command.Stdout = io.Discard
+	command.Stdin = bytes.NewReader(contextData)
+	output := &boundedOutput{limit: maxResultBytes + 1}
+	command.Stdout = output
 	command.Stderr = io.Discard
-	if err := command.Start(); err != nil {
-		writer.Close()
-		errorWriter.Close()
-		contextReader.Close()
-		if contextErr := ctx.Err(); contextErr != nil {
-			return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
-		}
-		return config.TNL{}, fmt.Errorf("load TypeScript config: start Node.js: %w", err)
-	}
-	writer.Close()
-	errorWriter.Close()
-	contextReader.Close()
-	if _, err := contextWriter.Write(contextData); err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		if contextErr := ctx.Err(); contextErr != nil {
-			return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
-		}
-		if loadCtx.Err() != nil {
-			return config.TNL{}, errors.New("load TypeScript config: evaluation timed out")
-		}
-		return config.TNL{}, fmt.Errorf("load TypeScript config: send context: %w", err)
-	}
-	contextWriter.Close()
-	resultChannel := readBoundedPipe(reader, maxResultBytes)
-	errorChannel := readBoundedPipe(errorReader, maxDiagnosticByte)
-	waitErr := command.Wait()
-	result := <-resultChannel
-	loaderError := <-errorChannel
+	waitErr := command.Run()
 	if contextErr := ctx.Err(); contextErr != nil {
 		return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
 	}
@@ -117,15 +71,19 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 		return config.TNL{}, errors.New("load TypeScript config: evaluation timed out")
 	}
 	if waitErr != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: %s", loaderErrorMessage(loaderError))
+		if _, ok := waitErr.(*exec.ExitError); !ok {
+			return config.TNL{}, fmt.Errorf("load TypeScript config: start Node.js: %w", waitErr)
+		}
+		return config.TNL{}, fmt.Errorf("load TypeScript config: %s", loaderErrorMessage(output))
 	}
-	if result.err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: read result: %w", result.err)
-	}
-	if result.overflow {
+	if output.overflow {
 		return config.TNL{}, errors.New("load TypeScript config: result is too large")
 	}
-	value, err := unmarshalTypeScriptTNL(result.data)
+	data := output.Bytes()
+	if len(data) == 0 || data[0] != 'R' || !stdjson.Valid(data[1:]) {
+		return config.TNL{}, errors.New("load TypeScript config: invalid result from loader")
+	}
+	value, err := unmarshalTypeScriptTNL(data[1:])
 	if err != nil {
 		return config.TNL{}, fmt.Errorf("load TypeScript config: invalid result: %w", err)
 	}
@@ -135,38 +93,42 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	return value, nil
 }
 
-type result struct {
-	data     []byte
-	err      error
+type boundedOutput struct {
+	data     bytes.Buffer
+	limit    int
 	overflow bool
 }
 
-func readBoundedPipe(reader io.Reader, limit int) <-chan result {
-	channel := make(chan result, 1)
-	go func() {
-		data, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
-		overflow := len(data) > limit
-		if err == nil && overflow {
-			// keep draining so the loader's synchronous write can finish before
-			// command.Wait without retaining oversized project-controlled data.
-			_, err = io.Copy(io.Discard, reader)
-		}
-		channel <- result{data: data, err: err, overflow: overflow}
-	}()
-	return channel
+func (o *boundedOutput) Write(data []byte) (int, error) {
+	size := len(data)
+	remaining := o.limit - o.data.Len()
+	if remaining > 0 {
+		_, _ = o.data.Write(data[:min(size, remaining)])
+	}
+	if size > remaining {
+		// the writer must keep accepting bytes so the subprocess cannot block.
+		o.overflow = true
+	}
+	return size, nil
 }
+
+func (o *boundedOutput) Bytes() []byte { return o.data.Bytes() }
 
 type loaderError struct {
 	Error string `json:"error"`
 }
 
-func loaderErrorMessage(result result) string {
+func loaderErrorMessage(output *boundedOutput) string {
 	const fallback = "failed to evaluate tnl.config.ts"
-	if result.err != nil || result.overflow {
+	if output.overflow {
+		return fallback
+	}
+	data := output.Bytes()
+	if len(data) < 2 || data[0] != 'E' || len(data)-1 > maxDiagnosticByte {
 		return fallback
 	}
 	var value loaderError
-	if err := json.Unmarshal(result.data, &value); err != nil {
+	if err := json.Unmarshal(data[1:], &value); err != nil {
 		return fallback
 	}
 	messages := map[string]string{

@@ -129,6 +129,10 @@ func TestLoadDoesNotExposeProjectOutputOrExceptions(t *testing.T) {
 			fmt.Sprintf(`export default () => { throw {toString() { throw new Error(%q); }}; };`, secret),
 			"failed to evaluate tnl.config.ts",
 		},
+		"direct stdout": {
+			fmt.Sprintf(`import {writeSync} from "node:fs"; writeSync(1, %q); throw new Error(%q);`, secret, secret),
+			"failed to evaluate tnl.config.ts",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -144,6 +148,21 @@ func TestLoadDoesNotExposeProjectOutputOrExceptions(t *testing.T) {
 				t.Fatalf("load error exposed project secret: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsProjectWritesToResponseChannel(t *testing.T) {
+	for _, output := range []string{"project output", "RPROJECT_CONFIG_SECRET_SENTINEL"} {
+		directory := t.TempDir()
+		path := filepath.Join(directory, "tnl.config.ts")
+		source := fmt.Sprintf(`import {writeSync} from "node:fs"; writeSync(1, %q); export default {};`, output)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := loadTypeScript(t.Context(), path, directory, Worktree{})
+		if err == nil || !strings.Contains(err.Error(), "invalid result from loader") || strings.Contains(err.Error(), output) {
+			t.Fatalf("unexpected response channel result: %v", err)
+		}
 	}
 }
 
