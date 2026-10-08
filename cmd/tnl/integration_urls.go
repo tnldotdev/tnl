@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -63,7 +64,13 @@ func integrationURLConfig(services publisherServices, hostname string) publisher
 	return config
 }
 
-func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth projectmeta.IntegrationOrigin, output *publishOutput) func() {
+func reportIntegrationURL(tunnel *clientstate.Tunnel, output *publishOutput, state, footer string, blocks ...clioutput.Block) {
+	if err := output.integrationURLMessage(state, footer, blocks...); err != nil {
+		tunnel.CancelWithCause(failure.Wrap("write integration URL progress", failure.OutputUnavailable, err))
+	}
+}
+
+func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *publishOutput) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	var reportMu sync.Mutex
@@ -81,10 +88,10 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 			if err != nil {
 				if time.Since(lastReport) >= 30*time.Second {
 					lastReport = time.Now()
-					_ = output.integrationURLMessage("oauth unavailable", "app tunnel continues; retry sign-in shortly", clioutput.Text("the callback publisher could not become ready"))
+					reportIntegrationURL(tunnel, output, "oauth unavailable", "app tunnel continues; retry sign-in shortly", clioutput.Text("the callback publisher could not become ready"))
 				}
 			} else if event.Type == publisher.EventReady {
-				_ = output.integrationURLMessage("oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: oauth.URL}))
+				reportIntegrationURL(tunnel, output, "oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: oauth.URL}))
 			}
 		},
 	}
@@ -120,22 +127,22 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 				state = "webhook policy conflict"
 				message = "webhook " + name + " conflicts with another worktree's endpoint policy"
 			}
-			_ = output.integrationURLMessage(state, "app tunnel continues", clioutput.Text(message))
+			reportIntegrationURL(tunnel, output, state, "app tunnel continues", clioutput.Text(message))
 		}
 	}
 	hooks, err := projectIntegrationOrigin(ctx, state, project, services.authenticated.ServerEndpoint, services.namespace, "hooks")
 	if err != nil {
-		_ = output.integrationURLMessage("webhooks unavailable", "app tunnel continues", clioutput.Text("the stable webhook origin could not be selected"))
+		reportIntegrationURL(tunnel, output, "webhooks unavailable", "app tunnel continues", clioutput.Text("the stable webhook origin could not be selected"))
 		cancel()
 		return func() {}
 	}
 	done := make(chan struct{})
-	worker := webhookURLPublisher(state, services, group, hooks, output)
+	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output)
 	go func() { defer close(done); worker.Maintain(ctx) }()
 	return func() { cancel(); <-done }
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, output *publishOutput) integrationurls.Publisher {
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *publishOutput) integrationurls.Publisher {
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	failure := func(message string) {
@@ -143,7 +150,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 		defer reportMu.Unlock()
 		if time.Since(lastReport) >= 30*time.Second {
 			lastReport = time.Now()
-			_ = output.integrationURLMessage("webhook unavailable", "app tunnel continues", clioutput.Text(message))
+			reportIntegrationURL(tunnel, output, "webhook unavailable", "app tunnel continues", clioutput.Text(message))
 		}
 	}
 	definitionsAt := func(ctx context.Context) (map[string]config.Webhook, string, error) {
@@ -185,7 +192,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			if err != nil {
 				failure("the stable webhook publisher could not become ready")
 			} else if event.Type == publisher.EventReady {
-				_ = output.integrationURLMessage("webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: origin.URL}))
+				reportIntegrationURL(tunnel, output, "webhooks ready", "", clioutput.Fields(clioutput.Field{Label: "webhook origin", Value: origin.URL}))
 			}
 		},
 	}

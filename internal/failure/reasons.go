@@ -44,6 +44,12 @@ const (
 	WebhookOwned                      Reason = "TNL_CLIENT_WEBHOOK_OWNED"
 	WebhookReceiverUnready            Reason = "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY"
 	WebhookNotSelected                Reason = "TNL_CLIENT_WEBHOOK_NOT_SELECTED"
+	IntegrationURLNotReady            Reason = "TNL_CLIENT_INTEGRATION_URL_NOT_READY"
+	IntegrationURLLeaseExpired        Reason = "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED"
+	WebhookNoReadyReceivers           Reason = "TNL_CLIENT_WEBHOOK_NO_READY_RECEIVERS"
+	WebhookOwnerMissing               Reason = "TNL_CLIENT_WEBHOOK_OWNER_MISSING"
+	WebhookOwnerUnready               Reason = "TNL_CLIENT_WEBHOOK_OWNER_UNREADY"
+	WebhookPolicyConflict             Reason = "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT"
 	InitPackageManager                Reason = "TNL_CLIENT_INIT_PACKAGE_MANAGER"
 	InitFramework                     Reason = "TNL_CLIENT_INIT_FRAMEWORK"
 	InvalidSetupInput                 Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
@@ -273,6 +279,30 @@ var definitions = map[Reason]Definition{
 	WebhookNotSelected: {
 		Class: Conflict, Message: "this worktree is not the selected webhook receiver",
 		Action: "check tnl status before releasing or switching this webhook", Retry: RetryAfterChange,
+	},
+	IntegrationURLNotReady: {
+		Class: Unavailable, Message: "the integration URL publisher is not ready",
+		Action: "keep a participating tnl dev or tnl publish tunnel running and wait for its publisher", Retry: RetryLater,
+	},
+	IntegrationURLLeaseExpired: {
+		Class: Stale, Message: "the integration URL publisher stopped renewing its readiness",
+		Action: "check the running app tunnels and restart one if the publisher does not recover", Retry: RetryLater,
+	},
+	WebhookNoReadyReceivers: {
+		Class: Unavailable, Message: "this webhook has no ready receivers",
+		Action: "start the configured service in a worktree and wait for its public URL", Retry: RetryLater,
+	},
+	WebhookOwnerMissing: {
+		Class: Unavailable, Message: "this exclusive webhook has no selected receiver",
+		Action: "run tnl webhook use NAME from a worktree with a ready service", Retry: RetryAfterChange,
+	},
+	WebhookOwnerUnready: {
+		Class: Unavailable, Message: "the selected webhook receiver is not ready",
+		Action: "wait for its tunnel to recover or run tnl webhook use NAME --force from a ready worktree", Retry: RetryLater,
+	},
+	WebhookPolicyConflict: {
+		Class: Conflict, Message: "worktrees disagree about this webhook endpoint",
+		Action: "make the endpoint declarations agree, then restart the conflicting tunnel", Retry: RetryAfterChange,
 	},
 	InitPackageManager: {
 		Class: Invalid, Message: "tnl could not select a package manager",

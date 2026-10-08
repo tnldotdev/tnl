@@ -180,6 +180,15 @@ in the calling worktree. Already-dispatched requests may finish at the old one.
 Source/path/method admission runs before delivery in either mode. An exclusive
 handler's status and bounded body are returned directly to the provider.
 
+`tnl status` reads app tunnels, saved integration URL hostnames, publisher
+readiness leases, webhook declarations, and exclusive ownership in one SQLite
+snapshot. The version-2 JSON result includes ready receivers from linked
+worktrees even when the command selects just the current checkout's tunnels.
+An expired publisher lease is stale; a live exclusive owner in provisioning
+remains selected but is not a ready receiver. Status includes only saved
+hostnames, endpoint configuration, local tunnel identity, and authored reasons;
+it never includes OAuth state, codes, signature headers, or request bodies.
+
 ```text
 public URL
   durable hostname, ownership, target, policy, and state
