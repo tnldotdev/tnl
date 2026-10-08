@@ -32,6 +32,8 @@ const (
 	TeamSelectionAmbiguous            Reason = "client.team_selection_ambiguous"
 	DomainNotAvailable                Reason = "client.domain_not_available"
 	DomainNotReady                    Reason = "client.domain_not_ready"
+	CustomDomainsDisabled             Reason = "client.custom_domains_disabled"
+	MemberHostnameDepthExceeded       Reason = "client.member_hostname_depth_exceeded"
 	InvalidDomainName                 Reason = "client.invalid_domain_name"
 	LoginTokenInvalid                 Reason = "client.login_token_invalid"
 	LoginTerminalRequired             Reason = "client.login_terminal_required"
@@ -231,6 +233,14 @@ var definitions = map[Reason]Definition{
 	InvalidDomainName: {
 		Class: Invalid, Message: "the domain name is not a canonical DNS name",
 		Action: "use lowercase ASCII DNS labels without a trailing dot", Retry: RetryAfterChange,
+	},
+	CustomDomainsDisabled: {
+		Class: Forbidden, Message: "this server does not allow adding custom domains",
+		Action: "publish on a domain already available to your team", Retry: RetryAfterChange,
+	},
+	MemberHostnameDepthExceeded: {
+		Class: Forbidden, Message: "this hostname exceeds the server's member URL depth limit on its managed domain",
+		Action: "use fewer labels beneath your namespace", Retry: RetryAfterChange,
 	},
 	LoginTokenInvalid: {
 		Class: Unauthenticated, Message: "the login token is invalid",

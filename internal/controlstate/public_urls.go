@@ -939,7 +939,7 @@ func authorizeRouteCreation(
 	actorNamespace := actorLabel + "." + context.CanonicalDomain
 	if request.PublicURLScope == "member" {
 		if request.MembershipID != context.ActorMembershipID ||
-			request.CanonicalHostname != actorNamespace && !oneLabelBeneath(request.CanonicalHostname, actorNamespace) {
+			!hostnameWithin(request.CanonicalHostname, actorNamespace) {
 			return ErrPublicURLAccess
 		}
 		return nil

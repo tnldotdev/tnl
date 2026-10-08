@@ -19,13 +19,20 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, scope string
 		dns               bool
+		nested            bool
+		limit             int
+		denied            bool
 	}{
-		{"managed_member_dns", "managed", "member", true},
-		{"claimed_member_dns", "claimed", "member", true},
-		{"managed_member_no_dns", "managed", "member", false},
-		{"claimed_member_no_dns", "claimed", "member", false},
-		{"shared_dns", "managed", "shared", true},
-		{"shared_no_dns", "claimed", "shared", false},
+		{"managed_member_dns", "managed", "member", true, false, 1, false},
+		{"claimed_member_dns", "claimed", "member", true, false, 1, false},
+		{"managed_member_no_dns", "managed", "member", false, false, 0, false},
+		{"claimed_member_no_dns", "claimed", "member", false, false, 0, false},
+		{"shared_dns", "managed", "shared", true, false, 1, false},
+		{"shared_no_dns", "claimed", "shared", false, false, 0, false},
+		{"nested_managed_dns", "managed", "member", true, true, 0, false},
+		{"nested_managed_manual_dns", "managed", "member", false, true, 0, false},
+		{"nested_custom_domain", "claimed", "member", true, true, 1, false},
+		{"nested_managed_limited", "managed", "member", true, true, 1, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			namespace := "member.routes.example.test"
@@ -33,6 +40,9 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				namespace = "member-unique.routes.example.test"
 			}
 			hostname := "api." + namespace
+			if test.nested {
+				hostname = "api.shop." + namespace
+			}
 			membershipID := "membership_1"
 			if test.scope == "shared" {
 				hostname, membershipID = "shared.routes.example.test", ""
@@ -56,12 +66,19 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}
-			h := testHandler(t, Config{DNSAutomation: test.dns}, store, store, nil)
+			h := testHandler(t, Config{DNSAutomation: test.dns, ManagedDomainMaxMemberChildLabels: test.limit}, store, store, nil)
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			request.Header.Set("Idempotency-Key", "session-plan")
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
+			if test.denied {
+				var problem controlv1.Problem
+				if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusForbidden || problem.Code != controlv1.MemberHostnameDepthExceeded || store.sessions != 0 {
+					t.Fatalf("nested hostname was not rejected before creating a run: %d %s", response.Code, response.Body.String())
+				}
+				return
+			}
 			if response.Code != http.StatusCreated {
 				t.Fatalf("session status = %d: %s", response.Code, response.Body.String())
 			}
@@ -70,7 +87,7 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantScope, wantIDs := hostname, []string{hostname}
-			if test.dns && test.scope == "member" {
+			if test.dns && test.scope == "member" && !test.nested {
 				wantScope, wantIDs = namespace, []string{namespace, "*." + namespace}
 			}
 			plan := setup.CertificatePlan

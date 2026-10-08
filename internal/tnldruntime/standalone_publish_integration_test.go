@@ -439,3 +439,20 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 		t.Fatalf("route ACME order count = %d, want %d", orderCount, firstOrderCount)
 	}
 }
+
+func TestIntegrationNestedMemberHostname(t *testing.T) {
+	fixture := newStandalonePublishFixture(t, "api.shop")
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(response, "nested member URL")
+	}))
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
+	quic, tcp := fixture.connectors()
+	handle := fixture.startPublisher(t, target.URL, quic, tcp)
+	ready := fixture.waitReady(t, handle)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "nested member URL" {
+		t.Fatalf("nested URL visitor failed: %v", err)
+	}
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
+	stopIntegrationPublisher(t, handle)
+}

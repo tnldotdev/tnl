@@ -24,21 +24,23 @@ import (
 
 func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
 	return controlapi.Config{
-		Role:                    cfg.Role,
-		ManagedDeploymentDomain: cfg.ManagedDomain(),
-		ControlURL:              cfg.ControlOrigin(),
-		LoginToken:              cfg.LoginToken,
-		OIDCIssuer:              cfg.OIDCIssuer,
-		OIDCClientID:            cfg.OIDCClientID,
-		BrowserOIDCClientID:     cfg.BrowserOIDCClientID,
-		OIDCLoginFlow:           cfg.OIDCLoginFlow,
-		OIDCScopes:              cfg.EffectiveOIDCScopes(),
-		CertificateIssuance:     cfg.ACMEEnabled(),
-		ACMEDirectoryURL:        cfg.ACMEDirectoryURL,
-		ServerDomain:            cfg.ServerDomain,
-		HTTPClient:              httpClient,
-		DNSAutomation:           cfg.DNSAutomationEnabled(),
-		GuestDemoEnabled:        cfg.GuestDemoEnabled,
+		Role:                              cfg.Role,
+		ManagedDeploymentDomain:           cfg.ManagedDomain(),
+		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
+		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
+		ControlURL:                        cfg.ControlOrigin(),
+		LoginToken:                        cfg.LoginToken,
+		OIDCIssuer:                        cfg.OIDCIssuer,
+		OIDCClientID:                      cfg.OIDCClientID,
+		BrowserOIDCClientID:               cfg.BrowserOIDCClientID,
+		OIDCLoginFlow:                     cfg.OIDCLoginFlow,
+		OIDCScopes:                        cfg.EffectiveOIDCScopes(),
+		CertificateIssuance:               cfg.ACMEEnabled(),
+		ACMEDirectoryURL:                  cfg.ACMEDirectoryURL,
+		ServerDomain:                      cfg.ServerDomain,
+		HTTPClient:                        httpClient,
+		DNSAutomation:                     cfg.DNSAutomationEnabled(),
+		GuestDemoEnabled:                  cfg.GuestDemoEnabled,
 	}
 }
 
@@ -46,6 +48,7 @@ func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oid
 	return authorityapi.Config{
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
+		CustomDomainsEnabled:    cfg.CustomDomainsEnabled,
 		LoginToken:              cfg.LoginToken,
 		AccessTokenLifetime:     cfg.AccessTokenLifetime,
 		RefreshTokenLifetime:    cfg.RefreshTokenLifetime,

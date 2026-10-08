@@ -55,7 +55,7 @@ type teamInviteCommand struct {
 
 type teamInviteCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	MemberSlug      string               `name:"member-slug" required:"" help:"Reserved member namespace label on claimed domains."`
+	MemberSlug      string               `name:"member-slug" required:"" help:"Reserved member namespace label on custom domains."`
 	Role            authorityv1.TeamRole `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
 	Email           string               `name:"email" help:"Optional verified-email restriction."`
 	ExpiresIn       time.Duration        `name:"expires-in" default:"168h" help:"Invitation lifetime."`

@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -36,6 +37,16 @@ func (h *handler) CreateCertificateIssuance(
 	if err != nil {
 		writeControlStateProblem(response, "create certificate issuance", err)
 		return
+	}
+	if issuance.NewOrder {
+		plan := "exact"
+		for _, identifier := range issuance.CertificatePlan.Identifiers {
+			if strings.HasPrefix(identifier, "*.") {
+				plan = "wildcard"
+				break
+			}
+		}
+		h.config.Metrics.ObserveCertificateOrder(string(issuance.DomainKind), plan)
 	}
 	writeJSON(response, http.StatusCreated, certificateIssuanceResponse(issuance))
 }

@@ -53,6 +53,7 @@ type Metrics struct {
 	recoveryPending         prometheus.Gauge
 	recoveryAttempts        *prometheus.CounterVec
 	certificateClaims       *prometheus.CounterVec
+	certificateOrders       *prometheus.CounterVec
 	certificateTransitions  *prometheus.CounterVec
 	dnsWork                 *prometheus.HistogramVec
 	dnsTransitions          *prometheus.CounterVec
@@ -157,6 +158,7 @@ func New(role string) *Metrics {
 		recoveryPending:         prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_recovery_observations_pending", Help: "Recovery observations awaiting a successful or stale response."}),
 		recoveryAttempts:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_recovery_observation_attempts_total", Help: "Recovery reporting attempts by bounded outcome."}, []string{"outcome"}),
 		certificateClaims:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_claims_total", Help: "Certificate worker claims by certificate kind and outcome."}, []string{"kind", "outcome"}),
+		certificateOrders:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_certificate_orders_total", Help: "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota."}, []string{"domain_kind", "plan"}),
 		certificateTransitions:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_transitions_total", Help: "Committed certificate work transitions by kind and resulting state."}, []string{"kind", "state"}),
 		dnsWork:                 prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_dns_work_duration_seconds", Help: "DNS worker phase duration; count is the number of attempts.", Buckets: DurationBucketsSeconds()}, []string{"kind", "phase", "outcome"}),
 		dnsTransitions:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_dns_transitions_total", Help: "Committed DNS work transitions by kind and resulting state."}, []string{"kind", "state"}),
@@ -181,7 +183,7 @@ func New(role string) *Metrics {
 		registered = append(registered, metrics.apiDuration, metrics.apiInFlight,
 			metrics.readinessDuration, metrics.readinessAge, metrics.certificateDuration, metrics.certificateMilestone,
 			metrics.databaseQueryDuration, metrics.databaseGuardDuration, metrics.databaseAcquireDuration, metrics.databaseFailures, metrics.controlOperations, metrics.recoveryDuration,
-			metrics.certificateClaims, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
+			metrics.certificateClaims, metrics.certificateOrders, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
 			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration, metrics.usageLastSuccess,
 			metrics.cleanupRuns, metrics.cleanupItems, metrics.cleanupLastSuccess, metrics.placementDecisions, metrics.assignmentReplacements)
 		registered = append(registered, metrics.guestTrialStats)

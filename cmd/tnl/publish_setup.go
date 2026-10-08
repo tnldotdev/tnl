@@ -218,7 +218,7 @@ func resolvePublishHostname(
 		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.Join(err, errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")))
 	}
 	publicURLScope := controlv1.Shared
-	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
+	if _, within := naming.ChildDepth(hostname, namespace); within {
 		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
 		return "", authorityv1.Domain{}, "", failure.Wrap("authorize shared public URL", failure.ServerDenied, errors.New("shared public URLs require a team administrator or owner"))

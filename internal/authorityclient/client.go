@@ -303,6 +303,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request authority API", failure.ServerResponseInvalid, fmt.Errorf("authorityclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case authorityv1.CustomDomainsDisabled:
+		return failure.Wrap("add custom domain", failure.CustomDomainsDisabled, &ProblemError{Status: status, Problem: problem})
 	case authorityv1.Unauthenticated:
 		return ErrUnauthenticated
 	case authorityv1.NotFound:

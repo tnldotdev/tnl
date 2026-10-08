@@ -22,6 +22,7 @@ type Config struct {
 	AccessTokenLifetime     time.Duration
 	RefreshTokenLifetime    time.Duration
 	DNSAutomation           bool
+	CustomDomainsEnabled    bool
 	EmailDelivery           bool
 	OIDCVerifier            oidcauth.Verifier
 	BrowserOIDCVerifier     oidcauth.Verifier

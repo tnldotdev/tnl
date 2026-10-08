@@ -162,6 +162,25 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	}
 }
 
+func TestNestedMemberURLUsesExactDNSRecord(t *testing.T) {
+	now := time.Now()
+	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
+		PublicURLID: "url_nested", DomainID: "domain_1", CanonicalHostname: "api.shop.member.tunnels.example.test",
+		PublicURLScope: controlstate.PublicURLScopeMember, State: controlstate.PublicURLDNSPending,
+		DNSRevision: 1, AvailableAt: now, WorkerID: "dns_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
+	}}
+	provider := &providerStub{zone: Zone{ID: "ZMANAGED"}}
+	worker := testDNSWorker(t, store, provider, &verifierStub{publicURLVerified: true}, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("nested URL DNS work = %t, %v", found, err)
+	}
+	if provider.publishCalls != 1 || provider.record.WildcardHostname != "" || provider.record.CanonicalHostname != "api.shop.member.tunnels.example.test" {
+		t.Fatal("nested URL used wildcard DNS instead of its exact hostname")
+	}
+}
+
 func TestWorkerManagedMemberWildcardPersistsAcrossPublicURLRemoval(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := controlstate.DNSPublicURLWork{

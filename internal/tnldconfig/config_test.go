@@ -34,6 +34,9 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	if config.PublicURLCertificateWorkers != 8 {
 		t.Fatalf("public URL certificate workers = %d, want 8", config.PublicURLCertificateWorkers)
 	}
+	if config.ManagedDomainMaxMemberChildLabels != 0 || config.CustomDomainsEnabled {
+		t.Fatal("standalone should allow nested managed-domain URLs and require custom-domain opt-in")
+	}
 	if config.PublisherConnectionLimit < 1 {
 		t.Fatalf("publisher connection limit = %d", config.PublisherConnectionLimit)
 	}
@@ -54,6 +57,23 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 		if _, err := Parse(append(base, "--public-url-certificate-workers", value)); err == nil {
 			t.Fatalf("public URL certificate worker count %s was accepted", value)
 		}
+	}
+}
+
+func TestParseDomainPolicy(t *testing.T) {
+	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken, "--storage-key", testStorageKey}
+	if _, err := Parse(append(base, "--managed-domain-max-member-child-labels=-1")); err == nil {
+		t.Fatal("negative managed-domain depth accepted")
+	}
+	if _, err := Parse(append(base, "--custom-domains-enabled")); err == nil {
+		t.Fatal("custom-domain opt-in without DNS automation accepted")
+	}
+	cfg, err := Parse(append(base, "--custom-domains-enabled", "--managed-domain-max-member-child-labels=1",
+		"--route53-managed-zone-id", "ZMANAGED", "--ingress-ipv4-address", "192.0.2.1"))
+	if err != nil || !cfg.CustomDomainsEnabled || cfg.ManagedDomainMaxMemberChildLabels != 1 {
+		t.Fatalf("explicit domain policy = %v", err)
 	}
 }
 

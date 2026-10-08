@@ -148,23 +148,26 @@ func (e InvitationState) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict            ProblemCode = "conflict"
-	DnsSetupPending     ProblemCode = "dns_setup_pending"
-	Forbidden           ProblemCode = "forbidden"
-	Internal            ProblemCode = "internal"
-	InvalidRequest      ProblemCode = "invalid_request"
-	NameUnavailable     ProblemCode = "name_unavailable"
-	NotFound            ProblemCode = "not_found"
-	PolicyRevisionStale ProblemCode = "policy_revision_stale"
-	RateLimited         ProblemCode = "rate_limited"
-	Unauthenticated     ProblemCode = "unauthenticated"
-	Unavailable         ProblemCode = "unavailable"
+	Conflict              ProblemCode = "conflict"
+	CustomDomainsDisabled ProblemCode = "custom_domains_disabled"
+	DnsSetupPending       ProblemCode = "dns_setup_pending"
+	Forbidden             ProblemCode = "forbidden"
+	Internal              ProblemCode = "internal"
+	InvalidRequest        ProblemCode = "invalid_request"
+	NameUnavailable       ProblemCode = "name_unavailable"
+	NotFound              ProblemCode = "not_found"
+	PolicyRevisionStale   ProblemCode = "policy_revision_stale"
+	RateLimited           ProblemCode = "rate_limited"
+	Unauthenticated       ProblemCode = "unauthenticated"
+	Unavailable           ProblemCode = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case Conflict:
+		return true
+	case CustomDomainsDisabled:
 		return true
 	case DnsSetupPending:
 		return true

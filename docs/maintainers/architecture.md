@@ -117,6 +117,18 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
+member-owned URLs may use any valid descendant of the acting member's namespace.
+control can limit the number of child labels on the managed deployment domain;
+that operator setting does not apply to custom domains. nested descendants stay
+member-owned and cannot be treated as team-shared URLs to bypass the policy.
+one-label names reuse namespace wildcard DNS and certificates when automation
+is configured. deeper names use exact records and exact-host certificates.
+
+new custom-domain claims are disabled by default and require an explicit
+operator opt-in alongside DNS automation. configuring Route 53 alone does not
+grant teams permission to add domains. disabling new claims does not disable
+existing custom domains or domain release.
+
 ```text
 public URL
   durable hostname, ownership, target, policy, and state

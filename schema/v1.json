@@ -375,6 +375,15 @@
           "type": "string",
           "description": "Server-controlled domain used for namespaces."
         },
+        "managed_domain_max_member_child_labels": {
+          "type": "integer",
+          "description": "Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only.",
+          "default": 0
+        },
+        "custom_domains_enabled": {
+          "type": "boolean",
+          "description": "Allow teams to add custom domains; requires managed DNS automation."
+        },
         "control_tls_certificate_file": {
           "type": "string",
           "description": "Optional static control certificate chain."

@@ -71,7 +71,7 @@ func TestDomainClaimCanonicalDefaultAndIdempotency(t *testing.T) {
 				ID: "domain_result", TeamID: "team_path", Kind: "claimed", CanonicalDomain: "claim.example.test", State: "pending", AuthorityRevision: 8,
 				RequiredRecords: []controlstate.DNSRecord{{Name: "claim.example.test", Type: "NS", Value: "ns.example.test"}},
 			}}
-			response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, LoginToken: testLoginToken}, store), http.MethodPost, "/v1/teams/team_path/domains", test.body, "Bearer exact-access-token", "domain-idempotency")
+			response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true, LoginToken: testLoginToken}, store), http.MethodPost, "/v1/teams/team_path/domains", test.body, "Bearer exact-access-token", "domain-idempotency")
 			if response.Code != http.StatusCreated {
 				t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 			}
@@ -149,7 +149,7 @@ func TestAuthorityMutationsRejectAuthenticationBeforeStoreMutation(t *testing.T)
 				t.Run(auth.name, func(t *testing.T) {
 					store := &rejectedMutationStore{authorityResourceStore: &authorityResourceStore{authorityAuthenticationStub: newAuthorityAuthenticationStub()}}
 					store.err = controlstate.ErrControlAuthentication
-					response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, LoginToken: testLoginToken}, store), operation.method, operation.path, operation.body, auth.header, operation.key)
+					response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true, LoginToken: testLoginToken}, store), operation.method, operation.path, operation.body, auth.header, operation.key)
 					if response.Code != http.StatusUnauthorized || len(store.tokens) != auth.calls || len(store.mutations) != 0 {
 						t.Fatalf("response = %d: %s; authentications %v, mutations %#v", response.Code, response.Body.String(), store.tokens, store.mutations)
 					}

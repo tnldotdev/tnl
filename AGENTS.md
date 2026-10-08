@@ -215,7 +215,7 @@ not _inbox_, for the collection of threads.
 | **managed label**                  | A server-generated, immutable DNS label used with the managed deployment domain.                                 |
 | **namespace**                      | A complete hostname built from a membership and domain.                                                          |
 | **managed deployment domain**      | A server-controlled domain beneath which namespaces are generated.                                               |
-| **claimed domain**                 | A domain assigned exclusively to one team after DNS authority verification.                                      |
+| **custom domain**                  | A domain added by a team and assigned exclusively to it after DNS authority verification.                        |
 | **team domain**                    | A managed deployment domain or claimed domain available to one team.                                             |
 | **default domain**                 | The ready team domain used when a command does not select another domain.                                        |
 | **DNS authority**                  | State control uses to manage public URL DNS beneath one claimed domain.                                          |
@@ -225,6 +225,9 @@ not _inbox_, for the collection of threads.
 | **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                         |
 
 ## public url usage
+
+Use **custom domain** in CLI help, diagnostics, and public guides. Preserve
+`claimed` in existing domain-kind machine values and internal identifiers.
 
 | Term                          | Definition                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |

@@ -123,6 +123,7 @@ type Querier interface {
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
+	GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)

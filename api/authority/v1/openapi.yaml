@@ -1015,6 +1015,7 @@ components:
               name_unavailable,
               policy_revision_stale,
               dns_setup_pending,
+              custom_domains_disabled,
             ]
         request_id:
           type: string

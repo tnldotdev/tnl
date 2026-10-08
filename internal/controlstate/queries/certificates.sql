@@ -141,6 +141,12 @@ INSERT INTO control.acme_orders (
 )
 RETURNING *;
 
+-- name: GetCertificateOrderDomainKind :one
+SELECT domains.kind
+FROM control.public_urls AS public_urls
+JOIN control.domains AS domains ON domains.id = public_urls.domain_id
+WHERE public_urls.id = sqlc.arg(public_url_id);
+
 -- name: GetACMEOrder :one
 SELECT *
 FROM control.acme_orders

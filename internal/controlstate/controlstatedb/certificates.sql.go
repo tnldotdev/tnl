@@ -490,6 +490,20 @@ func (q *Queries) GetActivePublishRunChallengeExpiry(ctx context.Context, arg Ge
 	return expires_at, err
 }
 
+const getCertificateOrderDomainKind = `-- name: GetCertificateOrderDomainKind :one
+SELECT domains.kind
+FROM control.public_urls AS public_urls
+JOIN control.domains AS domains ON domains.id = public_urls.domain_id
+WHERE public_urls.id = $1
+`
+
+func (q *Queries) GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error) {
+	row := q.db.QueryRow(ctx, getCertificateOrderDomainKind, publicUrlID)
+	var kind string
+	err := row.Scan(&kind)
+	return kind, err
+}
+
 const getControlTLSCacheEntry = `-- name: GetControlTLSCacheEntry :one
 SELECT cache_ciphertext, cache_storage_key_id
 FROM control.control_tls_cache

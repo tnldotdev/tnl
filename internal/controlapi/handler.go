@@ -26,27 +26,29 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
-	Role                        tnldconfig.Role
-	StartedAt                   time.Time
-	ManagedDeploymentDomain     string
-	ControlURL                  string
-	LoginToken                  string
-	OIDCIssuer                  string
-	OIDCClientID                string
-	BrowserOIDCClientID         string
-	OIDCLoginFlow               tnldconfig.OIDCLoginFlow
-	OIDCScopes                  []string
-	CertificateIssuance         bool
-	ACMEDirectoryURL            string
-	ServerDomain                string
-	HTTPClient                  *http.Client
-	DNSAutomation               bool
-	GuestDemoEnabled            bool
-	Metrics                     *observability.Metrics
-	Route53CredentialsReadiness func(context.Context) error
-	ControlReadiness            func() error
-	IngressReadiness            func() error
-	RelayReadiness              func() error
+	Role                              tnldconfig.Role
+	StartedAt                         time.Time
+	ManagedDeploymentDomain           string
+	ManagedDomainMaxMemberChildLabels int
+	CustomDomainsEnabled              bool
+	ControlURL                        string
+	LoginToken                        string
+	OIDCIssuer                        string
+	OIDCClientID                      string
+	BrowserOIDCClientID               string
+	OIDCLoginFlow                     tnldconfig.OIDCLoginFlow
+	OIDCScopes                        []string
+	CertificateIssuance               bool
+	ACMEDirectoryURL                  string
+	ServerDomain                      string
+	HTTPClient                        *http.Client
+	DNSAutomation                     bool
+	GuestDemoEnabled                  bool
+	Metrics                           *observability.Metrics
+	Route53CredentialsReadiness       func(context.Context) error
+	ControlReadiness                  func() error
+	IngressReadiness                  func() error
+	RelayReadiness                    func() error
 }
 
 // PublicURLStore owns saved public URL and publish run state.
@@ -223,6 +225,7 @@ func NewHandler(
 	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
 			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
+			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		}
 	}
 	if cfg.BrowserOIDCClientID != "" {
@@ -321,11 +324,13 @@ func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Reques
 
 func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
-		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
-		DnsAutomation:           cfg.DNSAutomation,
-		GuestDemo:               cfg.GuestDemoEnabled,
-		BrowserLoginAvailable:   new(cfg.BrowserOIDCClientID != ""),
-		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
+		ManagedDeploymentDomain:           cfg.ManagedDeploymentDomain,
+		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
+		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
+		DnsAutomation:                     cfg.DNSAutomation,
+		GuestDemo:                         cfg.GuestDemoEnabled,
+		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
+		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}
 	if cfg.LoginToken != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.LoginToken)

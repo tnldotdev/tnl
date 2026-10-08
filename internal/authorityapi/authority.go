@@ -448,6 +448,10 @@ func (h *handler) ClaimTeamDomain(
 	if !ok {
 		return
 	}
+	if !h.config.CustomDomainsEnabled {
+		writeProblem(response, http.StatusForbidden, authorityv1.CustomDomainsDisabled, "this server does not allow adding custom domains")
+		return
+	}
 	if !h.config.DNSAutomation {
 		writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "DNS automation is unavailable")
 		return
