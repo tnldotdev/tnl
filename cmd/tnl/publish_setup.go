@@ -138,7 +138,7 @@ func preparePublisherServices(
 		return publisherServices{}, err
 	}
 	customAvailable := slices.ContainsFunc(current.domains, func(domain authorityv1.Domain) bool {
-		return domain.Kind == authorityv1.Claimed && domain.State == authorityv1.DomainStateReady
+		return domain.Kind == authorityv1.Custom && domain.State == authorityv1.DomainStateReady
 	})
 	return publisherServices{
 		domainKind: domain.Kind, customDomainAvailable: customAvailable,
