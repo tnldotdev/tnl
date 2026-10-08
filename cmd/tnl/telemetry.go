@@ -98,6 +98,46 @@ type telemetryReporter interface {
 
 type telemetryReporterFactory func(string) telemetryReporter
 
+type telemetryEventID string
+
+type telemetryWireEvent struct {
+	EventID      telemetryEventID `json:"event_id"`
+	InvocationID string           `json:"invocation_id"`
+	OccurredAt   time.Time        `json:"occurred_at"`
+	Name         string           `json:"name"`
+	EventVersion int              `json:"event_version"`
+	Payload      any              `json:"payload"`
+}
+
+func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEvent {
+	event := telemetryWireEvent{EventID: id, InvocationID: payload.InvocationID,
+		OccurredAt: time.Now().UTC(), EventVersion: 1}
+	switch payload.Event {
+	case telemetryCommandStarted, telemetryCommandCompleted, telemetryCommandFailed:
+		event.Name = "command." + strings.TrimPrefix(string(payload.Event), "command_")
+		command := struct {
+			Command        telemetryTrackedCommand `json:"command"`
+			FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
+			DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
+		}{payload.Command, payload.FailureStage, payload.DiagnosticCode}
+		event.Payload = command
+	case telemetryPublishRunStarted:
+		event.Name = "tunnel.ready"
+		event.Payload = struct {
+			Source      telemetryTrackedCommand `json:"source"`
+			ServerKind  telemetryServerKind     `json:"server_kind"`
+			Framework   telemetryFrameworkName  `json:"framework,omitempty"`
+			PublishMode telemetryPublishMode    `json:"publish_mode,omitempty"`
+		}{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}
+	case telemetryDemoPingReceived:
+		event.Name = "demo.first_ping"
+		event.Payload = struct {
+			PublishMode telemetryPublishMode `json:"publish_mode"`
+		}{telemetryPublishDemo}
+	}
+	return event
+}
+
 type telemetryInvocation struct {
 	reporter telemetryReporter
 	id       string
@@ -162,9 +202,10 @@ type asyncTelemetryReporter struct {
 	root   string
 	client *http.Client
 
-	idMu sync.Mutex
-	id   string
-	wait sync.WaitGroup
+	idMu    sync.Mutex
+	id      string
+	wait    sync.WaitGroup
+	flushMu sync.Mutex
 }
 
 func newTelemetryReporter(root string) *asyncTelemetryReporter {
@@ -180,32 +221,94 @@ func newTelemetryReporter(root string) *asyncTelemetryReporter {
 }
 
 func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
+	id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
+	if err != nil {
+		return
+	}
+	event := payload.wireEvent(telemetryEventID(id))
+	if event.Name == "" {
+		return
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
+	state, err := clientstate.Open(ctx, r.root)
+	if err == nil {
+		err = state.QueueTelemetryEvent(ctx, id, encoded)
+		_ = state.Close()
+	}
+	cancel()
+	if err != nil {
+		return
+	}
 	r.wait.Add(1)
 	go func() {
 		defer r.wait.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-		defer cancel()
-
-		installationID, err := r.installationID(ctx)
-		if err != nil {
-			return
-		}
-		payload.InstallationID = installationID
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("User-Agent", "")
-		response, err := r.client.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-		}
+		time.Sleep(50 * time.Millisecond)
+		r.flush()
 	}()
+}
+
+func (r *asyncTelemetryReporter) flush() {
+	r.flushMu.Lock()
+	defer r.flushMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
+	defer cancel()
+	state, err := clientstate.Open(ctx, r.root)
+	if err != nil {
+		return
+	}
+	defer state.Close()
+	if enabled, err := state.TelemetryEnabled(ctx); err != nil || !enabled {
+		return
+	}
+	_ = state.PruneTelemetryOutbox(ctx)
+	pending, err := state.PendingTelemetryEvents(ctx, 25)
+	if err != nil || len(pending) == 0 {
+		return
+	}
+	installationID, err := state.InstallationID(ctx)
+	if err != nil {
+		return
+	}
+	events := make([]json.RawMessage, 0, len(pending))
+	for _, item := range pending {
+		events = append(events, item.JSON)
+	}
+	body, err := json.Marshal(struct {
+		SchemaVersion  int    `json:"schema_version"`
+		InstallationID string `json:"installation_id"`
+		Client         struct {
+			Version string `json:"version"`
+			OS      string `json:"os"`
+			Arch    string `json:"arch"`
+			CI      bool   `json:"ci"`
+		} `json:"client"`
+		Events []json.RawMessage `json:"events"`
+	}{1, installationID, struct {
+		Version string `json:"version"`
+		OS      string `json:"os"`
+		Arch    string `json:"arch"`
+		CI      bool   `json:"ci"`
+	}{buildinfo.Version, runtime.GOOS, runtime.GOARCH, os.Getenv("CI") != ""}, events})
+	if err != nil {
+		return
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "")
+	response, err := r.client.Do(request)
+	if err == nil {
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusNoContent || response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
+			_ = state.DeleteTelemetryEvents(ctx, pending)
+		}
+	}
 }
 
 func (r *asyncTelemetryReporter) installationID(ctx context.Context) (string, error) {

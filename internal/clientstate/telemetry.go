@@ -28,6 +28,9 @@ func (d *Database) SetTelemetryEnabled(ctx context.Context, enabled bool) error 
 	if err := d.queries.SetTelemetryEnabled(ctx, value); err != nil {
 		return fmt.Errorf("clientstate: save telemetry preference: %w", err)
 	}
+	if !enabled {
+		return d.ClearTelemetryOutbox(ctx)
+	}
 	return nil
 }
 
