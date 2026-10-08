@@ -5,7 +5,11 @@ import { readFileSync, writeSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const [configPath] = process.argv.slice(1);
 // keep project logging off the response channel.
-globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
+Object.defineProperty(globalThis, "console", {
+  value: new Console({ stdout: process.stderr, stderr: process.stderr }),
+  configurable: true,
+  writable: true,
+});
 try {
   if (configPath === undefined) {
     exitWithError("invalid_arguments");
