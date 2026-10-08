@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 )
 
 const (
@@ -96,41 +98,40 @@ func (d *Database) saveRequest(ctx context.Context, tunnelID, primary, project, 
 	if mode == "" {
 		mode = "summary"
 	}
-	var detail any
+	var detail sql.NullString
 	if len(record.Detail) != 0 && json.Valid(record.Detail) {
-		detail = string(record.Detail)
+		detail = sql.NullString{String: string(record.Detail), Valid: true}
 	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var number int64
-	err = tx.QueryRowContext(ctx, `INSERT INTO local_request_counters (primary_checkout_root, last_number) VALUES (?, 1)
-		ON CONFLICT (primary_checkout_root) DO UPDATE SET last_number = last_number + 1 RETURNING last_number`, primary).Scan(&number)
+	queries := clientstatedb.New(tx)
+	number, err := queries.NextLocalRequestNumber(ctx, primary)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO local_requests
-		(request_number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
-		 service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		number, primary, tunnelID, project, shared, service, record.ReceivedAt.UnixNano(),
-		record.Method, record.Path, record.Status, record.DurationMS, record.Origin, mode, detail)
-	if err != nil {
+	if err := queries.InsertLocalRequest(ctx, clientstatedb.InsertLocalRequestParams{
+		RequestNumber: number, PrimaryCheckoutRoot: primary, TunnelID: tunnelID,
+		ProjectRoot: project, SharedProjectRoot: shared, Service: service,
+		ReceivedAt: record.ReceivedAt.UnixNano(), Method: record.Method, Path: record.Path,
+		Status: int64(record.Status), DurationMs: record.DurationMS, Origin: record.Origin,
+		CaptureMode: mode, DetailJson: detail,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (d *Database) pruneRequests(ctx context.Context) error {
-	if _, err := d.db.ExecContext(ctx, `DELETE FROM local_requests WHERE received_at < ?`, d.now().Add(-requestRetention).UnixNano()); err != nil {
+	if err := d.queries.DeleteExpiredLocalRequests(ctx, d.now().Add(-requestRetention).UnixNano()); err != nil {
 		return err
 	}
-	if _, err := d.db.ExecContext(ctx, `DELETE FROM local_requests WHERE row_id NOT IN
-		(SELECT row_id FROM local_requests ORDER BY received_at DESC, row_id DESC LIMIT ?)`, requestMaxRows); err != nil {
+	if err := d.queries.PruneLocalRequestsToLimit(ctx, requestMaxRows); err != nil {
 		return err
 	}
+	// sqlc's SQLite parser cannot resolve the window alias inside this DELETE.
 	_, err := d.db.ExecContext(ctx, `DELETE FROM local_requests WHERE row_id IN
 		(SELECT row_id FROM (SELECT row_id, sum(length(detail_json)) OVER
 		 (ORDER BY received_at DESC, row_id DESC) AS used FROM local_requests) WHERE used > ?)`, requestMaxDetailBytes)

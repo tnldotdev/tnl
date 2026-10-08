@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -28,7 +29,9 @@ func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event jso
 		return fmt.Errorf("clientstate: begin telemetry queue: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO telemetry_outbox (event_id, created_at, event_json) VALUES (?, ?, ?)`, id, d.now().UTC().UnixNano(), string(event)); err != nil {
+	if err := clientstatedb.New(tx).InsertTelemetryEvent(ctx, clientstatedb.InsertTelemetryEventParams{
+		EventID: id, CreatedAt: d.now().UTC().UnixNano(), EventJson: string(event),
+	}); err != nil {
 		return fmt.Errorf("clientstate: queue telemetry: %w", err)
 	}
 	if err := d.pruneTelemetryOutbox(ctx, tx); err != nil {
@@ -50,34 +53,26 @@ func (d *Database) PruneTelemetryOutbox(ctx context.Context) error {
 }
 
 func (d *Database) pruneTelemetryOutbox(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE created_at < ?`, d.now().Add(-telemetryOutboxLifetime).UnixNano()); err != nil {
+	queries := clientstatedb.New(tx)
+	if err := queries.DeleteExpiredTelemetryEvents(ctx, d.now().Add(-telemetryOutboxLifetime).UnixNano()); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id NOT IN
-		(SELECT event_id FROM telemetry_outbox ORDER BY created_at DESC, event_id DESC LIMIT ?)`, telemetryOutboxMax)
-	return err
+	return queries.PruneTelemetryEventsToLimit(ctx, telemetryOutboxMax)
 }
 
 func (d *Database) PendingTelemetryEvents(ctx context.Context, limit int) ([]TelemetryOutboxEvent, error) {
 	if limit < 1 || limit > 25 {
 		return nil, errors.New("clientstate: invalid telemetry batch limit")
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT event_id, event_json FROM telemetry_outbox ORDER BY created_at, event_id LIMIT ?`, limit)
+	rows, err := d.queries.SelectPendingTelemetryEvents(ctx, int64(limit))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := make([]TelemetryOutboxEvent, 0, limit)
-	for rows.Next() {
-		var event TelemetryOutboxEvent
-		var raw string
-		if err := rows.Scan(&event.ID, &raw); err != nil {
-			return nil, err
-		}
-		event.JSON = json.RawMessage(raw)
-		result = append(result, event)
+	for _, row := range rows {
+		result = append(result, TelemetryOutboxEvent{ID: row.EventID, JSON: json.RawMessage(row.EventJson)})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (d *Database) DeleteTelemetryEvents(ctx context.Context, events []TelemetryOutboxEvent) error {
@@ -95,12 +90,9 @@ func (d *Database) DeleteTelemetryEvents(ctx context.Context, events []Telemetry
 	if err != nil {
 		return err
 	}
-	_, err = d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id IN
-		(SELECT value FROM json_each(?))`, string(encoded))
-	return err
+	return d.queries.DeleteAcknowledgedTelemetryEvents(ctx, string(encoded))
 }
 
 func (d *Database) ClearTelemetryOutbox(ctx context.Context) error {
-	_, err := d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox`)
-	return err
+	return d.queries.ClearTelemetryEvents(ctx)
 }
