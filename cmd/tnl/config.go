@@ -109,6 +109,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.Target = string(*effective.Publish.Target)
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	applyRequestInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.Target == "" {
@@ -183,6 +184,7 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 		flags.StartupTimeout = effective.Dev.StartupTimeout.Value()
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	applyRequestInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
 	_, domainFromEnvironment := os.LookupEnv("TNL_DOMAIN")
@@ -262,6 +264,15 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 		if tunnel.AllowAllIPs != nil && flags.AllowIP == nil && flags.AllowProvider == nil {
 			flags.AllowAllIPs = *tunnel.AllowAllIPs
 		}
+	}
+}
+
+func applyRequestInspection(flags *tunnelFlags, effective config.TNL) {
+	if flags.requestInspectionFromCLI {
+		return
+	}
+	if effective.RequestInspection != nil {
+		flags.RequestInspection = *effective.RequestInspection
 	}
 }
 

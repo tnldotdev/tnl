@@ -272,6 +272,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	output.setFramework(framework)
+	output.setRequestInspection(flags.RequestInspection)
 	output.setIPPolicy(policy)
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
@@ -284,8 +285,15 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishCtx, cancelPublish := context.WithCancel(ctx)
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
+	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	if err != nil {
+		return err
+	}
+	defer recorder.Close()
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.ObserveRequest = requestObservation(recorder)
+		publisherConfig.RequestInspection = flags.RequestInspection
 		publisherConfig.ControlURL = authenticated.ServerEndpoint
 		publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 		publisherConfig.PreviewID = previewID

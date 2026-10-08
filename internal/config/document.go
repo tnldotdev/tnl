@@ -20,6 +20,18 @@ import (
 
 const DocumentVersion = 1
 
+// RequestInspectionMode selects how much local HTTP detail the publisher saves.
+type RequestInspectionMode string
+
+const (
+	RequestInspectionSummary  RequestInspectionMode = "summary"
+	RequestInspectionDetailed RequestInspectionMode = "detailed"
+)
+
+func (mode RequestInspectionMode) Valid() bool {
+	return mode == RequestInspectionSummary || mode == RequestInspectionDetailed
+}
+
 // Document is the versioned static tnl.yml, tnl.yaml, or tnl.json contract.
 // TypeScript configuration evaluates directly to the TnlConfig shape and is
 // wrapped in this document shape by the loader.
@@ -32,24 +44,26 @@ type Document struct {
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Server   *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
-	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
-	Feedback *bool    `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
-	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Services Services `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
+	Server            *string                `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Team              *string                `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Feedback          *bool                  `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
+	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."`
+	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
+	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Dev               *Dev                   `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
 }
 
 type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Directory *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
-	Tunnel    *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
-	Publish   *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev       *Dev                 `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Override local request capture for this service."`
+	Directory         *string                `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
+	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Dev               *Dev                   `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Paths             map[string]PathMount   `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
 }
 
 // PathMount selects a local service reached at a path on another service's public URL.

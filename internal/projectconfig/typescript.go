@@ -235,13 +235,14 @@ type loaderContext struct {
 }
 
 var typeScriptKeyMappings = map[string]string{
-	"allow_ip":        "allowIP",
-	"allow_providers": "allowProviders",
-	"allow_all_ips":   "allowAllIPs",
-	"startup_timeout": "startupTimeout",
-	"request_limit":   "requestLimit",
-	"strip_prefix":    "stripPrefix",
-	"public_url":      "publicURL",
+	"allow_ip":           "allowIP",
+	"allow_providers":    "allowProviders",
+	"allow_all_ips":      "allowAllIPs",
+	"startup_timeout":    "startupTimeout",
+	"request_limit":      "requestLimit",
+	"request_inspection": "requestInspection",
+	"strip_prefix":       "stripPrefix",
+	"public_url":         "publicURL",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

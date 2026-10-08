@@ -26,6 +26,26 @@ type Worktree struct {
 	labelParts  worktreeLabelParts
 }
 
+// PrimaryCheckoutRoot returns the primary Git checkout shared by linked worktrees.
+func (w Worktree) PrimaryCheckoutRoot() string {
+	if w.primaryRoot != "" {
+		return w.primaryRoot
+	}
+	return w.Root
+}
+
+// SharedProjectIdentity identifies the same project directory in linked worktrees.
+func SharedProjectIdentity(worktree Worktree, projectRoot string) string {
+	if canonical, err := filepath.EvalSymlinks(projectRoot); err == nil {
+		projectRoot = canonical
+	}
+	relative, err := filepath.Rel(worktree.Root, projectRoot)
+	if err != nil || !pathWithin(projectRoot, worktree.Root) {
+		relative = "."
+	}
+	return filepath.Join(worktree.PrimaryCheckoutRoot(), relative)
+}
+
 type worktreeLabelParts struct {
 	project  string
 	checkout string

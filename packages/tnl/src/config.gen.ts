@@ -121,9 +121,17 @@ export interface TnlConfig {
                 }
               | undefined;
           };
+          /**
+           * Local HTTP request capture for this service.
+           */
+          requestInspection?: "summary" | "detailed";
         }
       | undefined;
   };
+  /**
+   * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
+   */
+  requestInspection?: "summary" | "detailed";
 }
 export interface Publish {
   /**

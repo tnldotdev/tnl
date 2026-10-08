@@ -61,6 +61,11 @@
           "type": "boolean",
           "description": "Show the feedback toolbar on development pages."
         },
+        "request_inspection": {
+          "type": "string",
+          "enum": ["summary", "detailed"],
+          "description": "Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."
+        },
         "tunnel": {
           "allOf": [
             {
@@ -157,6 +162,11 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "Service directory relative to the project configuration."
+              },
+              "request_inspection": {
+                "type": "string",
+                "enum": ["summary", "detailed"],
+                "description": "Local HTTP request capture for this service."
               },
               "tunnel": {
                 "allOf": [

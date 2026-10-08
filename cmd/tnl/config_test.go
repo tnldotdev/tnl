@@ -136,6 +136,40 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 }
 
+func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
+	rootMode, serviceMode := config.RequestInspectionDetailed, config.RequestInspectionSummary
+	target := config.Target("3000")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		RequestInspection: &rootMode, Services: config.Services{"web": {
+			RequestInspection: &serviceMode, Publish: &config.Publish{Target: &target},
+		}},
+	}}}
+	for _, tc := range []struct {
+		args []string
+		want config.RequestInspectionMode
+	}{
+		{[]string{"publish", "web"}, "summary"},
+		{[]string{"publish", "web", "--request-inspection=detailed"}, "detailed"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parser.Parse(tc.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applyTunnelCLIUnits(parsed, &flags)
+		if err := project.applyPublish(&flags.Publish); err != nil {
+			t.Fatal(err)
+		}
+		if flags.Publish.RequestInspection != tc.want {
+			t.Fatalf("%v: capture = %q", tc.args, flags.Publish.RequestInspection)
+		}
+	}
+}
+
 func TestProviderFlagsReplaceConfiguredProvidersAndCombineWithIPs(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)

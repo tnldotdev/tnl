@@ -54,6 +54,29 @@ type GuestSession struct {
 	CreatedAt         int64
 }
 
+type LocalRequest struct {
+	RowID               int64
+	RequestNumber       int64
+	PrimaryCheckoutRoot string
+	TunnelID            string
+	ProjectRoot         string
+	SharedProjectRoot   string
+	Service             string
+	ReceivedAt          int64
+	Method              string
+	Path                string
+	Status              int64
+	DurationMs          int64
+	Origin              string
+	CaptureMode         string
+	DetailJson          sql.NullString
+}
+
+type LocalRequestCounter struct {
+	PrimaryCheckoutRoot string
+	LastNumber          int64
+}
+
 type LocalTunnel struct {
 	ID               string
 	Command          string

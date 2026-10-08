@@ -176,10 +176,26 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 	}
 }
 
+func TestRequestInspectionModeValid(t *testing.T) {
+	for _, test := range []struct {
+		mode  RequestInspectionMode
+		valid bool
+	}{
+		{RequestInspectionSummary, true},
+		{RequestInspectionDetailed, true},
+		{RequestInspectionMode("all"), false},
+		{"", false},
+	} {
+		if got := test.mode.Valid(); got != test.valid {
+			t.Errorf("mode %q valid = %t, want %t", test.mode, got, test.valid)
+		}
+	}
+}
+
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
-		"yml":  "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
+		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
+		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -192,24 +208,26 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero request limit":     {`{"version":1,"tnl":{"tunnel":{"request_limit":0}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 0\n", "tunnel.request_limit must be greater than zero"},
-		"negative request limit": {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
-		"duration":               {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
-		"server URL":             {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
-		"uppercase domain":       {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},
-		"multi-label name":       {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},
-		"public URL path":        {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be an HTTPS public URL"},
-		"root name with service": {`{"version":1,"tnl":{"tunnel":{"name":"api"},"services":{"api":{}}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api\n  services:\n    api: {}\n", "tunnel.name and tunnel.public_url belong under services.NAME.tunnel"},
-		"service server":         {`{"version":1,"tnl":{"services":{"web":{"server":"https://control.example"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      server: https://control.example\n", "server"},
-		"service team":           {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
-		"service feedback":       {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
-		"obsolete subdomain":     {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
-		"target":                 {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
-		"ip":                     {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
-		"duplicate":              {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
-		"unknown provider":       {`{"version":1,"tnl":{"tunnel":{"allow_providers":["other"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [other]\n", "not a supported webhook IP provider"},
-		"duplicate provider":     {`{"version":1,"tnl":{"tunnel":{"allow_providers":["github","github"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [github, github]\n", "is duplicated"},
-		"public with providers":  {`{"version":1,"tnl":{"tunnel":{"allow_all_ips":true,"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_all_ips: true\n    allow_providers: [stripe]\n", "cannot be combined"},
+		"zero request limit":         {`{"version":1,"tnl":{"tunnel":{"request_limit":0}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 0\n", "tunnel.request_limit must be greater than zero"},
+		"negative request limit":     {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
+		"invalid request inspection": {`{"version":1,"tnl":{"request_inspection":"all"}}`, "version: 1\ntnl:\n  request_inspection: all\n", "request_inspection"},
+		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"request_inspection":"all"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      request_inspection: all\n", "request_inspection"},
+		"duration":                   {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
+		"server URL":                 {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
+		"uppercase domain":           {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},
+		"multi-label name":           {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},
+		"public URL path":            {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be an HTTPS public URL"},
+		"root name with service":     {`{"version":1,"tnl":{"tunnel":{"name":"api"},"services":{"api":{}}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api\n  services:\n    api: {}\n", "tunnel.name and tunnel.public_url belong under services.NAME.tunnel"},
+		"service server":             {`{"version":1,"tnl":{"services":{"web":{"server":"https://control.example"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      server: https://control.example\n", "server"},
+		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
+		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
+		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
+		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
+		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
+		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
+		"unknown provider":           {`{"version":1,"tnl":{"tunnel":{"allow_providers":["other"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [other]\n", "not a supported webhook IP provider"},
+		"duplicate provider":         {`{"version":1,"tnl":{"tunnel":{"allow_providers":["github","github"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [github, github]\n", "is duplicated"},
+		"public with providers":      {`{"version":1,"tnl":{"tunnel":{"allow_all_ips":true,"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_all_ips: true\n    allow_providers: [stripe]\n", "cannot be combined"},
 	} {
 		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {
 			t.Run(name+"/"+extension, func(t *testing.T) {

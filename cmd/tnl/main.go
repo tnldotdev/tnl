@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -30,6 +31,7 @@ type cli struct {
 	Dev         devCommand       `cmd:"" help:"Start and publish a development service; override its child command after --." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local HTTP service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
+	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
@@ -50,18 +52,20 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	teamSelectionFlags `embed:""`
-	Domain             string   `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
-	Name               string   `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
-	PublicURL          string   `name:"public-url" help:"Exact HTTPS public URL to publish."`
-	AllowIP            []string `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowProvider      []string `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
-	AllowAllIPs        bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	RequestLimit       *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	Domain             string                       `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name               string                       `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
+	PublicURL          string                       `name:"public-url" help:"Exact HTTPS public URL to publish."`
+	AllowIP            []string                     `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
+	AllowProvider      []string                     `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
+	AllowAllIPs        bool                         `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Ephemeral          bool                         `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	RequestLimit       *int                         `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
 
-	allowAllIPsFromCLI bool
-	ephemeralFromCLI   bool
-	domainFromCLI      bool
+	allowAllIPsFromCLI       bool
+	ephemeralFromCLI         bool
+	domainFromCLI            bool
+	requestInspectionFromCLI bool
 }
 
 type remoteFlags struct {
@@ -407,6 +411,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
+	case "requests list", "requests show <request-id>":
+		root, err := projectRoot(ctx, flags)
+		if err != nil {
+			return err
+		}
+		if parsedCommand == "requests list" {
+			return runRequestsList(ctx, flags.Requests.List, root, stdout)
+		}
+		return runRequestsShow(ctx, flags.Requests.Show, root, stdout)
 	case "team current":
 		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
 	case "team list":
@@ -538,7 +551,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowProvider, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false, false
+	publicURL, name, domain, allowIP, allowProvider, allowAllIPs, ephemeral, open, inspection := false, false, false, false, false, false, false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
@@ -564,12 +577,15 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			flags.Dev.portFromCLI = true
 		case "startup-timeout":
 			flags.Dev.startupTimeoutFromCLI = true
+		case "request-inspection":
+			inspection = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
 		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
+		tunnel.requestInspectionFromCLI = inspection
 		if publicURL && !name {
 			tunnel.Name = ""
 		}

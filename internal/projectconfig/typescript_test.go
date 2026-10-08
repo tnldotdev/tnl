@@ -18,11 +18,12 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	source := `export default async ({cwd, env, worktree}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
+  requestInspection: "detailed",
   tunnel: {domain: "routes.example.test", requestLimit: 750, allowProviders: ["stripe", "github"]},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {
-    api: {directory: "apps/api", tunnel: {name: worktree.label}, dev: {startupTimeout: "45s"}},
+    api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label}, dev: {startupTimeout: "45s"}},
     site: {tunnel: {publicURL: "https://site.example.test", open: true}, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}},
   },
 });`
@@ -36,6 +37,8 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Tunnel == nil || value.Tunnel.Domain == nil ||
+		value.RequestInspection == nil || *value.RequestInspection != "detailed" ||
+		value.Services["api"].RequestInspection == nil || *value.Services["api"].RequestInspection != "summary" ||
 		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
 		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label ||
 		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
@@ -129,13 +132,14 @@ func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 
 func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
-		"service server": {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
-		"service team":   {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"request limit":  {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
-		"duration":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
-		"target":         {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
-		"ip":             {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
-		"duplicate":      {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
+		"service server":     {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
+		"service team":       {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
+		"request limit":      {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
+		"request inspection": {`export default {services: {api: {requestInspection: "all"}}};`, "services.api.request_inspection: must be summary or detailed"},
+		"duration":           {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
+		"target":             {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
+		"ip":                 {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
+		"duplicate":          {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")

@@ -73,13 +73,13 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 // NewWithMounts shares one hostname check and request limit across the base
 // service and all mounted local services.
 func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
-	return NewWithMountsOptions(target, hostname, requestLimit, mounts, nil, nil, onTargetFailure...)
+	return NewWithMountsOptions(target, hostname, requestLimit, mounts, nil, nil, nil, onTargetFailure...)
 }
 
 // NewWithMountsOptions adds publisher-owned HTML response handling and
 // request observations without changing the visitor policy or shared limit.
 func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mount,
-	modifyResponse func(*http.Response) error, observe func(*http.Request, int), onTargetFailure ...func(),
+	modifyResponse func(*http.Response) error, observe func(*http.Request, int), onForwarded func(*http.Request), onTargetFailure ...func(),
 ) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
@@ -91,7 +91,7 @@ func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mo
 	if err != nil || canonical != hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(target, requestLimit, modifyResponse, observe, onTargetFailure)
+	base, err := newReverseProxy(target, requestLimit, modifyResponse, observe, onForwarded, onTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mo
 			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
 		}
 		seen[mount.Prefix] = true
-		proxy, err := newReverseProxy(mount.Target, requestLimit, modifyResponse, observe, onTargetFailure)
+		proxy, err := newReverseProxy(mount.Target, requestLimit, modifyResponse, observe, onForwarded, onTargetFailure)
 		if err != nil {
 			return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 		}
@@ -166,7 +166,7 @@ func NewWithMountsOptions(target, hostname string, requestLimit int, mounts []Mo
 	}), nil
 }
 
-func newReverseProxy(target string, requestLimit int, modifyResponse func(*http.Response) error, observe func(*http.Request, int), onTargetFailure []func()) (*httputil.ReverseProxy, error) {
+func newReverseProxy(target string, requestLimit int, modifyResponse func(*http.Response) error, observe func(*http.Request, int), onForwarded func(*http.Request), onTargetFailure []func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -219,7 +219,12 @@ func newReverseProxy(target string, requestLimit int, modifyResponse func(*http.
 				observe(response.Request, response.StatusCode)
 			}
 			if modifyResponse != nil {
-				return modifyResponse(response)
+				if err := modifyResponse(response); err != nil {
+					return err
+				}
+			}
+			if onForwarded != nil {
+				onForwarded(response.Request)
 			}
 			return nil
 		},
