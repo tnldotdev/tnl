@@ -183,6 +183,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		if err != nil {
 			return err
 		}
+		metadata.Aliases, err = projectAliasMetadata(ctx, metadataResolver, metadata)
+		if err != nil {
+			return err
+		}
 	}
 	previewID := ""
 	if flags.project.Found() && flags.Service != "" {
@@ -202,7 +206,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		metadata.OAuth = oauth
 	}
 	integrationGroup := ""
-	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 {
+	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0 {
 		integrationGroup = projectIntegrationGroup(flags.project.Project, services.namespace)
 	}
 	if partialReason != "" || metadataErr != nil {
@@ -346,7 +350,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			}
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
-		publishDone <- publisher.Run(publishCtx, publisherConfig)
+		stopAliases := func() {}
+		if len(flags.project.Config.Aliases) != 0 {
+			stopAliases = startProjectAliases(publishCtx, state, flags.project, flags.Service, flags.selectedTeam, services, publisherConfig, integrationGroup, tunnel, output)
+		}
+		result := publisher.Run(publishCtx, publisherConfig)
+		stopAliases()
+		publishDone <- result
 	}()
 
 	for {

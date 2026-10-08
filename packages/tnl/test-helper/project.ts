@@ -47,6 +47,52 @@ export function testPublicProject(dev: boolean) {
   return { namespace: project.namespace, dev, services: project.services };
 }
 
+export function testAliasAssignment() {
+  const project = testPublicProject(true);
+  return {
+    hostname: "api.member.example",
+    namespace: "member.example",
+    protocol: 1,
+    publicURL: "https://api.member.example",
+    service: "api",
+    tunnelID: `tun_${"b".repeat(22)}`,
+    project: {
+      ...project,
+      services: {
+        ...project.services,
+        web: {
+          ...project.services.web,
+          paths: {
+            "/api": { service: "api", url: "https://web.member.example/api", stripPrefix: true },
+          },
+        },
+        worker: {
+          namespace: "member.example",
+          hostname: "worker.member.example",
+          url: "https://worker.member.example",
+        },
+      },
+      aliases: {
+        api: {
+          service: "api",
+          hostname: "review-api.member.example",
+          url: "https://review-api.member.example",
+        },
+        web: {
+          service: "web",
+          hostname: "review-web.member.example",
+          url: "https://review-web.member.example",
+        },
+        worker: {
+          service: "worker",
+          hostname: "review-worker.member.example",
+          url: "https://review-worker.member.example",
+        },
+      },
+    },
+  };
+}
+
 export async function withCurrentDirectory<T>(
   directory: string,
   callback: () => T | Promise<T>,

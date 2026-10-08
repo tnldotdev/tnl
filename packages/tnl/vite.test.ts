@@ -22,6 +22,7 @@ import { withProcessEnvironment } from "./test-helper/environment.js";
 import { startFrameworkFixture } from "./test-helper/framework.js";
 import { viteClientConnection } from "./test-helper/vite-client.js";
 import tnl from "@tnldotdev/tnl/vite";
+import { testAliasAssignment } from "./test-helper/project.js";
 
 const serveEnvironment: ConfigEnv = {
   command: "serve",
@@ -37,6 +38,24 @@ const buildEnvironment: ConfigEnv = {
 };
 
 describe("tnl", () => {
+  test("allows aliases that reach the service without broadening other hosts", async () => {
+    const bootstrap = await startTestBootstrap({
+      responseBody: JSON.stringify(testAliasAssignment()),
+    });
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const result = await runConfigHook(tnl(), { server: { allowedHosts: ["existing.example"] } });
+      expect(result).toMatchObject({
+        server: {
+          allowedHosts: [
+            "existing.example",
+            "api.member.example",
+            "review-api.member.example",
+            "review-web.member.example",
+          ],
+        },
+      });
+    });
+  });
   test("takes no arguments and is inert without generated metadata", async () => {
     expect(tnl).toHaveLength(0);
     expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });

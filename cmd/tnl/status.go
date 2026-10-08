@@ -55,7 +55,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(snapshot)
 	}
-	if len(snapshot.Tunnels) == 0 {
+	if len(snapshot.Tunnels) == 0 && len(snapshot.Aliases) == 0 {
 		return writeHumanFrame(output, "tnl status", "no local tunnels", "",
 			clioutput.Tree(clioutput.TreeNode{Label: "start one with", Children: []clioutput.TreeNode{
 				{Label: "tnl publish 3000"},
@@ -123,6 +123,19 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			}
 			blocks = append(blocks, clioutput.Section("webhook "+endpoint.Name+" "+endpoint.State, clioutput.Fields(fields...)))
 		}
+	}
+	for _, alias := range snapshot.Aliases {
+		fields := []clioutput.Field{
+			{Label: "alias", Value: alias.Name}, {Label: "public URL", Value: alias.PublicURL},
+			{Label: "service", Value: alias.Service}, {Label: "selected worktree", Value: alias.SelectedProject},
+		}
+		if alias.SelectedProject == alias.DefaultProject {
+			fields = append(fields, clioutput.Field{Label: "selection", Value: "primary checkout (default)"})
+		}
+		if alias.Reason != "" {
+			fields = append(fields, clioutput.Field{Label: "reason", Value: string(alias.Reason)}, clioutput.Field{Label: "action", Value: alias.Action})
+		}
+		blocks = append(blocks, clioutput.Section("alias "+alias.State, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(output, "tnl status", countState(len(snapshot.Tunnels), "local tunnel", "local tunnels"),
 		statusSummary(snapshot.Summary), blocks...)
