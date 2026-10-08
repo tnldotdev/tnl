@@ -36,6 +36,7 @@ const (
 )
 
 type telemetryTrackedCommand string
+type telemetryCommandAction string
 
 const (
 	telemetryInit    telemetryTrackedCommand = "init"
@@ -81,6 +82,7 @@ type telemetryPayload struct {
 	InvocationID   string                  `json:"invocation_id"`
 	Event          telemetryEventName      `json:"event"`
 	Command        telemetryTrackedCommand `json:"command"`
+	Action         telemetryCommandAction  `json:"action,omitempty"`
 	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
 	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
 	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
@@ -104,6 +106,7 @@ type telemetryInvocation struct {
 	ready    atomic.Bool
 	modeMu   sync.RWMutex
 	mode     telemetryPublishMode
+	action   telemetryCommandAction
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
@@ -116,6 +119,7 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
 	payload.InvocationID = i.id
+	payload.Action = i.action
 	if payload.Command == telemetryPublish {
 		i.modeMu.RLock()
 		payload.PublishMode = i.mode
@@ -327,25 +331,25 @@ func newTelemetryDemoPing() telemetryPayload {
 	return payload
 }
 
-func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, bool) {
+func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, telemetryCommandAction, bool) {
 	var command []string
 	for _, element := range parsed.Path {
 		if element.Command != nil && element.Command.Type == kong.CommandNode {
 			command = append(command, element.Command.Name)
 		}
 	}
-	switch strings.Join(command, " ") {
-	case string(telemetryInit):
-		return telemetryInit, true
-	case string(telemetryLogin):
-		return telemetryLogin, true
-	case string(telemetryDev):
-		return telemetryDev, true
-	case string(telemetryPublish):
-		return telemetryPublish, true
-	default:
-		return "", false
+	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" {
+		return "", "", false
 	}
+	if len(command) == 1 {
+		switch command[0] {
+		case "init", "login", "logout", "dev", "publish", "status":
+			return telemetryTrackedCommand(command[0]), "", true
+		default:
+			return "", "", false
+		}
+	}
+	return telemetryTrackedCommand(strings.Join(command[:len(command)-1], " ")), telemetryCommandAction(command[len(command)-1]), true
 }
 
 func commandStateRoot(parsed *kong.Context) (string, error) {

@@ -298,7 +298,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			return err
 		}
 	}
-	telemetryCommand, collectTelemetry := selectedTelemetryCommand(parsed)
+	telemetryCommand, telemetryAction, collectTelemetry := selectedTelemetryCommand(parsed)
 	var telemetry *telemetryInvocation
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
@@ -307,6 +307,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 				if reporter := reporterFactories[0](root); reporter != nil {
 					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
 						telemetry = invocation
+						telemetry.action = telemetryAction
 						if telemetryCommand == telemetryPublish {
 							mode := telemetryPublishApp
 							if flags.Publish.Demo {
@@ -325,7 +326,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		defer func() {
 			if result != nil {
 				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand == telemetryInit || telemetryCommand == telemetryLogin {
+			} else if telemetryCommand != telemetryDev && telemetryCommand != telemetryPublish && !(telemetryCommand == "feedback" && telemetryAction == "watch") {
 				telemetry.Report(newTelemetryCompleted(telemetryCommand))
 			}
 		}()

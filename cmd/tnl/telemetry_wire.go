@@ -29,10 +29,12 @@ type telemetryWireEvent interface{ isTelemetryWireEvent() }
 
 type telemetryCommandWirePayload struct {
 	Command telemetryTrackedCommand `json:"command"`
+	Action  telemetryCommandAction  `json:"action,omitempty"`
 }
 
 type telemetryFailureWirePayload struct {
 	Command        telemetryTrackedCommand `json:"command"`
+	Action         telemetryCommandAction  `json:"action,omitempty"`
 	FailureStage   telemetryFailureStage   `json:"failure_stage"`
 	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
 }
@@ -81,11 +83,11 @@ func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEven
 	common := telemetryEventCommon{EventID: id, InvocationID: payload.InvocationID, OccurredAt: time.Now().UTC(), EventVersion: 1}
 	switch payload.Event {
 	case telemetryCommandStarted:
-		return telemetryCommandWireEvent{common, wireCommandStarted, telemetryCommandWirePayload{payload.Command}}
+		return telemetryCommandWireEvent{common, wireCommandStarted, telemetryCommandWirePayload{payload.Command, payload.Action}}
 	case telemetryCommandCompleted:
-		return telemetryCommandWireEvent{common, wireCommandCompleted, telemetryCommandWirePayload{payload.Command}}
+		return telemetryCommandWireEvent{common, wireCommandCompleted, telemetryCommandWirePayload{payload.Command, payload.Action}}
 	case telemetryCommandFailed:
-		return telemetryFailureWireEvent{common, wireCommandFailed, telemetryFailureWirePayload{payload.Command, payload.FailureStage, payload.DiagnosticCode}}
+		return telemetryFailureWireEvent{common, wireCommandFailed, telemetryFailureWirePayload{payload.Command, payload.Action, payload.FailureStage, payload.DiagnosticCode}}
 	case telemetryPublishRunStarted:
 		return telemetryTunnelWireEvent{common, wireTunnelReady, telemetryTunnelWirePayload{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}}
 	case telemetryDemoPingReceived:
