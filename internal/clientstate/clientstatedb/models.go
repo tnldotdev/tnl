@@ -90,3 +90,9 @@ type ServerProfile struct {
 	CreatedAt      int64
 	LastUsedAt     int64
 }
+
+type TelemetryOutbox struct {
+	EventID   string
+	CreatedAt int64
+	EventJson string
+}

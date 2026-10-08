@@ -47,6 +47,7 @@ const (
 	SlugReservationPrefix            = "sr_"
 	TeamPrefix                       = "tm_"
 	TunnelPrefix                     = "tun_"
+	TelemetryEventPrefix             = "tev_"
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
 	PreviewPrefix                    = "pv_"

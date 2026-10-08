@@ -25,10 +25,20 @@ func (d *Database) SetTelemetryEnabled(ctx context.Context, enabled bool) error 
 	if enabled {
 		value = 1
 	}
-	if err := d.queries.SetTelemetryEnabled(ctx, value); err != nil {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("clientstate: begin telemetry preference: %w", err)
+	}
+	defer tx.Rollback()
+	if err := d.queries.WithTx(tx).SetTelemetryEnabled(ctx, value); err != nil {
 		return fmt.Errorf("clientstate: save telemetry preference: %w", err)
 	}
-	return nil
+	if !enabled {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox`); err != nil {
+			return fmt.Errorf("clientstate: clear telemetry queue: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // TelemetryEnabledAt checks an existing database without creating client state

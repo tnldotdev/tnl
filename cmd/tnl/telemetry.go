@@ -133,6 +133,12 @@ func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
 	i.modeMu.Unlock()
 }
 
+func (i *telemetryInvocation) flushReady() {
+	if reporter, ok := i.reporter.(interface{ flushReady() }); ok {
+		reporter.flushReady()
+	}
+}
+
 func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
 	if i.ready.Load() {
 		return
@@ -162,9 +168,10 @@ type asyncTelemetryReporter struct {
 	root   string
 	client *http.Client
 
-	idMu sync.Mutex
-	id   string
-	wait sync.WaitGroup
+	idMu    sync.Mutex
+	id      string
+	wait    sync.WaitGroup
+	flushMu sync.Mutex
 }
 
 func newTelemetryReporter(root string) *asyncTelemetryReporter {
@@ -180,32 +187,83 @@ func newTelemetryReporter(root string) *asyncTelemetryReporter {
 }
 
 func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
+	id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
+	if err != nil {
+		return
+	}
+	event := payload.wireEvent(telemetryEventID(id))
+	if event == nil {
+		return
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
+	state, err := clientstate.Open(ctx, r.root)
+	if err == nil {
+		err = state.QueueTelemetryEvent(ctx, id, encoded)
+		_ = state.Close()
+	}
+	cancel()
+	if err != nil {
+		return
+	}
+}
+
+func (r *asyncTelemetryReporter) flushReady() {
 	r.wait.Add(1)
 	go func() {
 		defer r.wait.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		defer cancel()
-
-		installationID, err := r.installationID(ctx)
-		if err != nil {
-			return
-		}
-		payload.InstallationID = installationID
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("User-Agent", "")
-		response, err := r.client.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-		}
+		r.flush(ctx)
 	}()
+}
+
+func (r *asyncTelemetryReporter) flush(ctx context.Context) {
+	r.flushMu.Lock()
+	defer r.flushMu.Unlock()
+	state, err := clientstate.Open(ctx, r.root)
+	if err != nil {
+		return
+	}
+	defer state.Close()
+	if enabled, err := state.TelemetryEnabled(ctx); err != nil || !enabled {
+		return
+	}
+	_ = state.PruneTelemetryOutbox(ctx)
+	pending, err := state.PendingTelemetryEvents(ctx, 25)
+	if err != nil || len(pending) == 0 {
+		return
+	}
+	installationID, err := state.InstallationID(ctx)
+	if err != nil {
+		return
+	}
+	events := make([]json.RawMessage, 0, len(pending))
+	for _, item := range pending {
+		events = append(events, item.JSON)
+	}
+	body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
+		Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
+		Events: events})
+	if err != nil {
+		return
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "tnl")
+	response, err := r.client.Do(request)
+	if err == nil {
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusNoContent || response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
+			_ = state.DeleteTelemetryEvents(ctx, pending)
+		}
+	}
 }
 
 func (r *asyncTelemetryReporter) installationID(ctx context.Context) (string, error) {
@@ -352,6 +410,9 @@ func withTelemetryObserver(
 					name = telemetryFramework(framework())
 				}
 				reporter.Report(newTelemetryReady(command, serverKind, name))
+				if invocation, ok := reporter.(*telemetryInvocation); ok {
+					invocation.flushReady()
+				}
 			})
 		}
 		return nil
