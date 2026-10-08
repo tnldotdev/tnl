@@ -40,6 +40,7 @@ type cli struct {
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
+	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for an exclusive webhook." group:"manage"`
 	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
@@ -115,6 +116,21 @@ type loginCommand struct {
 type logoutCommand struct {
 	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+}
+
+type webhookCommand struct {
+	Use     webhookUseCommand    `cmd:"" help:"Send this webhook to the ready service in this worktree."`
+	Release webhookChoiceCommand `cmd:"" help:"Stop sending this webhook to this worktree."`
+}
+
+type webhookUseCommand struct {
+	webhookChoiceCommand `embed:""`
+	Force                bool `help:"Replace the selected receiver even if its tunnel is running."`
+}
+
+type webhookChoiceCommand struct {
+	remoteFlags `embed:""`
+	Endpoint    string `arg:"" name:"endpoint" help:"Configured webhook endpoint name."`
 }
 
 func main() {
@@ -428,6 +444,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			return runRequestsList(ctx, flags.Requests.List, root, stdout)
 		}
 		return runRequestsShow(ctx, flags.Requests.Show, root, stdout)
+	case "webhook use <endpoint>":
+		return runWebhookChoice(ctx, flags.Webhook.Use.webhookChoiceCommand, project, true, flags.Webhook.Use.Force, stdout)
+	case "webhook release <endpoint>":
+		return runWebhookChoice(ctx, flags.Webhook.Release, project, false, false, stdout)
 	case "team current":
 		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
 	case "team list":
@@ -531,6 +551,8 @@ func commandFailureReason(command string) failure.Reason {
 	case strings.HasPrefix(command, "tnl url "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
+		return failure.ServerConflict
+	case strings.HasPrefix(command, "tnl webhook "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl admin "):
 		return failure.AdminUnavailable

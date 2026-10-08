@@ -19,6 +19,7 @@ import (
 type Webhook struct {
 	Service   string         `json:"service" yaml:"service"`
 	Path      string         `json:"path" yaml:"path"`
+	Delivery  string         `json:"delivery,omitempty" yaml:"delivery,omitempty"`
 	Methods   []string       `json:"methods,omitempty" yaml:"methods,omitempty" jsonschema:"uniqueItems=true"`
 	AllowFrom WebhookSources `json:"allow_from" yaml:"allow_from"`
 }
@@ -26,6 +27,9 @@ type Webhook struct {
 // DefinitionBytes gives equivalent declarations the same fingerprint without
 // modifying the caller's slices. fingerprints fence local receiver selection.
 func (w Webhook) DefinitionBytes() ([]byte, [32]byte, error) {
+	if w.Delivery == "" {
+		w.Delivery = "fanout"
+	}
 	if len(w.Methods) == 0 {
 		w.Methods = []string{http.MethodPost}
 	}
@@ -64,6 +68,9 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			return fmt.Errorf("webhooks.%s: path is also used by %s", name, previous)
 		}
 		paths[endpoint.Path] = name
+		if endpoint.Delivery != "" && endpoint.Delivery != "fanout" && endpoint.Delivery != "exclusive" {
+			return fmt.Errorf("webhooks.%s: delivery must be fanout or exclusive", name)
+		}
 		methods := make(map[string]bool, len(endpoint.Methods))
 		for _, method := range endpoint.Methods {
 			if !ValidWebhookMethod(method) || methods[method] {

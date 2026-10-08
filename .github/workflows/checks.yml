@@ -171,6 +171,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            tools/staticcheck/go.sum
             mise.toml
 
       - name: Set up pnpm and Node
@@ -193,7 +194,6 @@ jobs:
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           go install golang.org/x/tools/cmd/goimports@v0.49.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
 
       - name: Check formatting
         run: task go:format-check

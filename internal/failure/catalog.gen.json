@@ -456,6 +456,27 @@
       "class": "unavailable",
       "message": "tnl could not start or maintain this tunnel",
       "action": "check the local service, selected server, and network connection, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_NOT_SELECTED",
+      "slug": "webhook-not-selected",
+      "class": "conflict",
+      "message": "this worktree is not the selected webhook receiver",
+      "action": "check tnl status before releasing or switching this webhook"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_OWNED",
+      "slug": "webhook-owned",
+      "class": "conflict",
+      "message": "another running tunnel is selected for this webhook",
+      "action": "run tnl webhook use NAME --force to switch, or release it from the current worktree"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY",
+      "slug": "webhook-receiver-unready",
+      "class": "unavailable",
+      "message": "the selected webhook receiver is not ready",
+      "action": "start the configured service in this worktree and wait for its public URL to be ready"
     }
   ]
 }

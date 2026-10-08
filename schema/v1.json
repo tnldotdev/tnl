@@ -285,6 +285,11 @@
                 "type": "string",
                 "pattern": "^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$"
               },
+              "delivery": {
+                "type": "string",
+                "enum": ["fanout", "exclusive"],
+                "default": "fanout"
+              },
               "methods": {
                 "items": {
                   "type": "string",
