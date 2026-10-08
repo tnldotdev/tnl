@@ -132,6 +132,7 @@ func main() {
 	if telemetry != nil {
 		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		telemetry.Wait(waitCtx)
+		telemetry.flush(waitCtx)
 		cancel()
 	}
 	if err != nil {
