@@ -30,7 +30,7 @@ func (h *handler) resolveWebsiteIdentity(response http.ResponseWriter, request *
 	if body.VerifiedEmail != nil {
 		identity.NormalizedEmail, identity.EmailVerified = string(*body.VerifiedEmail), true
 	}
-	result, err := h.store.EnsureServiceIdentity(request.Context(), h.config.ManagedDeploymentDomain, identity, time.Now())
+	result, err := h.store.EnsureServiceIdentity(request.Context(), h.config.ManagedDomain, identity, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "resolve website identity", err)
 		return result, false

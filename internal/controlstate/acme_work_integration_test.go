@@ -46,6 +46,11 @@ func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !issuance.NewOrder || issuance.DomainKind != DomainKindCustom {
+		t.Fatal("new committed order did not identify its domain kind")
+	}
+	// creation facts are not part of the durable issuance returned on replay.
+	issuance.NewOrder, issuance.DomainKind = false, ""
 	if issuance.State != "pending" || issuance.PublishRunID != f.setup.PublishRunID ||
 		issuance.PublishRunNumber != f.setup.PublishRunNumber || !reflect.DeepEqual(issuance.CertificatePlan.Identifiers, f.request.CertificateIdentifiers) {
 		t.Fatalf("issuance = %#v", issuance)
@@ -61,6 +66,22 @@ func TestIntegrationCertificateIssuanceCreation(t *testing.T) {
 	loaded, err := f.database.GetCertificateIssuance(t.Context(), issuance.ID, f.setup.PublishRunToken, f.now)
 	if err != nil || !reflect.DeepEqual(loaded, issuance) {
 		t.Fatalf("loaded issuance = %#v, %v", loaded, err)
+	}
+}
+
+func TestIntegrationManagedCertificateOrderFacts(t *testing.T) {
+	f := newPublishRunFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.domains SET kind = 'managed', team_id = NULL, dns_authority_reference = NULL WHERE id = 'domain_session'`); err != nil {
+		t.Fatal(err)
+	}
+	request := newTestIssuanceRequest(t, f)
+	created, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
+	if err != nil || !created.NewOrder || created.DomainKind != DomainKindManaged {
+		t.Fatalf("managed order creation facts = %t/%q, %v", created.NewOrder, created.DomainKind, err)
+	}
+	repeated, err := f.database.CreateCertificateIssuance(t.Context(), request, f.now)
+	if err != nil || repeated.NewOrder || repeated.ID != created.ID {
+		t.Fatalf("replayed managed order = new %t, %v", repeated.NewOrder, err)
 	}
 }
 

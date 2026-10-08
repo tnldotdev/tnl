@@ -551,16 +551,16 @@ FROM control.domains
 WHERE released_at IS NULL
 ORDER BY canonical_domain;
 
--- name: GetClaimedDomainByIdempotency :one
+-- name: GetCustomDomainByIdempotency :one
 SELECT d.*, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
 FROM control.domains AS d
 LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
 WHERE d.created_by_identity_id = sqlc.arg(identity_id)
   AND d.team_id = sqlc.arg(team_id)
   AND d.claim_idempotency_key = sqlc.arg(idempotency_key)
-  AND d.kind = 'claimed';
+  AND d.kind = 'custom';
 
--- name: CreateClaimedDNSAuthority :exec
+-- name: CreateCustomDNSAuthority :exec
 INSERT INTO control.dns_authorities (
     authority_reference,
     team_id,
@@ -587,7 +587,7 @@ INSERT INTO control.dns_authorities (
     sqlc.arg(created_at)
 );
 
--- name: CreateClaimedDomain :one
+-- name: CreateCustomDomain :one
 INSERT INTO control.domains (
     id,
     kind,
@@ -604,7 +604,7 @@ INSERT INTO control.domains (
     updated_at
 ) VALUES (
     sqlc.arg(id),
-    'claimed',
+    'custom',
     sqlc.arg(team_id),
     sqlc.arg(canonical_domain),
     sqlc.arg(dns_authority_reference),
@@ -636,14 +636,14 @@ SET default_domain_id = sqlc.arg(domain_id),
 WHERE id = sqlc.arg(team_id)
   AND deleted_at IS NULL;
 
--- name: MarkClaimedDomainReleasing :execrows
+-- name: MarkCustomDomainReleasing :execrows
 UPDATE control.domains
 SET state = 'releasing',
     authority_revision = sqlc.arg(authority_revision),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(domain_id)
   AND team_id = sqlc.arg(team_id)
-  AND kind = 'claimed'
+  AND kind = 'custom'
   AND state IN ('pending', 'ready', 'failed');
 
 -- name: MarkDNSAuthorityReleasing :execrows

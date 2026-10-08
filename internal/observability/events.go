@@ -101,6 +101,13 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 	m.certificateClaims.WithLabelValues(kind, string(outcome)).Inc()
 }
 
+func (m *Metrics) ObserveCertificateOrder(domainKind, plan string) {
+	if m == nil || domainKind != "managed" && domainKind != "custom" || plan != "exact" && plan != "wildcard" {
+		return
+	}
+	m.certificateOrders.WithLabelValues(domainKind, plan).Inc()
+}
+
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
 	if m == nil || kind != "relay" && kind != "public_url" {
 		return

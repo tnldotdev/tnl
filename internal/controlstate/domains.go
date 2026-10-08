@@ -51,13 +51,13 @@ func (d *Database) ClaimTeamDomain(
 	}
 	managedDomain, err := queries.LockManagedDomainForClaim(ctx)
 	if err != nil {
-		return Domain{}, fmt.Errorf("controlstate: claim team domain: lock managed deployment domain: %w", err)
+		return Domain{}, fmt.Errorf("controlstate: claim team domain: lock managed domain: %w", err)
 	}
 	canonical, _, err := naming.CustomDomain(request.Domain, managedDomain.CanonicalDomain)
 	if err != nil || canonical != request.Domain {
 		return Domain{}, ErrAuthorityInvalid
 	}
-	existing, err := queries.GetClaimedDomainByIdempotency(ctx, controlstatedb.GetClaimedDomainByIdempotencyParams{
+	existing, err := queries.GetCustomDomainByIdempotency(ctx, controlstatedb.GetCustomDomainByIdempotencyParams{
 		IdentityID: text(request.IdentityID), TeamID: text(request.TeamID), IdempotencyKey: text(request.IdempotencyKey),
 	})
 	if err == nil {
@@ -99,14 +99,14 @@ func (d *Database) ClaimTeamDomain(
 	if err != nil {
 		return Domain{}, err
 	}
-	if err := queries.CreateClaimedDNSAuthority(ctx, controlstatedb.CreateClaimedDNSAuthorityParams{
+	if err := queries.CreateCustomDNSAuthority(ctx, controlstatedb.CreateCustomDNSAuthorityParams{
 		AuthorityReference: authorityReference, TeamID: request.TeamID, DomainID: domainID,
 		CanonicalDomain: canonical, CreateIdempotencyKey: "self_hosted_" + domainID,
 		CreateRequestDigest: request.RequestDigest[:], CreatedAt: timestamp(now),
 	}); err != nil {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: create DNS authority: %w", err)
 	}
-	row, err := queries.CreateClaimedDomain(ctx, controlstatedb.CreateClaimedDomainParams{
+	row, err := queries.CreateCustomDomain(ctx, controlstatedb.CreateCustomDomainParams{
 		ID: domainID, TeamID: text(request.TeamID), CanonicalDomain: canonical,
 		DnsAuthorityReference: text(authorityReference), AuthorityRevision: revision,
 		CreatedByIdentityID: text(request.IdentityID), ClaimIdempotencyKey: text(request.IdempotencyKey),
@@ -222,7 +222,7 @@ func (d *Database) ReleaseTeamDomain(
 	if err != nil {
 		return fmt.Errorf("controlstate: release team domain: lock domain: %w", err)
 	}
-	if DomainKind(domain.Kind) != DomainKindClaimed || domain.TeamID.String != teamID {
+	if DomainKind(domain.Kind) != DomainKindCustom || domain.TeamID.String != teamID {
 		return ErrAuthorityAccess
 	}
 	if actor.DefaultDomainID.String == domainID {
@@ -240,7 +240,7 @@ func (d *Database) ReleaseTeamDomain(
 	if err != nil {
 		return fmt.Errorf("controlstate: release team domain: advance policy revision: %w", err)
 	}
-	updated, err := queries.MarkClaimedDomainReleasing(ctx, controlstatedb.MarkClaimedDomainReleasingParams{
+	updated, err := queries.MarkCustomDomainReleasing(ctx, controlstatedb.MarkCustomDomainReleasingParams{
 		AuthorityRevision: revision, UpdatedAt: timestamp(now), DomainID: domainID, TeamID: text(teamID),
 	})
 	if err != nil {

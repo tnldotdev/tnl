@@ -117,6 +117,9 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.ObserveRoutingHistoryFloor(100)
 	metrics.ObserveRoutingHistoryFloor(50)
 	metrics.ObserveRoutingHistoryBatch(0, 0, true)
+	metrics.ObserveCertificateOrder("managed", "exact")
+	metrics.ObserveCertificateOrder("hostname-secret", "exact")
+	metrics.ObserveCertificateOrder("managed", "certificate-secret")
 
 	families, err := metrics.registry.Gather()
 	if err != nil {
@@ -128,6 +131,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
+		"tnl_control_public_url_certificate_orders_total":     {"COUNTER", map[string]string{"domain_kind": "managed", "plan": "exact"}, 1},
 		"tnl_control_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
 		"tnl_control_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
 		"tnl_process_info":                         {"GAUGE", map[string]string{"role": "standalone"}, 1},

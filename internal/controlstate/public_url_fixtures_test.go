@@ -75,7 +75,7 @@ func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffi
 		{`INSERT INTO control.team_memberships (id, team_id, identity_id, slug_reservation_id, managed_label, role, authority_revision, created_at, updated_at)
 			VALUES ($2, $3, $4, $5, $6, 'owner', 1, $1, $1)`, []any{now, membershipID, teamID, identityID, reservationID, "member-" + label}},
 		{`INSERT INTO control.domains (id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id, created_at, verified_at, updated_at)
-			VALUES ($2, 'claimed', $3, $4, 'ready', 1, $5, $1, $1, $1)`, []any{now, domainID, teamID, suffix + ".example.test", identityID}},
+			VALUES ($2, 'custom', $3, $4, 'ready', 1, $5, $1, $1, $1)`, []any{now, domainID, teamID, suffix + ".example.test", identityID}},
 		{`UPDATE control.teams SET default_domain_id = $1 WHERE id = $2`, []any{domainID, teamID}},
 		{`INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
 			request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,

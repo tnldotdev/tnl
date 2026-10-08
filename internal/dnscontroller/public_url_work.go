@@ -123,7 +123,7 @@ func (w *Worker) publicURLRecord(
 		return record, nil, true, nil
 	}
 	if work.DNSAuthorityReference == "" {
-		return PublicURLRecord{}, nil, false, terminalf("claimed route has no DNS authority reference")
+		return PublicURLRecord{}, nil, false, terminalf("custom-domain public URL has no DNS authority reference")
 	}
 	authority, err := w.store.GetDNSAuthority(ctx, work.DNSAuthorityReference)
 	if err != nil {
@@ -139,7 +139,7 @@ func (w *Worker) publicURLRecord(
 	if authority.State != controlstate.DNSAuthorityReady && authority.State != controlstate.DNSAuthorityReleasing || authority.ProviderZoneID == "" {
 		return PublicURLRecord{}, nil, false, terminalf("DNS authority is not available")
 	}
-	record.ZoneID, record.ZoneDomain, record.ClaimedZone = authority.ProviderZoneID, authority.CanonicalDomain, true
+	record.ZoneID, record.ZoneDomain, record.CustomZone = authority.ProviderZoneID, authority.CanonicalDomain, true
 	record.AuthorityReference, record.TeamID = authority.Reference, authority.TeamID
 	if work.PublicURLScope == controlstate.PublicURLScopeMember {
 		record.WildcardHostname = naming.MemberWildcardHostname(work.CanonicalHostname, authority.CanonicalDomain)

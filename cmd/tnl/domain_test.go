@@ -218,9 +218,9 @@ func TestDomainClaimFollowupRetainsServerAndTeam(t *testing.T) {
 }
 
 func TestDomainStatusFindsOneDomainAndShowsAction(t *testing.T) {
-	claimed := authorityv1.Domain{CanonicalDomain: "claimed.example", Id: "domain_1", Kind: "claimed", State: authorityv1.DomainStatePending, RequiredRecords: []authorityv1.DNSRecord{{Name: "claimed.example", Type: "NS", Value: "ns-1.example"}}}
+	claimed := authorityv1.Domain{CanonicalDomain: "custom.example", Id: "domain_1", Kind: "custom", State: authorityv1.DomainStatePending, RequiredRecords: []authorityv1.DNSRecord{{Name: "custom.example", Type: "NS", Value: "ns-1.example"}}}
 	domains := []authorityv1.Domain{{CanonicalDomain: "other.example", Id: "domain_2"}, claimed}
-	for _, value := range []string{"claimed.example", "domain_1"} {
+	for _, value := range []string{"custom.example", "domain_1"} {
 		found, ok := teamDomain(domains, value)
 		if !ok || found.Id != claimed.Id {
 			t.Fatalf("lookup %q: %#v, %t", value, found, ok)
@@ -267,7 +267,7 @@ func TestDomainDNSRecordBlocksRenderRequiredRecords(t *testing.T) {
 	domain := authorityv1.Domain{
 		CanonicalDomain: "claimed.example",
 		Id:              "domain_0123456789abcdef0123456789abcdef",
-		Kind:            "claimed",
+		Kind:            "custom",
 		State:           authorityv1.DomainStatePending,
 		RequiredRecords: []authorityv1.DNSRecord{
 			{Name: "claimed.example", Type: "NS", Value: "ns-1.example"},

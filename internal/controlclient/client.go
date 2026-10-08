@@ -47,6 +47,7 @@ var (
 	ErrGuestDemoOnly        = failure.Wrap("publish guest demo", failure.GuestDemoOnly, errors.New("controlclient: guest demo only"))
 	ErrGuestIPChanged       = failure.Wrap("publish guest demo", failure.GuestIPChanged, errors.New("controlclient: guest demo source IP changed"))
 	ErrGuestIssuanceLimited = failure.Wrap("create guest demo", failure.GuestIssuanceLimited, errors.New("controlclient: guest demo issuance limited"))
+	ErrMemberHostnameDepth  = failure.Wrap("select public URL hostname", failure.MemberHostnameDepthExceeded, errors.New("managed-domain member hostname depth exceeded"))
 )
 
 type Client struct {
@@ -449,6 +450,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case controlv1.MemberHostnameDepthExceeded:
+		return ErrMemberHostnameDepth
 	case controlv1.Unauthenticated:
 		return ErrUnauthenticated
 	case controlv1.GuestTrialExhausted:

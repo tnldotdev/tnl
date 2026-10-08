@@ -21,7 +21,7 @@ const optionsSchema = z.object({
   stateDir: z.string().refine(isAbsolute, "state directory must be absolute"),
   tnlBinary: z.string().refine(isAbsolute, "tnl binary path must be absolute"),
   version: z.string().min(1),
-  claimedDomain: z.union([
+  customDomain: z.union([
     z.literal(""),
     z.string().regex(/^(?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+[a-z0-9]+(?:-[a-z0-9]+)*$/),
   ]),
@@ -88,7 +88,7 @@ function options(args: string[]): { mode: "plan" | "run"; config: Options } {
       "state-dir": { type: "string" },
       "tnl-binary": { type: "string" },
       version: { type: "string" },
-      "claimed-domain": { type: "string" },
+      "custom-domain": { type: "string" },
     },
   });
   const [mode] = positionals;
@@ -102,7 +102,7 @@ function options(args: string[]): { mode: "plan" | "run"; config: Options } {
       stateDir: values["state-dir"] ?? "",
       tnlBinary: values["tnl-binary"] ?? "",
       version: values.version ?? "",
-      claimedDomain: values["claimed-domain"] ?? "",
+      customDomain: values["custom-domain"] ?? "",
     },
     optionsSchema,
     "release check options",
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
         checks: [
           "generated ephemeral URL",
           "saved URL republish",
-          ...(config.claimedDomain ? ["claimed-domain shared URL"] : []),
+          ...(config.customDomain ? ["custom-domain shared URL"] : []),
         ],
         read_only: true,
       }),
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), "tnl-release-check-"));
   const nonce = randomBytes(8).toString("hex");
   const label = `releasecheck-${randomBytes(10).toString("hex")}`;
-  const shared = `${label}.${config.claimedDomain}`;
+  const shared = `${label}.${config.customDomain}`;
   const server = createServer((request, response) => {
     if (request.url !== `/release-check/${nonce}`) {
       response.writeHead(404).end();
@@ -305,7 +305,7 @@ async function main(): Promise<void> {
       }
     });
     if (second.url !== first.url) throw new Error("saved public URL hostname changed");
-    if (config.claimedDomain)
+    if (config.customDomain)
       await check(
         "shared custom URL",
         ["--ephemeral", `--public-url=https://${shared}`],

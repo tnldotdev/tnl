@@ -250,24 +250,25 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict             ProblemCode = "conflict"
-	DnsSetupPending      ProblemCode = "dns_setup_pending"
-	Forbidden            ProblemCode = "forbidden"
-	GuestDemoOnly        ProblemCode = "guest_demo_only"
-	GuestIpChanged       ProblemCode = "guest_ip_changed"
-	GuestIssuanceLimited ProblemCode = "guest_issuance_limited"
-	GuestTrialExhausted  ProblemCode = "guest_trial_exhausted"
-	Internal             ProblemCode = "internal"
-	InvalidRequest       ProblemCode = "invalid_request"
-	IssuanceRetry        ProblemCode = "issuance_retry"
-	NameUnavailable      ProblemCode = "name_unavailable"
-	NotFound             ProblemCode = "not_found"
-	PlacementUnavailable ProblemCode = "placement_unavailable"
-	PolicyRevisionStale  ProblemCode = "policy_revision_stale"
-	PublishRunOpen       ProblemCode = "publish_run_open"
-	RateLimited          ProblemCode = "rate_limited"
-	Unauthenticated      ProblemCode = "unauthenticated"
-	Unavailable          ProblemCode = "unavailable"
+	Conflict                    ProblemCode = "conflict"
+	DnsSetupPending             ProblemCode = "dns_setup_pending"
+	Forbidden                   ProblemCode = "forbidden"
+	GuestDemoOnly               ProblemCode = "guest_demo_only"
+	GuestIpChanged              ProblemCode = "guest_ip_changed"
+	GuestIssuanceLimited        ProblemCode = "guest_issuance_limited"
+	GuestTrialExhausted         ProblemCode = "guest_trial_exhausted"
+	Internal                    ProblemCode = "internal"
+	InvalidRequest              ProblemCode = "invalid_request"
+	IssuanceRetry               ProblemCode = "issuance_retry"
+	MemberHostnameDepthExceeded ProblemCode = "member_hostname_depth_exceeded"
+	NameUnavailable             ProblemCode = "name_unavailable"
+	NotFound                    ProblemCode = "not_found"
+	PlacementUnavailable        ProblemCode = "placement_unavailable"
+	PolicyRevisionStale         ProblemCode = "policy_revision_stale"
+	PublishRunOpen              ProblemCode = "publish_run_open"
+	RateLimited                 ProblemCode = "rate_limited"
+	Unauthenticated             ProblemCode = "unauthenticated"
+	Unavailable                 ProblemCode = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -292,6 +293,8 @@ func (e ProblemCode) Valid() bool {
 	case InvalidRequest:
 		return true
 	case IssuanceRetry:
+		return true
+	case MemberHostnameDepthExceeded:
 		return true
 	case NameUnavailable:
 		return true
@@ -720,11 +723,17 @@ type ControlDiscovery struct {
 
 	// BrowserLoginAvailable Whether visitors can sign in through a browser OIDC client.
 	BrowserLoginAvailable *bool `json:"browser_login_available,omitempty"`
-	DnsAutomation         bool  `json:"dns_automation"`
+
+	// CustomDomainsEnabled Whether teams may add new custom domains. Existing custom domains remain usable when disabled.
+	CustomDomainsEnabled bool `json:"custom_domains_enabled"`
+	DnsAutomation        bool `json:"dns_automation"`
 
 	// GuestDemo Whether this server accepts limited anonymous demo publishers.
-	GuestDemo               bool              `json:"guest_demo"`
-	ManagedDeploymentDomain CanonicalHostname `json:"managed_deployment_domain"`
+	GuestDemo     bool              `json:"guest_demo"`
+	ManagedDomain CanonicalHostname `json:"managed_domain"`
+
+	// ManagedDomainMaxMemberChildLabels Maximum labels beneath a member namespace on the managed domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
+	ManagedDomainMaxMemberChildLabels int `json:"managed_domain_max_member_child_labels"`
 }
 
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.

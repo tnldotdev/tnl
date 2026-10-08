@@ -74,7 +74,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlConfig.PrivateControlListen = privateControlAddress
 	controlConfig.ClusterSecret = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
-	controlConfig.ManagedDeploymentDomain = "routes." + serverDomain
+	controlConfig.ManagedDomain = "routes." + serverDomain
 	controlConfig.ControlTLSCertificateFile = controlCertificate.certificateFile
 	controlConfig.ControlTLSPrivateKeyFile = controlCertificate.privateKeyFile
 	controlConfig.ACMEDirectoryURL = pebble.directoryURL
@@ -86,7 +86,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlConfig.AccessTokenLifetime = 5 * time.Minute
 	controlConfig.RefreshTokenLifetime = time.Hour
 	if options.dns != nil {
-		controlConfig.ManagedDeploymentDomain = serverDomain
+		controlConfig.ManagedDomain = serverDomain
 		controlConfig.DNSServer = options.dns.address
 		controlConfig.Route53Region = "us-east-1"
 		controlConfig.Route53ManagedZoneID = options.dns.zoneID

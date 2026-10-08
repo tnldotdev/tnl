@@ -1259,10 +1259,25 @@ components:
     ControlDiscovery:
       type: object
       additionalProperties: false
-      required: [managed_deployment_domain, dns_automation, guest_demo, authentication]
+      required:
+        [
+          managed_domain,
+          managed_domain_max_member_child_labels,
+          custom_domains_enabled,
+          dns_automation,
+          guest_demo,
+          authentication,
+        ]
       properties:
-        managed_deployment_domain:
+        managed_domain:
           $ref: "#/components/schemas/CanonicalHostname"
+        managed_domain_max_member_child_labels:
+          type: integer
+          minimum: 0
+          description: Maximum labels beneath a member namespace on the managed domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
+        custom_domains_enabled:
+          type: boolean
+          description: Whether teams may add new custom domains. Existing custom domains remain usable when disabled.
         dns_automation:
           type: boolean
         guest_demo:
@@ -2705,6 +2720,7 @@ components:
           policy_revision_stale,
           dns_setup_pending,
           placement_unavailable,
+          member_hostname_depth_exceeded,
           issuance_retry,
         ]
     Problem:

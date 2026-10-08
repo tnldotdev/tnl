@@ -215,7 +215,7 @@ ALTER TABLE control.teams
     ADD CONSTRAINT teams_default_domain_id_fkey
     FOREIGN KEY (default_domain_id) REFERENCES control.domains(id) ON DELETE RESTRICT;
 
--- a managed deployment domain is shared; a claimed default must belong to the team.
+-- the managed domain is shared; a custom default must belong to the team after migration 14.
 -- the foreign key above protects existence, and this check protects ownership.
 -- +goose StatementBegin
 CREATE FUNCTION control.check_team_default_domain() RETURNS trigger

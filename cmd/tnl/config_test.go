@@ -361,7 +361,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	}
 	claimed := "studio.example.test"
 	current.domains = append(current.domains, authorityv1.Domain{
-		Id: "domain_2", Kind: authorityv1.Claimed, CanonicalDomain: claimed, State: authorityv1.DomainStateReady,
+		Id: "domain_2", Kind: authorityv1.Custom, CanonicalDomain: claimed, State: authorityv1.DomainStateReady,
 	})
 	service, err = configuredProjectService("api", worktree, config.TNL{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
 	if err != nil {
@@ -369,7 +369,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	}
 	want = projectconfig.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
 	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
-		t.Fatalf("claimed-domain metadata = %#v", service)
+		t.Fatalf("custom-domain metadata = %#v", service)
 	}
 }
 

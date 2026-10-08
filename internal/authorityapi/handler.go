@@ -15,16 +15,17 @@ import (
 
 // Config contains settings for the built-in authority API.
 type Config struct {
-	OIDCIssuer              string
-	WebServiceSecret        string
-	ManagedDeploymentDomain string
-	LoginToken              string
-	AccessTokenLifetime     time.Duration
-	RefreshTokenLifetime    time.Duration
-	DNSAutomation           bool
-	EmailDelivery           bool
-	OIDCVerifier            oidcauth.Verifier
-	BrowserOIDCVerifier     oidcauth.Verifier
+	OIDCIssuer           string
+	WebServiceSecret     string
+	ManagedDomain        string
+	LoginToken           string
+	AccessTokenLifetime  time.Duration
+	RefreshTokenLifetime time.Duration
+	DNSAutomation        bool
+	CustomDomainsEnabled bool
+	EmailDelivery        bool
+	OIDCVerifier         oidcauth.Verifier
+	BrowserOIDCVerifier  oidcauth.Verifier
 }
 
 // Store is the stored state used by the built-in authority API.

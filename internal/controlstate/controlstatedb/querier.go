@@ -67,9 +67,9 @@ type Querier interface {
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	CreateActiveSlugReservation(ctx context.Context, arg CreateActiveSlugReservationParams) error
-	CreateClaimedDNSAuthority(ctx context.Context, arg CreateClaimedDNSAuthorityParams) error
-	CreateClaimedDomain(ctx context.Context, arg CreateClaimedDomainParams) (ControlDomain, error)
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
+	CreateCustomDNSAuthority(ctx context.Context, arg CreateCustomDNSAuthorityParams) error
+	CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error)
 	CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateInvitationEmail(ctx context.Context, arg CreateInvitationEmailParams) error
@@ -123,9 +123,10 @@ type Querier interface {
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
-	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
+	GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)
+	GetCustomDomainByIdempotency(ctx context.Context, arg GetCustomDomainByIdempotencyParams) (GetCustomDomainByIdempotencyRow, error)
 	GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
@@ -303,7 +304,7 @@ type Querier interface {
 	LockTeamMembership(ctx context.Context, arg LockTeamMembershipParams) (LockTeamMembershipRow, error)
 	MarkACMEAuthorizationsPresented(ctx context.Context, arg MarkACMEAuthorizationsPresentedParams) (int64, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
-	MarkClaimedDomainReleasing(ctx context.Context, arg MarkClaimedDomainReleasingParams) (int64, error)
+	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
 	MarkDNSAuthorityReleasing(ctx context.Context, arg MarkDNSAuthorityReleasingParams) (int64, error)
 	MarkExpiredIngressUsageRunIncomplete(ctx context.Context, arg MarkExpiredIngressUsageRunIncompleteParams) error
 	MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, now pgtype.Timestamptz) ([]ControlIngressUsageRun, error)

@@ -111,8 +111,8 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 		name, kind, host string
 	}{
 		{"managed", "managed", ""},
-		{"claimed", "claimed", ""},
-		{"shared", "claimed", "shared.routes.example.test"},
+		{"custom", "custom", ""},
+		{"shared", "custom", "shared.routes.example.test"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := teamContext{
@@ -152,7 +152,7 @@ func TestExplicitHostnameUsesReadyDomainWhenDefaultIsPending(t *testing.T) {
 			Role: authorityv1.TeamRoleOwner, MemberSlug: "member", ManagedLabel: "managed-member"},
 		domains: []authorityv1.Domain{
 			{Id: "domain_pending", CanonicalDomain: "pending.example.test", State: authorityv1.DomainStatePending},
-			{Id: "domain_ready", CanonicalDomain: "ready.example.test", Kind: authorityv1.Claimed, State: authorityv1.DomainStateReady},
+			{Id: "domain_ready", CanonicalDomain: "ready.example.test", Kind: authorityv1.Custom, State: authorityv1.DomainStateReady},
 		},
 	}
 	hostname, domain, scope, err := resolvePublishHostname("https://api.member.ready.example.test", "", "", current)

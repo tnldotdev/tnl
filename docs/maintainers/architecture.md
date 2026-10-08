@@ -117,6 +117,13 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
+control owns hostname policy: a member may publish any valid descendant of
+their namespace, subject to the managed domain's configured depth limit.
+one-label names use namespace wildcard DNS and certificates when automation
+is configured; deeper names use exact records and certificates. new custom
+domains require an explicit opt-in and DNS automation. disabling new claims
+does not affect existing custom domains or their release.
+
 ```text
 public URL
   durable hostname, ownership, target, policy, and state
@@ -204,7 +211,7 @@ transaction as the trial; team creation cannot reuse a guest namespace. managed
 guest DNS uses the configured managed zone, without a claimed DNS authority.
 
 `TNLD_SERVER_DOMAIN` names server infrastructure. It is independent from
-`TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which provides managed public URL
+`TNLD_MANAGED_DOMAIN`, which provides managed public URL
 namespaces.
 
 ## own each api

@@ -57,6 +57,9 @@ type CertificatePlan struct {
 }
 
 type CertificateIssuance struct {
+	// new order facts describe a committed insertion, not an idempotent retry.
+	NewOrder         bool
+	DomainKind       DomainKind
 	ID               string
 	PublishRunID     string
 	PublicURLID      string
@@ -225,9 +228,15 @@ func (d *Database) CreateCertificateIssuance(
 	if err != nil {
 		return CertificateIssuance{}, err
 	}
+	kind, err := queries.GetCertificateOrderDomainKind(ctx, session.PublicURLID)
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: read certificate order domain kind: %w", err)
+	}
+	result.DomainKind = DomainKind(kind)
 	if err := tx.Commit(ctx); err != nil {
 		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: commit: %w", err)
 	}
+	result.NewOrder = true
 	return result, nil
 }
 

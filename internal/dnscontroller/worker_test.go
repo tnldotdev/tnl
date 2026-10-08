@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func TestWorkerCreatesAndVerifiesClaimedZone(t *testing.T) {
+func TestWorkerCreatesAndVerifiesCustomZone(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	store := &dnsStoreStub{work: testDNSWork(now)}
 	provider := &providerStub{zone: Zone{ID: "Z123", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
@@ -156,9 +156,28 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	if found, err := worker.processOne(t.Context()); err != nil || !found {
 		t.Fatalf("route iteration = found %v, error %v", found, err)
 	}
-	if provider.publishCalls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ClaimedZone ||
+	if provider.publishCalls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.CustomZone ||
 		store.publicURLSaved.State != controlstate.PublicURLDNSPublished || verifier.publicURLCalls != 1 {
 		t.Fatalf("published route = %#v, provider = %#v, verifier = %#v", store.publicURLSaved, provider, verifier)
+	}
+}
+
+func TestNestedMemberURLUsesExactDNSRecord(t *testing.T) {
+	now := time.Now()
+	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
+		PublicURLID: "url_nested", DomainID: "domain_1", CanonicalHostname: "api.shop.member.tunnels.example.test",
+		PublicURLScope: controlstate.PublicURLScopeMember, State: controlstate.PublicURLDNSPending,
+		DNSRevision: 1, AvailableAt: now, WorkerID: "dns_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
+	}}
+	provider := &providerStub{zone: Zone{ID: "ZMANAGED"}}
+	worker := testDNSWorker(t, store, provider, &verifierStub{publicURLVerified: true}, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	if found, err := worker.processOne(t.Context()); !found || err != nil {
+		t.Fatalf("nested URL DNS work = %t, %v", found, err)
+	}
+	if provider.publishCalls != 1 || provider.record.WildcardHostname != "" || provider.record.CanonicalHostname != "api.shop.member.tunnels.example.test" {
+		t.Fatal("nested URL used wildcard DNS instead of its exact hostname")
 	}
 }
 
@@ -196,7 +215,7 @@ func TestWorkerManagedMemberWildcardPersistsAcrossPublicURLRemoval(t *testing.T)
 	}
 }
 
-func TestWorkerClaimedMemberWildcardUsesClaimedZone(t *testing.T) {
+func TestWorkerCustomMemberWildcardUsesCustomZone(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := claimedRouteWork(now)
 	work.CanonicalHostname = "api.member.claimed.example.test"
@@ -212,7 +231,7 @@ func TestWorkerClaimedMemberWildcardUsesClaimedZone(t *testing.T) {
 	if found, err := worker.processOne(t.Context()); !found || err != nil {
 		t.Fatalf("claimed member publish = %t, %v", found, err)
 	}
-	if !provider.record.ClaimedZone || provider.record.WildcardHostname != "*.member.claimed.example.test" ||
+	if !provider.record.CustomZone || provider.record.WildcardHostname != "*.member.claimed.example.test" ||
 		verifier.publicURLHostname != provider.record.WildcardHostname ||
 		store.publicURLSaved.State != controlstate.PublicURLDNSPublished {
 		t.Fatalf("claimed wildcard publication = %#v, %#v", provider.record, store.publicURLSaved)
@@ -371,7 +390,7 @@ type providerStub struct {
 	beforeCall              func()
 }
 
-func (p *providerStub) EnsureClaimedZone(_ context.Context, work controlstate.DNSAuthorityWork) (Zone, error) {
+func (p *providerStub) EnsureCustomZone(_ context.Context, work controlstate.DNSAuthorityWork) (Zone, error) {
 	p.ensureCalls++
 	p.ensureWork = work
 	if p.beforeCall != nil {
@@ -380,7 +399,7 @@ func (p *providerStub) EnsureClaimedZone(_ context.Context, work controlstate.DN
 	return p.zone, p.err
 }
 
-func (p *providerStub) ReleaseClaimedZone(_ context.Context, work controlstate.DNSAuthorityWork) error {
+func (p *providerStub) ReleaseCustomZone(_ context.Context, work controlstate.DNSAuthorityWork) error {
 	p.releaseCalls++
 	p.releaseWork = work
 	if p.beforeCall != nil {
@@ -472,7 +491,7 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 				t.Fatalf("process = %v, %v", found, err)
 			}
 			wantRecord := PublicURLRecord{
-				ZoneID: "ZCLAIMED", ZoneDomain: "claimed.example.test", ClaimedZone: true,
+				ZoneID: "ZCLAIMED", ZoneDomain: "claimed.example.test", CustomZone: true,
 				AuthorityReference: authority.Reference, TeamID: "team_1", DomainID: "domain_1", PublicURLID: "public_url_claimed",
 				CanonicalHostname: "api.claimed.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 			}

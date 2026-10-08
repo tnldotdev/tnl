@@ -101,7 +101,7 @@ func (q *Queries) CountTeamOwners(ctx context.Context, teamID string) (int64, er
 	return count, err
 }
 
-const createClaimedDNSAuthority = `-- name: CreateClaimedDNSAuthority :exec
+const createCustomDNSAuthority = `-- name: CreateCustomDNSAuthority :exec
 INSERT INTO control.dns_authorities (
     authority_reference,
     team_id,
@@ -129,7 +129,7 @@ INSERT INTO control.dns_authorities (
 )
 `
 
-type CreateClaimedDNSAuthorityParams struct {
+type CreateCustomDNSAuthorityParams struct {
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
@@ -139,8 +139,8 @@ type CreateClaimedDNSAuthorityParams struct {
 	CreatedAt            pgtype.Timestamptz
 }
 
-func (q *Queries) CreateClaimedDNSAuthority(ctx context.Context, arg CreateClaimedDNSAuthorityParams) error {
-	_, err := q.db.Exec(ctx, createClaimedDNSAuthority,
+func (q *Queries) CreateCustomDNSAuthority(ctx context.Context, arg CreateCustomDNSAuthorityParams) error {
+	_, err := q.db.Exec(ctx, createCustomDNSAuthority,
 		arg.AuthorityReference,
 		arg.TeamID,
 		arg.DomainID,
@@ -152,7 +152,7 @@ func (q *Queries) CreateClaimedDNSAuthority(ctx context.Context, arg CreateClaim
 	return err
 }
 
-const createClaimedDomain = `-- name: CreateClaimedDomain :one
+const createCustomDomain = `-- name: CreateCustomDomain :one
 INSERT INTO control.domains (
     id,
     kind,
@@ -169,7 +169,7 @@ INSERT INTO control.domains (
     updated_at
 ) VALUES (
     $1,
-    'claimed',
+    'custom',
     $2,
     $3,
     $4,
@@ -185,7 +185,7 @@ INSERT INTO control.domains (
 RETURNING id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
 `
 
-type CreateClaimedDomainParams struct {
+type CreateCustomDomainParams struct {
 	ID                    string
 	TeamID                pgtype.Text
 	CanonicalDomain       string
@@ -198,8 +198,8 @@ type CreateClaimedDomainParams struct {
 	CreatedAt             pgtype.Timestamptz
 }
 
-func (q *Queries) CreateClaimedDomain(ctx context.Context, arg CreateClaimedDomainParams) (ControlDomain, error) {
-	row := q.db.QueryRow(ctx, createClaimedDomain,
+func (q *Queries) CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error) {
+	row := q.db.QueryRow(ctx, createCustomDomain,
 		arg.ID,
 		arg.TeamID,
 		arg.CanonicalDomain,
@@ -486,23 +486,23 @@ func (q *Queries) FindInvitationTeamByTokenDigest(ctx context.Context, tokenDige
 	return team_id, err
 }
 
-const getClaimedDomainByIdempotency = `-- name: GetClaimedDomainByIdempotency :one
+const getCustomDomainByIdempotency = `-- name: GetCustomDomainByIdempotency :one
 SELECT d.id, d.kind, d.team_id, d.canonical_domain, d.dns_authority_reference, d.state, d.authority_revision, d.verification_token_digest, d.created_by_identity_id, d.claim_idempotency_key, d.claim_request_digest, d.make_default_when_ready, d.created_at, d.verified_at, d.reusable_after, d.released_at, d.updated_at, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
 FROM control.domains AS d
 LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
 WHERE d.created_by_identity_id = $1
   AND d.team_id = $2
   AND d.claim_idempotency_key = $3
-  AND d.kind = 'claimed'
+  AND d.kind = 'custom'
 `
 
-type GetClaimedDomainByIdempotencyParams struct {
+type GetCustomDomainByIdempotencyParams struct {
 	IdentityID     pgtype.Text
 	TeamID         pgtype.Text
 	IdempotencyKey pgtype.Text
 }
 
-type GetClaimedDomainByIdempotencyRow struct {
+type GetCustomDomainByIdempotencyRow struct {
 	ID                      string
 	Kind                    string
 	TeamID                  pgtype.Text
@@ -523,9 +523,9 @@ type GetClaimedDomainByIdempotencyRow struct {
 	Nameservers             []string
 }
 
-func (q *Queries) GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error) {
-	row := q.db.QueryRow(ctx, getClaimedDomainByIdempotency, arg.IdentityID, arg.TeamID, arg.IdempotencyKey)
-	var i GetClaimedDomainByIdempotencyRow
+func (q *Queries) GetCustomDomainByIdempotency(ctx context.Context, arg GetCustomDomainByIdempotencyParams) (GetCustomDomainByIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getCustomDomainByIdempotency, arg.IdentityID, arg.TeamID, arg.IdempotencyKey)
+	var i GetCustomDomainByIdempotencyRow
 	err := row.Scan(
 		&i.ID,
 		&i.Kind,
@@ -1726,26 +1726,26 @@ func (q *Queries) LockTeamMembership(ctx context.Context, arg LockTeamMembership
 	return i, err
 }
 
-const markClaimedDomainReleasing = `-- name: MarkClaimedDomainReleasing :execrows
+const markCustomDomainReleasing = `-- name: MarkCustomDomainReleasing :execrows
 UPDATE control.domains
 SET state = 'releasing',
     authority_revision = $1,
     updated_at = $2
 WHERE id = $3
   AND team_id = $4
-  AND kind = 'claimed'
+  AND kind = 'custom'
   AND state IN ('pending', 'ready', 'failed')
 `
 
-type MarkClaimedDomainReleasingParams struct {
+type MarkCustomDomainReleasingParams struct {
 	AuthorityRevision int64
 	UpdatedAt         pgtype.Timestamptz
 	DomainID          string
 	TeamID            pgtype.Text
 }
 
-func (q *Queries) MarkClaimedDomainReleasing(ctx context.Context, arg MarkClaimedDomainReleasingParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markClaimedDomainReleasing,
+func (q *Queries) MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markCustomDomainReleasing,
 		arg.AuthorityRevision,
 		arg.UpdatedAt,
 		arg.DomainID,

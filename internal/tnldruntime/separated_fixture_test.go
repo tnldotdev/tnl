@@ -233,7 +233,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	case tnldconfig.RoleControl:
 		cfg.DatabaseURL = testutil.PostgresURL(t)
 		cfg.ControlListen, cfg.PrivateControlListen = "0.0.0.0:443", "0.0.0.0:9443"
-		cfg.ServerDomain, cfg.ManagedDeploymentDomain = separatedDomain, "routes."+separatedDomain
+		cfg.ServerDomain, cfg.ManagedDomain = separatedDomain, "routes."+separatedDomain
 		cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "/load/control.pem", "/load/control.key"
 		cfg.ACMEDirectoryURL, cfg.ACMEEmail = "https://pebble:14000/dir", "integration@example.test"
 		cfg.ACMEAcceptTerms, cfg.ACMEProfile = true, "tlsserver"

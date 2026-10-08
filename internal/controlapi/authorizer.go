@@ -11,14 +11,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type localAuthorizer struct {
-	store          AuthorizationStore
-	sourceRevision int64
-	dnsAutomation  bool
+	store                             AuthorizationStore
+	sourceRevision                    int64
+	dnsAutomation                     bool
+	managedDomainMaxMemberChildLabels int
 }
 
 type publicURLReadPrincipal struct {
@@ -130,6 +132,21 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
+	label := acting.MemberSlug
+	if domain.Kind == controlstate.DomainKindManaged {
+		label = acting.ManagedLabel
+	}
+	namespace := label + "." + domain.CanonicalDomain
+	if request.PublicURLScope == authorization.PublicURLScopeMember &&
+		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
+		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
+		if !within {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		if domain.Kind == controlstate.DomainKindManaged && a.managedDomainMaxMemberChildLabels > 0 && depth > a.managedDomainMaxMemberChildLabels {
+			return authorization.Decision{}, errMemberHostnameDepth
+		}
+	}
 	if request.Operation == authorization.OperationPublishRunCreate {
 		decision.CertificatePlan = &authorization.CertificatePlan{
 			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
@@ -139,13 +156,10 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			plan := decision.CertificatePlan
 			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
 			if request.PublicURLScope == authorization.PublicURLScopeMember {
-				label := acting.MemberSlug
-				if domain.Kind == controlstate.DomainKindManaged {
-					label = acting.ManagedLabel
+				if depth, within := naming.ChildDepth(request.CanonicalHostname, namespace); within && depth <= 1 {
+					plan.CacheKey, plan.Scope = namespace, namespace
+					plan.Identifiers = []string{"*." + namespace, namespace}
 				}
-				namespace := label + "." + domain.CanonicalDomain
-				plan.CacheKey, plan.Scope = namespace, namespace
-				plan.Identifiers = []string{"*." + namespace, namespace}
 			}
 		}
 	}
@@ -169,6 +183,9 @@ func (h *handler) authorizeMutation(
 	}
 	decision, err := h.authorizer.Authorize(request.Context(), operation)
 	switch {
+	case errors.Is(err, errMemberHostnameDepth):
+		writeProblem(response, http.StatusForbidden, controlv1.MemberHostnameDepthExceeded,
+			"this hostname exceeds the server's member URL depth limit on its managed domain; use fewer labels beneath your namespace")
 	case errors.Is(err, authorization.ErrUnauthenticated):
 		writeBearerProblem(response)
 	case errors.Is(err, controlstate.ErrGuestTrialSpent):

@@ -38,9 +38,16 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 		t.Fatalf("hostname conflict: %v", err)
 	}
 	deeper := conflict
-	deeper.CanonicalHostname = "too.deep." + request.CanonicalHostname
-	if _, err := database.CreatePublicURL(t.Context(), deeper, now); !errors.Is(err, ErrPublicURLAccess) {
-		t.Fatalf("deep member hostname: %v", err)
+	deeper.CanonicalHostname = "nested.api." + request.CanonicalHostname
+	nested, err := database.CreatePublicURL(t.Context(), deeper, now)
+	if err != nil {
+		t.Fatalf("nested member hostname: %v", err)
+	}
+	if nested.CanonicalHostname != deeper.CanonicalHostname || nested.PublicURLScope != PublicURLScopeMember || nested.MembershipID != request.MembershipID || nested.TeamID != request.TeamID {
+		t.Fatalf("nested public URL changed its member ownership: %#v", nested)
+	}
+	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, nested.ID, now); err != nil {
+		t.Fatal(err)
 	}
 	page, err := database.ListPublicURLs(t.Context(), request.ActingIdentityID, request.TeamID, "")
 	if err != nil || len(page.PublicURLs) != 1 || page.NextCursor != "" || page.PublicURLs[0].ID != route.ID {

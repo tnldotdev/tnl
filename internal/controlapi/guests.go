@@ -42,7 +42,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 			break
 		}
 		issuedAt := time.Now()
-		domainID, err := h.guests.CreateGuestTrial(request.Context(), guest, h.config.ManagedDeploymentDomain, issuedAt)
+		domainID, err := h.guests.CreateGuestTrial(request.Context(), guest, h.config.ManagedDomain, issuedAt)
 		if err != nil {
 			if errors.Is(err, controlstate.ErrGuestIssuance) {
 				response.Header().Set("Retry-After", "3600")
@@ -58,7 +58,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		writeJSON(response, http.StatusCreated, controlv1.GuestDemoSession{
 			AccessToken: string(guest.Token), GuestId: guest.ID, TeamId: guest.TeamID,
 			MembershipId: guest.MembershipID, DomainId: domainID,
-			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDeploymentDomain,
+			Namespace: guest.NamespaceLabel + "." + h.config.ManagedDomain,
 			ExpiresAt: issuedAt.Add(controlstate.GuestLifetime),
 		})
 		return

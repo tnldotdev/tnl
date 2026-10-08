@@ -925,7 +925,7 @@ func authorizeRouteCreation(
 	context controlstatedb.GetPublicURLCreationContextRow,
 	labels []controlstatedb.ListTeamNamespaceLabelsRow,
 ) error {
-	if context.DomainState != "ready" || context.DomainKind == "claimed" && context.DomainTeamID.String != request.TeamID ||
+	if context.DomainState != "ready" || context.DomainKind == "custom" && context.DomainTeamID.String != request.TeamID ||
 		context.DomainKind == "managed" && context.DomainTeamID.Valid || !hostnameWithin(request.CanonicalHostname, context.CanonicalDomain) {
 		return ErrPublicURLAccess
 	}
@@ -939,7 +939,7 @@ func authorizeRouteCreation(
 	actorNamespace := actorLabel + "." + context.CanonicalDomain
 	if request.PublicURLScope == "member" {
 		if request.MembershipID != context.ActorMembershipID ||
-			request.CanonicalHostname != actorNamespace && !oneLabelBeneath(request.CanonicalHostname, actorNamespace) {
+			!hostnameWithin(request.CanonicalHostname, actorNamespace) {
 			return ErrPublicURLAccess
 		}
 		return nil

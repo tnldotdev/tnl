@@ -14,7 +14,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
-		"--managed-deployment-domain", "tunnels.example.com",
+		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
 		"--login-token", testLoginToken,
@@ -24,8 +24,8 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.ServerHostname() != "control.tnl.example.com" || config.IngressHostname() != "ingress.tnl.example.com" ||
-		config.StandaloneRelayHostname() != "relay.tnl.example.com" || config.ManagedDomain() != "tunnels.example.com" {
-		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain())
+		config.StandaloneRelayHostname() != "relay.tnl.example.com" || config.ManagedDomain != "tunnels.example.com" {
+		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain)
 	}
 	if config.ControlListen != ":443" || config.PrivateControlListen != ":9443" ||
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
@@ -33,6 +33,9 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	}
 	if config.PublicURLCertificateWorkers != 8 {
 		t.Fatalf("public URL certificate workers = %d, want 8", config.PublicURLCertificateWorkers)
+	}
+	if config.ManagedDomainMaxMemberChildLabels != 0 || config.CustomDomainsEnabled {
+		t.Fatal("standalone should allow nested managed-domain URLs and require custom-domain opt-in")
 	}
 	if config.PublisherConnectionLimit < 1 {
 		t.Fatalf("publisher connection limit = %d", config.PublisherConnectionLimit)
@@ -44,7 +47,7 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
-		"--managed-deployment-domain", "tunnels.example.com",
+		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
 		"--login-token", testLoginToken,
@@ -57,12 +60,29 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 	}
 }
 
+func TestParseDomainPolicy(t *testing.T) {
+	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken, "--storage-key", testStorageKey}
+	if _, err := Parse(append(base, "--managed-domain-max-member-child-labels=-1")); err == nil {
+		t.Fatal("negative managed-domain depth accepted")
+	}
+	if _, err := Parse(append(base, "--custom-domains-enabled")); err == nil {
+		t.Fatal("custom-domain opt-in without DNS automation accepted")
+	}
+	cfg, err := Parse(append(base, "--custom-domains-enabled", "--managed-domain-max-member-child-labels=1",
+		"--route53-managed-zone-id", "ZMANAGED", "--ingress-ipv4-address", "192.0.2.1"))
+	if err != nil || !cfg.CustomDomainsEnabled || cfg.ManagedDomainMaxMemberChildLabels != 1 {
+		t.Fatalf("explicit domain policy = %v", err)
+	}
+}
+
 func TestParseRequiresValidStorageKey(t *testing.T) {
 	base := []string{
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
-		"--managed-deployment-domain", "tunnels.example.com",
+		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
 		"--login-token", testLoginToken,
@@ -81,7 +101,7 @@ func TestParseRequiresValidStorageKey(t *testing.T) {
 func TestParseSplitRoles(t *testing.T) {
 	control, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
-		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 	})
@@ -135,7 +155,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 	}
 	if _, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
-		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--private-control-address", "control.internal:9443",
@@ -147,7 +167,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 func TestParseDNSAutomation(t *testing.T) {
 	config, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
-		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--route53-managed-zone-id", "Z0123456789ABC", "--ingress-ipv4-address", "192.0.2.10",
@@ -169,7 +189,7 @@ func TestParseDNSAutomation(t *testing.T) {
 	} {
 		base := []string{
 			"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
-			"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+			"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 			"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
 			"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		}
@@ -233,8 +253,8 @@ func TestConfigRouteAndRelayDNSMatrix(t *testing.T) {
 				t.Fatalf("route/relay/provider DNS = %v/%v/%v; want %v/%v/%v", cfg.DNSAutomationEnabled(), cfg.RelayCertificateAutomationEnabled(), cfg.DNSProviderEnabled(), test.routes, test.relay, test.provider)
 			}
 			if cfg.ServerHostname() != "control.infra.example.test" || cfg.IngressHostname() != "ingress.infra.example.test" ||
-				cfg.RelayServiceHostname("relay-a") != "relay-a.infra.example.test" || cfg.ManagedDomain() != "routes.other.test" {
-				t.Fatal("server and managed deployment domains were conflated")
+				cfg.RelayServiceHostname("relay-a") != "relay-a.infra.example.test" || cfg.ManagedDomain != "routes.other.test" {
+				t.Fatal("server and managed domains were conflated")
 			}
 		})
 	}
@@ -353,7 +373,7 @@ func validCertificateConfig(t *testing.T, role Role) Config {
 	args := []string{"--role", string(role)}
 	if role.RunsControl() {
 		args = append(args, "--database-url", "postgres://tnl:secret@database.example/tnl",
-			"--server-domain", "infra.example.test", "--managed-deployment-domain", "routes.other.test",
+			"--server-domain", "infra.example.test", "--managed-domain", "routes.other.test",
 			"--acme-email", "operator@example.test", "--acme-accept-terms", "--login-token", testLoginToken, "--storage-key", testStorageKey)
 	} else {
 		args = append(args, "--control-hostname", "control.infra.example.test")

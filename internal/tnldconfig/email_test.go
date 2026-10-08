@@ -33,7 +33,7 @@ func TestEmailAndWebsiteFailuresNameTheirSettings(t *testing.T) {
 
 func TestWebhookSecretEnvironmentAndFlag(t *testing.T) {
 	args := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
-		"--server-domain", "infra.example.test", "--managed-deployment-domain", "routes.example.test",
+		"--server-domain", "infra.example.test", "--managed-domain", "routes.example.test",
 		"--login-token", testLoginToken, "--storage-key", testStorageKey,
 		"--acme-email", "operator@example.test", "--acme-accept-terms",
 		"--email-url", "https://mail.example.test"}

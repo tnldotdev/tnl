@@ -21,14 +21,14 @@ import (
 )
 
 func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
-	for _, kind := range []string{"managed", "claimed", "builtin_control"} {
+	for _, kind := range []string{"managed", "custom", "builtin_control"} {
 		t.Run(kind, func(t *testing.T) {
 			database, now := newCertificatePlanDatabase(t)
 			const domain = "routes.example.test"
 			reference := "dns_authority_0123456789abcdef0123456789abcdef"
 			// Managed-zone identity comes from daemon configuration, not builtin domain rows.
 			contextDomain := ""
-			if kind == "claimed" {
+			if kind == "custom" {
 				contextDomain = domain
 				authority, err := database.CreateDNSAuthority(t.Context(), CreateDNSAuthorityRequest{
 					TeamID: "team_external", DomainID: "domain_external", CanonicalDomain: domain,

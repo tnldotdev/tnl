@@ -210,14 +210,14 @@ func TestIntegrationRevokedInvitationReleasesPendingSlug(t *testing.T) {
 	}
 }
 
-func TestIntegrationClaimedDomainLifecycle(t *testing.T) {
+func TestIntegrationCustomDomainLifecycle(t *testing.T) {
 	database, now, owner, team := newAuthorityTeam(t)
 	managedDomainID := team.DefaultDomainID
 	request := ClaimDomainRequest{IdentityID: owner, TeamID: team.ID, IdempotencyKey: "domain",
 		RequestDigest: sha256.Sum256([]byte("domain")), Domain: "authority.example.test", MakeDefault: true}
 	domain, err := database.ClaimTeamDomain(t.Context(), request, now)
 	if err != nil || domain.State != "pending" || domain.DNSAuthorityReference == "" || domain.AuthorityRevision != 2 {
-		t.Fatalf("claimed domain = %#v, %v", domain, err)
+		t.Fatalf("custom domain = %#v, %v", domain, err)
 	}
 	repeated, err := database.ClaimTeamDomain(t.Context(), request, now.Add(time.Second))
 	if err != nil || !reflect.DeepEqual(repeated, domain) {

@@ -96,7 +96,7 @@ func TestCreateTeamHandlerExplainsMissingMemberSlug(t *testing.T) {
 
 func TestClaimTeamDomainRequiresDNSAutomation(t *testing.T) {
 	store := &authorityMutationStoreStub{}
-	handler := testHandler(t, Config{}, store)
+	handler := testHandler(t, Config{CustomDomainsEnabled: true}, store)
 	request := httptest.NewRequest(
 		http.MethodPost, "/v1/teams/team_1/domains", strings.NewReader(`{"domain":"claim.example.test"}`),
 	)
@@ -107,6 +107,21 @@ func TestClaimTeamDomainRequiresDNSAutomation(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"unavailable"`) {
 		t.Fatalf("domain claim without DNS automation = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCustomDomainClaimsRequireExplicitOptIn(t *testing.T) {
+	store := &authorityMutationStoreStub{}
+	handler := testHandler(t, Config{DNSAutomation: true}, store)
+	request := httptest.NewRequest(http.MethodPost, "/v1/teams/team_1/domains", strings.NewReader(`{"domain":"custom.example.test"}`))
+	request.Header.Set("Authorization", "Bearer access-token")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "custom")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var problem authorityv1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusForbidden || problem.Code != authorityv1.CustomDomainsDisabled {
+		t.Fatalf("custom domain claim without opt-in = %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -154,7 +169,7 @@ func TestExchangeOIDCTokenCreatesLocalSession(t *testing.T) {
 	}
 	store := &authorityMutationStoreStub{}
 	handler := testHandler(t, Config{
-		ManagedDeploymentDomain: "example.test", OIDCVerifier: oidcVerifierStub{identity: verified},
+		ManagedDomain: "example.test", OIDCVerifier: oidcVerifierStub{identity: verified},
 		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour,
 	}, store)
 	request := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc", strings.NewReader(`{"id_token":"id-token"}`))

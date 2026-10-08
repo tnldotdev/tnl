@@ -422,7 +422,7 @@ paths:
   /v1/teams/{team_id}/domains/{domain_id}:
     delete:
       operationId: releaseTeamDomain
-      summary: Release one claimed domain
+      summary: Release one custom domain
       security:
         - bearerAuth: []
       parameters:
@@ -875,7 +875,7 @@ components:
           maxLength: 4096
     DomainKind:
       type: string
-      enum: [managed, claimed]
+      enum: [managed, custom]
     DomainState:
       type: string
       enum: [pending, ready, releasing, failed]
@@ -1015,6 +1015,7 @@ components:
               name_unavailable,
               policy_revision_stale,
               dns_setup_pending,
+              custom_domains_disabled,
             ]
         request_id:
           type: string
