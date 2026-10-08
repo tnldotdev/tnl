@@ -34,6 +34,8 @@ import (
 type PublicURLServerConfig struct {
 	Hostname          string
 	Target            string
+	Handler           http.Handler
+	ObserveResponse   func(*http.Response) error
 	Mounts            []localproxy.Mount
 	ShareAccess       *shareAccess
 	BrowserAccess     *browserAccess
@@ -123,6 +125,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.RequestInspection != "" && !config.RequestInspection.Valid() {
 		return nil, errors.New("publisher: request inspection mode must be summary or detailed")
 	}
+	if config.RequestLimit < 0 {
+		return nil, errors.New("publisher: request limit cannot be negative")
+	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
@@ -134,16 +139,35 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.Feedback != nil {
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
-	handler, err := localproxy.NewWithMountsOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
-		modifyResponse, observe, func(request *http.Request) {
-			if request != nil {
-				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
-					forwarded.Store(true)
-				}
+	var handler http.Handler
+	if config.Handler != nil {
+		limit := config.RequestLimit
+		if limit == 0 {
+			limit = localproxy.DefaultRequestLimit
+		}
+		active := make(chan struct{}, limit)
+		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			select {
+			case active <- struct{}{}:
+				defer func() { <-active }()
+				config.Handler.ServeHTTP(response, request)
+			default:
+				response.Header().Set("Retry-After", "1")
+				diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
 			}
-		}, config.OnTargetFailure)
-	if err != nil {
-		return nil, err
+		})
+	} else {
+		handler, err = localproxy.NewWithMountsHooks(config.Target, hostname, config.RequestLimit, config.Mounts,
+			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
+				if request != nil {
+					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
+						forwarded.Store(true)
+					}
+				}
+			}}, config.OnTargetFailure)
+		if err != nil {
+			return nil, err
+		}
 	}
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)

@@ -84,6 +84,21 @@ and connection assignment identities before accepting each visitor stream.
 Public URL DNS points to ingress, never to a relay. Placement can therefore
 change without changing public URL DNS.
 
+## maintain project integration urls
+
+`internal/integrationurls.Publisher` maintains one locally elected public URL
+alongside app tunnels. it reuses `internal/publisher` for visitor TLS,
+certificates, admission, and publisher connections. a prepared run either
+proxies a local target or serves a publisher-owned HTTP handler; both retain
+hostname and visitor-policy checks. header-only response observers run before
+headers reach the visitor and do not disable upstream compression.
+
+the elected worker renews a short-lived readiness record in client state.
+reprovisioning and draining clear readiness. a changed preparation revision
+cancels and joins the old run before preparing its replacement. the worker
+holds its hostname lock through cleanup so another local process cannot
+publish the same integration URL while the old run is draining.
+
 ## understand the retry boundary
 
 Ingress may try another connected relay while it is opening a visitor stream.

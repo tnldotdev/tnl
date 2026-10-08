@@ -411,6 +411,54 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 	}
 }
 
+func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities(t *testing.T) {
+	sources := make(chan string, 1)
+	url, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: "http://127.0.0.1:1",
+		Certificate: publicURLTestCertificate(t, "route.example"),
+		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			sources <- request.RemoteAddr
+			response.WriteHeader(http.StatusNoContent)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := url.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = url.Close() })
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}, // test certificate is self-signed.
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			return openHTTPTestRouteServer(url, make(chan struct{}, 1))
+		},
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	response, err := client.Get("https://route.example/integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent || awaitPublisherTest(t, sources) != "192.0.2.10:1234" {
+		t.Fatalf("integration URL handler response = %d", response.StatusCode)
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://route.example/integration", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "other.example"
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode < 400 || len(sources) != 0 {
+		t.Fatalf("another authority reached integration URL handler: status %d", response.StatusCode)
+	}
+}
+
 func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 	t.Helper()
 	route, err := NewPublicURLServer(PublicURLServerConfig{

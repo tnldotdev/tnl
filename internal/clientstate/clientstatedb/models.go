@@ -54,6 +54,13 @@ type GuestSession struct {
 	CreatedAt         int64
 }
 
+type IntegrationUrlPublisher struct {
+	ServerOrigin        string
+	Hostname            string
+	PublisherInstanceID string
+	ExpiresAt           int64
+}
+
 type LocalRequest struct {
 	RowID               int64
 	RequestNumber       int64

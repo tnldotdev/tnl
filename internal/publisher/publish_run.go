@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
@@ -172,6 +173,13 @@ func runSession(
 		RequestLimit:      config.RequestLimit,
 		ObserveRequest:    config.ObserveRequest,
 		RequestInspection: config.RequestInspection,
+		Handler:           config.Handler,
+		ObserveResponse: func(response *http.Response) error {
+			if config.ObserveResponse == nil {
+				return nil
+			}
+			return config.ObserveResponse(response, PublishRunIdentity{PublicURLID: setup.PublicUrl.Id, Number: version})
+		},
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
 				Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version})
