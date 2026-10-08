@@ -22,7 +22,13 @@ const lines = catalog.diagnostics.map((entry) => {
   const symbol = code
     .slice(4)
     .split("_")
-    .map((word) => (acronyms.has(word) ? word : word[0] + word.slice(1).toLowerCase()))
+    .map((word) =>
+      word === "OAUTH"
+        ? "OAuth"
+        : acronyms.has(word)
+          ? word
+          : word[0] + word.slice(1).toLowerCase(),
+    )
     .join("");
   if (codes.has(code) || symbols.has(symbol)) throw new Error(`duplicate diagnostic ${code}`);
   codes.add(code);

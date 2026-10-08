@@ -15,6 +15,10 @@
     "project": {
       "namespace": "member.example",
       "dev": true,
+      "oauth": {
+        "hostname": "oauth-shop-ab1234.member.example",
+        "url": "https://oauth-shop-ab1234.member.example"
+      },
       "services": {
         "api": {
           "namespace": "member.example",

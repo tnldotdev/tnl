@@ -48,11 +48,12 @@ const (
 )
 
 type BeginTunnelOptions struct {
-	Command TunnelCommand
-	Server  string
-	Target  string
-	Project string
-	Service string
+	Command          TunnelCommand
+	Server           string
+	Target           string
+	Project          string
+	Service          string
+	CallbackHostname string
 }
 
 // Tunnel is the write handle for one local publish or dev invocation.
@@ -97,6 +98,7 @@ type TunnelInfo struct {
 	PublicURL        string        `json:"public_url,omitempty"`
 	Target           string        `json:"target,omitempty"`
 	Framework        string        `json:"framework,omitempty"`
+	CallbackHostname string        `json:"-"`
 	StartedAt        time.Time     `json:"started_at"`
 	UpdatedAt        time.Time     `json:"updated_at"`
 	HeartbeatAt      time.Time     `json:"heartbeat_at"`
@@ -128,6 +130,12 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if options.Service != "" && !naming.ValidServiceName(options.Service) {
 		return nil, errors.New("clientstate: invalid tunnel service")
 	}
+	if options.CallbackHostname != "" {
+		canonical, err := naming.CanonicalizeHostname(options.CallbackHostname)
+		if err != nil || canonical != options.CallbackHostname {
+			return nil, errors.New("clientstate: invalid callback hostname")
+		}
+	}
 	if _, err := d.Server(ctx, server); err != nil {
 		return nil, err
 	}
@@ -142,14 +150,11 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.db.ExecContext(ctx, `
-INSERT INTO local_tunnels (
-    id, command, process_id, server_origin, project_root, service, hostname,
-    target, framework, public_url_id, publish_run_number, state, started_at, updated_at,
-    heartbeat_at, lease_expires_at, last_error
-) VALUES (?, ?, ?, ?, ?, ?, '', ?, '', '', 0, 'starting', ?, ?, ?, ?, '')
-`, id, string(options.Command), int64(os.Getpid()), server, options.Project, options.Service,
-		options.Target, now.UnixNano(), now.UnixNano(), now.UnixNano(), now.Add(tunnelLeaseDuration).UnixNano()); err != nil {
+	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
+		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
+		ProjectRoot: options.Project, Service: options.Service, Target: options.Target,
+		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(), CallbackHostname: options.CallbackHostname,
+	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
 	}
 	leaseCtx, cancel := context.WithCancelCause(ctx)
@@ -159,6 +164,24 @@ INSERT INTO local_tunnels (
 }
 
 func (t *Tunnel) ID() string { return t.id }
+
+// SetCallbackHostname joins this tunnel to its machine-local callback group.
+func (t *Tunnel) SetCallbackHostname(ctx context.Context, hostname string) error {
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if err != nil || canonical != hostname {
+		return errors.New("clientstate: invalid callback hostname")
+	}
+	count, err := t.database.queries.SetTunnelCallbackHostname(ctx, clientstatedb.SetTunnelCallbackHostnameParams{
+		Hostname: hostname, TunnelID: t.id,
+	})
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("clientstate: tunnel stopped before callback registration")
+	}
+	return nil
+}
 
 // Context is canceled if the parent ends or a failed heartbeat leaves the
 // tunnel's local lease unmaintained.
@@ -272,7 +295,7 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 	query := `
 SELECT id, command, process_id, server_origin, project_root, service, hostname,
        target, framework, public_url_id, publish_run_number, state, started_at, updated_at,
-       heartbeat_at, lease_expires_at
+       heartbeat_at, lease_expires_at, callback_hostname
 FROM local_tunnels
 WHERE stopped_at IS NULL`
 	arguments := []any{}
@@ -292,7 +315,7 @@ WHERE stopped_at IS NULL`
 		if err := rows.Scan(
 			&row.id, &row.command, &row.processID, &row.server, &row.project, &row.service,
 			&row.hostname, &row.target, &row.framework, &row.publicURLID, &row.publishRunNumber,
-			&row.state, &row.startedAt, &row.updatedAt, &row.heartbeatAt, &row.leaseExpiresAt,
+			&row.state, &row.startedAt, &row.updatedAt, &row.heartbeatAt, &row.leaseExpiresAt, &row.callbackHostname,
 		); err != nil {
 			return TunnelSnapshot{}, fmt.Errorf("clientstate: scan tunnel: %w", err)
 		}
@@ -321,7 +344,7 @@ WHERE stopped_at IS NULL`
 			ID: row.id, Command: TunnelCommand(row.command), State: state, ProcessID: int(row.processID),
 			Server: row.server, Project: row.project, Service: row.service,
 			PublicURLID: row.publicURLID, PublishRunNumber: uint64(row.publishRunNumber),
-			Hostname: row.hostname, Target: row.target, Framework: row.framework,
+			Hostname: row.hostname, Target: row.target, Framework: row.framework, CallbackHostname: row.callbackHostname,
 			StartedAt: unixNanoTime(row.startedAt), UpdatedAt: unixNanoTime(row.updatedAt),
 			HeartbeatAt: unixNanoTime(row.heartbeatAt), LeaseExpiresAt: unixNanoTime(row.leaseExpiresAt),
 		}
@@ -347,8 +370,8 @@ WHERE stopped_at IS NULL`
 }
 
 type tunnelRecord struct {
-	id, command, server, project, service, hostname, target, framework, publicURLID, state string
-	processID, publishRunNumber, startedAt, updatedAt, heartbeatAt, leaseExpiresAt         int64
+	id, command, server, project, service, hostname, target, framework, publicURLID, state, callbackHostname string
+	processID, publishRunNumber, startedAt, updatedAt, heartbeatAt, leaseExpiresAt                           int64
 }
 
 func (t *Tunnel) heartbeat(ctx context.Context) {

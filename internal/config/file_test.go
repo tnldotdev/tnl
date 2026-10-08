@@ -13,17 +13,18 @@ import (
 func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 	directory := t.TempDir()
 	for name, test := range map[string]struct{ contents, category string }{
-		"missing.yml":    {"tnl: {}\n", "version is required"},
-		"missing.json":   {`{"tnl":{}}`, "version is required"},
-		"future.yml":     {"version: 2\n", "unsupported configuration version 2"},
-		"future.json":    {`{"version":2}`, "unsupported configuration version 2"},
-		"unknown.yml":    {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
-		"unknown.json":   {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
-		"duplicate.yml":  {"version: 1\nversion: 1\n", "already defined"},
-		"duplicate.json": {`{"version":1,"version":1}`, "duplicate object member name"},
-		"tagged.yml":     {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
-		"trailing.json":  {"{\"version\":1} {}", "after top-level value"},
-		"trailing.yml":   {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
+		"missing.yml":        {"tnl: {}\n", "version is required"},
+		"missing.json":       {`{"tnl":{}}`, "version is required"},
+		"future.yml":         {"version: 2\n", "unsupported configuration version 2"},
+		"future.json":        {`{"version":2}`, "unsupported configuration version 2"},
+		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
+		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
+		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
+		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
+		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
+		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
+		"trailing.json":      {"{\"version\":1} {}", "after top-level value"},
+		"trailing.yml":       {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
 	} {
 		path := filepath.Join(directory, name)
 		if err := os.WriteFile(path, []byte(test.contents), 0o600); err != nil {
@@ -48,6 +49,7 @@ func TestLoadDocumentPreservesClientValues(t *testing.T) {
 tnl:
   server: https://control.example.com
   feedback: true
+  oauth: true
   tunnel:
     allow_ip: [192.0.2.1]
     allow_all_ips: false
@@ -67,7 +69,7 @@ tnl:
 		t.Fatal(err)
 	}
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
-		document.TNL.Feedback == nil || !*document.TNL.Feedback ||
+		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
 		document.TNL.Dev == nil || document.TNL.Dev.StartupTimeout == nil || document.TNL.Dev.StartupTimeout.Value() != 90*time.Second ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||

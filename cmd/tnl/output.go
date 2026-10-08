@@ -363,6 +363,12 @@ func (o *publishOutput) logf(format string, arguments ...any) {
 	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(presented.message))
 }
 
+func (o *publishOutput) integrationURLMessage(state, footer string, blocks ...clioutput.Block) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return writeHumanFrame(o.stderr, o.command, state, footer, blocks...)
+}
+
 func (o *publishOutput) failed(err error) error {
 	if o.mode == publishOutputHuman {
 		return nil

@@ -19,6 +19,12 @@ export interface ProjectPathMetadata {
 export interface ProjectMetadata {
   readonly namespace: string;
   readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
+  readonly oauth?: IntegrationOrigin;
+}
+
+export interface IntegrationOrigin {
+  readonly hostname: string;
+  readonly url: `https://${string}`;
 }
 
 export interface ProjectRuntime extends ProjectMetadata {
@@ -28,7 +34,7 @@ export interface ProjectRuntime extends ProjectMetadata {
 /** Checks browser-safe project metadata and makes it read-only. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);
-  exactKeys(object, ["namespace", "services"], description);
+  exactKeys(object, ["namespace", "services", ...optionalCallbackKeys(object)], description);
   const projectNamespace = requiredHostname(object.namespace, `${description} namespace`);
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
@@ -45,9 +51,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      Object.hasOwn(service, "paths")
-        ? ["hostname", "namespace", "url", "paths"]
-        : ["hostname", "namespace", "url"],
+      ["hostname", "namespace", "url", ...["paths"].filter((key) => Object.hasOwn(service, key))],
       `${description} service ${JSON.stringify(name)}`,
     );
     const serviceNamespace = requiredHostname(
@@ -117,10 +121,28 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     }
   }
 
+  let oauth: IntegrationOrigin | undefined;
+  if (object.oauth !== undefined) {
+    oauth = parseIntegrationOrigin(object.oauth, `${description} oauth`);
+  }
+
   return Object.freeze({
     namespace: projectNamespace,
     services: Object.freeze(services),
+    ...(oauth === undefined ? {} : { oauth }),
   });
+}
+
+function optionalCallbackKeys(value: Record<string, unknown>): string[] {
+  return ["oauth"].filter((key) => Object.hasOwn(value, key));
+}
+
+function parseIntegrationOrigin(raw: unknown, description: string): IntegrationOrigin {
+  const value = record(raw, description);
+  exactKeys(value, ["hostname", "url"], description);
+  const hostname = requiredHostname(value.hostname, `${description} hostname`);
+  if (value.url !== `https://${hostname}`) throw new TnlError("sdk.runtime_invalid");
+  return Object.freeze({ hostname, url: `https://${hostname}` });
 }
 
 /** Reports whether a value is a valid 1-32 character ASCII service name. */
@@ -162,12 +184,16 @@ export function parseRuntimePayload(serialized: string | undefined): ProjectRunt
 
 export function parseProjectRuntime(value: unknown, description: string): ProjectRuntime {
   const object = record(value, description);
-  exactKeys(object, ["dev", "namespace", "services"], description);
+  exactKeys(object, ["dev", "namespace", "services", ...optionalCallbackKeys(object)], description);
   if (typeof object.dev !== "boolean") {
     throw new TnlError("sdk.runtime_invalid");
   }
   const project = parseProjectMetadata(
-    { namespace: object.namespace, services: object.services },
+    {
+      namespace: object.namespace,
+      services: object.services,
+      ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
+    },
     description,
   );
   return Object.freeze({
@@ -181,6 +207,7 @@ export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean):
     namespace: project.namespace,
     dev,
     services: project.services,
+    ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
   });
   if (byteLength(serialized) > maximumRuntimeBytes) {
     throw new TnlError("sdk.runtime_invalid");

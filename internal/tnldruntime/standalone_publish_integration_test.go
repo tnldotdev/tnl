@@ -88,6 +88,41 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 }
 
+func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
+	fixture := newStandalonePublishFixture(t, "integration-url")
+	observed := make(chan string, 1)
+	quic, tcp := fixture.connectors()
+	config := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
+	config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
+	config.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		observed <- request.RemoteAddr + " " + request.URL.RequestURI()
+		response.WriteHeader(http.StatusNoContent)
+	})
+	handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
+	ready := fixture.waitReady(t, handle)
+	request, err := http.NewRequest(http.MethodPost, ready.PublicURL+"/hooks/stripe?event=one", strings.NewReader("signed-body"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, body, err := fixture.visitor.request(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNoContent || len(body) != 0 {
+		t.Fatalf("integration URL visitor response = %d %q", response.StatusCode, body)
+	}
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
+	select {
+	case source := <-observed:
+		if !strings.HasPrefix(source, "127.0.0.1:") || !strings.HasSuffix(source, " /hooks/stripe?event=one") {
+			t.Fatalf("integration URL publisher saw %q", source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("integration URL publisher did not see the authenticated visitor")
+	}
+	stopIntegrationPublisher(t, handle)
+}
+
 func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {

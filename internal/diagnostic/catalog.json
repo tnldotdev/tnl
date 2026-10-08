@@ -2,6 +2,57 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_OAUTH_CALLBACK_UNAVAILABLE",
+      "slug": "oauth-callback-unavailable",
+      "category": "oauth callback",
+      "title": "oauth callback unavailable",
+      "summary": "the stable OAuth callback is not ready. keep an app tunnel running and retry sign-in shortly.",
+      "description": "the local callback publisher or its state could not accept this login attempt.",
+      "diagram_label": "the stable OAuth callback is unavailable",
+      "surfaces": ["cli", "browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "browser" },
+        { "label": "tnl", "detail": "callback not ready", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the callback public URL is still provisioning or changing its publisher",
+        "local callback state is unavailable or full"
+      ],
+      "actions": {
+        "visitor": ["start sign-in again after the callback publisher is ready"],
+        "publisher": [
+          "keep tnl dev or tnl publish running and check callback readiness",
+          "retry sign-in after the publisher recovers"
+        ]
+      }
+    },
+    {
+      "code": "TNL_OAUTH_CALLBACK_EXPIRED",
+      "slug": "oauth-callback-expired",
+      "category": "oauth callback",
+      "title": "oauth callback expired",
+      "summary": "this login callback expired, was already used, or belongs to a stopped tunnel. start sign-in again in the intended worktree.",
+      "description": "tnl could not find a current, unused local callback mapping for this OAuth response.",
+      "diagram_label": "the OAuth callback no longer has a current tunnel",
+      "surfaces": ["cli", "browser"],
+      "http_status": 410,
+      "flow": [
+        { "label": "browser" },
+        { "label": "tnl", "detail": "callback expired", "failure": true },
+        { "label": "local service" }
+      ],
+      "causes": [
+        "the login attempt expired or its state was already consumed",
+        "the originating tunnel stopped or its publish run was replaced"
+      ],
+      "actions": {
+        "visitor": ["open the intended worktree and start a new sign-in"],
+        "publisher": ["keep the originating app tunnel running while signing in"]
+      }
+    },
+    {
       "code": "TNL_TARGET_UNAVAILABLE",
       "slug": "target",
       "category": "local service",

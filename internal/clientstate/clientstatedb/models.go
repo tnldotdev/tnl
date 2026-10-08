@@ -8,6 +8,14 @@ import (
 	"database/sql"
 )
 
+type CallbackHostname struct {
+	ServerOrigin string
+	ProjectKey   string
+	Namespace    string
+	Purpose      string
+	Hostname     string
+}
+
 type CertificateMaterial struct {
 	ID             int64
 	ServerOrigin   string
@@ -103,6 +111,19 @@ type LocalTunnel struct {
 	LeaseExpiresAt   int64
 	StoppedAt        sql.NullInt64
 	LastError        string
+	CallbackHostname string
+}
+
+type OauthCallback struct {
+	ServerOrigin     string
+	Hostname         string
+	StateDigest      []byte
+	TunnelID         string
+	CallbackPath     string
+	CallbackQuery    string
+	PublicURLID      string
+	PublishRunNumber int64
+	ExpiresAt        int64
 }
 
 type Preview struct {

@@ -97,6 +97,21 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 			linkedWorktree.PrimaryCheckoutRoot(), SharedProjectIdentity(linkedWorktree, filepath.Join(linked, "apps", "web")),
 			SharedProjectIdentity(mainWorktree, filepath.Join(primary, "apps", "web")))
 	}
+	if SharedProjectLabel("oauth", mainWorktree, primary, salt) == ServiceWorktreeLabel("oauth", mainWorktree) {
+		t.Fatal("callback hostname collides with a project service named oauth")
+	}
+	for _, relative := range []string{".", "apps/store"} {
+		mainProject := filepath.Join(primary, relative)
+		linkedProject := filepath.Join(linked, relative)
+		if first, second := SharedProjectLabel("oauth", mainWorktree, mainProject, salt),
+			SharedProjectLabel("oauth", linkedWorktree, linkedProject, salt); first != second {
+			t.Fatalf("shared callback labels differ for %s: %q != %q", relative, first, second)
+		}
+		if first, second := SharedProjectIdentity(mainWorktree, mainProject),
+			SharedProjectIdentity(linkedWorktree, linkedProject); first != second {
+			t.Fatalf("shared project identities differ for %s: %q != %q", relative, first, second)
+		}
+	}
 	runWorktreeGit(t, linked, "switch", "-c", "new-branch")
 	changedBranch, err := ResolveWorktree(t.Context(), linked)
 	if err != nil {

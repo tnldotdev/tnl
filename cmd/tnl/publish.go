@@ -14,7 +14,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -69,6 +71,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	defer state.Close()
+	var oauthHostname string
 	if !flags.Demo {
 		if err := requireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
 			return err
@@ -148,6 +151,25 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	if !flags.Demo && flags.project.Config.OAuth {
+		if flags.project.Root == "" {
+			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			flags.project.Project = projectconfig.Project{Root: flags.projectRoot, Worktree: worktree}
+		}
+		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if err := tunnel.SetCallbackHostname(ctx, oauth.Hostname); err != nil {
+			return err
+		}
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, output)
+		defer stopCallbacks()
+		oauthHostname = oauth.Hostname
+	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
@@ -156,6 +178,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = requestObservation(recorder)
 	publisherConfig.RequestInspection = flags.RequestInspection
+	if oauthHostname != "" {
+		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, tunnel.ID())
+	}
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {

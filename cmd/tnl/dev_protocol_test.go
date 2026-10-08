@@ -91,6 +91,7 @@ func TestDevProtocolWireFixture(t *testing.T) {
 			Namespace: "member.example", Hostname: "api.member.example", PublicURL: "https://api.member.example",
 			Project: projectmeta.PublicMetadata{
 				Namespace: "member.example", Dev: true,
+				OAuth: &projectmeta.IntegrationOrigin{Hostname: "oauth-shop-ab1234.member.example", URL: "https://oauth-shop-ab1234.member.example"},
 				Services: map[string]projectmeta.Service{
 					"api": {Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"},
 				},
