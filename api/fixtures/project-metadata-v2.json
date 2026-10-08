@@ -1,13 +1,56 @@
 {
-  "version": 1,
+  "version": 2,
   "cases": [
+    {
+      "name": "primary worktree label",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 2,
+        "serviceDirectories": {},
+        "services": {},
+        "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "shop-k7n2p9" } }
+      }
+    },
+    {
+      "name": "linked worktree label",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 2,
+        "serviceDirectories": {},
+        "services": {},
+        "worktree": {
+          "label": {
+            "project": "shop",
+            "checkout": "perf",
+            "id": "k7n2p9",
+            "fullLabel": "shop-perf-k7n2p9"
+          }
+        }
+      }
+    },
+    {
+      "name": "inconsistent label components",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 2,
+        "serviceDirectories": {},
+        "services": {},
+        "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "other-k7n2p9" } }
+      }
+    },
     {
       "name": "stable webhook origin with exact path",
       "valid": true,
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "version": 1,
+        "version": 2,
         "serviceDirectories": { "api": "." },
         "services": {
           "api": {
@@ -33,7 +76,7 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "version": 1,
+        "version": 2,
         "serviceDirectories": { "api": "." },
         "services": {
           "api": {
@@ -59,7 +102,7 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "version": 1,
+        "version": 2,
         "serviceDirectories": { "api": "." },
         "services": {
           "api": {
@@ -97,7 +140,7 @@
             "url": "https://api.other.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -118,7 +161,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -135,7 +178,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -152,7 +195,7 @@
             "url": "https://api.xn--bcher-kva.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -169,7 +212,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -186,7 +229,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -208,7 +251,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -225,7 +268,7 @@
             "url": "https://other.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -243,7 +286,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     },
     {
@@ -261,7 +304,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 2
+        "version": 3
       }
     },
     {
@@ -279,7 +322,7 @@
             "url": "https://api.member.example"
           }
         },
-        "version": 1
+        "version": 2
       }
     }
   ]

@@ -434,6 +434,9 @@ func selectedDevMetadata(flags devCommand, services publisherServices) (projectm
 		Version: projectmeta.Version, Namespace: services.namespace,
 		Services: map[string]projectmeta.Service{}, ServiceDirectories: map[string]string{},
 	}
+	if flags.project.Worktree.Label.FullLabel != "" {
+		metadata.Worktree = &projectmeta.Worktree{Label: flags.project.Worktree.Label}
+	}
 	if flags.Service != "" {
 		directory, err := filepath.Rel(flags.project.Root, flags.commandDir)
 		if err != nil {

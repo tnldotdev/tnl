@@ -1,4 +1,5 @@
 import { TnlError } from "../errors.js";
+import type { TnlWorktreeLabel } from "../config.gen.js";
 const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -17,11 +18,14 @@ export interface ProjectPathMetadata {
 }
 
 export interface ProjectMetadata {
+  readonly worktree?: { readonly label: WorktreeLabel };
   readonly namespace: string;
   readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
   readonly oauth?: IntegrationOrigin;
   readonly webhooks?: Readonly<Record<string, WebhookMetadata | undefined>>;
 }
+
+export type WorktreeLabel = TnlWorktreeLabel;
 
 export interface WebhookMetadata extends IntegrationOrigin {
   readonly service: string;
@@ -43,7 +47,8 @@ export interface ProjectRuntime extends ProjectMetadata {
 /** Checks browser-safe project metadata and makes it read-only. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);
-  exactKeys(object, ["namespace", "services", ...optionalCallbackKeys(object)], description);
+  exactKeys(object, ["namespace", "services", ...optionalProjectKeys(object)], description);
+  const worktree = object.worktree === undefined ? undefined : parseWorktree(object.worktree);
   const projectNamespace = requiredHostname(object.namespace, `${description} namespace`);
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
@@ -181,6 +186,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
 
   return Object.freeze({
     namespace: projectNamespace,
+    ...(worktree === undefined ? {} : { worktree }),
     services: Object.freeze(services),
     ...(oauth === undefined ? {} : { oauth }),
     ...(webhooks === undefined ? {} : { webhooks }),
@@ -199,8 +205,40 @@ function isWebhookMethod(value: unknown): value is WebhookMethod {
   );
 }
 
-function optionalCallbackKeys(value: Record<string, unknown>): string[] {
-  return ["oauth", "webhooks"].filter((key) => Object.hasOwn(value, key));
+function optionalProjectKeys(value: Record<string, unknown>): string[] {
+  return ["oauth", "webhooks", "worktree"].filter((key) => Object.hasOwn(value, key));
+}
+
+function parseWorktree(raw: unknown): { readonly label: WorktreeLabel } {
+  const worktree = record(raw, "worktree");
+  exactKeys(worktree, ["label"], "worktree");
+  const label = record(worktree.label, "worktree label");
+  const hasCheckout = Object.hasOwn(label, "checkout");
+  exactKeys(
+    label,
+    ["project", "id", "fullLabel", ...(hasCheckout ? ["checkout"] : [])],
+    "worktree label",
+  );
+  const project = requiredHostname(label.project, "worktree project label");
+  const id = requiredHostname(label.id, "worktree label id");
+  const fullLabel = requiredHostname(label.fullLabel, "worktree full label");
+  const checkout = hasCheckout ? requiredHostname(label.checkout, "checkout label") : undefined;
+  const parts = [project, ...(checkout === undefined ? [] : [checkout]), id];
+  if (
+    parts.some((part) => part.includes(".")) ||
+    fullLabel.includes(".") ||
+    fullLabel !== parts.join("-")
+  ) {
+    throw new TnlError("sdk.runtime_invalid");
+  }
+  return Object.freeze({
+    label: Object.freeze({
+      project,
+      id,
+      fullLabel,
+      ...(checkout === undefined ? {} : { checkout }),
+    }),
+  });
 }
 
 function parseIntegrationOrigin(raw: unknown, description: string): IntegrationOrigin {
@@ -250,7 +288,7 @@ export function parseRuntimePayload(serialized: string | undefined): ProjectRunt
 
 export function parseProjectRuntime(value: unknown, description: string): ProjectRuntime {
   const object = record(value, description);
-  exactKeys(object, ["dev", "namespace", "services", ...optionalCallbackKeys(object)], description);
+  exactKeys(object, ["dev", "namespace", "services", ...optionalProjectKeys(object)], description);
   if (typeof object.dev !== "boolean") {
     throw new TnlError("sdk.runtime_invalid");
   }
@@ -258,6 +296,7 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
     {
       namespace: object.namespace,
       services: object.services,
+      ...(Object.hasOwn(object, "worktree") ? { worktree: object.worktree } : {}),
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
       ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
     },
@@ -274,6 +313,7 @@ export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean):
     namespace: project.namespace,
     dev,
     services: project.services,
+    ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
     ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
     ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
   });

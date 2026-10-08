@@ -117,6 +117,9 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
 	}
+	if r.project.Worktree.Label.FullLabel != "" {
+		metadata.Worktree = &projectmeta.Worktree{Label: r.project.Worktree.Label}
+	}
 	server, err := r.server(ctx, root.Server)
 	if err != nil {
 		return projectmeta.Metadata{}, err

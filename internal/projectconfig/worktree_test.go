@@ -2,6 +2,7 @@ package projectconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -54,8 +55,8 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !mainWorktree.IsGit || mainWorktree.Root != canonicalPrimary || mainWorktree.Name != "shop" ||
-		!strings.HasPrefix(mainWorktree.Label, "shop-") ||
-		ServiceWorktreeLabel("web", mainWorktree) != "web-"+mainWorktree.Label {
+		!strings.HasPrefix(mainWorktree.Label.FullLabel, "shop-") || mainWorktree.Label.Checkout != "" || mainWorktree.Label.Project != "shop" ||
+		ServiceWorktreeLabel("web", mainWorktree) != "web-"+mainWorktree.Label.FullLabel {
 		t.Fatalf("primary worktree = %#v", mainWorktree)
 	}
 	alias := filepath.Join(parent, "shop-alias")
@@ -80,8 +81,8 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !linkedWorktree.IsGit || linkedWorktree.Root != canonicalLinked || linkedWorktree.Name != "perf" ||
-		!strings.HasPrefix(linkedWorktree.Label, "shop-perf-") ||
-		ServiceWorktreeLabel("web", linkedWorktree) != "web-"+linkedWorktree.Label ||
+		!strings.HasPrefix(linkedWorktree.Label.FullLabel, "shop-perf-") || linkedWorktree.Label.Checkout != "perf" ||
+		ServiceWorktreeLabel("web", linkedWorktree) != "web-"+linkedWorktree.Label.FullLabel ||
 		linkedWorktree.Label == mainWorktree.Label {
 		t.Fatalf("linked worktree = %#v", linkedWorktree)
 	}
@@ -119,7 +120,7 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 	}
 	changedBranch = ApplyWorktreeHashSalt(changedBranch, linked, salt)
 	if changedBranch.Label != linkedWorktree.Label {
-		t.Fatalf("branch switch changed the worktree label: %q -> %q", linkedWorktree.Label, changedBranch.Label)
+		t.Fatalf("branch switch changed the worktree label: %q -> %q", linkedWorktree.Label.FullLabel, changedBranch.Label.FullLabel)
 	}
 
 	projectRoot := filepath.Join(linked, "apps", "store")
@@ -131,7 +132,7 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	nested = ApplyWorktreeHashSalt(nested, projectRoot, salt)
-	if !strings.HasPrefix(nested.Label, "shop-apps-store-perf-") || nested.Label == linkedWorktree.Label {
+	if !strings.HasPrefix(nested.Label.FullLabel, "shop-apps-store-perf-") || nested.Label == linkedWorktree.Label {
 		t.Fatalf("nested project = %#v", nested)
 	}
 	configPath := filepath.Join(projectRoot, "tnl.json")
@@ -147,7 +148,7 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := ApplyWorktreeHashSalt(nested, otherRoot, salt)
-	if !strings.HasPrefix(other.Label, "shop-apps-admin-perf-") || other.Label == nested.Label {
+	if !strings.HasPrefix(other.Label.FullLabel, "shop-apps-admin-perf-") || other.Label == nested.Label {
 		t.Fatalf("other project = %#v", other)
 	}
 
@@ -167,7 +168,7 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	billingWorktree = ApplyWorktreeHashSalt(billingWorktree, secondLinked, salt)
-	if !strings.HasPrefix(billingWorktree.Label, "billing-perf-") || billingWorktree.Label == linkedWorktree.Label {
+	if !strings.HasPrefix(billingWorktree.Label.FullLabel, "billing-perf-") || billingWorktree.Label == linkedWorktree.Label {
 		t.Fatalf("other repository = %#v", billingWorktree)
 	}
 }
@@ -183,16 +184,16 @@ func TestWorktreeLabelUsesStateAndProjectRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := ApplyWorktreeHashSalt(worktree, root, [32]byte{1})
-	if first.IsGit || !regexp.MustCompile(`^cafe-shop-[0-9a-z]{6}$`).MatchString(first.Label) ||
-		ServiceWorktreeLabel("api", first) != "api-"+first.Label ||
+	if first.IsGit || !regexp.MustCompile(`^cafe-shop-[0-9a-z]{6}$`).MatchString(first.Label.FullLabel) ||
+		ServiceWorktreeLabel("api", first) != "api-"+first.Label.FullLabel ||
 		ApplyWorktreeHashSalt(worktree, root, [32]byte{1}).Label != first.Label {
-		t.Fatalf("non-Git project label = %q", first.Label)
+		t.Fatalf("non-Git project label = %q", first.Label.FullLabel)
 	}
 	if changed := ApplyWorktreeHashSalt(worktree, root, [32]byte{2}); changed.Label == first.Label {
-		t.Fatalf("different client state kept label %q", changed.Label)
+		t.Fatalf("different client state kept label %q", changed.Label.FullLabel)
 	}
 	if changed := ApplyWorktreeHashSalt(worktree, filepath.Join(root, "other"), [32]byte{1}); changed.Label == first.Label {
-		t.Fatalf("different project root kept label %q", changed.Label)
+		t.Fatalf("different project root kept label %q", changed.Label.FullLabel)
 	}
 	secondRoot := filepath.Join(parent, "other", "Café Shop")
 	if err := os.MkdirAll(secondRoot, 0o700); err != nil {
@@ -203,8 +204,8 @@ func TestWorktreeLabelUsesStateAndProjectRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondWorktree = ApplyWorktreeHashSalt(secondWorktree, secondRoot, [32]byte{1})
-	if !strings.HasPrefix(secondWorktree.Label, "cafe-shop-") || secondWorktree.Label == first.Label {
-		t.Fatalf("same-named project in another directory = %q", secondWorktree.Label)
+	if !strings.HasPrefix(secondWorktree.Label.FullLabel, "cafe-shop-") || secondWorktree.Label == first.Label {
+		t.Fatalf("same-named project in another directory = %q", secondWorktree.Label.FullLabel)
 	}
 }
 
@@ -214,7 +215,7 @@ func TestServiceWorktreeLabelKeepsEachPartUnderDNSLimit(t *testing.T) {
 		checkout: dnsLabelStem("Perf Feature "+strings.Repeat("worktree", 10), "worktree"),
 		id:       "k7n2p9",
 	}
-	worktree := Worktree{labelParts: parts, Label: formatWorktreeLabel("", parts)}
+	worktree := Worktree{labelParts: parts}
 	for _, service := range []string{"", "web", strings.Repeat("a", 32)} {
 		label := ServiceWorktreeLabel(service, worktree)
 		if len(label) > 63 || !strings.HasSuffix(label, "-k7n2p9") ||
@@ -225,6 +226,33 @@ func TestServiceWorktreeLabelKeepsEachPartUnderDNSLimit(t *testing.T) {
 	}
 	if value := dnsLabelStem("💫", "project"); value != "project" {
 		t.Fatalf("non-ASCII name = %q", value)
+	}
+}
+
+func TestWorktreeLabelExposesFinishedComponentsAndOmitsPrimaryCheckout(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		worktree := Worktree{Root: "/checkout", Name: strings.Repeat("feature", 20)}
+		if linked {
+			worktree.IsGit = true
+			worktree.primaryRoot = "/projects/" + strings.Repeat("shop", 30)
+		}
+		worktree = ApplyWorktreeHashSalt(worktree, worktree.Root, [32]byte{1})
+		label := worktree.Label
+		parts := []string{label.Project}
+		if linked {
+			parts = append(parts, label.Checkout)
+		}
+		parts = append(parts, label.ID)
+		if len(label.FullLabel) > 63 || strings.Join(parts, "-") != label.FullLabel {
+			t.Fatal("shortened components differ from the finished label")
+		}
+		data, err := json.Marshal(label)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"checkout"`) != linked {
+			t.Fatalf("checkout presence differs from worktree kind: %s", data)
+		}
 	}
 }
 

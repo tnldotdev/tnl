@@ -38,7 +38,7 @@ export function testProjectDocument() {
         url: "https://web.member.example",
       },
     },
-    version: 1,
+    version: 2,
   };
 }
 

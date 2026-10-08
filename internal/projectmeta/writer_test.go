@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/filelock"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 	metadata := Metadata{
 		Version: Version, Namespace: "ecstatic-penguin.tnl.dev",
+		Worktree: &Worktree{Label: projectconfig.WorktreeLabel{Project: "tnl", ID: "bb4eff", FullLabel: "tnl-bb4eff"}},
 		Services: map[string]Service{
 			"web": {
 				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "web-tnl-bb4eff.ecstatic-penguin.tnl.dev",
@@ -39,7 +41,7 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 		!strings.Contains(text, `readonly hostname: "api-tnl-bb4eff.ecstatic-penguin.tnl.dev"`) ||
 		!strings.Contains(text, `readonly url: "https://api-tnl-bb4eff.ecstatic-penguin.tnl.dev"`) ||
 		strings.Contains(text, "TnlProjectRegistry") || strings.Contains(text, "serviceDirectories") ||
-		strings.Contains(text, "readonly project:") {
+		strings.Contains(text, "readonly root:") || strings.Contains(text, "readonly checkout:") {
 		t.Fatalf("declarations =\n%s", declarations)
 	}
 	golden, err := os.ReadFile(filepath.Join("testdata", "project.d.ts"))
@@ -60,6 +62,24 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 		if bytes.Contains(jsonData, []byte(forbidden)) || bytes.Contains(declarations, []byte(forbidden)) {
 			t.Fatalf("generated metadata contains %q", forbidden)
 		}
+	}
+}
+
+func TestRenderWorktreeLabelLiteralComponents(t *testing.T) {
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{},
+		Worktree: &Worktree{Label: projectconfig.WorktreeLabel{Project: "shop", Checkout: "perf", ID: "k7n2p9", FullLabel: "shop-perf-k7n2p9"}}}
+	_, declarations, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, literal := range []string{`readonly project: "shop"`, `readonly checkout: "perf"`, `readonly id: "k7n2p9"`, `readonly fullLabel: "shop-perf-k7n2p9"`} {
+		if !bytes.Contains(declarations, []byte(literal)) {
+			t.Fatalf("declaration missing %s", literal)
+		}
+	}
+	metadata.Worktree.Label.FullLabel = "different-k7n2p9"
+	if _, _, err := Render(metadata); err == nil {
+		t.Fatal("inconsistent label components were written")
 	}
 }
 

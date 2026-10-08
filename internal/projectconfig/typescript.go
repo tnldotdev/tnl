@@ -67,7 +67,16 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	command.Dir = filepath.Dir(absolutePath)
 	environment, contextEnvironment := sanitizedEnvironment(os.Environ())
 	command.Env = environment
-	contextData, err := json.Marshal(loaderContext{CWD: absoluteCWD, Env: contextEnvironment, Worktree: worktree})
+	projectRoot := filepath.Dir(absolutePath)
+	if canonical, err := filepath.EvalSymlinks(projectRoot); err == nil {
+		projectRoot = canonical
+	}
+	relative, err := filepath.Rel(worktree.Root, projectRoot)
+	if err != nil || !pathWithin(projectRoot, worktree.Root) {
+		relative = "."
+	}
+	contextData, err := json.Marshal(loaderContext{CWD: absoluteCWD, Env: contextEnvironment, Worktree: worktree,
+		Project: ProjectContext{RelativeDirectory: filepath.ToSlash(relative)}})
 	if err != nil {
 		return config.TNL{}, fmt.Errorf("load TypeScript config: encode context: %w", err)
 	}
@@ -232,6 +241,11 @@ type loaderContext struct {
 	CWD      string            `json:"cwd"`
 	Env      map[string]string `json:"env"`
 	Worktree Worktree          `json:"worktree"`
+	Project  ProjectContext    `json:"project"`
+}
+
+type ProjectContext struct {
+	RelativeDirectory string `json:"relativeDirectory"`
 }
 
 var typeScriptKeyMappings = map[string]string{

@@ -12,9 +12,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
-const Version = 1
+const Version = 2
+
+type Worktree struct {
+	Label projectconfig.WorktreeLabel `json:"label"`
+}
 
 type Service struct {
 	Namespace string          `json:"namespace"`
@@ -45,6 +50,7 @@ type Webhook struct {
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
+	Worktree           *Worktree          `json:"worktree,omitempty"`
 	Namespace          string             `json:"namespace"`
 	Dev                bool               `json:"dev"`
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
@@ -56,6 +62,7 @@ type Metadata struct {
 
 // PublicMetadata is the value exposed by @tnldotdev/tnl.
 type PublicMetadata struct {
+	Worktree  *Worktree          `json:"worktree,omitempty"`
 	Namespace string             `json:"namespace"`
 	Services  map[string]Service `json:"services"`
 	OAuth     *IntegrationOrigin `json:"oauth,omitempty"`
@@ -76,6 +83,7 @@ func (m Metadata) Public(dev bool) PublicMetadata {
 		services[name] = service
 	}
 	return PublicMetadata{
+		Worktree:  m.Worktree,
 		Namespace: m.Namespace, Services: services, OAuth: m.OAuth, Webhooks: m.Webhooks,
 		Dev: dev,
 	}
@@ -87,6 +95,22 @@ func (m Metadata) Validate() error {
 	}
 	if m.Dev {
 		return errors.New("generated project metadata cannot be marked as running under tnl dev")
+	}
+	if m.Worktree != nil {
+		label := m.Worktree.Label
+		parts := []string{label.Project}
+		if label.Checkout != "" {
+			parts = append(parts, label.Checkout)
+		}
+		parts = append(parts, label.ID)
+		if label.FullLabel != strings.Join(parts, "-") || strings.Contains(label.FullLabel, ".") {
+			return errors.New("worktree label components must match fullLabel")
+		}
+		for _, part := range append(parts, label.FullLabel) {
+			if err := canonicalHostname("worktree label", part); err != nil || strings.Contains(part, ".") {
+				return errors.New("worktree label components must be lowercase DNS labels")
+			}
+		}
 	}
 	if err := canonicalHostname("namespace", m.Namespace); err != nil {
 		return err
