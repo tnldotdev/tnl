@@ -93,6 +93,37 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		fields = append(fields, clioutput.Field{Label: "tunnel", Value: tunnel.ID})
 		blocks = append(blocks, clioutput.Section(string(tunnel.State), clioutput.Fields(fields...)))
 	}
+	for _, integrationURL := range snapshot.IntegrationURLs {
+		fields := []clioutput.Field{
+			{Label: "public URL", Value: integrationURL.PublicURL},
+			{Label: "server", Value: integrationURL.Server},
+		}
+		if integrationURL.Reason != "" {
+			fields = append(fields, clioutput.Field{Label: "reason", Value: string(integrationURL.Reason)})
+			fields = append(fields, clioutput.Field{Label: "action", Value: integrationURL.Action})
+		}
+		blocks = append(blocks, clioutput.Section(integrationURL.Kind+" "+integrationURL.State, clioutput.Fields(fields...)))
+		for _, endpoint := range integrationURL.Endpoints {
+			fields := []clioutput.Field{
+				{Label: "endpoint", Value: endpoint.URL},
+				{Label: "service", Value: endpoint.Service},
+				{Label: "delivery", Value: endpoint.Delivery},
+				{Label: "ready receivers", Value: strconv.Itoa(len(endpoint.ReadyReceivers))},
+			}
+			for _, receiver := range endpoint.ReadyReceivers {
+				fields = append(fields, clioutput.Field{Label: "worktree", Value: receiver.PublicURL})
+			}
+			if endpoint.Owner != nil {
+				fields = append(fields, clioutput.Field{Label: "owner", Value: endpoint.Owner.PublicURL})
+				fields = append(fields, clioutput.Field{Label: "owner state", Value: endpoint.Owner.State})
+			}
+			if endpoint.Reason != "" {
+				fields = append(fields, clioutput.Field{Label: "reason", Value: string(endpoint.Reason)})
+				fields = append(fields, clioutput.Field{Label: "action", Value: endpoint.Action})
+			}
+			blocks = append(blocks, clioutput.Section("webhook "+endpoint.Name+" "+endpoint.State, clioutput.Fields(fields...)))
+		}
+	}
 	return writeHumanFrame(output, "tnl status", countState(len(snapshot.Tunnels), "local tunnel", "local tunnels"),
 		statusSummary(snapshot.Summary), blocks...)
 }

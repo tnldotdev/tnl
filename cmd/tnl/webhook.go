@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	defer state.Close()
 	snapshot, err := state.SnapshotProject(ctx, project.Root)
 	if err != nil {
-		return err
+		return failure.Wrap("read webhook receivers", failure.ClientStateUnavailable, err)
 	}
 	var selected *clientstate.TunnelInfo
 	for i := range snapshot.Tunnels {
@@ -45,11 +46,14 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	}
 	hostname, err := state.WebhookHostname(ctx, server, selected.IntegrationGroup)
 	if err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return failure.Wrap("read webhook URL", failure.WebhookReceiverUnready, err)
+		}
+		return failure.Wrap("read webhook URL", failure.ClientStateUnavailable, err)
 	}
 	_, digest, err := integrationurls.DefinitionBytes(definition)
 	if err != nil {
-		return err
+		return failure.Wrap("validate webhook endpoint", failure.ProjectConfigInvalid, err)
 	}
 	command, status := "tnl webhook use", "selected"
 	if use {

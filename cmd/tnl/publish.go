@@ -169,7 +169,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if resolveErr != nil {
 			return resolveErr
 		}
-		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, output)
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output)
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
 	}

@@ -19,7 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-const tunnelSnapshotSchemaVersion = 1
+const tunnelSnapshotSchemaVersion = 2
 
 const (
 	tunnelLeaseDuration     = 20 * time.Second
@@ -69,10 +69,11 @@ type Tunnel struct {
 }
 
 type TunnelSnapshot struct {
-	SchemaVersion int           `json:"schema_version"`
-	ObservedAt    time.Time     `json:"observed_at"`
-	Summary       TunnelSummary `json:"summary"`
-	Tunnels       []TunnelInfo  `json:"tunnels"`
+	SchemaVersion   int                  `json:"schema_version"`
+	ObservedAt      time.Time            `json:"observed_at"`
+	Summary         TunnelSummary        `json:"summary"`
+	Tunnels         []TunnelInfo         `json:"tunnels"`
+	IntegrationURLs []IntegrationURLInfo `json:"integration_urls"`
 }
 
 type TunnelSummary struct {
@@ -182,6 +183,10 @@ func (t *Tunnel) SetIntegrationGroup(ctx context.Context, group string) error {
 // Context is canceled if the parent ends or a failed heartbeat leaves the
 // tunnel's local lease unmaintained.
 func (t *Tunnel) Context() context.Context { return t.ctx }
+
+// CancelWithCause stops this tunnel when a local reporting boundary fails.
+// Finish records the original cause after joining lease maintenance.
+func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
 
 func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) error {
 	target, err := localproxy.NormalizeTarget(target)
@@ -298,13 +303,18 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 	if err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: list tunnels: %w", err)
 	}
+	integrationURLs, err := d.snapshotIntegrationURLs(ctx, tx, records, observedAt)
+	if err != nil {
+		return TunnelSnapshot{}, fmt.Errorf("read integration URL status: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: commit tunnel snapshot: %w", err)
 	}
 	snapshot := TunnelSnapshot{
-		SchemaVersion: tunnelSnapshotSchemaVersion,
-		ObservedAt:    observedAt,
-		Tunnels:       make([]TunnelInfo, 0, len(records)),
+		SchemaVersion:   tunnelSnapshotSchemaVersion,
+		ObservedAt:      observedAt,
+		Tunnels:         make([]TunnelInfo, 0, len(records)),
+		IntegrationURLs: integrationURLs,
 	}
 	for _, row := range records {
 		state := TunnelState(row.State)

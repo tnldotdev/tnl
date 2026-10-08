@@ -191,6 +191,20 @@
       "action": "set packageManager to pnpm, npm, yarn, or bun, then run tnl init again"
     },
     {
+      "code": "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED",
+      "slug": "integration-url-lease-expired",
+      "class": "stale",
+      "message": "the integration URL publisher stopped renewing its readiness",
+      "action": "check the running app tunnels and restart one if the publisher does not recover"
+    },
+    {
+      "code": "TNL_CLIENT_INTEGRATION_URL_NOT_READY",
+      "slug": "integration-url-not-ready",
+      "class": "unavailable",
+      "message": "the integration URL publisher is not ready",
+      "action": "keep a participating tnl dev or tnl publish tunnel running and wait for its publisher"
+    },
+    {
       "code": "TNL_CLIENT_INVALID_AUTHORITY_URL",
       "slug": "invalid-authority-url",
       "class": "invalid",
@@ -465,11 +479,39 @@
       "action": "check tnl status before releasing or switching this webhook"
     },
     {
+      "code": "TNL_CLIENT_WEBHOOK_NO_READY_RECEIVERS",
+      "slug": "webhook-no-ready-receivers",
+      "class": "unavailable",
+      "message": "this webhook has no ready receivers",
+      "action": "start the configured service in a worktree and wait for its public URL"
+    },
+    {
       "code": "TNL_CLIENT_WEBHOOK_OWNED",
       "slug": "webhook-owned",
       "class": "conflict",
       "message": "another running tunnel is selected for this webhook",
       "action": "run tnl webhook use NAME --force to switch, or release it from the current worktree"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_OWNER_MISSING",
+      "slug": "webhook-owner-missing",
+      "class": "unavailable",
+      "message": "this exclusive webhook has no selected receiver",
+      "action": "run tnl webhook use NAME from a worktree with a ready service"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_OWNER_UNREADY",
+      "slug": "webhook-owner-unready",
+      "class": "unavailable",
+      "message": "the selected webhook receiver is not ready",
+      "action": "wait for its tunnel to recover or run tnl webhook use NAME --force from a ready worktree"
+    },
+    {
+      "code": "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT",
+      "slug": "webhook-policy-conflict",
+      "class": "conflict",
+      "message": "worktrees disagree about this webhook endpoint",
+      "action": "make the endpoint declarations agree, then restart the conflicting tunnel"
     },
     {
       "code": "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY",

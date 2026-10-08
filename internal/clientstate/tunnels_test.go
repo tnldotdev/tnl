@@ -200,7 +200,7 @@ func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
 			t.Fatalf("initial migration does not contain %q", required)
 		}
 	}
-	if tunnelSnapshotSchemaVersion != 1 {
+	if tunnelSnapshotSchemaVersion != 2 {
 		t.Fatalf("tunnel snapshot schema version = %d", tunnelSnapshotSchemaVersion)
 	}
 }
