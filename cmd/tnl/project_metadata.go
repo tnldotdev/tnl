@@ -117,6 +117,17 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
 	}
+	server, err := r.server(ctx, root.Server)
+	if err != nil {
+		return projectmeta.Metadata{}, err
+	}
+	if r.project.Config.OAuth {
+		oauth, err := projectIntegrationOrigin(ctx, r.state, r.project.Project, server, metadata.Namespace, "oauth")
+		if err != nil {
+			return projectmeta.Metadata{}, err
+		}
+		metadata.OAuth = &oauth
+	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
 		names = append(names, name)

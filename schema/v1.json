@@ -61,6 +61,10 @@
           "type": "boolean",
           "description": "Show the feedback toolbar on development pages."
         },
+        "oauth": {
+          "type": "boolean",
+          "description": "Publish one shared OAuth callback URL while project tunnels run."
+        },
         "request_inspection": {
           "type": "string",
           "enum": ["summary", "detailed"],

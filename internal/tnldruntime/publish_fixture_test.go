@@ -238,7 +238,15 @@ func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config
 		})
 	}
 	config.Logf = t.Logf
-	config.Observe = handle.observe
+	previous := config.Observe
+	config.Observe = func(event publisher.Event) error {
+		if previous != nil {
+			if err := previous(event); err != nil {
+				return err
+			}
+		}
+		return handle.observe(event)
+	}
 	go func() {
 		err := publisher.Run(ctx, config)
 		handle.mu.Lock()

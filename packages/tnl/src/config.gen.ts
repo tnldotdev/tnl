@@ -14,6 +14,10 @@ export interface TnlConfig {
    */
   feedback?: boolean;
   /**
+   * Publish one shared OAuth callback URL while project tunnels run.
+   */
+  oauth?: boolean;
+  /**
    * Default public URL and tunnel settings.
    */
   tunnel?: {

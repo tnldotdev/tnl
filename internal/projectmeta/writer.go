@@ -156,8 +156,20 @@ func renderDeclarations(metadata Metadata) []byte {
 		}
 		output.WriteString("      };\n")
 	}
-	output.WriteString("    };\n  }\n}\n")
+	output.WriteString("    };\n")
+	if metadata.OAuth != nil {
+		writeOriginDeclaration(&output, "    ", *metadata.OAuth)
+	}
+	output.WriteString("  }\n}\n")
 	return []byte(output.String())
+}
+
+func writeOriginDeclaration(output *strings.Builder, indent string, origin IntegrationOrigin) {
+	output.WriteString(indent + "readonly oauth: { readonly hostname: ")
+	output.WriteString(typeScriptString(origin.Hostname))
+	output.WriteString("; readonly url: ")
+	output.WriteString(typeScriptString(origin.URL))
+	output.WriteString("; };\n")
 }
 
 func commonNamespace(metadata Metadata) bool {

@@ -36,6 +36,33 @@ func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
 	}
 }
 
+func TestOAuthCallbackRegistrationHasTypedFailures(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	options := BeginTunnelOptions{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(), CallbackHostname: "NOT-CANONICAL.example"}
+	if _, err := database.BeginTunnel(t.Context(), options); err == nil {
+		t.Fatal("accepted an invalid callback hostname")
+	} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ProjectConfigInvalid {
+		t.Fatalf("callback hostname failure = %v", err)
+	}
+	options.CallbackHostname = "oauth.example"
+	tunnel, err := database.BeginTunnel(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.Finish(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetCallbackHostname(t.Context(), "oauth.example"); err == nil {
+		t.Fatal("stopped tunnel registered a callback")
+	} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ClientStateUnavailable {
+		t.Fatalf("stopped callback registration failure = %v", err)
+	}
+}
+
 func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {

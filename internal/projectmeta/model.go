@@ -28,6 +28,11 @@ type Path struct {
 	StripPrefix bool   `json:"stripPrefix"`
 }
 
+type IntegrationOrigin struct {
+	Hostname string `json:"hostname"`
+	URL      string `json:"url"`
+}
+
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
@@ -35,6 +40,7 @@ type Metadata struct {
 	Dev                bool               `json:"dev"`
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
 	Services           map[string]Service `json:"services"`
+	OAuth              *IntegrationOrigin `json:"oauth,omitempty"`
 	Version            int                `json:"version"`
 }
 
@@ -42,6 +48,7 @@ type Metadata struct {
 type PublicMetadata struct {
 	Namespace string             `json:"namespace"`
 	Services  map[string]Service `json:"services"`
+	OAuth     *IntegrationOrigin `json:"oauth,omitempty"`
 	Dev       bool               `json:"dev"`
 }
 
@@ -58,7 +65,7 @@ func (m Metadata) Public(dev bool) PublicMetadata {
 		services[name] = service
 	}
 	return PublicMetadata{
-		Namespace: m.Namespace, Services: services,
+		Namespace: m.Namespace, Services: services, OAuth: m.OAuth,
 		Dev: dev,
 	}
 }
@@ -72,6 +79,11 @@ func (m Metadata) Validate() error {
 	}
 	if err := canonicalHostname("namespace", m.Namespace); err != nil {
 		return err
+	}
+	if m.OAuth != nil {
+		if err := validateOrigin("oauth", *m.OAuth); err != nil {
+			return err
+		}
 	}
 	if len(m.Services) > 32 {
 		return errors.New("project metadata may contain at most 32 services")
@@ -141,6 +153,16 @@ func canonicalHostname(kind, value string) error {
 	canonical, err := naming.CanonicalizeHostname(value)
 	if err != nil || canonical != value {
 		return fmt.Errorf("%s must be a canonical hostname", kind)
+	}
+	return nil
+}
+
+func validateOrigin(name string, origin IntegrationOrigin) error {
+	if err := canonicalHostname(name+" hostname", origin.Hostname); err != nil {
+		return err
+	}
+	if origin.URL != "https://"+origin.Hostname {
+		return fmt.Errorf("%s URL does not match hostname", name)
 	}
 	return nil
 }

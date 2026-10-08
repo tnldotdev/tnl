@@ -425,10 +425,15 @@ test("project metadata agrees with the Go validation fixture", async () => {
             namespace: z.string(),
             dev: z.boolean(),
             version: z.number(),
+            oauth: z.object({ hostname: z.string(), url: z.string() }).optional(),
             serviceDirectories: z.record(z.string(), z.string()),
             services: z.record(
               z.string(),
-              z.object({ namespace: z.string(), hostname: z.string(), url: z.string() }),
+              z.object({
+                namespace: z.string(),
+                hostname: z.string(),
+                url: z.string(),
+              }),
             ),
           }),
         }),
@@ -452,8 +457,13 @@ test("project metadata agrees with the Go validation fixture", async () => {
     } else {
       expect(() => discoverProject(root), entry.name).toThrow();
     }
-    const { namespace, services, dev } = entry.metadata;
-    const runtime = JSON.stringify({ namespace, services, dev });
+    const { namespace, services, dev, oauth } = entry.metadata;
+    const runtime = JSON.stringify({
+      namespace,
+      services,
+      dev,
+      ...(oauth === undefined ? {} : { oauth }),
+    });
     if (entry.runtimeValid ?? entry.valid) {
       expect(parseRuntimePayload(runtime)?.namespace, entry.name).toBe(namespace);
     } else {
@@ -485,6 +495,7 @@ test("tnl dev requests and assignment agree with the Go wire fixture", async () 
         project: z.object({
           namespace: z.string(),
           dev: z.boolean(),
+          oauth: z.object({ hostname: z.string(), url: z.string() }).optional(),
           services: z.record(
             z.string(),
             z.object({ namespace: z.string(), hostname: z.string(), url: z.string() }),

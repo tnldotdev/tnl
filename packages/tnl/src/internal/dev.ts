@@ -324,7 +324,18 @@ function parseProjectDocumentValue(
   projectRoot: string,
 ): ProjectDocument {
   const object = record(value, description);
-  exactKeys(object, ["dev", "namespace", "serviceDirectories", "services", "version"], description);
+  exactKeys(
+    object,
+    [
+      "dev",
+      "namespace",
+      "serviceDirectories",
+      "services",
+      "version",
+      ...["oauth"].filter((key) => Object.hasOwn(object, key)),
+    ],
+    description,
+  );
   if (object.version !== 1) {
     throw new TnlError("sdk.runtime_invalid");
   }
@@ -335,7 +346,11 @@ function parseProjectDocumentValue(
     throw new TnlError("sdk.runtime_invalid");
   }
   const project = parseProjectMetadata(
-    { namespace: object.namespace, services: object.services },
+    {
+      namespace: object.namespace,
+      services: object.services,
+      ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
+    },
     description,
   );
   const directoryValues = record(object.serviceDirectories, `${description} service directories`);
@@ -363,7 +378,11 @@ function parseProjectDocumentValue(
 }
 
 function projectMetadata(document: ProjectDocument): ProjectMetadata {
-  return Object.freeze({ namespace: document.namespace, services: document.services });
+  return Object.freeze({
+    namespace: document.namespace,
+    services: document.services,
+    ...(document.oauth === undefined ? {} : { oauth: document.oauth }),
+  });
 }
 
 function selectService(document: ProjectDocument, cwd: string): string | null {

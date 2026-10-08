@@ -139,6 +139,19 @@ is configured; deeper names use exact records and certificates. new custom
 domains require an explicit opt-in and DNS automation. disabling new claims
 does not affect existing custom domains or their release.
 
+projects with `oauth: true` publish one saved OAuth callback URL while app
+tunnels run. linked worktrees share that URL through the same client state,
+server, and member namespace; its name does not depend on the checkout.
+
+the app publisher observes response headers before releasing authorization
+redirects to the browser. a bounded, single-use OAuth state digest identifies
+the initiating app's public URL and exact publish run and expires after ten
+minutes. the callback handler returns the browser to that app's callback path.
+the app validates state and PKCE and exchanges its code using the registered
+redirect URI. control and relays receive neither login state nor callback
+contents. a callback to a stopped or replaced run fails instead of reaching
+another worktree.
+
 ```text
 public URL
   durable hostname, ownership, target, policy, and state

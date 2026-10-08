@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -166,15 +167,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
-	if flags.project.Found() {
-		write := func() error { return projectmeta.Write(ctx, flags.project.Root, metadata) }
-		if flags.metadataWriter != nil {
-			write = func() error { return flags.metadataWriter.write(ctx, flags.project.Root, metadata) }
-		}
-		if err := write(); err != nil {
-			return err
-		}
-	}
 	if flags.useMetadataHostname {
 		if service, found := metadata.Services[flags.Service]; found {
 			flags.PublicURL = service.URL
@@ -199,9 +191,30 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
+	var oauth *projectmeta.IntegrationOrigin
+	var oauthServices publisherServices
+	callbackHostname := ""
+	if flags.project.Config.OAuth {
+		origin, selected, selectErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
+		if selectErr != nil {
+			return selectErr
+		}
+		oauth, oauthServices = &origin, selected
+		callbackHostname = origin.Hostname
+		metadata.OAuth = oauth
+	}
+	if flags.project.Found() {
+		write := func() error { return projectmeta.Write(ctx, flags.project.Root, metadata) }
+		if flags.metadataWriter != nil {
+			write = func() error { return flags.metadataWriter.write(ctx, flags.project.Root, metadata) }
+		}
+		if err := write(); err != nil {
+			return err
+		}
+	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: forcedTarget,
-		Project: flags.projectRoot, Service: flags.Service,
+		Project: flags.projectRoot, Service: flags.Service, CallbackHostname: callbackHostname,
 	})
 	if err != nil {
 		return err
@@ -222,11 +235,12 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer func() { result = errors.Join(result, bootstrap.Close()) }()
 
+	runtimeProject := runtimeProjectMetadata(metadata, flags.Service, services.namespace, services.hostname)
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
 		Namespace: services.namespace, Hostname: services.hostname,
 		PublicURL: "https://" + services.hostname,
-		Project:   runtimeProjectMetadata(metadata, flags.Service, services.namespace, services.hostname),
+		Project:   runtimeProject,
 	}
 	projectPayload, err := json.Marshal(assignment.Project)
 	if err != nil {
@@ -284,6 +298,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	publishCtx, cancelPublish := context.WithCancel(ctx)
 	defer cancelPublish()
+	if oauth != nil {
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, *oauth, output)
+		defer stopCallbacks()
+	}
 	publishDone := make(chan error, 1)
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
@@ -294,6 +312,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
 		publisherConfig.ObserveRequest = requestObservation(recorder)
 		publisherConfig.RequestInspection = flags.RequestInspection
+		if oauth != nil {
+			publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauth.Hostname, tunnel.ID())
+		}
 		publisherConfig.ControlURL = authenticated.ServerEndpoint
 		publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 		publisherConfig.PreviewID = previewID

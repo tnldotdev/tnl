@@ -34,18 +34,6 @@ func (w Worktree) PrimaryCheckoutRoot() string {
 	return w.Root
 }
 
-// SharedProjectIdentity identifies the same project directory in linked worktrees.
-func SharedProjectIdentity(worktree Worktree, projectRoot string) string {
-	if canonical, err := filepath.EvalSymlinks(projectRoot); err == nil {
-		projectRoot = canonical
-	}
-	relative, err := filepath.Rel(worktree.Root, projectRoot)
-	if err != nil || !pathWithin(projectRoot, worktree.Root) {
-		relative = "."
-	}
-	return filepath.Join(worktree.PrimaryCheckoutRoot(), relative)
-}
-
 type worktreeLabelParts struct {
 	project  string
 	checkout string
@@ -147,8 +135,12 @@ func ApplyWorktreeHashSalt(worktree Worktree, projectRoot string, salt [32]byte)
 }
 
 func worktreeLabelID(root, projectRoot string, salt [32]byte) string {
+	return labelID("tnl-worktree-label-v2\x00", root, projectRoot, salt)
+}
+
+func labelID(purpose, root, projectRoot string, salt [32]byte) string {
 	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte("tnl-worktree-label-v2\x00"))
+	_, _ = hash.Write([]byte(purpose))
 	_, _ = hash.Write([]byte(root))
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(projectRoot))
@@ -207,4 +199,39 @@ func formatWorktreeLabel(service string, parts worktreeLabelParts) string {
 // ServiceWorktreeLabel returns the built-in hostname label for one service.
 func ServiceWorktreeLabel(service string, worktree Worktree) string {
 	return formatWorktreeLabel(service, worktree.labelParts)
+}
+
+// SharedProjectLabel gives linked worktrees one label for project integration URLs.
+func SharedProjectLabel(role string, worktree Worktree, projectRoot string, salt [32]byte) string {
+	primary, relative := sharedProjectPath(worktree, projectRoot)
+	name := filepath.Base(primary)
+	if relative != "." {
+		name += "-" + filepath.ToSlash(relative)
+	}
+	parts := worktreeLabelParts{
+		project: dnsLabelStem(name, "project"),
+		id:      labelID("tnl-shared-project-label-v1\x00", primary, filepath.Join(primary, relative), salt),
+	}
+	return formatWorktreeLabel(role, parts)
+}
+
+// SharedProjectIdentity is the checkout-independent local state key.
+func SharedProjectIdentity(worktree Worktree, projectRoot string) string {
+	primary, relative := sharedProjectPath(worktree, projectRoot)
+	return filepath.Join(primary, relative)
+}
+
+func sharedProjectPath(worktree Worktree, projectRoot string) (string, string) {
+	if canonical, err := filepath.EvalSymlinks(projectRoot); err == nil {
+		projectRoot = canonical
+	}
+	primary := worktree.primaryRoot
+	if primary == "" {
+		primary = worktree.Root
+	}
+	relative, err := filepath.Rel(worktree.Root, projectRoot)
+	if err != nil || !pathWithin(projectRoot, worktree.Root) {
+		relative = "."
+	}
+	return primary, relative
 }

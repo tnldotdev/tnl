@@ -2,6 +2,8 @@
 package diagnostic
 
 const (
+	OAuthCallbackUnavailable     Code = "TNL_OAUTH_CALLBACK_UNAVAILABLE"
+	OAuthCallbackExpired         Code = "TNL_OAUTH_CALLBACK_EXPIRED"
 	TargetUnavailable            Code = "TNL_TARGET_UNAVAILABLE"
 	TargetInvalid                Code = "TNL_TARGET_INVALID"
 	PublicURLInvalid             Code = "TNL_PUBLIC_URL_INVALID"

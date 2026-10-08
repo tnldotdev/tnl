@@ -2,6 +2,48 @@
   "version": 1,
   "cases": [
     {
+      "name": "shared oauth origin and service context",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "oauth": {
+          "hostname": "oauth-shop-ab1234.member.example",
+          "url": "https://oauth-shop-ab1234.member.example"
+        },
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "other.example",
+            "hostname": "api.other.example",
+            "url": "https://api.other.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "oauth URL differs from hostname",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "oauth": {
+          "hostname": "oauth-shop-ab1234.member.example",
+          "url": "https://different.example"
+        },
+        "serviceDirectories": { "api": "." },
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
       "name": "one service",
       "valid": true,
       "metadata": {
