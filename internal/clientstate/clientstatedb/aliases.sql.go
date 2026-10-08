@@ -105,7 +105,7 @@ UPDATE project_aliases SET selection_revision = selection_revision
 WHERE server_origin = ?1 AND project_key = ?2
     AND team_id = ?3 AND membership_id = ?4
     AND namespace = ?5 AND name = ?6
-RETURNING id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision
+RETURNING id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason
 `
 
 type LockAliasSelectionParams struct {
@@ -140,12 +140,13 @@ func (q *Queries) LockAliasSelection(ctx context.Context, arg LockAliasSelection
 		&i.Fingerprint,
 		&i.SelectedProject,
 		&i.SelectionRevision,
+		&i.FailureReason,
 	)
 	return i, err
 }
 
 const projectAliasByID = `-- name: ProjectAliasByID :one
-SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision FROM project_aliases WHERE id = ?1
+SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason FROM project_aliases WHERE id = ?1
 `
 
 func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (ProjectAlias, error) {
@@ -164,12 +165,13 @@ func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (Project
 		&i.Fingerprint,
 		&i.SelectedProject,
 		&i.SelectionRevision,
+		&i.FailureReason,
 	)
 	return i, err
 }
 
 const projectAliasByScope = `-- name: ProjectAliasByScope :one
-SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision FROM project_aliases
+SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason FROM project_aliases
 WHERE server_origin = ?1 AND project_key = ?2
     AND team_id = ?3 AND membership_id = ?4
     AND namespace = ?5 AND name = ?6
@@ -207,6 +209,7 @@ func (q *Queries) ProjectAliasByScope(ctx context.Context, arg ProjectAliasBySco
 		&i.Fingerprint,
 		&i.SelectedProject,
 		&i.SelectionRevision,
+		&i.FailureReason,
 	)
 	return i, err
 }
@@ -291,7 +294,7 @@ func (q *Queries) RegisterAliasDeclaration(ctx context.Context, arg RegisterAlia
 }
 
 const setAliasSelectedProject = `-- name: SetAliasSelectedProject :execrows
-UPDATE project_aliases SET selected_project = ?1, selection_revision = selection_revision + 1
+UPDATE project_aliases SET selected_project = ?1, selection_revision = selection_revision + 1, failure_reason = ''
 WHERE id = ?2 AND selection_revision = ?3
     AND selection_revision < 9223372036854775807
 `

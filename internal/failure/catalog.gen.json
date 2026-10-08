@@ -9,6 +9,34 @@
       "action": "check administrator access and control health, then retry"
     },
     {
+      "code": "TNL_CLIENT_ALIAS_NOT_SELECTED",
+      "slug": "alias-not-selected",
+      "class": "conflict",
+      "message": "this worktree is not selected for the alias",
+      "action": "release the alias from its selected worktree or select this one explicitly"
+    },
+    {
+      "code": "TNL_CLIENT_ALIAS_OWNED",
+      "slug": "alias-owned",
+      "class": "conflict",
+      "message": "another live worktree owns this alias",
+      "action": "use tnl alias use NAME --force for a deliberate handoff"
+    },
+    {
+      "code": "TNL_CLIENT_ALIAS_POLICY_CONFLICT",
+      "slug": "alias-policy-conflict",
+      "class": "conflict",
+      "message": "another running worktree declares a different alias or uses its hostname",
+      "action": "use matching alias definitions across worktrees and choose a distinct public hostname"
+    },
+    {
+      "code": "TNL_CLIENT_ALIAS_RECEIVER_UNREADY",
+      "slug": "alias-receiver-unready",
+      "class": "unavailable",
+      "message": "the selected alias entry service is not ready",
+      "action": "start the entry service in the selected worktree and check tnl status"
+    },
+    {
       "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",
       "slug": "authentication-required",
       "class": "unauthenticated",

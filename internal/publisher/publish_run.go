@@ -174,11 +174,17 @@ func runSession(
 		ObserveRequest:    config.ObserveRequest,
 		RequestInspection: config.RequestInspection,
 		Handler:           config.Handler,
+		AdmitRequest: func(request *http.Request) error {
+			if config.AdmitRequest == nil {
+				return nil
+			}
+			return config.AdmitRequest(request, PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
+		},
 		ObserveResponse: func(response *http.Response) error {
 			if config.ObserveResponse == nil {
 				return nil
 			}
-			return config.ObserveResponse(response, PublishRunIdentity{PublicURLID: setup.PublicUrl.Id, Number: version})
+			return config.ObserveResponse(response, PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
 		},
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,

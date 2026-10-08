@@ -33,12 +33,16 @@ func (a Alias) RelativeName(key string) string {
 // DefinitionBytes normalizes equivalent relative names and IP ordering for
 // agreement between live worktrees. local targets are not alias declarations.
 func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
+	overrideVisitorPolicy := a.AllowIP != nil || a.AllowAllIPs != nil
 	if a.PublicURL == nil {
 		name := a.RelativeName(key)
 		a.Name = &name
 	}
 	a.AllowIP = slices.Sorted(slices.Values(a.AllowIP))
-	encoded, err := json.Marshal(a)
+	encoded, err := json.Marshal(struct {
+		Alias
+		OverrideVisitorPolicy bool `json:"override_visitor_policy"`
+	}{a, overrideVisitorPolicy})
 	return encoded, sha256.Sum256(encoded), err
 }
 

@@ -20,6 +20,12 @@ type OAuthCallback struct {
 // SaveOAuthCallback stores an opaque OAuth state digest, never the state value.
 // duplicate states fail closed rather than replacing another worktree's login.
 func (d *Database) SaveOAuthCallback(ctx context.Context, server, hostname, group, state, tunnelID, path, query, publicURLID string, runNumber uint64) error {
+	return d.SaveOAuthCallbackOrigin(ctx, server, hostname, group, state, tunnelID, path, query, "", publicURLID, runNumber)
+}
+
+// SaveOAuthCallbackOrigin also binds an alias-origin login to that alias run,
+// independently of the selected app tunnel's own public URL and run.
+func (d *Database) SaveOAuthCallbackOrigin(ctx context.Context, server, hostname, group, state, tunnelID, path, query, originHostname, publicURLID string, runNumber uint64) error {
 	if server == "" || hostname == "" || group == "" || state == "" || len(state) > 8192 || tunnelID == "" || path == "" || publicURLID == "" || runNumber == 0 || runNumber > 1<<63-1 {
 		return errors.New("incomplete OAuth callback")
 	}
@@ -28,10 +34,14 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, server, hostname, grou
 	if err := d.queries.ExpireOAuthCallbacks(ctx, now.UnixNano()); err != nil {
 		return fmt.Errorf("expire OAuth callbacks: %w", err)
 	}
+	if err := d.queries.ExpireOAuthAliasReturns(ctx, now.UnixNano()); err != nil {
+		return err
+	}
 	count, err := d.queries.SaveOAuthCallback(ctx, clientstatedb.SaveOAuthCallbackParams{
 		ServerOrigin: server, Hostname: hostname, IntegrationGroup: group, StateDigest: digest[:], TunnelID: tunnelID,
 		CallbackPath: path, CallbackQuery: query, ExpiresAt: now.Add(10 * time.Minute).UnixNano(),
 		PublicURLID: publicURLID, PublishRunNumber: int64(runNumber), Now: now.UnixNano(),
+		OriginHostname: originHostname,
 	})
 	if err != nil {
 		return fmt.Errorf("save OAuth callback: %w", err)
@@ -74,11 +84,58 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 	if count != 1 {
 		return OAuthCallback{}, TunnelInfo{}, sql.ErrNoRows
 	}
+	if row.OriginHostname != "" && row.OriginHostname != row.Hostname {
+		count, err := queries.SaveOAuthAliasReturn(ctx, clientstatedb.SaveOAuthAliasReturnParams{
+			ServerOrigin: server, Hostname: row.OriginHostname, StateDigest: digest[:], CallbackPath: row.CallbackPath,
+			PublicURLID: row.PublicURLID, PublishRunNumber: row.PublishRunNumber, ExpiresAt: row.ExpiresAt,
+		})
+		if err != nil {
+			return OAuthCallback{}, TunnelInfo{}, err
+		}
+		if count != 1 {
+			return OAuthCallback{}, TunnelInfo{}, errors.New("alias callback return state is full")
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return OAuthCallback{}, TunnelInfo{}, err
 	}
+	origin := row.OriginHostname
+	if origin == "" {
+		origin = row.Hostname
+	}
 	return OAuthCallback{TunnelID: row.TunnelID, Path: row.CallbackPath}, TunnelInfo{
-		ID: row.TunnelID, Hostname: row.Hostname, PublicURL: "https://" + row.Hostname,
+		ID: row.TunnelID, Hostname: origin, PublicURL: "https://" + origin,
 		PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
 	}, nil
+}
+
+// AdmitAliasOAuthReturn binds the browser's final callback hop to the alias run
+// that started login. unknown states are ordinary app requests; a known return
+// never falls through to a replacement run, including after it was consumed.
+func (d *Database) AdmitAliasOAuthReturn(ctx context.Context, server, hostname, state, path, publicURLID string, number uint64) error {
+	if state == "" || len(state) > 8192 {
+		return nil
+	}
+	digest := sha256.Sum256([]byte(state))
+	row, err := d.queries.GetOAuthAliasReturn(ctx, clientstatedb.GetOAuthAliasReturnParams{ServerOrigin: server, Hostname: hostname, StateDigest: digest[:]})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.CallbackPath != path {
+		return nil
+	}
+	count, err := d.queries.ConsumeOAuthAliasReturn(ctx, clientstatedb.ConsumeOAuthAliasReturnParams{
+		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path,
+		PublicURLID: publicURLID, PublishRunNumber: int64(number), Now: d.now().UTC().UnixNano(),
+	})
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
