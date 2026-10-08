@@ -32,11 +32,14 @@ export default {};`
 	t.Chdir(directory)
 
 	var stdout, stderr bytes.Buffer
+	var events []telemetryPayload
 	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr, func(string) telemetryReporter {
-		t.Fatal("config path started a telemetry reporter")
-		return nil
+		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Command != "config" || events[0].Action != "path" || events[1].Event != telemetryCommandCompleted {
+		t.Fatalf("config path telemetry = %+v", events)
 	}
 	want, err := clioutput.Render(clioutput.Frame{
 		Command: "tnl config path", State: "selected", Blocks: []clioutput.Block{clioutput.Text(configPath)},
