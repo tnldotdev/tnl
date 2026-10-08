@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"time"
 
@@ -55,6 +56,8 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	Handler                  http.Handler // integration URL handler; no local target is dialed.
+	ObserveResponse          ResponseObserver
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	ObserveRequest           func(RequestObservation)
@@ -95,6 +98,14 @@ type Event struct {
 	PolicyDenials    uint64
 }
 
+// PublishRunIdentity binds a response observer to the run that served it.
+type PublishRunIdentity struct {
+	PublicURLID string
+	Number      uint64
+}
+
+type ResponseObserver func(*http.Response, PublishRunIdentity) error
+
 func Run(ctx context.Context, config Config) (result error) {
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
@@ -132,8 +143,10 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err != nil {
 		return err
 	}
-	if err := localproxy.Preflight(ctx, config.Target); err != nil {
-		return err
+	if config.Handler == nil {
+		if err := localproxy.Preflight(ctx, config.Target); err != nil {
+			return err
+		}
 	}
 	hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
 	if err != nil {

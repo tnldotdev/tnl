@@ -77,6 +77,13 @@ type LocalRequestCounter struct {
 	LastNumber          int64
 }
 
+type IntegrationUrlPublisher struct {
+	ServerOrigin string
+	Hostname     string
+	Owner        string
+	ExpiresAt    int64
+}
+
 type LocalTunnel struct {
 	ID               string
 	Command          string
