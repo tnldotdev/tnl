@@ -166,10 +166,12 @@ func runSession(
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		Hostname:      setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
-		Mounts:       config.Mounts,
-		ShareAccess:  shareRuntime,
-		Feedback:     feedback,
-		RequestLimit: config.RequestLimit,
+		Mounts:            config.Mounts,
+		ShareAccess:       shareRuntime,
+		Feedback:          feedback,
+		RequestLimit:      config.RequestLimit,
+		ObserveRequest:    config.ObserveRequest,
+		RequestInspection: config.RequestInspection,
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
 				Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version})

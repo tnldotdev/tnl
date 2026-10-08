@@ -85,6 +85,18 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 		linkedWorktree.Label == mainWorktree.Label {
 		t.Fatalf("linked worktree = %#v", linkedWorktree)
 	}
+	for _, root := range []string{primary, linked} {
+		if err := os.MkdirAll(filepath.Join(root, "apps", "web"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if linkedWorktree.PrimaryCheckoutRoot() != canonicalPrimary ||
+		SharedProjectIdentity(linkedWorktree, filepath.Join(linked, "apps", "web")) != filepath.Join(canonicalPrimary, "apps", "web") ||
+		SharedProjectIdentity(mainWorktree, filepath.Join(primary, "apps", "web")) != filepath.Join(canonicalPrimary, "apps", "web") {
+		t.Fatalf("primary = %q, linked primary = %q, linked project = %q, main project = %q", canonicalPrimary,
+			linkedWorktree.PrimaryCheckoutRoot(), SharedProjectIdentity(linkedWorktree, filepath.Join(linked, "apps", "web")),
+			SharedProjectIdentity(mainWorktree, filepath.Join(primary, "apps", "web")))
+	}
 	runWorktreeGit(t, linked, "switch", "-c", "new-branch")
 	changedBranch, err := ResolveWorktree(t.Context(), linked)
 	if err != nil {

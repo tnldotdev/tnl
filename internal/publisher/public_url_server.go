@@ -31,16 +31,18 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname        string
-	Target          string
-	Mounts          []localproxy.Mount
-	ShareAccess     *shareAccess
-	BrowserAccess   *browserAccess
-	Feedback        *feedbackRuntime
-	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
-	OnTargetFailure func()
-	Certificate     tls.Certificate
-	CertificatePlan controlv1.CertificatePlan
+	Hostname          string
+	Target            string
+	Mounts            []localproxy.Mount
+	ShareAccess       *shareAccess
+	BrowserAccess     *browserAccess
+	Feedback          *feedbackRuntime
+	RequestLimit      int // zero selects localproxy.DefaultRequestLimit.
+	OnTargetFailure   func()
+	ObserveRequest    func(RequestObservation)
+	RequestInspection string
+	Certificate       tls.Certificate
+	CertificatePlan   controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
@@ -70,6 +72,46 @@ type PublicURLServer struct {
 
 type denialContextKey struct{}
 type shareConnectionKey struct{}
+type responseOriginKey struct{}
+
+// Unwrap lets net/http's response controller retain flushing and upgrades.
+type observedResponseWriter struct {
+	http.ResponseWriter
+	status int
+	body   *bodyCapture
+}
+
+func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *observedResponseWriter) WriteHeader(status int) {
+	if w.status == 0 && status >= http.StatusOK {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *observedResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(data)
+	if w.body != nil {
+		w.body.append(data[:n])
+	}
+	return n, err
+}
+
+// RequestObservation holds local HTTP observations for the CLI inspector.
+type RequestObservation struct {
+	ReceivedAt  time.Time
+	Method      string
+	Path        string
+	Status      int
+	Duration    time.Duration
+	Origin      string
+	CaptureMode string
+	Detail      *RequestDetail
+}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
@@ -89,7 +131,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	handler, err := localproxy.NewWithMountsOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
-		modifyResponse, observe, config.OnTargetFailure)
+		modifyResponse, observe, func(request *http.Request) {
+			if request != nil {
+				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
+					forwarded.Store(true)
+				}
+			}
+		}, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +154,54 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if config.ObserveRequest != nil && !sharePath(request.URL.EscapedPath()) {
+					started := time.Now()
+					forwarded := &atomic.Bool{}
+					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
+					tracked := &observedResponseWriter{ResponseWriter: response}
+					var detail *RequestDetail
+					var incoming, outgoing *bodyCapture
+					if config.RequestInspection == "detailed" {
+						detail = &RequestDetail{}
+						detail.Query, detail.QueryTruncated = boundedRequestText(request.URL.RawQuery, 8<<10)
+						detail.RequestHeaders, detail.RequestHeadersTruncated = boundedRequestHeaders(request.Header, 16<<10)
+						incoming, outgoing = &bodyCapture{}, &bodyCapture{}
+						if request.Body != nil {
+							request.Body = &observedBodyReader{ReadCloser: request.Body, body: incoming}
+						}
+						tracked.body = outgoing
+					}
+					response = tracked
+					defer func() {
+						path := request.URL.EscapedPath()
+						if len(path) > 512 {
+							path = path[:512]
+						}
+						origin := "tnl"
+						if forwarded.Load() {
+							origin = "local_service"
+						}
+						status := tracked.status
+						if status == 0 {
+							status = http.StatusOK
+						}
+						mode := "summary"
+						if detail != nil {
+							mode = "detailed"
+							detail.RequestBody, detail.ResponseBody = incoming.snapshot(), outgoing.snapshot()
+							if request.ContentLength > incoming.total {
+								detail.RequestBody.Incomplete = true
+							}
+							if status == http.StatusSwitchingProtocols {
+								detail.RequestBody.Unavailable, detail.ResponseBody.Unavailable = "upgrade", "upgrade"
+							}
+							detail.ResponseHeaders, detail.ResponseHeadersTruncated = boundedRequestHeaders(tracked.Header(), 16<<10)
+						}
+						config.ObserveRequest(RequestObservation{ReceivedAt: started.UTC(), Method: request.Method,
+							Path: path, Status: status, Duration: time.Since(started), Origin: origin,
+							CaptureMode: mode, Detail: detail})
+					}()
+				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code)
 					return

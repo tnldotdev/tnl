@@ -76,6 +76,7 @@ type publishOutput struct {
 	providers             []providerCount
 	allowedPrefixCount    int
 	framework             string
+	inspection            string
 	demo                  bool
 	guestDemo             bool
 	openURL               func(string) error
@@ -231,6 +232,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.framework != "" {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
+			if o.inspection == "detailed" {
+				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
+			}
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
 			}
@@ -319,6 +323,12 @@ func (o *publishOutput) currentIP(ip string) error {
 func (o *publishOutput) setFramework(framework string) {
 	o.mu.Lock()
 	o.framework = framework
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) setRequestInspection(mode string) {
+	o.mu.Lock()
+	o.inspection = mode
 	o.mu.Unlock()
 }
 

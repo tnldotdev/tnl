@@ -93,6 +93,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
+	properties.Set("request_inspection", &jsonschema.Schema{Type: "string", Enum: []any{"summary", "detailed"}, Description: "Local HTTP request capture for this service."})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)

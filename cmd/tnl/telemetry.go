@@ -38,10 +38,11 @@ const (
 type telemetryTrackedCommand string
 
 const (
-	telemetryInit    telemetryTrackedCommand = "init"
-	telemetryLogin   telemetryTrackedCommand = "login"
-	telemetryDev     telemetryTrackedCommand = "dev"
-	telemetryPublish telemetryTrackedCommand = "publish"
+	telemetryInit     telemetryTrackedCommand = "init"
+	telemetryLogin    telemetryTrackedCommand = "login"
+	telemetryDev      telemetryTrackedCommand = "dev"
+	telemetryPublish  telemetryTrackedCommand = "publish"
+	telemetryRequests telemetryTrackedCommand = "requests"
 )
 
 type telemetryFailureStage string
@@ -394,7 +395,7 @@ func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, st
 
 // only literal command nodes enter this set. arguments and flags do not.
 var trackedCommandPaths = func() map[string]bool {
-	paths := `init|login|logout|dev|publish|status|config path|config check|config generate|team current|team list|team use|team create|team members|team invite create|team invite list|team invite revoke|team join|team member set-role|team member remove|domain claim|domain default|domain list|domain status|domain release|url list|url delete|share link create|share list|share link revoke|share team create|share team revoke|feedback list|feedback inspect|feedback watch|feedback reply|feedback update|feedback resolve|feedback reopen|admin server status|admin relays list|admin relays drain|admin maintenance list|admin maintenance allow|admin maintenance block`
+	paths := `init|login|logout|dev|publish|status|requests list|requests show|config path|config check|config generate|team current|team list|team use|team create|team members|team invite create|team invite list|team invite revoke|team join|team member set-role|team member remove|domain claim|domain default|domain list|domain status|domain release|url list|url delete|share link create|share list|share link revoke|share team create|share team revoke|feedback list|feedback inspect|feedback watch|feedback reply|feedback update|feedback resolve|feedback reopen|admin server status|admin relays list|admin relays drain|admin maintenance list|admin maintenance allow|admin maintenance block`
 	result := make(map[string]bool)
 	for _, path := range strings.Split(paths, "|") {
 		result[path] = true

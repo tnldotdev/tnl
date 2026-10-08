@@ -40,6 +40,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	output.setRequestInspection(flags.RequestInspection)
 	defer func() { result = output.finish(ctx, result) }()
 	var localDemo *demo.Server
 	if flags.Demo {
@@ -148,6 +149,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	if err != nil {
+		return err
+	}
+	defer recorder.Close()
+	publisherConfig.ObserveRequest = requestObservation(recorder)
+	publisherConfig.RequestInspection = flags.RequestInspection
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {

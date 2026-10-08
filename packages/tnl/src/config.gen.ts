@@ -14,6 +14,10 @@ export interface TnlConfig {
    */
   feedback?: boolean;
   /**
+   * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
+   */
+  request_inspection?: "summary" | "detailed";
+  /**
    * Default public URL and tunnel settings.
    */
   tunnel?: {
@@ -66,6 +70,10 @@ export interface TnlConfig {
            * Service directory relative to the project configuration.
            */
           directory?: string;
+          /**
+           * Local HTTP request capture for this service.
+           */
+          request_inspection?: "summary" | "detailed";
           /**
            * PublicURL and tunnel overrides for this service.
            */

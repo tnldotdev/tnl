@@ -134,6 +134,9 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if err := validateRequestInspection(config.RequestInspection); err != nil {
+		return fmt.Errorf("request_inspection: %w", err)
+	}
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
@@ -155,6 +158,9 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		if err := validateRequestInspection(service.RequestInspection); err != nil {
+			return fmt.Errorf("services.%s.request_inspection: %w", name, err)
+		}
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
 		}
@@ -181,6 +187,13 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
 			}
 		}
+	}
+	return nil
+}
+
+func validateRequestInspection(value *string) error {
+	if value != nil && *value != "summary" && *value != "detailed" {
+		return errors.New("must be summary or detailed")
 	}
 	return nil
 }
