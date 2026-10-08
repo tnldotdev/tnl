@@ -133,7 +133,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if options.CallbackHostname != "" {
 		canonical, err := naming.CanonicalizeHostname(options.CallbackHostname)
 		if err != nil || canonical != options.CallbackHostname {
-			return nil, errors.New("clientstate: invalid callback hostname")
+			return nil, failure.Wrap("validate OAuth callback hostname", failure.ProjectConfigInvalid, errors.New("hostname must be canonical"))
 		}
 	}
 	if _, err := d.Server(ctx, server); err != nil {
@@ -169,16 +169,16 @@ func (t *Tunnel) ID() string { return t.id }
 func (t *Tunnel) SetCallbackHostname(ctx context.Context, hostname string) error {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return errors.New("clientstate: invalid callback hostname")
+		return failure.Wrap("validate OAuth callback hostname", failure.ProjectConfigInvalid, errors.New("hostname must be canonical"))
 	}
 	count, err := t.database.queries.SetTunnelCallbackHostname(ctx, clientstatedb.SetTunnelCallbackHostnameParams{
 		Hostname: hostname, TunnelID: t.id,
 	})
 	if err != nil {
-		return err
+		return failure.Wrap("register OAuth callback hostname", failure.ClientStateUnavailable, err)
 	}
 	if count != 1 {
-		return errors.New("clientstate: tunnel stopped before callback registration")
+		return failure.Wrap("register OAuth callback hostname", failure.ClientStateUnavailable, errors.New("tunnel stopped before callback registration"))
 	}
 	return nil
 }
