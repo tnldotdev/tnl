@@ -2,6 +2,7 @@ package clientstate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,17 +23,37 @@ func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event jso
 	if !opaqueid.Valid(id, opaqueid.TelemetryEventPrefix) || !json.Valid(event) || len(event) > 2048 {
 		return errors.New("clientstate: invalid telemetry event")
 	}
-	if _, err := d.db.ExecContext(ctx, `INSERT INTO telemetry_outbox (event_id, created_at, event_json) VALUES (?, ?, ?)`, id, d.now().UTC().UnixNano(), string(event)); err != nil {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("clientstate: begin telemetry queue: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO telemetry_outbox (event_id, created_at, event_json) VALUES (?, ?, ?)`, id, d.now().UTC().UnixNano(), string(event)); err != nil {
 		return fmt.Errorf("clientstate: queue telemetry: %w", err)
 	}
-	return d.PruneTelemetryOutbox(ctx)
+	if err := d.pruneTelemetryOutbox(ctx, tx); err != nil {
+		return fmt.Errorf("clientstate: prune telemetry queue: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (d *Database) PruneTelemetryOutbox(ctx context.Context) error {
-	if _, err := d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE created_at < ?`, d.now().Add(-telemetryOutboxLifetime).UnixNano()); err != nil {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	_, err := d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id NOT IN
+	defer tx.Rollback()
+	if err := d.pruneTelemetryOutbox(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (d *Database) pruneTelemetryOutbox(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE created_at < ?`, d.now().Add(-telemetryOutboxLifetime).UnixNano()); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id NOT IN
 		(SELECT event_id FROM telemetry_outbox ORDER BY created_at DESC, event_id DESC LIMIT ?)`, telemetryOutboxMax)
 	return err
 }
@@ -60,12 +81,23 @@ func (d *Database) PendingTelemetryEvents(ctx context.Context, limit int) ([]Tel
 }
 
 func (d *Database) DeleteTelemetryEvents(ctx context.Context, events []TelemetryOutboxEvent) error {
-	for _, event := range events {
-		if _, err := d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id = ?`, event.ID); err != nil {
-			return err
-		}
+	if len(events) == 0 {
+		return nil
 	}
-	return nil
+	ids := make([]string, 0, len(events))
+	for _, event := range events {
+		if !opaqueid.Valid(event.ID, opaqueid.TelemetryEventPrefix) {
+			return errors.New("clientstate: invalid acknowledged telemetry event")
+		}
+		ids = append(ids, event.ID)
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, `DELETE FROM telemetry_outbox WHERE event_id IN
+		(SELECT value FROM json_each(?))`, string(encoded))
+	return err
 }
 
 func (d *Database) ClearTelemetryOutbox(ctx context.Context) error {
