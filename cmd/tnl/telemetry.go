@@ -173,6 +173,12 @@ func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
 	i.modeMu.Unlock()
 }
 
+func (i *telemetryInvocation) flushReady() {
+	if reporter, ok := i.reporter.(interface{ flushReady() }); ok {
+		reporter.flushReady()
+	}
+}
+
 func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
 	if i.ready.Load() {
 		return
@@ -243,19 +249,21 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 	if err != nil {
 		return
 	}
+}
+
+func (r *asyncTelemetryReporter) flushReady() {
 	r.wait.Add(1)
 	go func() {
 		defer r.wait.Done()
-		time.Sleep(50 * time.Millisecond)
-		r.flush()
+		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
+		defer cancel()
+		r.flush(ctx)
 	}()
 }
 
-func (r *asyncTelemetryReporter) flush() {
+func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-	defer cancel()
 	state, err := clientstate.Open(ctx, r.root)
 	if err != nil {
 		return
@@ -455,6 +463,9 @@ func withTelemetryObserver(
 					name = telemetryFramework(framework())
 				}
 				reporter.Report(newTelemetryReady(command, serverKind, name))
+				if invocation, ok := reporter.(*telemetryInvocation); ok {
+					invocation.flushReady()
+				}
 			})
 		}
 		return nil
