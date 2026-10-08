@@ -64,6 +64,44 @@ const integrationConfig = defineConfig({
 } as const);
 integrationConfig.oauth satisfies true;
 integrationConfig.webhooks.unknownProvider.allowFrom satisfies "*";
+
+const aliasConfig = defineConfig({
+  services: {
+    api: {},
+    web: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } },
+  },
+  aliases: { review: { service: "web" }, nested: { service: "api", name: "api.shop" } },
+});
+aliasConfig.aliases.review.service satisfies "web";
+aliasConfig.aliases.nested.name satisfies "api.shop";
+const aliasFactory = defineConfig(async ({ worktree }) => ({
+  services: {
+    api: { tunnel: { name: `api-${worktree.label.id}` } },
+    web: { paths: { "/api": "api" } },
+  },
+  aliases: { review: { service: "web" } },
+}));
+// @ts-expect-error aliases reference a configured entry service.
+defineConfig({ services: { api: {} }, aliases: { review: { service: "missing" } } });
+defineConfig({
+  // @ts-expect-error webhook service references are checked too.
+  services: { api: {} },
+  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+});
+// @ts-expect-error string path mounts name a configured service.
+defineConfig({ services: { web: { paths: { "/api": "missing" } }, api: {} } });
+// @ts-expect-error object path mounts name a configured service.
+defineConfig({ services: { web: { paths: { "/api": { service: "missing" } } }, api: {} } });
+// @ts-expect-error a service cannot mount itself.
+defineConfig({ services: { api: { paths: { "/api": "api" } } } });
+// @ts-expect-error factory returns retain service-reference checks.
+defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
+// @ts-expect-error async factory returns retain service-reference checks.
+defineConfig(async () => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
+// @ts-expect-error factory string mounts retain service-reference checks.
+defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": "missing" } } } }));
+// @ts-expect-error factory object mounts retain service-reference checks.
+defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": { service: "missing" } } } } }));
 // @ts-expect-error server belongs to the project, not a service.
 ({ server: "https://control.example" }) satisfies NonNullable<TnlConfig["services"]>[string];
 // @ts-expect-error team belongs to the project, not a service.
@@ -86,6 +124,8 @@ defineConfig({ version: 1 });
 defineConfig({ tnld: { role: "relay" } });
 
 export {
+  aliasConfig,
+  aliasFactory,
   dynamicConfig,
   exactConfig,
   integrationConfig,

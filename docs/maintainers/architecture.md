@@ -93,6 +93,12 @@ may require further shortening. the primary checkout omits the checkout piece.
 generated project declarations preserve exact label literals, and browser
 metadata exposes those pieces without filesystem roots.
 
+project alias declarations name one configured entry service. relative alias
+names can contain several DNS labels; ordinary tunnel names remain one label.
+configuration validation does not consult server policy or publish a URL.
+TypeScript config helpers check service references in aliases, webhooks, and
+path mounts; Go validation also checks computed values and static configuration.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL

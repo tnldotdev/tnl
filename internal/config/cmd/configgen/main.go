@@ -85,6 +85,11 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return servicesSchema()
 	case reflect.TypeOf(config.Webhook{}):
 		return webhookSchema()
+	case reflect.TypeOf(config.Alias{}):
+		return aliasSchema()
+	case reflect.TypeOf(map[string]config.Alias{}):
+		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(32),
+			PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`}, AdditionalProperties: aliasSchema()}
 	case reflect.TypeOf(map[string]config.Webhook{}):
 		return &jsonschema.Schema{
 			Type: "object", MaxProperties: integerPointer(32),
@@ -187,6 +192,25 @@ func webhookSchema() *jsonschema.Schema {
 		{Const: "*"}, sourceObject("providers"), sourceObject("ips"), sourceObject("providers", "ips"),
 	}})
 	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "allow_from"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
+}
+
+func aliasSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "Configured entry service serving the alias."})
+	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`, MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Relative DNS name beneath the member namespace; defaults to the alias key. Nested names require server permission."})
+	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain; otherwise inherit the entry service's domain."})
+	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact authorized HTTPS public URL; mutually exclusive with name and domain."})
+	tunnel := tunnelSchema()
+	for _, name := range []string{"allow_ip", "allow_all_ips"} {
+		value, _ := tunnel.Properties.Get(name)
+		properties.Set(name, value)
+	}
+	return &jsonschema.Schema{Type: "object", Required: []string{"service"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
+		AllOf: []*jsonschema.Schema{
+			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}}},
+			{Not: &jsonschema.Schema{Required: []string{"domain", "public_url"}}},
+			tunnel.AllOf[1],
+		}}
 }
 
 func tnldSchema() *jsonschema.Schema {

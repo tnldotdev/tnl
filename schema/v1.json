@@ -372,6 +372,84 @@
           "type": "object",
           "maxProperties": 32,
           "description": "Stable project webhook endpoints, delivered to running worktrees."
+        },
+        "aliases": {
+          "additionalProperties": {
+            "allOf": [
+              {
+                "not": {
+                  "required": ["name", "public_url"]
+                }
+              },
+              {
+                "not": {
+                  "required": ["domain", "public_url"]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "allow_all_ips": {
+                      "const": true
+                    }
+                  },
+                  "required": ["allow_all_ips"]
+                },
+                "then": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": ["allow_ip"]
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "service": {
+                "type": "string",
+                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                "description": "Configured entry service serving the alias."
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 253,
+                "minLength": 1,
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$",
+                "description": "Relative DNS name beneath the member namespace; defaults to the alias key. Nested names require server permission."
+              },
+              "domain": {
+                "type": "string",
+                "description": "Ready team domain; otherwise inherit the entry service's domain."
+              },
+              "public_url": {
+                "type": "string",
+                "description": "Exact authorized HTTPS public URL; mutually exclusive with name and domain."
+              },
+              "allow_ip": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true,
+                "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+              },
+              "allow_all_ips": {
+                "type": "boolean",
+                "description": "Allow visitors from every IP address."
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["service"]
+          },
+          "propertyNames": {
+            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          },
+          "type": "object",
+          "maxProperties": 32,
+          "description": "Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."
         }
       },
       "additionalProperties": false,

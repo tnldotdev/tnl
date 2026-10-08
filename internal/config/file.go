@@ -153,6 +153,9 @@ func ValidateTNL(config TNL) error {
 	if err := ValidateWebhooks(config.Services, config.Webhooks); err != nil {
 		return err
 	}
+	if err := ValidateAliases(config); err != nil {
+		return err
+	}
 	names := make([]string, 0, len(config.Services))
 	for name := range config.Services {
 		names = append(names, name)
