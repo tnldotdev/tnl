@@ -46,10 +46,6 @@ export interface TnlConfig {
      */
     allowIP?: string[];
     /**
-     * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
-     */
-    allowProviders?: ("github" | "stripe")[];
-    /**
      * Exact HTTPS public URL to publish.
      */
     publicURL?: string;
@@ -99,10 +95,6 @@ export interface TnlConfig {
              */
             allowIP?: string[];
             /**
-             * Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.
-             */
-            allowProviders?: ("github" | "stripe")[];
-            /**
              * Exact HTTPS public URL to publish.
              */
             publicURL?: string;
@@ -129,6 +121,48 @@ export interface TnlConfig {
            * Local HTTP request capture for this service.
            */
           requestInspection?: "summary" | "detailed";
+        }
+      | undefined;
+  };
+  /**
+   * Stable project webhook endpoints, delivered to running worktrees.
+   */
+  webhooks?: {
+    [k: string]:
+      | {
+          service: string;
+          path: string;
+          /**
+           * @minItems 1
+           */
+          methods?: [
+            "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE",
+            ...("GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE")[],
+          ];
+          allowFrom:
+            | "*"
+            | {
+                /**
+                 * @minItems 1
+                 */
+                providers: ["github" | "stripe", ...("github" | "stripe")[]];
+              }
+            | {
+                /**
+                 * @minItems 1
+                 */
+                ips: [string, ...string[]];
+              }
+            | {
+                /**
+                 * @minItems 1
+                 */
+                providers: ["github" | "stripe", ...("github" | "stripe")[]];
+                /**
+                 * @minItems 1
+                 */
+                ips: [string, ...string[]];
+              };
         }
       | undefined;
   };

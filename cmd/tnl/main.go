@@ -56,7 +56,6 @@ type tunnelFlags struct {
 	Name               string                       `name:"name" env:"TNL_NAME" help:"One label beneath your member namespace. Defaults to a service-and-worktree name."`
 	PublicURL          string                       `name:"public-url" help:"Exact HTTPS public URL to publish."`
 	AllowIP            []string                     `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowProvider      []string                     `name:"allow-provider" help:"Add stripe or github webhook IPs; your current IP is also allowed. Repeat for each provider."`
 	AllowAllIPs        bool                         `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
 	Ephemeral          bool                         `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
 	RequestLimit       *int                         `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
@@ -560,7 +559,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowProvider, allowAllIPs, ephemeral, open, inspection := false, false, false, false, false, false, false, false, false
+	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open, inspection := false, false, false, false, false, false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
@@ -576,8 +575,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			open = true
 		case "allow-ip":
 			allowIP = true
-		case "allow-provider":
-			allowProvider = true
 		case "allow-all-ips":
 			allowAllIPs = true
 		case "ephemeral":
@@ -601,7 +598,7 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		if name && !publicURL {
 			tunnel.PublicURL = ""
 		}
-		if (allowIP || allowProvider) && !allowAllIPs {
+		if allowIP && !allowAllIPs {
 			tunnel.AllowAllIPs = false
 		}
 	}

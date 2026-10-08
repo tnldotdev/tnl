@@ -30,7 +30,7 @@ func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags 
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	if len(names) > 1 && (len(flags.Command) != 0 || flags.Port != 0 || flags.StartupTimeout != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral || flags.AllowAllIPs || flags.AllowIP != nil || flags.AllowProvider != nil || flags.RequestLimit != nil) {
+	if len(names) > 1 && (len(flags.Command) != 0 || flags.Port != 0 || flags.StartupTimeout != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral || flags.AllowAllIPs || flags.AllowIP != nil || flags.RequestLimit != nil) {
 		return failure.Wrap("select development services", failure.InvalidTunnelFlags, errors.New("select a service when overriding its command, port, or public URL settings"))
 	}
 	writer := &devMetadataWriter{}

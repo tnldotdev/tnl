@@ -53,6 +53,7 @@ type TNL struct {
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev               *Dev                   `json:"dev,omitempty" yaml:"dev,omitempty"`
 	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
+	Webhooks          map[string]Webhook     `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 }
 
 type Services map[string]Service
@@ -113,15 +114,14 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Tunnel struct {
-	Domain         *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name           *string  `json:"name,omitempty" yaml:"name,omitempty"`
-	PublicURL      *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Open           *bool    `json:"open,omitempty" yaml:"open,omitempty"`
-	AllowIP        []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
-	AllowProviders []string `json:"allow_providers,omitempty" yaml:"allow_providers,omitempty" jsonschema:"uniqueItems=true"`
-	AllowAllIPs    *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
-	Ephemeral      *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	RequestLimit   *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
+	Domain       *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Name         *string  `json:"name,omitempty" yaml:"name,omitempty"`
+	PublicURL    *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Open         *bool    `json:"open,omitempty" yaml:"open,omitempty"`
+	AllowIP      []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
+	AllowAllIPs  *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
+	Ephemeral    *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	RequestLimit *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
 }
 
 type Publish struct {

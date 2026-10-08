@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
@@ -33,6 +34,14 @@ type IntegrationOrigin struct {
 	URL      string `json:"url"`
 }
 
+type Webhook struct {
+	Hostname string   `json:"hostname"`
+	URL      string   `json:"url"`
+	Service  string   `json:"service"`
+	Path     string   `json:"path"`
+	Methods  []string `json:"methods"`
+}
+
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
@@ -41,6 +50,7 @@ type Metadata struct {
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
 	Services           map[string]Service `json:"services"`
 	OAuth              *IntegrationOrigin `json:"oauth,omitempty"`
+	Webhooks           map[string]Webhook `json:"webhooks,omitempty"`
 	Version            int                `json:"version"`
 }
 
@@ -49,6 +59,7 @@ type PublicMetadata struct {
 	Namespace string             `json:"namespace"`
 	Services  map[string]Service `json:"services"`
 	OAuth     *IntegrationOrigin `json:"oauth,omitempty"`
+	Webhooks  map[string]Webhook `json:"webhooks,omitempty"`
 	Dev       bool               `json:"dev"`
 }
 
@@ -65,7 +76,7 @@ func (m Metadata) Public(dev bool) PublicMetadata {
 		services[name] = service
 	}
 	return PublicMetadata{
-		Namespace: m.Namespace, Services: services, OAuth: m.OAuth,
+		Namespace: m.Namespace, Services: services, OAuth: m.OAuth, Webhooks: m.Webhooks,
 		Dev: dev,
 	}
 }
@@ -87,6 +98,37 @@ func (m Metadata) Validate() error {
 	}
 	if len(m.Services) > 32 {
 		return errors.New("project metadata may contain at most 32 services")
+	}
+	if len(m.Webhooks) > 32 {
+		return errors.New("project metadata may contain at most 32 webhooks")
+	}
+	for name, endpoint := range m.Webhooks {
+		if !naming.ValidServiceName(name) || !localproxy.ValidMountPrefix(endpoint.Path) {
+			return fmt.Errorf("invalid webhook %q", name)
+		}
+		if err := canonicalHostname("webhook "+name+" hostname", endpoint.Hostname); err != nil {
+			return err
+		}
+		if endpoint.URL != "https://"+endpoint.Hostname+endpoint.Path {
+			return fmt.Errorf("webhook %q URL does not match hostname and path", name)
+		}
+		if endpoint.Service != "" {
+			if _, found := m.Services[endpoint.Service]; !found {
+				return fmt.Errorf("webhook %q names an unknown service", name)
+			}
+		} else if len(m.Services) != 0 {
+			return fmt.Errorf("webhook %q needs a named service", name)
+		}
+		if len(endpoint.Methods) == 0 {
+			return fmt.Errorf("webhook %q needs a method", name)
+		}
+		seen := map[string]bool{}
+		for _, method := range endpoint.Methods {
+			if !config.ValidWebhookMethod(method) || seen[method] {
+				return fmt.Errorf("webhook %q has an invalid method", name)
+			}
+			seen[method] = true
+		}
 	}
 	if len(m.ServiceDirectories) != len(m.Services) {
 		return errors.New("project metadata requires one directory for every service")

@@ -152,6 +152,23 @@ redirect URI. control and relays receive neither login state nor callback
 contents. a callback to a stopped or replaced run fails instead of reaching
 another worktree.
 
+Declared webhook endpoints use a sibling saved hostname. Each live participant
+registers its declarations separately from receiver selection. All declarations
+for a named endpoint must agree on service, exact path, methods, and source
+policy. SQLite registration rejects conflicting names and paths atomically.
+Only ready tunnels of the named service receive requests; subscriptions in
+other contexts and expired tunnel leases cannot become receivers.
+
+Ingress admits the union of the declared source ranges because HTTP paths remain
+encrypted until the publisher. The local handler checks the trusted source IP,
+exact escaped path, and method before reading the body. It snapshots ready
+receivers and forwards identical body bytes and signature inputs to each.
+Every receiver must return 2xx. Failed attempts are not retried locally, and
+provider retries may revisit already successful worktrees. GET verification
+requires matching bounded responses. No request journal or replay is retained.
+Changed declarations drain the webhook publish run before re-publication;
+provider IP ranges are resolved once per new run, independently of OAuth.
+
 ```text
 public URL
   durable hostname, ownership, target, policy, and state

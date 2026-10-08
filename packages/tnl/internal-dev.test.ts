@@ -426,6 +426,18 @@ test("project metadata agrees with the Go validation fixture", async () => {
             dev: z.boolean(),
             version: z.number(),
             oauth: z.object({ hostname: z.string(), url: z.string() }).optional(),
+            webhooks: z
+              .record(
+                z.string(),
+                z.object({
+                  hostname: z.string(),
+                  url: z.string(),
+                  service: z.string(),
+                  path: z.string(),
+                  methods: z.array(z.string()),
+                }),
+              )
+              .optional(),
             serviceDirectories: z.record(z.string(), z.string()),
             services: z.record(
               z.string(),
@@ -457,12 +469,13 @@ test("project metadata agrees with the Go validation fixture", async () => {
     } else {
       expect(() => discoverProject(root), entry.name).toThrow();
     }
-    const { namespace, services, dev, oauth } = entry.metadata;
+    const { namespace, services, dev, oauth, webhooks } = entry.metadata;
     const runtime = JSON.stringify({
       namespace,
       services,
       dev,
       ...(oauth === undefined ? {} : { oauth }),
+      ...(webhooks === undefined ? {} : { webhooks }),
     });
     if (entry.runtimeValid ?? entry.valid) {
       expect(parseRuntimePayload(runtime)?.namespace, entry.name).toBe(namespace);
@@ -496,6 +509,18 @@ test("tnl dev requests and assignment agree with the Go wire fixture", async () 
           namespace: z.string(),
           dev: z.boolean(),
           oauth: z.object({ hostname: z.string(), url: z.string() }).optional(),
+          webhooks: z
+            .record(
+              z.string(),
+              z.object({
+                hostname: z.string(),
+                url: z.string(),
+                service: z.string(),
+                path: z.string(),
+                methods: z.array(z.string()),
+              }),
+            )
+            .optional(),
           services: z.record(
             z.string(),
             z.object({ namespace: z.string(), hostname: z.string(), url: z.string() }),

@@ -91,9 +91,6 @@
                   "anyOf": [
                     {
                       "required": ["allow_ip"]
-                    },
-                    {
-                      "required": ["allow_providers"]
                     }
                   ]
                 }
@@ -124,15 +121,6 @@
               "type": "array",
               "uniqueItems": true,
               "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-            },
-            "allow_providers": {
-              "items": {
-                "type": "string",
-                "enum": ["github", "stripe"]
-              },
-              "type": "array",
-              "uniqueItems": true,
-              "description": "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts."
             },
             "allow_all_ips": {
               "type": "boolean",
@@ -193,9 +181,6 @@
                         "anyOf": [
                           {
                             "required": ["allow_ip"]
-                          },
-                          {
-                            "required": ["allow_providers"]
                           }
                         ]
                       }
@@ -226,15 +211,6 @@
                     "type": "array",
                     "uniqueItems": true,
                     "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-                  },
-                  "allow_providers": {
-                    "items": {
-                      "type": "string",
-                      "enum": ["github", "stripe"]
-                    },
-                    "type": "array",
-                    "uniqueItems": true,
-                    "description": "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts."
                   },
                   "allow_all_ips": {
                     "type": "boolean",
@@ -298,6 +274,99 @@
           "type": "object",
           "maxProperties": 32,
           "description": "Named local services with optional tunnel, publish, and dev overrides and path mounts."
+        },
+        "webhooks": {
+          "additionalProperties": {
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$"
+              },
+              "methods": {
+                "items": {
+                  "type": "string",
+                  "enum": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]
+                },
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "allow_from": {
+                "oneOf": [
+                  {
+                    "const": "*"
+                  },
+                  {
+                    "properties": {
+                      "providers": {
+                        "items": {
+                          "type": "string",
+                          "enum": ["github", "stripe"]
+                        },
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["providers"]
+                  },
+                  {
+                    "properties": {
+                      "ips": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["ips"]
+                  },
+                  {
+                    "properties": {
+                      "providers": {
+                        "items": {
+                          "type": "string",
+                          "enum": ["github", "stripe"]
+                        },
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "ips": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["providers", "ips"]
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["path", "service", "allow_from"]
+          },
+          "propertyNames": {
+            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          },
+          "type": "object",
+          "maxProperties": 32,
+          "description": "Stable project webhook endpoints, delivered to running worktrees."
         }
       },
       "additionalProperties": false,

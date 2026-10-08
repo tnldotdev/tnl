@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -151,6 +150,9 @@ func ValidateTNL(config TNL) error {
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
 	}
+	if err := ValidateWebhooks(config.Services, config.Webhooks); err != nil {
+		return err
+	}
 	names := make([]string, 0, len(config.Services))
 	for name := range config.Services {
 		names = append(names, name)
@@ -240,8 +242,8 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 				return errors.New("tunnel.public_url must be an HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
-		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && (tunnel.AllowIP != nil || tunnel.AllowProviders != nil) {
-			return errors.New("tunnel.allow_all_ips cannot be combined with tunnel.allow_ip or tunnel.allow_providers")
+		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
+			return errors.New("tunnel.allow_all_ips cannot be combined with tunnel.allow_ip")
 		}
 		seen := make(map[string]struct{}, len(tunnel.AllowIP))
 		for _, value := range tunnel.AllowIP {
@@ -253,16 +255,6 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 				return fmt.Errorf("tunnel.allow_ip value %q is duplicated", value)
 			}
 			seen[canonical[0]] = struct{}{}
-		}
-		seenProviders := make(map[string]bool, len(tunnel.AllowProviders))
-		for _, provider := range tunnel.AllowProviders {
-			if !webhookips.Valid(provider) {
-				return fmt.Errorf("tunnel.allow_providers value %q is not a supported webhook IP provider", provider)
-			}
-			if seenProviders[provider] {
-				return fmt.Errorf("tunnel.allow_providers value %q is duplicated", provider)
-			}
-			seenProviders[provider] = true
 		}
 	}
 	if publish != nil && publish.Target != nil {

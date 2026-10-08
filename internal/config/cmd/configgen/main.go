@@ -83,6 +83,14 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):
 		return servicesSchema()
+	case reflect.TypeOf(config.Webhook{}):
+		return webhookSchema()
+	case reflect.TypeOf(map[string]config.Webhook{}):
+		return &jsonschema.Schema{
+			Type: "object", MaxProperties: integerPointer(32),
+			PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
+			AdditionalProperties: webhookSchema(),
+		}
 	case reflect.TypeOf(config.TNLDSection{}):
 		return tnldSchema()
 	default:
@@ -130,15 +138,6 @@ func tunnelSchema() *jsonschema.Schema {
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true,
 		Description: "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.",
 	})
-	providerNames := webhookips.Names()
-	providerValues := make([]any, len(providerNames))
-	for index, name := range providerNames {
-		providerValues[index] = name
-	}
-	properties.Set("allow_providers", &jsonschema.Schema{
-		Type: "array", Items: &jsonschema.Schema{Type: "string", Enum: providerValues}, UniqueItems: true,
-		Description: "Webhook providers whose published IP addresses may visit the public URL; resolved when the tunnel starts.",
-	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
 	properties.Set("request_limit", &jsonschema.Schema{
@@ -154,11 +153,39 @@ func tunnelSchema() *jsonschema.Schema {
 			{
 				If: &jsonschema.Schema{Properties: allowAllProperties, Required: []string{"allow_all_ips"}},
 				Then: &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-					{Required: []string{"allow_ip"}}, {Required: []string{"allow_providers"}},
+					{Required: []string{"allow_ip"}},
 				}}},
 			},
 		},
 	}
+}
+
+func webhookSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("service", &jsonschema.Schema{Type: "string"})
+	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
+	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
+	providerValues := make([]any, 0, len(webhookips.Names()))
+	for _, name := range webhookips.Names() {
+		providerValues = append(providerValues, name)
+	}
+	providerField := &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: providerValues}, UniqueItems: true}
+	ipField := &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true}
+	sourceObject := func(required ...string) *jsonschema.Schema {
+		fields := jsonschema.NewProperties()
+		for _, name := range required {
+			if name == "providers" {
+				fields.Set(name, providerField)
+			} else {
+				fields.Set(name, ipField)
+			}
+		}
+		return &jsonschema.Schema{Type: "object", Properties: fields, Required: required, AdditionalProperties: jsonschema.FalseSchema}
+	}
+	properties.Set("allow_from", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+		{Const: "*"}, sourceObject("providers"), sourceObject("ips"), sourceObject("providers", "ips"),
+	}})
+	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "allow_from"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 
 func tnldSchema() *jsonschema.Schema {

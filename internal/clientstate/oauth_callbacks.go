@@ -19,25 +19,25 @@ type OAuthCallback struct {
 
 // SaveOAuthCallback stores an opaque OAuth state digest, never the state value.
 // duplicate states fail closed rather than replacing another worktree's login.
-func (d *Database) SaveOAuthCallback(ctx context.Context, server, hostname, state, tunnelID, path, query, publicURLID string, runNumber uint64) error {
-	if server == "" || hostname == "" || state == "" || len(state) > 8192 || tunnelID == "" || path == "" || publicURLID == "" || runNumber == 0 || runNumber > 1<<63-1 {
-		return errors.New("clientstate: incomplete OAuth callback")
+func (d *Database) SaveOAuthCallback(ctx context.Context, server, hostname, group, state, tunnelID, path, query, publicURLID string, runNumber uint64) error {
+	if server == "" || hostname == "" || group == "" || state == "" || len(state) > 8192 || tunnelID == "" || path == "" || publicURLID == "" || runNumber == 0 || runNumber > 1<<63-1 {
+		return errors.New("incomplete OAuth callback")
 	}
 	digest := sha256.Sum256([]byte(state))
 	now := d.now().UTC()
 	if err := d.queries.ExpireOAuthCallbacks(ctx, now.UnixNano()); err != nil {
-		return fmt.Errorf("clientstate: expire OAuth callbacks: %w", err)
+		return fmt.Errorf("expire OAuth callbacks: %w", err)
 	}
 	count, err := d.queries.SaveOAuthCallback(ctx, clientstatedb.SaveOAuthCallbackParams{
-		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], TunnelID: tunnelID,
+		ServerOrigin: server, Hostname: hostname, IntegrationGroup: group, StateDigest: digest[:], TunnelID: tunnelID,
 		CallbackPath: path, CallbackQuery: query, ExpiresAt: now.Add(10 * time.Minute).UnixNano(),
 		PublicURLID: publicURLID, PublishRunNumber: int64(runNumber), Now: now.UnixNano(),
 	})
 	if err != nil {
-		return fmt.Errorf("clientstate: save OAuth callback: %w", err)
+		return fmt.Errorf("save OAuth callback: %w", err)
 	}
 	if count != 1 {
-		return errors.New("clientstate: OAuth callback already exists or tunnel stopped")
+		return errors.New("OAuth callback already exists or tunnel stopped")
 	}
 	return nil
 }
@@ -47,7 +47,7 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, server, hostname, stat
 // to a different app merely because the hostname was reused.
 func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, state, path string) (OAuthCallback, TunnelInfo, error) {
 	if server == "" || hostname == "" || state == "" || len(state) > 8192 || path == "" {
-		return OAuthCallback{}, TunnelInfo{}, errors.New("clientstate: invalid OAuth callback")
+		return OAuthCallback{}, TunnelInfo{}, errors.New("invalid OAuth callback")
 	}
 	digest := sha256.Sum256([]byte(state))
 	tx, err := d.db.BeginTx(ctx, nil)

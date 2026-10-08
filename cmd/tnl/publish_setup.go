@@ -19,7 +19,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -45,7 +44,6 @@ type clientIPLookup interface {
 type resolvedIPPolicy struct {
 	prefixes []string
 	current  string
-	sources  []webhookips.Source
 }
 
 func authenticatePublisher(
@@ -71,18 +69,7 @@ func resolveIPPolicy(
 	ctx context.Context,
 	control clientIPLookup,
 	allowedIPPrefixes []string,
-	providers []string,
 	public bool,
-) (resolvedIPPolicy, error) {
-	return resolveIPPolicyWithSources(ctx, control, allowedIPPrefixes, providers, public, webhookips.Resolve)
-}
-
-func resolveIPPolicyWithSources(
-	ctx context.Context,
-	control clientIPLookup,
-	allowedIPPrefixes, providers []string,
-	public bool,
-	resolve func(context.Context, []string) ([]webhookips.Source, error),
 ) (resolvedIPPolicy, error) {
 	if public {
 		return resolvedIPPolicy{prefixes: []string{}}, nil
@@ -91,21 +78,9 @@ func resolveIPPolicyWithSources(
 	if err != nil {
 		return resolvedIPPolicy{}, failure.Wrap("validate allowed IP prefixes", failure.InvalidTunnelFlags, err)
 	}
-	sources, err := resolve(ctx, providers)
-	if err != nil {
-		return resolvedIPPolicy{}, err
-	}
 	seen := make(map[string]bool, len(canonical))
 	for _, prefix := range canonical {
 		seen[prefix] = true
-	}
-	for _, source := range sources {
-		for _, prefix := range source.Prefixes {
-			if !seen[prefix] {
-				canonical = append(canonical, prefix)
-				seen[prefix] = true
-			}
-		}
 	}
 	current, err := control.ClientIP(ctx)
 	if err != nil {
@@ -122,7 +97,7 @@ func resolveIPPolicyWithSources(
 		canonical = append(canonical, currentPrefix)
 	}
 	slices.Sort(canonical)
-	return resolvedIPPolicy{prefixes: canonical, current: currentIP, sources: sources}, nil
+	return resolvedIPPolicy{prefixes: canonical, current: currentIP}, nil
 }
 
 func preparePublisherServices(

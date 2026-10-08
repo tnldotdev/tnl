@@ -78,6 +78,34 @@ tnl:
 	}
 }
 
+func TestWebhookAllowFromSupportsCustomIPsAndUnrestrictedSources(t *testing.T) {
+	for name, contents := range map[string]string{
+		"restricted.json":   `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","allow_from":{"providers":["stripe"],"ips":["198.51.100.0/24"]}}}}}`,
+		"unrestricted.json": `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","allow_from":"*"}}}}`,
+		"restricted.yml":    "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      allow_from:\n        providers: [stripe]\n        ips: [198.51.100.0/24]\n",
+		"unrestricted.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      allow_from: '*'\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), name)
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			document, err := LoadDocument(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := document.TNL.Webhooks["payments"].AllowFrom
+			if strings.HasPrefix(name, "unrestricted") {
+				if !policy.Any() {
+					t.Fatal("the explicit wildcard was not accepted")
+				}
+			} else if len(policy.Providers) != 1 || policy.Providers[0] != "stripe" || len(policy.IPs) != 1 || policy.IPs[0] != "198.51.100.0/24" {
+				t.Fatalf("restricted webhook sources = %#v", policy)
+			}
+		})
+	}
+}
+
 func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 	for extension, contents := range map[string]string{
 		"json": `{"version":1,"tnld":{"role":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
@@ -178,26 +206,10 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 	}
 }
 
-func TestRequestInspectionModeValid(t *testing.T) {
-	for _, test := range []struct {
-		mode  RequestInspectionMode
-		valid bool
-	}{
-		{RequestInspectionSummary, true},
-		{RequestInspectionDetailed, true},
-		{RequestInspectionMode("all"), false},
-		{"", false},
-	} {
-		if got := test.mode.Valid(); got != test.valid {
-			t.Errorf("mode %q valid = %t, want %t", test.mode, got, test.valid)
-		}
-	}
-}
-
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
-		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
+		"json": `{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
+		"yml":  "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -227,9 +239,10 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
-		"unknown provider":           {`{"version":1,"tnl":{"tunnel":{"allow_providers":["other"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [other]\n", "not a supported webhook IP provider"},
-		"duplicate provider":         {`{"version":1,"tnl":{"tunnel":{"allow_providers":["github","github"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [github, github]\n", "is duplicated"},
-		"public with providers":      {`{"version":1,"tnl":{"tunnel":{"allow_all_ips":true,"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_all_ips: true\n    allow_providers: [stripe]\n", "cannot be combined"},
+		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},
+		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_from":{"providers":["other"]}}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_from:\n        providers: [other]\n", "unknown or duplicate provider"},
+		"empty webhook sources":      {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_from":{}}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_from: {}\n", "allow_from requires"},
+		"obsolete webhook grant":     {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_providers":["stripe"]}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_providers: [stripe]\n", "allow_providers"},
 	} {
 		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {
 			t.Run(name+"/"+extension, func(t *testing.T) {

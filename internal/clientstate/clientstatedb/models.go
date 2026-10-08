@@ -8,14 +8,6 @@ import (
 	"database/sql"
 )
 
-type CallbackHostname struct {
-	ServerOrigin string
-	ProjectKey   string
-	Namespace    string
-	Purpose      string
-	Hostname     string
-}
-
 type CertificateMaterial struct {
 	ID             int64
 	ServerOrigin   string
@@ -60,6 +52,14 @@ type GuestSession struct {
 	Namespace         string
 	ExpiresAt         int64
 	CreatedAt         int64
+}
+
+type IntegrationUrlHostname struct {
+	ServerOrigin string
+	ProjectKey   string
+	Namespace    string
+	Purpose      string
+	Hostname     string
 }
 
 type IntegrationUrlPublisher struct {
@@ -111,7 +111,7 @@ type LocalTunnel struct {
 	LeaseExpiresAt   int64
 	StoppedAt        sql.NullInt64
 	LastError        string
-	CallbackHostname string
+	IntegrationGroup string
 }
 
 type OauthCallback struct {
@@ -146,4 +146,13 @@ type TelemetryOutbox struct {
 	EventID   string
 	CreatedAt int64
 	EventJson string
+}
+
+type WebhookEndpoint struct {
+	TunnelID    string
+	Name        string
+	Service     string
+	Path        string
+	Definition  []byte
+	Fingerprint []byte
 }

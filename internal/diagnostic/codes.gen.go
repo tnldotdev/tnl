@@ -2,6 +2,8 @@
 package diagnostic
 
 const (
+	WebhookUnavailable           Code = "TNL_WEBHOOK_UNAVAILABLE"
+	WebhookDeliveryFailed        Code = "TNL_WEBHOOK_DELIVERY_FAILED"
 	OAuthCallbackUnavailable     Code = "TNL_OAUTH_CALLBACK_UNAVAILABLE"
 	OAuthCallbackExpired         Code = "TNL_OAUTH_CALLBACK_EXPIRED"
 	TargetUnavailable            Code = "TNL_TARGET_UNAVAILABLE"

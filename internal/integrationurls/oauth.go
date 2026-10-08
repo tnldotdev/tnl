@@ -16,7 +16,7 @@ import (
 )
 
 // Observer records a login before sending the authorization response to the browser.
-func Observer(state *clientstate.Database, server, hostname, tunnelID string) publisher.ResponseObserver {
+func Observer(state *clientstate.Database, server, hostname, group, tunnelID string) publisher.ResponseObserver {
 	return func(response *http.Response, run publisher.PublishRunIdentity) error {
 		location, err := url.Parse(response.Header.Get("Location"))
 		if err != nil || location.Scheme != "https" || location.Host == "" {
@@ -32,7 +32,7 @@ func Observer(state *clientstate.Database, server, hostname, tunnelID string) pu
 		}
 		if len(query["state"]) != 1 || query.Get("state") == "" || len(query["state"][0]) > 8192 || len(query["redirect_uri"]) != 1 ||
 			callback.Scheme != "https" || callback.User != nil || callback.Fragment != "" || callback.RawPath != "" || !localproxy.ValidMountPrefix(callback.Path) {
-			return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("callbacks: invalid authorization redirect"))
+			return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("invalid OAuth authorization redirect"))
 		}
 		static, err := url.ParseQuery(callback.RawQuery)
 		if err != nil {
@@ -40,7 +40,7 @@ func Observer(state *clientstate.Database, server, hostname, tunnelID string) pu
 		}
 		for _, key := range []string{"state", "code", "error", "error_description", "iss"} {
 			if _, found := static[key]; found {
-				return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("callbacks: redirect URI contains an OAuth response parameter"))
+				return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("redirect URI contains an OAuth response parameter"))
 			}
 		}
 		ctx, cancel := context.WithTimeout(response.Request.Context(), 2*time.Second)
@@ -50,9 +50,9 @@ func Observer(state *clientstate.Database, server, hostname, tunnelID string) pu
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, err)
 		}
 		if !ready {
-			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("callbacks: callback publisher is not ready"))
+			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
-		if err := state.SaveOAuthCallback(ctx, server, hostname, query.Get("state"), tunnelID, callback.Path, callback.RawQuery, run.PublicURLID, run.Number); err != nil {
+		if err := state.SaveOAuthCallback(ctx, server, hostname, group, query.Get("state"), tunnelID, callback.Path, callback.RawQuery, run.PublicURLID, run.Number); err != nil {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, err)
 		}
 		return nil

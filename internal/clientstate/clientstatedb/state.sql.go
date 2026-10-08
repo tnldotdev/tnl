@@ -265,7 +265,7 @@ INSERT INTO local_tunnels (
     heartbeat_at,
     lease_expires_at,
     last_error,
-    callback_hostname
+    integration_group
 ) VALUES (
     ?1,
     ?2,
@@ -298,7 +298,7 @@ type InsertTunnelParams struct {
 	Target           string
 	Now              int64
 	LeaseExpiresAt   int64
-	CallbackHostname string
+	IntegrationGroup string
 }
 
 func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) error {
@@ -312,13 +312,13 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 		arg.Target,
 		arg.Now,
 		arg.LeaseExpiresAt,
-		arg.CallbackHostname,
+		arg.IntegrationGroup,
 	)
 	return err
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, callback_hostname
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -352,7 +352,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
 			&i.LastError,
-			&i.CallbackHostname,
+			&i.IntegrationGroup,
 		); err != nil {
 			return nil, err
 		}
@@ -368,7 +368,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, callback_hostname
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -402,7 +402,7 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
 			&i.LastError,
-			&i.CallbackHostname,
+			&i.IntegrationGroup,
 		); err != nil {
 			return nil, err
 		}
