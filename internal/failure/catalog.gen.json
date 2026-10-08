@@ -1,0 +1,461 @@
+{
+  "schema_version": 1,
+  "failures": [
+    {
+      "code": "TNL_CLIENT_ADMIN_UNAVAILABLE",
+      "slug": "admin-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not complete the administrator operation",
+      "action": "check administrator access and control health, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",
+      "slug": "authentication-required",
+      "class": "unauthenticated",
+      "message": "tnl could not authenticate this request",
+      "action": "log in again or check the supplied access token"
+    },
+    {
+      "code": "TNL_CLIENT_BROWSER_OPEN_FAILED",
+      "slug": "browser-open-failed",
+      "class": "unavailable",
+      "message": "tnl could not open the public URL in a browser",
+      "action": "open the printed public URL manually"
+    },
+    {
+      "code": "TNL_CLIENT_CERTIFICATE_UNAVAILABLE",
+      "slug": "certificate-unavailable",
+      "class": "unavailable",
+      "message": "the public URL certificate is not ready",
+      "action": "leave the tunnel running while certificate issuance retries"
+    },
+    {
+      "code": "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE",
+      "slug": "current-directory-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not read the working directory",
+      "action": "move to an accessible project directory and retry"
+    },
+    {
+      "code": "TNL_CLIENT_CUSTOM_DOMAINS_DISABLED",
+      "slug": "custom-domains-disabled",
+      "class": "forbidden",
+      "message": "this server does not allow adding custom domains",
+      "action": "publish on a domain already available to your team"
+    },
+    {
+      "code": "TNL_CLIENT_DEMO_CONFIG_NOT_USED",
+      "slug": "demo-config-not-used",
+      "class": "invalid",
+      "message": "the built-in demo does not use project configuration",
+      "action": "remove --config from tnl publish --demo"
+    },
+    {
+      "code": "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE",
+      "slug": "demo-local-service-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not start the local demo",
+      "action": "check that loopback networking is available, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL",
+      "slug": "demo-must-be-ephemeral",
+      "class": "invalid",
+      "message": "the built-in demo needs an ephemeral public URL",
+      "action": "remove --ephemeral=false from tnl publish --demo"
+    },
+    {
+      "code": "TNL_CLIENT_DEMO_TARGET_NOT_ALLOWED",
+      "slug": "demo-target-not-allowed",
+      "class": "invalid",
+      "message": "the built-in demo starts its own local service",
+      "action": "remove the service or target argument from tnl publish --demo"
+    },
+    {
+      "code": "TNL_CLIENT_DEMO_URL_MANAGED",
+      "slug": "demo-url-managed",
+      "class": "invalid",
+      "message": "the built-in demo chooses its own public URL",
+      "action": "remove --name or --public-url from tnl publish --demo"
+    },
+    {
+      "code": "TNL_CLIENT_DEV_PROCESS_FAILED",
+      "slug": "dev-process-failed",
+      "class": "unavailable",
+      "message": "the development server command could not start or stopped",
+      "action": "check the command and its child output, then restart tnl dev"
+    },
+    {
+      "code": "TNL_CLIENT_DEV_SOCKET_UNAVAILABLE",
+      "slug": "dev-socket-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not use its development session socket",
+      "action": "check the local runtime directory and permissions, then restart tnl dev"
+    },
+    {
+      "code": "TNL_CLIENT_DNS_PENDING",
+      "slug": "dns-pending",
+      "class": "unavailable",
+      "message": "the domain's DNS setup is not ready",
+      "action": "check its DNS records and retry after they propagate"
+    },
+    {
+      "code": "TNL_CLIENT_DOMAIN_NOT_AVAILABLE",
+      "slug": "domain-not-available",
+      "class": "not_found",
+      "message": "the selected domain is not available to this team",
+      "action": "run tnl domain list and select a domain owned by the current team"
+    },
+    {
+      "code": "TNL_CLIENT_DOMAIN_NOT_READY",
+      "slug": "domain-not-ready",
+      "class": "unavailable",
+      "message": "the selected domain is not ready for public URLs",
+      "action": "check tnl domain status and complete its required DNS records"
+    },
+    {
+      "code": "TNL_CLIENT_DOMAIN_UNAVAILABLE",
+      "slug": "domain-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not complete the domain operation",
+      "action": "check the team domain and required DNS records, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_FEEDBACK_INPUT_INVALID",
+      "slug": "feedback-input-invalid",
+      "class": "invalid",
+      "message": "feedback ID, cursor, or message is invalid",
+      "action": "use an ID from tnl feedback list, a nonnegative cursor, and a message of at most 4000 bytes"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_DEMO_ONLY",
+      "slug": "guest-demo-only",
+      "class": "forbidden",
+      "message": "guest access only publishes the built-in demo",
+      "action": "run tnl login to publish your own app or change settings"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_IP_CHANGED",
+      "slug": "guest-ip-changed",
+      "class": "forbidden",
+      "message": "your IP changed since this guest demo started",
+      "action": "run tnl login to publish your own app"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_ISSUANCE_LIMITED",
+      "slug": "guest-issuance-limited",
+      "class": "rate_limited",
+      "message": "guest demo creation is limited on this network",
+      "action": "wait an hour or run tnl login to continue"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_SESSION_INVALID",
+      "slug": "guest-session-invalid",
+      "class": "invalid",
+      "message": "the saved guest demo state is invalid",
+      "action": "run tnl login or retry tnl publish --demo with a fresh --state-dir"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED",
+      "slug": "guest-sign-in-required",
+      "class": "unauthenticated",
+      "message": "this command needs sign-in",
+      "action": "run tnl login to manage this server, or tnl publish --demo to try the built-in demo"
+    },
+    {
+      "code": "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED",
+      "slug": "guest-trial-exhausted",
+      "class": "forbidden",
+      "message": "this guest demo trial has ended",
+      "action": "run tnl login to publish your own app"
+    },
+    {
+      "code": "TNL_CLIENT_INIT_FAILED",
+      "slug": "init-failed",
+      "class": "unavailable",
+      "message": "tnl could not finish setting up this project",
+      "action": "check project files and permissions, then run tnl init again"
+    },
+    {
+      "code": "TNL_CLIENT_INIT_FRAMEWORK",
+      "slug": "init-framework",
+      "class": "invalid",
+      "message": "tnl could not determine the project's framework",
+      "action": "choose the framework integration for the project, then run tnl init again"
+    },
+    {
+      "code": "TNL_CLIENT_INIT_PACKAGE_MANAGER",
+      "slug": "init-package-manager",
+      "class": "invalid",
+      "message": "tnl could not select a package manager",
+      "action": "set packageManager to pnpm, npm, yarn, or bun, then run tnl init again"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_AUTHORITY_URL",
+      "slug": "invalid-authority-url",
+      "class": "invalid",
+      "message": "authority endpoint must be a canonical HTTPS origin",
+      "action": "check the authority URL configured on the selected server"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_COMMAND",
+      "slug": "invalid-command",
+      "class": "invalid",
+      "message": "tnl could not use this command or its options",
+      "action": "run tnl --help or the command's --help and correct the arguments"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_CONTROL_PORT",
+      "slug": "invalid-control-port",
+      "class": "invalid",
+      "message": "server port must be between 1 and 65535",
+      "action": "check the control URL port and retry"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_CONTROL_URL",
+      "slug": "invalid-control-url",
+      "class": "invalid",
+      "message": "server must be an HTTPS origin",
+      "action": "use an HTTPS control URL with --server or TNL_SERVER"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_DOMAIN_NAME",
+      "slug": "invalid-domain-name",
+      "class": "invalid",
+      "message": "the domain name is not a canonical DNS name",
+      "action": "use lowercase ASCII DNS labels without a trailing dot"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_SETUP_INPUT",
+      "slug": "invalid-setup-input",
+      "class": "invalid",
+      "message": "the entered value is not valid for this prompt",
+      "action": "enter one of the shown values or press enter to skip"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_STARTUP_TIMEOUT",
+      "slug": "invalid-startup-timeout",
+      "class": "invalid",
+      "message": "startup timeout must be greater than zero and at most 10 minutes",
+      "action": "choose a startup timeout within that range"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_TARGET",
+      "slug": "invalid-target",
+      "class": "invalid",
+      "message": "the local service target is invalid",
+      "action": "use an HTTP loopback address or a local port"
+    },
+    {
+      "code": "TNL_CLIENT_INVALID_TUNNEL_FLAGS",
+      "slug": "invalid-tunnel-flags",
+      "class": "invalid",
+      "message": "tunnel options conflict or contain an invalid value",
+      "action": "check --public-url, --name, --allow-ip, --allow-provider, and --request-limit"
+    },
+    {
+      "code": "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED",
+      "slug": "login-terminal-required",
+      "class": "invalid",
+      "message": "login-token authentication requires an interactive terminal",
+      "action": "run tnl login in a terminal or supply TNL_LOGIN_TOKEN"
+    },
+    {
+      "code": "TNL_CLIENT_LOGIN_TOKEN_INVALID",
+      "slug": "login-token-invalid",
+      "class": "unauthenticated",
+      "message": "the login token is invalid",
+      "action": "get a new login token for this server and retry"
+    },
+    {
+      "code": "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
+      "slug": "member-hostname-depth-exceeded",
+      "class": "forbidden",
+      "message": "this hostname exceeds the server's member URL depth limit on its managed domain",
+      "action": "use fewer labels beneath your namespace"
+    },
+    {
+      "code": "TNL_CLIENT_MISSING_TARGET",
+      "slug": "missing-target",
+      "class": "invalid",
+      "message": "a local target is required",
+      "action": "pass a local port or set publish.target in the project configuration"
+    },
+    {
+      "code": "TNL_CLIENT_OUTPUT_UNAVAILABLE",
+      "slug": "output-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not write the command result",
+      "action": "check the output destination and retry"
+    },
+    {
+      "code": "TNL_CLIENT_PREVIEW_NOT_SAVED",
+      "slug": "preview-not-saved",
+      "class": "not_found",
+      "message": "the project does not have a saved preview",
+      "action": "select the configured project and run tnl dev before sharing or reading its feedback"
+    },
+    {
+      "code": "TNL_CLIENT_PREVIEW_STATE_CONFLICT",
+      "slug": "preview-state-conflict",
+      "class": "conflict",
+      "message": "the saved preview does not match the current project",
+      "action": "check the selected server, team, and project, then run tnl dev again"
+    },
+    {
+      "code": "TNL_CLIENT_PROJECT_CONFIG_INVALID",
+      "slug": "project-config-invalid",
+      "class": "invalid",
+      "message": "tnl could not use the project configuration",
+      "action": "run tnl config check and correct the reported setting"
+    },
+    {
+      "code": "TNL_CLIENT_PROJECT_CONFIG_MISSING",
+      "slug": "project-config-missing",
+      "class": "not_found",
+      "message": "no project configuration file was found",
+      "action": "run tnl init or select a config file with --config"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_CONFLICT",
+      "slug": "server-conflict",
+      "class": "conflict",
+      "message": "the requested operation conflicts with the server's current state",
+      "action": "inspect the public URL or team state and retry when it changes"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_DENIED",
+      "slug": "server-denied",
+      "class": "forbidden",
+      "message": "the selected identity is not allowed to perform this operation",
+      "action": "check the team membership and selected credentials"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_RATE_LIMITED",
+      "slug": "server-rate-limited",
+      "class": "rate_limited",
+      "message": "the server is limiting requests",
+      "action": "wait for the retry interval before sending another request"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_REQUEST_INVALID",
+      "slug": "server-request-invalid",
+      "class": "invalid",
+      "message": "the server rejected this request",
+      "action": "check the command options and selected resource, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND",
+      "slug": "server-resource-not-found",
+      "class": "not_found",
+      "message": "the requested resource was not found on the selected server",
+      "action": "check the selected server, team, and resource ID"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_RESPONSE_INVALID",
+      "slug": "server-response-invalid",
+      "class": "internal",
+      "message": "the server sent a response tnl could not use",
+      "action": "check the selected server and its version, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_SERVER_UNAVAILABLE",
+      "slug": "server-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not reach the selected server",
+      "action": "check the server address and connectivity, then retry",
+      "cases": [
+        {
+          "id": "timeout",
+          "description": "the selected server did not respond before the request timed out.",
+          "action": "check network connectivity and server health, then retry",
+          "diagram_detail": "server response timed out"
+        },
+        {
+          "id": "connection-refused",
+          "description": "a connection to the selected server was refused.",
+          "action": "check the selected control URL and server listener, then retry",
+          "diagram_detail": "server refused connection"
+        }
+      ]
+    },
+    {
+      "code": "TNL_CLIENT_SERVICE_NOT_CONFIGURED",
+      "slug": "service-not-configured",
+      "class": "not_found",
+      "message": "the selected service is not configured",
+      "action": "run tnl config check or select a configured project service"
+    },
+    {
+      "code": "TNL_CLIENT_SHARE_INPUT_INVALID",
+      "slug": "share-input-invalid",
+      "class": "invalid",
+      "message": "share URL or lifetime is invalid",
+      "action": "select a public URL ID, hostname, or HTTPS origin and a lifetime greater than zero and at most 30d"
+    },
+    {
+      "code": "TNL_CLIENT_STATE_LOCKED",
+      "slug": "state-locked",
+      "class": "conflict",
+      "message": "another tnl process is using the client state",
+      "action": "wait for it to finish or stop it, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_STATE_UNAVAILABLE",
+      "slug": "state-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not use the client state",
+      "action": "check the state directory and its permissions, then retry",
+      "cases": [
+        {
+          "id": "permission-denied",
+          "description": "tnl cannot access the local client state directory.",
+          "action": "check permissions on the state directory, then retry",
+          "diagram_detail": "state directory access denied"
+        }
+      ]
+    },
+    {
+      "code": "TNL_CLIENT_TEAM_NOT_FOUND",
+      "slug": "team-not-found",
+      "class": "not_found",
+      "message": "team not found",
+      "action": "run tnl team list and choose a team you belong to"
+    },
+    {
+      "code": "TNL_CLIENT_TEAM_SELECTION_AMBIGUOUS",
+      "slug": "team-selection-ambiguous",
+      "class": "conflict",
+      "message": "more than one team has the selected name",
+      "action": "run tnl team list and select a team by ID with --team"
+    },
+    {
+      "code": "TNL_CLIENT_TEAM_UNAVAILABLE",
+      "slug": "team-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not complete the team operation",
+      "action": "check the selected team and membership, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_TRANSPORT_FALLBACK",
+      "slug": "transport-fallback",
+      "class": "degraded",
+      "message": "QUIC did not establish before TLS/TCP; continuing over TLS/TCP",
+      "action": "the tunnel remains available over TLS/TCP"
+    },
+    {
+      "code": "TNL_CLIENT_TRANSPORT_UNAVAILABLE",
+      "slug": "transport-unavailable",
+      "class": "unavailable",
+      "message": "a publisher connection could not be established",
+      "action": "check connectivity to the assigned relay and retry"
+    },
+    {
+      "code": "TNL_CLIENT_TUNNEL_UNAVAILABLE",
+      "slug": "tunnel-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not start or maintain this tunnel",
+      "action": "check the local service, selected server, and network connection, then retry"
+    }
+  ]
+}

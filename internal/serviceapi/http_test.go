@@ -53,6 +53,11 @@ func TestDecodeJSONPolicy(t *testing.T) {
 				return
 			}
 			assertProblem(t, response, test.status, test.problem, test.detail)
+			if test.name == "second value" || test.name == "trailing garbage" {
+				if got := response.Header().Get("Link"); got != `<https://tnl.dev/p/invalid-json?case=trailing-content>; rel="help"` {
+					t.Fatalf("trailing-content help = %q", got)
+				}
+			}
 		})
 	}
 }
@@ -91,6 +96,9 @@ func TestAuthenticateClusterRequest(t *testing.T) {
 				t.Fatalf("challenge header = %q", response.Header().Get("WWW-Authenticate"))
 			}
 			assertProblem(t, response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
+			if got := response.Header().Get("Link"); got != `<https://tnl.dev/p/unauthenticated?case=cluster-secret>; rel="help"` {
+				t.Fatalf("cluster help = %q", got)
+			}
 		})
 	}
 }

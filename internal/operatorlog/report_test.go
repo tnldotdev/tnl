@@ -17,7 +17,7 @@ func TestFormatDoesNotExposeCauseOrMultilineContext(t *testing.T) {
 	}
 	got := Format("read client session", failure.ClientStateUnavailable, "request_1\nspoofed")
 	if strings.Contains(got, "secret-do-not-log") || strings.ContainsRune(got, '\n') ||
-		!strings.Contains(got, "reason=client.state_unavailable") || !strings.Contains(got, "request_id=request_1?spoofed") {
+		!strings.Contains(got, "reason=TNL_CLIENT_STATE_UNAVAILABLE") || !strings.Contains(got, "request_id=request_1?spoofed") {
 		t.Fatalf("operator log = %q", got)
 	}
 }

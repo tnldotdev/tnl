@@ -1,70 +1,73 @@
 package failure
 
-import "sort"
+import (
+	"slices"
+	"sort"
+)
 
 const (
-	InvalidControlURL                 Reason = "client.invalid_control_url"
-	InvalidControlPort                Reason = "client.invalid_control_port"
-	InvalidAuthorityURL               Reason = "client.invalid_authority_url"
-	InvalidTarget                     Reason = "client.invalid_target"
-	MissingTarget                     Reason = "client.missing_target"
-	InvalidCommand                    Reason = "client.invalid_command"
-	OutputUnavailable                 Reason = "client.output_unavailable"
-	InitFailed                        Reason = "client.init_failed"
-	TunnelUnavailable                 Reason = "client.tunnel_unavailable"
-	TeamUnavailable                   Reason = "client.team_unavailable"
-	DomainUnavailable                 Reason = "client.domain_unavailable"
-	AdminUnavailable                  Reason = "client.admin_unavailable"
-	ServiceNotConfigured              Reason = "client.service_not_configured"
-	InvalidTunnelFlags                Reason = "client.invalid_tunnel_flags"
-	DemoTargetNotAllowed              Reason = "client.demo_target_not_allowed"
-	DemoConfigNotUsed                 Reason = "client.demo_config_not_used"
-	DemoURLManaged                    Reason = "client.demo_url_managed"
-	DemoMustBeEphemeral               Reason = "client.demo_must_be_ephemeral"
-	DemoLocalServiceUnavailable       Reason = "client.demo_local_service_unavailable"
-	InvalidStartupTimeout             Reason = "client.invalid_startup_timeout"
-	ProjectConfigMissing              Reason = "client.project_config_missing"
-	ClientStateLocked                 Reason = "client.state_locked"
-	ClientStateUnavailable            Reason = "client.state_unavailable"
-	GuestSessionInvalid               Reason = "client.guest_session_invalid"
-	CurrentDirectoryUnavailable       Reason = "client.current_directory_unavailable"
-	TeamNotFound                      Reason = "client.team_not_found"
-	TeamSelectionAmbiguous            Reason = "client.team_selection_ambiguous"
-	DomainNotAvailable                Reason = "client.domain_not_available"
-	DomainNotReady                    Reason = "client.domain_not_ready"
-	CustomDomainsDisabled             Reason = "client.custom_domains_disabled"
-	MemberHostnameDepthExceeded       Reason = "client.member_hostname_depth_exceeded"
-	InvalidDomainName                 Reason = "client.invalid_domain_name"
-	LoginTokenInvalid                 Reason = "client.login_token_invalid"
-	LoginTerminalRequired             Reason = "client.login_terminal_required"
-	ProjectConfigInvalid              Reason = "client.project_config_invalid"
-	InitPackageManager                Reason = "client.init_package_manager"
-	InitFramework                     Reason = "client.init_framework"
-	InvalidSetupInput                 Reason = "client.invalid_setup_input"
-	FeedbackInputInvalid              Reason = "client.feedback_input_invalid"
-	ShareInputInvalid                 Reason = "client.share_input_invalid"
-	PreviewNotSaved                   Reason = "client.preview_not_saved"
-	PreviewStateConflict              Reason = "client.preview_state_conflict"
-	DevProcessFailed                  Reason = "client.dev_process_failed"
-	DevSocketUnavailable              Reason = "client.dev_socket_unavailable"
-	BrowserOpenFailed                 Reason = "client.browser_open_failed"
-	TransportUnavailable              Reason = "client.transport_unavailable"
-	TransportFallback                 Reason = "client.transport_fallback"
-	Authentication                    Reason = "client.authentication_required"
-	ServerResourceNotFound            Reason = "client.server_resource_not_found"
-	ServerConflict                    Reason = "client.server_conflict"
-	ServerDenied                      Reason = "client.server_denied"
-	ServerUnavailable                 Reason = "client.server_unavailable"
-	ServerRateLimited                 Reason = "client.server_rate_limited"
-	GuestTrialExhausted               Reason = "client.guest_trial_exhausted"
-	GuestDemoOnly                     Reason = "client.guest_demo_only"
-	GuestIssuanceLimited              Reason = "client.guest_issuance_limited"
-	GuestSignInRequired               Reason = "client.guest_sign_in_required"
-	GuestIPChanged                    Reason = "client.guest_ip_changed"
-	ServerResponseInvalid             Reason = "client.server_response_invalid"
-	ServerRequestInvalid              Reason = "client.server_request_invalid"
-	DNSPending                        Reason = "client.dns_pending"
-	CertificateUnavailable            Reason = "client.certificate_unavailable"
+	InvalidControlURL                 Reason = "TNL_CLIENT_INVALID_CONTROL_URL"
+	InvalidControlPort                Reason = "TNL_CLIENT_INVALID_CONTROL_PORT"
+	InvalidAuthorityURL               Reason = "TNL_CLIENT_INVALID_AUTHORITY_URL"
+	InvalidTarget                     Reason = "TNL_CLIENT_INVALID_TARGET"
+	MissingTarget                     Reason = "TNL_CLIENT_MISSING_TARGET"
+	InvalidCommand                    Reason = "TNL_CLIENT_INVALID_COMMAND"
+	OutputUnavailable                 Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
+	InitFailed                        Reason = "TNL_CLIENT_INIT_FAILED"
+	TunnelUnavailable                 Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
+	TeamUnavailable                   Reason = "TNL_CLIENT_TEAM_UNAVAILABLE"
+	DomainUnavailable                 Reason = "TNL_CLIENT_DOMAIN_UNAVAILABLE"
+	AdminUnavailable                  Reason = "TNL_CLIENT_ADMIN_UNAVAILABLE"
+	ServiceNotConfigured              Reason = "TNL_CLIENT_SERVICE_NOT_CONFIGURED"
+	InvalidTunnelFlags                Reason = "TNL_CLIENT_INVALID_TUNNEL_FLAGS"
+	DemoTargetNotAllowed              Reason = "TNL_CLIENT_DEMO_TARGET_NOT_ALLOWED"
+	DemoConfigNotUsed                 Reason = "TNL_CLIENT_DEMO_CONFIG_NOT_USED"
+	DemoURLManaged                    Reason = "TNL_CLIENT_DEMO_URL_MANAGED"
+	DemoMustBeEphemeral               Reason = "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL"
+	DemoLocalServiceUnavailable       Reason = "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE"
+	InvalidStartupTimeout             Reason = "TNL_CLIENT_INVALID_STARTUP_TIMEOUT"
+	ProjectConfigMissing              Reason = "TNL_CLIENT_PROJECT_CONFIG_MISSING"
+	ClientStateLocked                 Reason = "TNL_CLIENT_STATE_LOCKED"
+	ClientStateUnavailable            Reason = "TNL_CLIENT_STATE_UNAVAILABLE"
+	GuestSessionInvalid               Reason = "TNL_CLIENT_GUEST_SESSION_INVALID"
+	CurrentDirectoryUnavailable       Reason = "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE"
+	TeamNotFound                      Reason = "TNL_CLIENT_TEAM_NOT_FOUND"
+	TeamSelectionAmbiguous            Reason = "TNL_CLIENT_TEAM_SELECTION_AMBIGUOUS"
+	DomainNotAvailable                Reason = "TNL_CLIENT_DOMAIN_NOT_AVAILABLE"
+	DomainNotReady                    Reason = "TNL_CLIENT_DOMAIN_NOT_READY"
+	CustomDomainsDisabled             Reason = "TNL_CLIENT_CUSTOM_DOMAINS_DISABLED"
+	MemberHostnameDepthExceeded       Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
+	InvalidDomainName                 Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
+	LoginTokenInvalid                 Reason = "TNL_CLIENT_LOGIN_TOKEN_INVALID"
+	LoginTerminalRequired             Reason = "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED"
+	ProjectConfigInvalid              Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	InitPackageManager                Reason = "TNL_CLIENT_INIT_PACKAGE_MANAGER"
+	InitFramework                     Reason = "TNL_CLIENT_INIT_FRAMEWORK"
+	InvalidSetupInput                 Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
+	FeedbackInputInvalid              Reason = "TNL_CLIENT_FEEDBACK_INPUT_INVALID"
+	ShareInputInvalid                 Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
+	PreviewNotSaved                   Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
+	PreviewStateConflict              Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
+	DevProcessFailed                  Reason = "TNL_CLIENT_DEV_PROCESS_FAILED"
+	DevSocketUnavailable              Reason = "TNL_CLIENT_DEV_SOCKET_UNAVAILABLE"
+	BrowserOpenFailed                 Reason = "TNL_CLIENT_BROWSER_OPEN_FAILED"
+	TransportUnavailable              Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
+	TransportFallback                 Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
+	Authentication                    Reason = "TNL_CLIENT_AUTHENTICATION_REQUIRED"
+	ServerResourceNotFound            Reason = "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND"
+	ServerConflict                    Reason = "TNL_CLIENT_SERVER_CONFLICT"
+	ServerDenied                      Reason = "TNL_CLIENT_SERVER_DENIED"
+	ServerUnavailable                 Reason = "TNL_CLIENT_SERVER_UNAVAILABLE"
+	ServerRateLimited                 Reason = "TNL_CLIENT_SERVER_RATE_LIMITED"
+	GuestTrialExhausted               Reason = "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED"
+	GuestDemoOnly                     Reason = "TNL_CLIENT_GUEST_DEMO_ONLY"
+	GuestIssuanceLimited              Reason = "TNL_CLIENT_GUEST_ISSUANCE_LIMITED"
+	GuestSignInRequired               Reason = "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED"
+	GuestIPChanged                    Reason = "TNL_CLIENT_GUEST_IP_CHANGED"
+	ServerResponseInvalid             Reason = "TNL_CLIENT_SERVER_RESPONSE_INVALID"
+	ServerRequestInvalid              Reason = "TNL_CLIENT_SERVER_REQUEST_INVALID"
+	DNSPending                        Reason = "TNL_CLIENT_DNS_PENDING"
+	CertificateUnavailable            Reason = "TNL_CLIENT_CERTIFICATE_UNAVAILABLE"
 	RelayLeaseStale                   Reason = "relay.lease_stale"
 	InvalidRole                       Reason = "server.invalid_role"
 	DatabaseUnavailable               Reason = "server.database_unavailable"
@@ -205,6 +208,8 @@ var definitions = map[Reason]Definition{
 	ClientStateUnavailable: {
 		Class: Unavailable, Message: "tnl could not use the client state",
 		Action: "check the state directory and its permissions, then retry", Retry: RetryAfterChange,
+		Cases: []Case{{ID: "permission-denied", Description: "tnl cannot access the local client state directory.",
+			Action: "check permissions on the state directory, then retry", DiagramDetail: "state directory access denied"}},
 	},
 	GuestSessionInvalid: {
 		Class: Invalid, Message: "the saved guest demo state is invalid",
@@ -321,6 +326,12 @@ var definitions = map[Reason]Definition{
 	ServerUnavailable: {
 		Class: Unavailable, Message: "tnl could not reach the selected server",
 		Action: "check the server address and connectivity, then retry", Retry: RetryLater,
+		Cases: []Case{
+			{ID: "timeout", Description: "the selected server did not respond before the request timed out.",
+				Action: "check network connectivity and server health, then retry", DiagramDetail: "server response timed out"},
+			{ID: "connection-refused", Description: "a connection to the selected server was refused.",
+				Action: "check the selected control URL and server listener, then retry", DiagramDetail: "server refused connection"},
+		},
 	},
 	ServerRateLimited: {
 		Class: RateLimited, Message: "the server is limiting requests",
@@ -535,6 +546,7 @@ var definitions = map[Reason]Definition{
 // DefinitionFor reports the text and retry policy for one known reason.
 func DefinitionFor(reason Reason) (Definition, bool) {
 	definition, found := definitions[reason]
+	definition.Cases = slices.Clone(definition.Cases)
 	return definition, found
 }
 

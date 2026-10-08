@@ -216,13 +216,22 @@ func writeCommandError(output io.Writer, err error) {
 	}
 	presented := presentFailure(err)
 	blocks := []clioutput.Block{clioutput.Text(presented.message)}
-	if presented.action != "" {
+	caseID := failure.KnownCase(err)
+	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
+		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
+	} else if presented.action != "" {
 		blocks = append(blocks, clioutput.Text(presented.action))
+	}
+	footer := ""
+	if helpURL := failure.HelpURL(presented.reason, caseID); helpURL != "" {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "help", Value: helpURL}))
+		footer = string(presented.reason)
 	}
 	_ = clioutput.Write(output, clioutput.Frame{
 		Command: command,
 		State:   "command failed",
 		Blocks:  blocks,
+		Footer:  footer,
 	})
 }
 

@@ -26,3 +26,21 @@ func TestWriteProvidesACompleteCorrelatedProblem(t *testing.T) {
 		t.Fatalf("problem body = %#v", body)
 	}
 }
+
+func TestProblemHelpContextKeepsCanonicalType(t *testing.T) {
+	response := httptest.NewRecorder()
+	Write(response, http.StatusUnauthorized, "unauthenticated", "unauthenticated", "cluster secret required", "cluster-secret")
+	if got := response.Header().Get("Link"); got != `<https://tnl.dev/p/unauthenticated?case=cluster-secret>; rel="help"` {
+		t.Fatalf("help header = %q", got)
+	}
+	var body Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Type != URL("unauthenticated") || body.Code != "unauthenticated" {
+		t.Fatalf("problem identity = %q / %q", body.Type, body.Code)
+	}
+	if got := HelpURL("unauthenticated", "cluster-secret&token=secret"); got != URL("unauthenticated") {
+		t.Fatalf("untrusted help context = %q", got)
+	}
+}

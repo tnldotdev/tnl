@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -140,7 +141,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 				response.Header().Set("Connection", "close")
 			}
 			response.Header().Set("Retry-After", "1")
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
 			return
 		}
 		escapedPath := request.URL.EscapedPath()
@@ -209,8 +210,8 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 			request.Out.Host = host
 			request.SetXForwarded()
 		},
-		ErrorHandler: func(response http.ResponseWriter, request *http.Request, err error) {
-			if code, ok := diagnostic.CodeOf(err); ok {
+		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
+			if code, ok := diagnostic.CodeOf(targetErr); ok {
 				diagnostic.WriteHTTP(response, request, code)
 				return
 			}
@@ -220,7 +221,13 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 			if failing.CompareAndSwap(false, true) && len(onTargetFailure) != 0 && onTargetFailure[0] != nil {
 				onTargetFailure[0]()
 			}
-			diagnostic.WriteHTTP(response, request, diagnostic.TargetUnavailable)
+			caseID := ""
+			if errors.Is(targetErr, syscall.ECONNREFUSED) {
+				caseID = "connection-refused"
+			} else if errors.Is(targetErr, context.DeadlineExceeded) {
+				caseID = "timeout"
+			}
+			diagnostic.WriteHTTP(response, request, diagnostic.TargetUnavailable, caseID)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			failing.Store(false)

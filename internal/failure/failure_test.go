@@ -3,6 +3,7 @@ package failure
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,31 @@ func TestFailureKeepsCauseOutOfPublicDescription(t *testing.T) {
 	}
 	if strings.Contains(definition.Message+definition.Action, "secret") || !strings.Contains(err.Error(), "secret") {
 		t.Fatal("public copy or internal cause changed")
+	}
+}
+
+func TestClientCatalogAndSafeHelpContext(t *testing.T) {
+	entries := ClientReasons()
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Message == "" || entry.Action == "" || seen[entry.Slug] ||
+			!strings.HasPrefix(string(entry.Code), "TNL_CLIENT_") || HelpURL(entry.Code, "") != "https://tnl.dev/c/"+entry.Slug {
+			t.Fatalf("invalid client entry: %+v", entry)
+		}
+		seen[entry.Slug] = true
+	}
+	if len(entries) < 50 {
+		t.Fatalf("missing client failures: %d", len(entries))
+	}
+	err := Wrap("read client state", ClientStateUnavailable, fs.ErrPermission)
+	if got := HelpURL(ClientStateUnavailable, KnownCase(err)); got != "https://tnl.dev/c/state-unavailable?case=permission-denied" {
+		t.Fatalf("contextual link = %q", got)
+	}
+	if got := HelpURL(ClientStateUnavailable, "permission-denied&token=secret"); got != "https://tnl.dev/c/state-unavailable" {
+		t.Fatalf("untrusted context = %q", got)
+	}
+	if got := HelpURL(DatabaseUnavailable, ""); got != "" {
+		t.Fatalf("server failure has a client page: %q", got)
 	}
 }
 
