@@ -313,7 +313,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 
 func projectSensitiveCommand(command string) bool {
 	return command == "login" || command == "logout" || strings.HasPrefix(command, "admin ") ||
-		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ")
+		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -360,6 +360,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "webhook use <endpoint>":
+		apply(&flags.Webhook.Use.remoteFlags, false)
+	case "webhook release <endpoint>":
+		apply(&flags.Webhook.Release.remoteFlags, false)
 	case "login":
 		if flags.Login.Server == "" {
 			flags.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Login.ServerURL, project.Config.Server, "")

@@ -141,7 +141,9 @@ does not affect existing custom domains or their release.
 
 projects with `oauth: true` publish one saved OAuth callback URL while app
 tunnels run. linked worktrees share that URL through the same client state,
-server, and member namespace; its name does not depend on the checkout.
+server, and project namespace, even if an app service selects another domain.
+its name does not depend on the checkout. webhooks coordinate through project
+identity and service namespace and do not require an OAuth URL.
 
 the app publisher observes response headers before releasing authorization
 redirects to the browser. a bounded, single-use OAuth state digest identifies
@@ -152,7 +154,7 @@ redirect URI. control and relays receive neither login state nor callback
 contents. a callback to a stopped or replaced run fails instead of reaching
 another worktree.
 
-Declared webhook endpoints use a sibling saved hostname. Each live participant
+Declared webhook endpoints use a saved `hooks-…` hostname. Each live participant
 registers its declarations separately from receiver selection. All declarations
 for a named endpoint must agree on service, exact path, methods, and source
 policy. SQLite registration rejects conflicting names and paths atomically.
@@ -164,10 +166,19 @@ encrypted until the publisher. The local handler checks the trusted source IP,
 exact escaped path, and method before reading the body. It snapshots ready
 receivers and forwards identical body bytes and signature inputs to each.
 Every receiver must return 2xx. Failed attempts are not retried locally, and
-provider retries may revisit already successful worktrees. GET verification
-requires matching bounded responses. No request journal or replay is retained.
+provider retries may revisit already successful worktrees. GET, HEAD, and
+OPTIONS verification requires matching bounded responses. No request journal or
+replay is retained.
 Changed declarations drain the webhook publish run before re-publication;
 provider IP ranges are resolved once per new run, independently of OAuth.
+
+Exclusive endpoints instead select one explicitly claimed receiver. Ownership
+is tied to that tunnel's liveness lease, not to publisher leadership or its
+current ready/provisioning phase. Ordinary `tnl webhook use NAME` cannot replace
+a live claim; `tnl webhook use NAME --force` atomically selects a ready receiver
+in the calling worktree. Already-dispatched requests may finish at the old one.
+Source/path/method admission runs before delivery in either mode. An exclusive
+handler's status and bounded body are returned directly to the provider.
 
 ```text
 public URL

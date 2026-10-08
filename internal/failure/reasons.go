@@ -41,6 +41,9 @@ const (
 	LoginTokenInvalid                 Reason = "TNL_CLIENT_LOGIN_TOKEN_INVALID"
 	LoginTerminalRequired             Reason = "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED"
 	ProjectConfigInvalid              Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	WebhookOwned                      Reason = "TNL_CLIENT_WEBHOOK_OWNED"
+	WebhookReceiverUnready            Reason = "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY"
+	WebhookNotSelected                Reason = "TNL_CLIENT_WEBHOOK_NOT_SELECTED"
 	InitPackageManager                Reason = "TNL_CLIENT_INIT_PACKAGE_MANAGER"
 	InitFramework                     Reason = "TNL_CLIENT_INIT_FRAMEWORK"
 	InvalidSetupInput                 Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
@@ -258,6 +261,18 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	WebhookOwned: {
+		Class: Conflict, Message: "another live worktree receives this exclusive webhook",
+		Action: "run tnl webhook use NAME --force to switch, or release it from the current worktree", Retry: RetryAfterChange,
+	},
+	WebhookReceiverUnready: {
+		Class: Unavailable, Message: "the selected webhook receiver is not ready",
+		Action: "start the configured service in this worktree and wait for its public URL to be ready", Retry: RetryLater,
+	},
+	WebhookNotSelected: {
+		Class: Conflict, Message: "this worktree is not the selected webhook receiver",
+		Action: "check tnl status before releasing or switching this webhook", Retry: RetryAfterChange,
 	},
 	InitPackageManager: {
 		Class: Invalid, Message: "tnl could not select a package manager",

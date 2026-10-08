@@ -156,3 +156,10 @@ type WebhookEndpoint struct {
 	Definition  []byte
 	Fingerprint []byte
 }
+
+type WebhookOwner struct {
+	ServerOrigin     string
+	IntegrationGroup string
+	Name             string
+	TunnelID         string
+}

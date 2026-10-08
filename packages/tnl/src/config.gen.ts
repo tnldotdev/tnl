@@ -132,6 +132,7 @@ export interface TnlConfig {
       | {
           service: string;
           path: string;
+          delivery?: "fanout" | "exclusive";
           /**
            * @minItems 1
            */

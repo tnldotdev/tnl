@@ -144,12 +144,21 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
 		return
 	}
-	receivers, err := h.state.WebhookReceivers(request.Context(), h.server, h.group, endpoint.name, endpoint.digest)
+	var receivers []clientstate.TunnelInfo
+	if endpoint.definition.Delivery == "exclusive" {
+		owner, ownerErr := h.state.ExclusiveWebhookReceiver(request.Context(), h.server, h.group, endpoint.name, endpoint.digest)
+		err = ownerErr
+		if err == nil {
+			receivers = []clientstate.TunnelInfo{owner}
+		}
+	} else {
+		receivers, err = h.state.WebhookReceivers(request.Context(), h.server, h.group, endpoint.name, endpoint.digest)
+	}
 	if err != nil {
 		if errors.Is(err, clientstate.ErrWebhookPolicyConflict) {
 			h.failure(endpoint.name, "local worktrees", "endpoint policies conflict")
 		} else {
-			h.failure(endpoint.name, "local worktrees", "local state unavailable")
+			h.failure(endpoint.name, "local worktrees", "local state unavailable or exclusive receiver unready")
 		}
 		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
 		return
@@ -162,6 +171,28 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 	body, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxWebhookBody))
 	if err != nil {
 		diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+		return
+	}
+	if endpoint.definition.Delivery == "exclusive" {
+		current, currentErr := h.state.WebhookReceiverCurrent(request.Context(), receivers[0])
+		if currentErr != nil || !current {
+			if currentErr != nil {
+				h.failure(endpoint.name, receivers[0].ID, "local state unavailable")
+			}
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+			return
+		}
+		result, err := deliverWebhook(request, receivers[0], body, true)
+		if err != nil && result.status == 0 {
+			h.failure(endpoint.name, receivers[0].ID, "local service unavailable")
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+			return
+		}
+		if err != nil && result.body == nil {
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+			return
+		}
+		writeWebhookResponse(response, result)
 		return
 	}
 	results := make([]webhookResponse, len(receivers))
@@ -283,7 +314,7 @@ func deliverWebhook(incoming *http.Request, receiver clientstate.TunnelInfo, bod
 	}
 	defer upstream.Body.Close()
 	result := webhookResponse{status: upstream.StatusCode}
-	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
+	if !includeResponse && (upstream.StatusCode < 200 || upstream.StatusCode >= 300) {
 		return result, errors.New("receiver did not acknowledge webhook")
 	}
 	if !includeResponse {
@@ -292,8 +323,11 @@ func deliverWebhook(incoming *http.Request, receiver clientstate.TunnelInfo, bod
 	}
 	result.body, err = io.ReadAll(io.LimitReader(upstream.Body, (64<<10)+1))
 	if err != nil || len(result.body) > 64<<10 {
-		return result, errors.New("receiver response exceeds limit")
+		return webhookResponse{}, errors.New("receiver response exceeds limit")
 	}
 	result.contentType, result.contentEncoding = upstream.Header.Get("Content-Type"), upstream.Header.Get("Content-Encoding")
+	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
+		return result, errors.New("receiver did not acknowledge webhook")
+	}
 	return result, nil
 }

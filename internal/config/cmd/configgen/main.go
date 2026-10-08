@@ -164,6 +164,7 @@ func webhookSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("service", &jsonschema.Schema{Type: "string"})
 	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
+	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "exclusive"}, Default: "fanout"})
 	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
 	providerValues := make([]any, 0, len(webhookips.Names()))
 	for _, name := range webhookips.Names() {
