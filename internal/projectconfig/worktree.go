@@ -17,10 +17,10 @@ import (
 )
 
 type Worktree struct {
-	Root  string `json:"root"`
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	IsGit bool   `json:"isGit"`
+	Root  string        `json:"root"`
+	Name  string        `json:"name"`
+	Label WorktreeLabel `json:"label"`
+	IsGit bool          `json:"isGit"`
 
 	primaryRoot string
 	labelParts  worktreeLabelParts
@@ -32,6 +32,15 @@ func (w Worktree) PrimaryCheckoutRoot() string {
 		return w.primaryRoot
 	}
 	return w.Root
+}
+
+// WorktreeLabel exposes the DNS-safe pieces used in the finished label.
+// the primary checkout has no checkout component.
+type WorktreeLabel struct {
+	Project   string `json:"project"`
+	Checkout  string `json:"checkout,omitempty"`
+	ID        string `json:"id"`
+	FullLabel string `json:"fullLabel"`
 }
 
 type worktreeLabelParts struct {
@@ -130,7 +139,8 @@ func ApplyWorktreeHashSalt(worktree Worktree, projectRoot string, salt [32]byte)
 		parts.checkout = dnsLabelStem(worktree.Name, "worktree")
 	}
 	worktree.labelParts = parts
-	worktree.Label = formatWorktreeLabel("", worktree.labelParts)
+	fitted := fitWorktreeLabel("", parts)
+	worktree.Label = WorktreeLabel{Project: fitted.project, Checkout: fitted.checkout, ID: fitted.id, FullLabel: formatWorktreeLabel("", fitted)}
 	return worktree
 }
 
@@ -170,7 +180,7 @@ func dnsLabelStem(value, fallback string) string {
 	return normalized.String()
 }
 
-func formatWorktreeLabel(service string, parts worktreeLabelParts) string {
+func fitWorktreeLabel(service string, parts worktreeLabelParts) worktreeLabelParts {
 	remaining := 63 - len(parts.id) - 1
 	if service != "" {
 		remaining -= len(service) + 1
@@ -187,8 +197,14 @@ func formatWorktreeLabel(service string, parts worktreeLabelParts) string {
 		project = strings.TrimRight(project[:projectBudget], "-")
 		checkout = strings.TrimRight(checkout[:checkoutBudget], "-")
 	}
-	if checkout != "" {
-		project += "-" + checkout
+	return worktreeLabelParts{project: project, checkout: checkout, id: parts.id}
+}
+
+func formatWorktreeLabel(service string, parts worktreeLabelParts) string {
+	parts = fitWorktreeLabel(service, parts)
+	project := parts.project
+	if parts.checkout != "" {
+		project += "-" + parts.checkout
 	}
 	if service != "" {
 		project = service + "-" + project

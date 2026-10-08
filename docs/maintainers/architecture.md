@@ -84,6 +84,15 @@ and connection assignment identities before accepting each visitor stream.
 Public URL DNS points to ingress, never to a relay. Placement can therefore
 change without changing public URL DNS.
 
+## resolve project configuration
+
+config factories receive the project's directory relative to its worktree and
+the structured worktree label. the label's project, optional checkout, and ID
+are the pieces used in its finished DNS label after shortening. service names
+may require further shortening. the primary checkout omits the checkout piece.
+generated project declarations preserve exact label literals, and browser
+metadata exposes those pieces without filesystem roots.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL

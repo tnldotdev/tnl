@@ -7,7 +7,7 @@ import (
 )
 
 func TestProjectMetadataConformance(t *testing.T) {
-	data, err := os.ReadFile("../../api/fixtures/project-metadata-v1.json")
+	data, err := os.ReadFile("../../api/fixtures/project-metadata-v2.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestProjectMetadataConformance(t *testing.T) {
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if fixture.Version != 1 || len(fixture.Cases) == 0 {
+	if fixture.Version != 2 || len(fixture.Cases) == 0 {
 		t.Fatalf("unsupported or empty project metadata fixture: version %d", fixture.Version)
 	}
 	for _, testCase := range fixture.Cases {

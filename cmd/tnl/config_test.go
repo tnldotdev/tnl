@@ -69,7 +69,7 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "tnl.config.ts")
 	source := `export default ({worktree}: any) => ({
-  tunnel: {name: worktree.label},
+  tunnel: {name: worktree.label.fullLabel},
   publish: {target: 3000},
 });`
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
@@ -90,17 +90,17 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Worktree.Label == "" || first.Worktree.Label != repeated.Worktree.Label ||
+	if first.Worktree.Label.FullLabel == "" || first.Worktree.Label != repeated.Worktree.Label ||
 		first.Worktree.Label == second.Worktree.Label || first.Config.Tunnel == nil || first.Config.Tunnel.Name == nil ||
-		*first.Config.Tunnel.Name != first.Worktree.Label {
-		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.Worktree.Label, repeated.Worktree.Label, second.Worktree.Label, first.Config)
+		*first.Config.Tunnel.Name != first.Worktree.Label.FullLabel {
+		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.Worktree.Label.FullLabel, repeated.Worktree.Label.FullLabel, second.Worktree.Label.FullLabel, first.Config)
 	}
 	publish := publishCommand{}
 	if err := first.applyPublish(&publish); err != nil {
 		t.Fatal(err)
 	}
-	if publish.Name != first.Worktree.Label {
-		t.Fatalf("publish name = %q, worktree label = %q", publish.Name, first.Worktree.Label)
+	if publish.Name != first.Worktree.Label.FullLabel {
+		t.Fatalf("publish name = %q, worktree label = %q", publish.Name, first.Worktree.Label.FullLabel)
 	}
 }
 
@@ -243,7 +243,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "3000" || flags.Name != worktree.Label {
+	if flags.Service != "" || flags.Target != "3000" || flags.Name != worktree.Label.FullLabel {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 }
@@ -372,7 +372,7 @@ func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T
 
 func TestEphemeralTunnelDoesNotReceiveWorktreeSubdomain(t *testing.T) {
 	flags := tunnelFlags{Ephemeral: true}
-	applyBuiltInHostname(&flags, "api", projectconfig.Worktree{Label: "tnl-bb4eff12"})
+	applyBuiltInHostname(&flags, "api", projectconfig.Worktree{Label: projectconfig.WorktreeLabel{Project: "tnl", ID: "bb4eff12", FullLabel: "tnl-bb4eff12"}})
 	if flags.PublicURL != "" || flags.Name != "" {
 		t.Fatalf("ephemeral hostname flags = %#v", flags)
 	}

@@ -14,7 +14,7 @@ import (
 func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "tnl.config.ts")
-	source := `export default async ({cwd, env, worktree}: any) => ({
+	source := `export default async ({cwd, env, worktree, project}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
   requestInspection: "detailed",
@@ -22,7 +22,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {
-    api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label}, dev: {startupTimeout: "45s"}},
+    api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label.fullLabel}, dev: {startupTimeout: "45s"}},
     site: {tunnel: {publicURL: "https://site.example.test", open: true}, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}},
   },
 });`
@@ -30,7 +30,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TNL_SERVER", "secret")
-	worktree := Worktree{Root: directory, Name: filepath.Base(directory), Label: "project-12345678"}
+	worktree := Worktree{Root: directory, Name: filepath.Base(directory), Label: WorktreeLabel{Project: "project", ID: "12345678", FullLabel: "project-12345678"}}
 	value, err := loadTypeScript(t.Context(), path, directory, worktree)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.RequestInspection == nil || *value.RequestInspection != "detailed" ||
 		value.Services["api"].RequestInspection == nil || *value.Services["api"].RequestInspection != "summary" ||
 		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
-		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label ||
+		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label.FullLabel ||
 		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
 		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
 		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
@@ -108,6 +108,32 @@ func TestLoadDoesNotExposeBuildErrors(t *testing.T) {
 	}
 	if outputs, err := filepath.Glob(filepath.Join(root, ".tnl-config-*.mjs")); err != nil || len(outputs) != 0 {
 		t.Fatalf("temporary bundles after build failure: %v, %v", outputs, err)
+	}
+}
+
+func TestFactoryReceivesRelativeProjectDirectoryAndFrozenLabel(t *testing.T) {
+	root := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{".", "apps/api"} {
+		project := filepath.Join(root, relative)
+		if err := os.MkdirAll(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(project, "tnl.config.ts")
+		source := fmt.Sprintf(`export default ({worktree, project}) => {
+  if (project.relativeDirectory !== %q || !Object.isFrozen(worktree.label) || "checkout" in worktree.label) throw new Error("context mismatch");
+  return {publish: {target: 3000}};
+};`, relative)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		worktree := ApplyWorktreeHashSalt(Worktree{Root: canonical, Name: "shop"}, canonical, [32]byte{1})
+		if _, err := loadTypeScript(t.Context(), path, project, worktree); err != nil {
+			t.Fatalf("relative project %q: %v", relative, err)
+		}
 	}
 }
 

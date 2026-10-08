@@ -106,6 +106,17 @@ func renderDeclarations(metadata Metadata) []byte {
 	var output strings.Builder
 	output.WriteString("import \"@tnldotdev/tnl\";\n\ndeclare module \"@tnldotdev/tnl\" {\n")
 	output.WriteString("  interface TnlProjectMetadata {\n")
+	if metadata.Worktree != nil {
+		label := metadata.Worktree.Label
+		output.WriteString("    readonly worktree: {\n      readonly label: {\n")
+		output.WriteString("        readonly project: " + typeScriptString(label.Project) + ";\n")
+		if label.Checkout != "" {
+			output.WriteString("        readonly checkout: " + typeScriptString(label.Checkout) + ";\n")
+		}
+		output.WriteString("        readonly id: " + typeScriptString(label.ID) + ";\n")
+		output.WriteString("        readonly fullLabel: " + typeScriptString(label.FullLabel) + ";\n")
+		output.WriteString("      };\n    };\n")
+	}
 	output.WriteString("    readonly namespace: ")
 	if commonNamespace(metadata) {
 		output.WriteString(typeScriptString(metadata.Namespace))

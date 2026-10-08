@@ -34,7 +34,7 @@ export interface ProjectDocument extends ProjectMetadata {
   readonly projectRoot: string;
   readonly dev: boolean;
   readonly serviceDirectories: Readonly<Record<string, string>>;
-  readonly version: 1;
+  readonly version: 2;
 }
 
 export interface ProjectDiscovery {
@@ -332,11 +332,11 @@ function parseProjectDocumentValue(
       "serviceDirectories",
       "services",
       "version",
-      ...["oauth", "webhooks"].filter((key) => Object.hasOwn(object, key)),
+      ...["oauth", "webhooks", "worktree"].filter((key) => Object.hasOwn(object, key)),
     ],
     description,
   );
-  if (object.version !== 1) {
+  if (object.version !== 2) {
     throw new TnlError("sdk.runtime_invalid");
   }
   if (typeof object.dev !== "boolean") {
@@ -349,6 +349,7 @@ function parseProjectDocumentValue(
     {
       namespace: object.namespace,
       services: object.services,
+      ...(Object.hasOwn(object, "worktree") ? { worktree: object.worktree } : {}),
       ...(Object.hasOwn(object, "oauth") ? { oauth: object.oauth } : {}),
       ...(Object.hasOwn(object, "webhooks") ? { webhooks: object.webhooks } : {}),
     },
@@ -374,7 +375,7 @@ function parseProjectDocumentValue(
     projectRoot,
     dev: object.dev,
     serviceDirectories: Object.freeze(serviceDirectories),
-    version: 1,
+    version: 2,
   });
 }
 
@@ -382,6 +383,7 @@ function projectMetadata(document: ProjectDocument): ProjectMetadata {
   return Object.freeze({
     namespace: document.namespace,
     services: document.services,
+    ...(document.worktree === undefined ? {} : { worktree: document.worktree }),
     ...(document.oauth === undefined ? {} : { oauth: document.oauth }),
     ...(document.webhooks === undefined ? {} : { webhooks: document.webhooks }),
   });

@@ -1,7 +1,15 @@
 import { tnl } from "@tnldotdev/tnl";
+import { defineConfig } from "@tnldotdev/tnl/config";
 
 declare module "@tnldotdev/tnl" {
   interface TnlProjectMetadata {
+    readonly worktree: {
+      readonly label: {
+        readonly project: "shop";
+        readonly id: "k7n2p9";
+        readonly fullLabel: "shop-k7n2p9";
+      };
+    };
     readonly namespace: "member.example";
     readonly services: {
       readonly api: {
@@ -16,6 +24,22 @@ declare module "@tnldotdev/tnl" {
       };
     };
   }
+}
+
+defineConfig(({ worktree, project }) => {
+  worktree.label.project satisfies "shop";
+  worktree.label.id satisfies "k7n2p9";
+  worktree.label.fullLabel satisfies "shop-k7n2p9";
+  project.relativeDirectory satisfies string;
+  // @ts-expect-error the generated primary-checkout label has no checkout property.
+  void worktree.label.checkout;
+  return {};
+});
+
+if (tnl.worktree) {
+  tnl.worktree.label.fullLabel satisfies "shop-k7n2p9";
+  // @ts-expect-error generated primary-checkout metadata omits checkout.
+  void tnl.worktree.label.checkout;
 }
 
 // @ts-expect-error augmentation does not make metadata always present.

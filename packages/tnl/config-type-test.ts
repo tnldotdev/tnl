@@ -13,8 +13,17 @@ const staticConfig = {
 
 const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
   ...staticConfig,
-  tunnel: { name: `${env.USER ?? "user"}-${worktree.label}-${cwd.length}` },
+  tunnel: { name: `${env.USER ?? "user"}-${worktree.label.fullLabel}-${cwd.length}` },
 }));
+
+defineConfig(({ worktree, project }) => {
+  worktree.label.project satisfies string;
+  worktree.label.checkout satisfies string | undefined;
+  worktree.label.id satisfies string;
+  worktree.label.fullLabel satisfies string;
+  project.relativeDirectory satisfies string;
+  return {};
+});
 
 declare const environment: TnlConfigContext["env"];
 environment.ARBITRARY_VARIABLE satisfies string | undefined;

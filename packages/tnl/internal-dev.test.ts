@@ -88,7 +88,7 @@ describe("development context", () => {
       path.join(root, ".tnl", "project.json"),
       JSON.stringify({
         ...project,
-        version: 1,
+        version: 2,
         serviceDirectories: Object.fromEntries(Object.keys(services).map((name) => [name, name])),
       }),
     );
@@ -415,7 +415,7 @@ test("socket identity matches the shared Go fixture", async () => {
 test("project metadata agrees with the Go validation fixture", async () => {
   const fixture = z
     .object({
-      version: z.literal(1),
+      version: z.literal(2),
       cases: z.array(
         z.object({
           name: z.string(),
@@ -425,6 +425,7 @@ test("project metadata agrees with the Go validation fixture", async () => {
             namespace: z.string(),
             dev: z.boolean(),
             version: z.number(),
+            worktree: z.unknown().optional(),
             oauth: z.object({ hostname: z.string(), url: z.string() }).optional(),
             webhooks: z
               .record(
@@ -454,7 +455,7 @@ test("project metadata agrees with the Go validation fixture", async () => {
     .parse(
       JSON.parse(
         await readFile(
-          new URL("../../api/fixtures/project-metadata-v1.json", import.meta.url),
+          new URL("../../api/fixtures/project-metadata-v2.json", import.meta.url),
           "utf8",
         ),
       ) as unknown,
@@ -469,11 +470,12 @@ test("project metadata agrees with the Go validation fixture", async () => {
     } else {
       expect(() => discoverProject(root), entry.name).toThrow();
     }
-    const { namespace, services, dev, oauth, webhooks } = entry.metadata;
+    const { namespace, services, dev, oauth, webhooks, worktree } = entry.metadata;
     const runtime = JSON.stringify({
       namespace,
       services,
       dev,
+      ...(worktree === undefined ? {} : { worktree }),
       ...(oauth === undefined ? {} : { oauth }),
       ...(webhooks === undefined ? {} : { webhooks }),
     });

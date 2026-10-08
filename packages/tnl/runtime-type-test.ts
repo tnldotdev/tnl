@@ -2,6 +2,14 @@ import { tnl } from "@tnldotdev/tnl";
 
 tnl.port satisfies number;
 tnl.dev satisfies boolean;
+// @ts-expect-error worktree metadata may be absent until narrowed.
+void tnl.worktree.label;
+if (tnl.worktree) {
+  tnl.worktree.label.project satisfies string;
+  tnl.worktree.label.checkout satisfies string | undefined;
+  tnl.worktree.label.id satisfies string;
+  tnl.worktree.label.fullLabel satisfies string;
+}
 // @ts-expect-error metadata may be absent until narrowed.
 tnl.namespace satisfies string;
 // @ts-expect-error service metadata also requires narrowing.
