@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/evanw/esbuild/pkg/api"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -51,7 +52,18 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
-	command := exec.CommandContext(loadCtx, node, "--input-type=module", "--eval", loaderSource, absolutePath, absoluteCWD)
+	bundledPath, cleanup, err := bundleTypeScript(loadCtx, absolutePath)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
+		}
+		if loadCtx.Err() != nil {
+			return config.TNL{}, errors.New("load TypeScript config: evaluation timed out")
+		}
+		return config.TNL{}, err
+	}
+	defer cleanup()
+	command := exec.CommandContext(loadCtx, node, "--input-type=module", "--eval", loaderSource, bundledPath, absoluteCWD)
 	command.Dir = filepath.Dir(absolutePath)
 	environment, contextEnvironment := sanitizedEnvironment(os.Environ())
 	command.Env = environment
@@ -91,6 +103,77 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 		return config.TNL{}, fmt.Errorf("load TypeScript config: %w", err)
 	}
 	return value, nil
+}
+
+func bundleTypeScript(ctx context.Context, path string) (string, func(), error) {
+	directory := filepath.Dir(path)
+	buildContext, contextErr := api.Context(api.BuildOptions{
+		EntryPoints: []string{path},
+		Outfile:     filepath.Join(directory, ".tnl-config.mjs"),
+		Bundle:      true,
+		Platform:    api.PlatformNode,
+		Format:      api.FormatESModule,
+		LogLevel:    api.LogLevelSilent,
+		Write:       false,
+		Plugins: []api.Plugin{{
+			Name: "external-project-packages",
+			Setup: func(build api.PluginBuild) {
+				build.OnResolve(api.OnResolveOptions{Filter: `^[^./]`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+					if args.PluginData == true {
+						return api.OnResolveResult{}, nil
+					}
+					options := api.ResolveOptions{ResolveDir: args.ResolveDir, Kind: args.Kind, PluginData: true}
+					resolved := build.Resolve(args.Path, options)
+					if resolved.Path == "" || resolved.External || !strings.Contains(filepath.ToSlash(resolved.Path), "/node_modules/") {
+						return api.OnResolveResult{}, nil
+					}
+					// a dependency reachable from the bundle's directory can stay a
+					// package import; imports private to a nested package are bundled.
+					options.ResolveDir = directory
+					fromConfig := build.Resolve(args.Path, options)
+					if fromConfig.Path == resolved.Path {
+						return api.OnResolveResult{Path: args.Path, External: true}, nil
+					}
+					return api.OnResolveResult{}, nil
+				})
+			},
+		}},
+	})
+	if contextErr != nil {
+		return "", nil, errors.New("load TypeScript config: failed to import tnl.config.ts")
+	}
+	defer buildContext.Dispose()
+	built := make(chan api.BuildResult, 1)
+	go func() { built <- buildContext.Rebuild() }()
+	var build api.BuildResult
+	select {
+	case build = <-built:
+	case <-ctx.Done():
+		buildContext.Cancel()
+		<-built
+		return "", nil, context.Cause(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, context.Cause(ctx)
+	}
+	if len(build.Errors) != 0 || len(build.OutputFiles) != 1 {
+		return "", nil, errors.New("load TypeScript config: failed to import tnl.config.ts")
+	}
+	file, err := os.CreateTemp(directory, ".tnl-config-*.mjs")
+	if err != nil {
+		return "", nil, fmt.Errorf("load TypeScript config: create temporary config: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(file.Name()) }
+	if _, err := file.Write(build.OutputFiles[0].Contents); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("load TypeScript config: write temporary config: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("load TypeScript config: close temporary config: %w", err)
+	}
+	return file.Name(), cleanup, nil
 }
 
 type boundedOutput struct {
