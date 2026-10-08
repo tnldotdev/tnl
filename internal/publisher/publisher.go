@@ -56,6 +56,7 @@ type Config struct {
 	Target                   string
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
+	ObserveRequest           func(RequestObservation)
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
 	State                    *clientstate.Store

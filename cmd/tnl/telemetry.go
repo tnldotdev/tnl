@@ -38,10 +38,11 @@ const (
 type telemetryTrackedCommand string
 
 const (
-	telemetryInit    telemetryTrackedCommand = "init"
-	telemetryLogin   telemetryTrackedCommand = "login"
-	telemetryDev     telemetryTrackedCommand = "dev"
-	telemetryPublish telemetryTrackedCommand = "publish"
+	telemetryInit     telemetryTrackedCommand = "init"
+	telemetryLogin    telemetryTrackedCommand = "login"
+	telemetryDev      telemetryTrackedCommand = "dev"
+	telemetryPublish  telemetryTrackedCommand = "publish"
+	telemetryRequests telemetryTrackedCommand = "requests"
 )
 
 type telemetryFailureStage string
@@ -81,6 +82,7 @@ type telemetryPayload struct {
 	InvocationID   string                  `json:"invocation_id"`
 	Event          telemetryEventName      `json:"event"`
 	Command        telemetryTrackedCommand `json:"command"`
+	CommandPath    string                  `json:"command_path"`
 	FailureStage   telemetryFailureStage   `json:"failure_stage,omitempty"`
 	DiagnosticCode diagnostic.Code         `json:"diagnostic_code,omitempty"`
 	ServerKind     telemetryServerKind     `json:"server_kind,omitempty"`
@@ -104,6 +106,7 @@ type telemetryInvocation struct {
 	ready    atomic.Bool
 	modeMu   sync.RWMutex
 	mode     telemetryPublishMode
+	path     string
 }
 
 func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
@@ -116,6 +119,9 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
 	payload.InvocationID = i.id
+	if i.path != "" {
+		payload.CommandPath = i.path
+	}
 	if payload.Command == telemetryPublish {
 		i.modeMu.RLock()
 		payload.PublishMode = i.mode
@@ -237,7 +243,7 @@ func (r *asyncTelemetryReporter) Wait(ctx context.Context) {
 
 func newTelemetryBase(command telemetryTrackedCommand) telemetryPayload {
 	return telemetryPayload{
-		Command: command,
+		Command: command, CommandPath: string(command),
 		Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != "",
 	}
 }
@@ -269,26 +275,29 @@ func newTelemetryDemoPing() telemetryPayload {
 	return payload
 }
 
-func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, bool) {
+func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, string, bool) {
 	var command []string
 	for _, element := range parsed.Path {
 		if element.Command != nil && element.Command.Type == kong.CommandNode {
 			command = append(command, element.Command.Name)
 		}
 	}
-	switch strings.Join(command, " ") {
-	case string(telemetryInit):
-		return telemetryInit, true
-	case string(telemetryLogin):
-		return telemetryLogin, true
-	case string(telemetryDev):
-		return telemetryDev, true
-	case string(telemetryPublish):
-		return telemetryPublish, true
-	default:
-		return "", false
+	path := strings.Join(command, " ")
+	if !trackedCommandPaths[path] {
+		return "", "", false
 	}
+	return telemetryTrackedCommand(command[0]), path, true
 }
+
+// Only literal command nodes enter this set. arguments, IDs and flag values never do.
+var trackedCommandPaths = func() map[string]bool {
+	paths := `init|login|logout|dev|publish|status|requests list|requests show|config path|config check|config generate|team current|team list|team use|team create|team members|team invite create|team invite list|team invite revoke|team join|team member set-role|team member remove|domain claim|domain default|domain list|domain status|domain release|url list|url delete|share link create|share list|share link revoke|share team create|share team revoke|feedback list|feedback inspect|feedback watch|feedback reply|feedback update|feedback resolve|feedback reopen|admin server status|admin relays list|admin relays drain|admin maintenance list|admin maintenance allow|admin maintenance block`
+	result := make(map[string]bool)
+	for _, path := range strings.Split(paths, "|") {
+		result[path] = true
+	}
+	return result
+}()
 
 func commandStateRoot(parsed *kong.Context) (string, error) {
 	stateDir := os.Getenv("TNL_STATE_DIR")

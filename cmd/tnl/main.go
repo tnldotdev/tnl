@@ -30,6 +30,7 @@ type cli struct {
 	Dev         devCommand       `cmd:"" help:"Start and publish a development service; override its child command after --." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local HTTP service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
+	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
@@ -297,7 +298,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			return err
 		}
 	}
-	telemetryCommand, collectTelemetry := selectedTelemetryCommand(parsed)
+	telemetryCommand, telemetryPath, collectTelemetry := selectedTelemetryCommand(parsed)
 	var telemetry *telemetryInvocation
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
@@ -306,6 +307,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 				if reporter := reporterFactories[0](root); reporter != nil {
 					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
 						telemetry = invocation
+						telemetry.path = telemetryPath
 						if telemetryCommand == telemetryPublish {
 							mode := telemetryPublishApp
 							if flags.Publish.Demo {
@@ -324,7 +326,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		defer func() {
 			if result != nil {
 				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand == telemetryInit || telemetryCommand == telemetryLogin {
+			} else if telemetryCommand != telemetryDev && telemetryCommand != telemetryPublish && telemetryPath != "feedback watch" {
 				telemetry.Report(newTelemetryCompleted(telemetryCommand))
 			}
 		}()
@@ -405,6 +407,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
+	case "requests list", "requests show <request-id>":
+		root, err := projectRoot(ctx, flags)
+		if err != nil {
+			return err
+		}
+		if parsedCommand == "requests list" {
+			return runRequestsList(ctx, flags.Requests.List, root, stdout)
+		}
+		return runRequestsShow(ctx, flags.Requests.Show, root, stdout)
 	case "team current":
 		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
 	case "team list":

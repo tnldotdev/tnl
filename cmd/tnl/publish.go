@@ -148,6 +148,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	recorder := tunnel.NewRequestRecorder(flags.projectRoot, flags.Service)
+	defer recorder.Close()
+	publisherConfig.ObserveRequest = requestObservation(recorder)
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {

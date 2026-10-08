@@ -284,8 +284,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishCtx, cancelPublish := context.WithCancel(ctx)
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
+	recorder := tunnel.NewRequestRecorder(flags.projectRoot, flags.Service)
+	defer recorder.Close()
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.ObserveRequest = requestObservation(recorder)
 		publisherConfig.ControlURL = authenticated.ServerEndpoint
 		publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 		publisherConfig.PreviewID = previewID

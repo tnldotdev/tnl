@@ -39,6 +39,7 @@ type PublicURLServerConfig struct {
 	Feedback        *feedbackRuntime
 	RequestLimit    int // zero selects localproxy.DefaultRequestLimit.
 	OnTargetFailure func()
+	ObserveRequest  func(RequestObservation)
 	Certificate     tls.Certificate
 	CertificatePlan controlv1.CertificatePlan
 }
@@ -70,6 +71,39 @@ type PublicURLServer struct {
 
 type denialContextKey struct{}
 type shareConnectionKey struct{}
+type responseOriginKey struct{}
+
+// Unwrap lets net/http's response controller retain flushing and upgrades.
+type observedResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *observedResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *observedResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+// RequestObservation contains only local HTTP metadata, never headers or bodies.
+type RequestObservation struct {
+	ReceivedAt time.Time
+	Method     string
+	Path       string
+	Status     int
+	Duration   time.Duration
+	Origin     string
+}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
@@ -89,7 +123,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	handler, err := localproxy.NewWithMountsOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
-		modifyResponse, observe, config.OnTargetFailure)
+		modifyResponse, observe, func(request *http.Request) {
+			if request != nil {
+				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
+					forwarded.Store(true)
+				}
+			}
+		}, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +146,29 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if config.ObserveRequest != nil && !sharePath(request.URL.EscapedPath()) {
+					started := time.Now()
+					forwarded := &atomic.Bool{}
+					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
+					tracked := &observedResponseWriter{ResponseWriter: response}
+					response = tracked
+					defer func() {
+						path := request.URL.EscapedPath()
+						if len(path) > 512 {
+							path = path[:512]
+						}
+						origin := "tnl"
+						if forwarded.Load() {
+							origin = "local_service"
+						}
+						status := tracked.status
+						if status == 0 {
+							status = http.StatusOK
+						}
+						config.ObserveRequest(RequestObservation{ReceivedAt: started.UTC(), Method: request.Method,
+							Path: path, Status: status, Duration: time.Since(started), Origin: origin})
+					}()
+				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code)
 					return
