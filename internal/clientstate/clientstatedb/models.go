@@ -196,11 +196,12 @@ type TelemetryOutbox struct {
 }
 
 type WebhookCatalog struct {
-	Provider   string
-	SourceJson string
-	Etag       string
-	CheckedAt  int64
-	ExpiresAt  int64
+	ServerOrigin string
+	Provider     string
+	SourceJson   string
+	Etag         string
+	CheckedAt    int64
+	ExpiresAt    int64
 }
 
 type WebhookEndpoint struct {

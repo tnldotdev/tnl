@@ -10,29 +10,23 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/webhookprovider"
 )
 
-const catalogURL = "https://tnl.dev/api/w/"
 const maxCatalogBytes = 16384
 const staleLimit = 24 * time.Hour
 const maxFreshness = 15 * time.Minute
 
-var providerNames = []string{
-	"amazon-sns", "auth0", "clerk", "custom", "discord", "github", "gitlab", "incident-io",
-	"lemon-squeezy", "linear", "loops", "paddle", "postmark", "resend", "sendgrid", "shopify",
-	"slack", "stripe", "supabase", "telegram", "twilio", "vercel", "workos",
-}
+func Names() []string { return webhookprovider.Names() }
 
-func Names() []string { return slices.Clone(providerNames) }
-
-func Valid(name string) bool { return slices.Contains(providerNames, name) }
+func Valid(name string) bool { return webhookprovider.Valid(name) }
 
 type Source struct {
 	Name     string
@@ -48,19 +42,23 @@ type CacheEntry struct {
 }
 
 type Cache interface {
-	CachedWebhookPolicy(context.Context, string) (CacheEntry, error)
-	SaveWebhookPolicy(context.Context, string, CacheEntry) error
+	CachedWebhookPolicy(context.Context, string, string) (CacheEntry, error)
+	SaveWebhookPolicy(context.Context, string, string, CacheEntry) error
 }
 
-// Resolve reads only the tnl.dev catalog and a bounded last-good client cache.
-func Resolve(ctx context.Context, cache Cache, name string) (Source, error) {
+// Resolve reads the selected server's catalog and its bounded last-good cache.
+func Resolve(ctx context.Context, cache Cache, server, name string) (Source, error) {
+	server, err := naming.CanonicalControlURL(server)
+	if err != nil {
+		return Source{}, fmt.Errorf("invalid control URL for webhook source: %w", err)
+	}
 	client := &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("webhook catalog redirected")
 	}}
-	return resolve(ctx, client, cache, catalogURL, name, time.Now())
+	return resolve(ctx, client, cache, server, name, time.Now())
 }
 
-func resolve(ctx context.Context, client *http.Client, cache Cache, base, name string, now time.Time) (Source, error) {
+func resolve(ctx context.Context, client *http.Client, cache Cache, server, name string, now time.Time) (Source, error) {
 	if !Valid(name) {
 		return Source{}, fmt.Errorf("unknown webhook provider %q", name)
 	}
@@ -70,7 +68,7 @@ func resolve(ctx context.Context, client *http.Client, cache Cache, base, name s
 	}
 	var entry CacheEntry
 	if cache != nil {
-		cached, err := cache.CachedWebhookPolicy(ctx, name)
+		cached, err := cache.CachedWebhookPolicy(ctx, server, name)
 		if err == nil {
 			entry = cached
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -81,7 +79,7 @@ func resolve(ctx context.Context, client *http.Client, cache Cache, base, name s
 	if cachedErr == nil && now.Before(entry.ExpiresAt) {
 		return cachedSource, nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+name, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server+"/v1/webhook-providers/"+name+"/source", nil)
 	if err != nil {
 		return Source{}, err
 	}
@@ -103,7 +101,7 @@ func resolve(ctx context.Context, client *http.Client, cache Cache, base, name s
 				if response.StatusCode == http.StatusNotModified {
 					updated.ETag = entry.ETag
 				}
-				if cache == nil || cache.SaveWebhookPolicy(ctx, name, updated) == nil {
+				if cache == nil || cache.SaveWebhookPolicy(ctx, server, name, updated) == nil {
 					return source, nil
 				}
 				err = errors.New("could not save webhook policy cache")

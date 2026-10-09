@@ -14,14 +14,14 @@ import (
 
 type memoryCache map[string]CacheEntry
 
-func (c memoryCache) CachedWebhookPolicy(_ context.Context, name string) (CacheEntry, error) {
-	if entry, found := c[name]; found {
+func (c memoryCache) CachedWebhookPolicy(_ context.Context, server, name string) (CacheEntry, error) {
+	if entry, found := c[server+"\x00"+name]; found {
 		return entry, nil
 	}
 	return CacheEntry{}, sql.ErrNoRows
 }
-func (c memoryCache) SaveWebhookPolicy(_ context.Context, name string, entry CacheEntry) error {
-	c[name] = entry
+func (c memoryCache) SaveWebhookPolicy(_ context.Context, server, name string, entry CacheEntry) error {
+	c[server+"\x00"+name] = entry
 	return nil
 }
 
@@ -31,7 +31,7 @@ func TestProviderCatalogRevalidationAndBoundedOutage(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requests++
-		if request.URL.Path != "/api/w/stripe" || request.Header.Get("User-Agent") != "tnl" {
+		if request.URL.Path != "/v1/webhook-providers/stripe/source" || request.Header.Get("User-Agent") != "tnl" {
 			t.Errorf("unexpected catalog request: %s", request.URL)
 		}
 		if unavailable {
@@ -49,7 +49,7 @@ func TestProviderCatalogRevalidationAndBoundedOutage(t *testing.T) {
 	defer server.Close()
 	cache := memoryCache{}
 	read := func(at time.Time) (Source, error) {
-		return resolve(t.Context(), server.Client(), cache, server.URL+"/api/w/", "stripe", at)
+		return resolve(t.Context(), server.Client(), cache, server.URL, "stripe", at)
 	}
 	source, err := read(now)
 	if err != nil || !slices.Equal(source.Prefixes, []string{"192.0.2.1/32", "198.51.100.0/24"}) {
@@ -68,6 +68,13 @@ func TestProviderCatalogRevalidationAndBoundedOutage(t *testing.T) {
 	}
 	if _, err := read(now.Add(25 * time.Hour)); err == nil {
 		t.Fatal("expired last-good source was used")
+	}
+	other := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer other.Close()
+	if _, err := resolve(t.Context(), other.Client(), cache, other.URL, "stripe", now.Add(time.Minute)); err == nil {
+		t.Fatal("another server reused the cached policy")
 	}
 }
 
@@ -97,12 +104,12 @@ func TestCatalogRejectsInvalidSourcesWithoutWidening(t *testing.T) {
 		_, _ = response.Write([]byte(`{"source":{"kind":"ip_ranges","ranges":[]}}`))
 	}))
 	defer server.Close()
-	if _, err := resolve(t.Context(), server.Client(), memoryCache{}, server.URL+"/api/w/", "stripe", time.Now()); err == nil || !strings.Contains(err.Error(), "unavailable") {
+	if _, err := resolve(t.Context(), server.Client(), memoryCache{}, server.URL, "stripe", time.Now()); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("invalid network source was admitted: %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := resolve(ctx, server.Client(), memoryCache{}, server.URL+"/api/w/", "stripe", time.Now()); !errors.Is(err, context.Canceled) {
+	if _, err := resolve(ctx, server.Client(), memoryCache{}, server.URL, "stripe", time.Now()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled catalog = %v", err)
 	}
 }

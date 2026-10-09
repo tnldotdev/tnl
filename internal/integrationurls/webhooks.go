@@ -55,7 +55,7 @@ func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group
 	return newWebhooks(ctx, state, server, group, hostname, definitions, report, webhookips.Resolve)
 }
 
-func newWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhookips.Cache, string) (webhookips.Source, error)) (*Webhooks, []string, error) {
+func newWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhookips.Cache, string, string) (webhookips.Source, error)) (*Webhooks, []string, error) {
 	services := config.Services{}
 	providers := map[string]bool{}
 	for _, definition := range definitions {
@@ -76,7 +76,7 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server, group
 	slices.Sort(names)
 	sources := map[string]webhookips.Source{}
 	for _, name := range names {
-		source, err := resolve(ctx, state, name)
+		source, err := resolve(ctx, state, server, name)
 		if err != nil {
 			continue
 		}

@@ -162,9 +162,9 @@ func TestUnavailableCatalogPolicyDoesNotBlockOtherWebhookOrReadFailedBody(t *tes
 	handler, ingressIPs, err := newWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
 		"stripe": stripe,
 		"github": {Service: "api", Path: "/hooks/github", Provider: "github"},
-	}, nil, func(_ context.Context, _ webhookips.Cache, name string) (webhookips.Source, error) {
-		if name != "github" {
-			t.Errorf("unexpected catalog lookup for overridden policy: %s", name)
+	}, nil, func(_ context.Context, _ webhookips.Cache, server, name string) (webhookips.Source, error) {
+		if server != testServer || name != "github" {
+			t.Errorf("unexpected catalog lookup for %s on %s", name, server)
 		}
 		return webhookips.Source{}, errors.New("catalog unavailable")
 	})

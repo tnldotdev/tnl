@@ -11,8 +11,13 @@ import (
 
 const getWebhookCatalog = `-- name: GetWebhookCatalog :one
 SELECT source_json, etag, checked_at, expires_at FROM webhook_catalog
-WHERE provider = ?1
+WHERE server_origin = ?1 AND provider = ?2
 `
+
+type GetWebhookCatalogParams struct {
+	ServerOrigin string
+	Provider     string
+}
 
 type GetWebhookCatalogRow struct {
 	SourceJson string
@@ -21,8 +26,8 @@ type GetWebhookCatalogRow struct {
 	ExpiresAt  int64
 }
 
-func (q *Queries) GetWebhookCatalog(ctx context.Context, provider string) (GetWebhookCatalogRow, error) {
-	row := q.db.QueryRowContext(ctx, getWebhookCatalog, provider)
+func (q *Queries) GetWebhookCatalog(ctx context.Context, arg GetWebhookCatalogParams) (GetWebhookCatalogRow, error) {
+	row := q.db.QueryRowContext(ctx, getWebhookCatalog, arg.ServerOrigin, arg.Provider)
 	var i GetWebhookCatalogRow
 	err := row.Scan(
 		&i.SourceJson,
@@ -34,22 +39,24 @@ func (q *Queries) GetWebhookCatalog(ctx context.Context, provider string) (GetWe
 }
 
 const putWebhookCatalog = `-- name: PutWebhookCatalog :exec
-INSERT INTO webhook_catalog (provider, source_json, etag, checked_at, expires_at)
-VALUES (?1, ?2, ?3, ?4, ?5)
-ON CONFLICT(provider) DO UPDATE SET source_json = excluded.source_json, etag = excluded.etag,
+INSERT INTO webhook_catalog (server_origin, provider, source_json, etag, checked_at, expires_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT(server_origin, provider) DO UPDATE SET source_json = excluded.source_json, etag = excluded.etag,
   checked_at = excluded.checked_at, expires_at = excluded.expires_at
 `
 
 type PutWebhookCatalogParams struct {
-	Provider   string
-	SourceJson string
-	Etag       string
-	CheckedAt  int64
-	ExpiresAt  int64
+	ServerOrigin string
+	Provider     string
+	SourceJson   string
+	Etag         string
+	CheckedAt    int64
+	ExpiresAt    int64
 }
 
 func (q *Queries) PutWebhookCatalog(ctx context.Context, arg PutWebhookCatalogParams) error {
 	_, err := q.db.ExecContext(ctx, putWebhookCatalog,
+		arg.ServerOrigin,
 		arg.Provider,
 		arg.SourceJson,
 		arg.Etag,
