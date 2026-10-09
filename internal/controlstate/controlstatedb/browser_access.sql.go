@@ -96,7 +96,7 @@ type ConsumeBrowserLoginAttemptParams struct {
 }
 
 type ConsumeBrowserLoginAttemptRow struct {
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
 	ReturnPath           string
 	Nonce                string
@@ -184,7 +184,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 
 type InsertBrowserAccessSessionParams struct {
 	TokenDigest       []byte
-	PreviewID         string
+	PreviewID         pgtype.Text
 	PublicURLID       string
 	IdentityID        string
 	DisplayName       string
@@ -220,7 +220,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 type InsertBrowserLoginAttemptParams struct {
 	StateDigest          []byte
 	BindingDigest        []byte
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
 	ReturnPath           string
 	Nonce                string
