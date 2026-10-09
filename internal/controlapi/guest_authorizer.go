@@ -108,7 +108,7 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		RetrySecret: retrySecret,
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
-		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace, true, a.dnsAutomation)
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace, false, a.dnsAutomation)
 	}
 	return decision, nil
 }

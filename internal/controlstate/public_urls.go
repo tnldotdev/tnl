@@ -129,6 +129,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
 	}
 	policyRevision := int64(0)
+	namespace := ""
 	if request.GuestID != "" {
 		policyRevision = positive(request.PolicyRevision)
 	}
@@ -177,6 +178,11 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			request.DNSState != PublicURLDNSUnmanaged && request.DNSAuthorityReference != guest.DnsAuthorityReference {
 			return PublicURL{}, ErrPublicURLAccess
 		}
+		managed, err := queries.FindManagedDomain(ctx)
+		if err != nil || managed.ID != guest.DomainID {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+		namespace = guest.NamespaceLabel + "." + managed.CanonicalDomain
 		count, err := queries.CountGuestCurrentPublicURLs(ctx, request.GuestID)
 		if err != nil {
 			return PublicURL{}, err
@@ -209,6 +215,16 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
+		}
+		if request.PublicURLScope == PublicURLScopeShared {
+			namespace = creation.CanonicalDomain
+		} else {
+			namespace, _ = naming.PublicURLNamespace(naming.NamespaceFacts{
+				Domain: creation.CanonicalDomain, Managed: creation.DomainKind == "managed",
+				Mode: request.ManagedURLMode, Personal: creation.TeamKind == "personal",
+				TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug,
+				ManagedLabel: creation.ActorManagedLabel,
+			})
 		}
 		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
 			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
@@ -259,7 +275,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
-		CanonicalHostname:         request.CanonicalHostname, Target: request.Target,
+		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
 		PublicURLScope: string(request.PublicURLScope), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),

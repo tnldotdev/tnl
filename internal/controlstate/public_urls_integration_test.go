@@ -80,6 +80,10 @@ func TestIntegrationSimpleManagedDirectNameReservation(t *testing.T) {
 	if err != nil || first.PublicURLScope != PublicURLScopeShared || first.MembershipID != "" {
 		t.Fatalf("simple direct public URL = %#v, %v", first, err)
 	}
+	var namespace string
+	if err := database.pool.QueryRow(t.Context(), `SELECT namespace FROM control.public_urls WHERE id = $1`, first.ID).Scan(&namespace); err != nil || namespace != "tunnels.example.test" {
+		t.Fatalf("direct URL namespace = %q, %v", namespace, err)
+	}
 	if replay, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second)); err != nil || replay.ID != first.ID {
 		t.Fatalf("direct public URL retry = %#v, %v", replay, err)
 	}
@@ -113,8 +117,14 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
 	}
 	request.CanonicalHostname = "app." + members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
-	if _, err := database.CreatePublicURL(t.Context(), request, now); err != nil {
+	route, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil {
 		t.Fatalf("organization public URL: %v", err)
+	}
+	var namespace string
+	wantNamespace := members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
+	if err := database.pool.QueryRow(t.Context(), `SELECT namespace FROM control.public_urls WHERE id = $1`, route.ID).Scan(&namespace); err != nil || namespace != wantNamespace {
+		t.Fatalf("organization URL namespace = %q, want %q: %v", namespace, wantNamespace, err)
 	}
 	request.IdempotencyKey, request.RequestDigest = "managed-label", sha256.Sum256([]byte("managed-label"))
 	request.CanonicalHostname = "app." + members[0].ManagedLabel + "." + domains[0].CanonicalDomain

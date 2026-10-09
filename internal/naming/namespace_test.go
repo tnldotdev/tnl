@@ -34,3 +34,17 @@ func TestPublicURLNamespaceOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicURLWildcardStaysUnderTheAuthorizedNamespace(t *testing.T) {
+	const namespace = "alex.studio.routes.example.com"
+	for _, test := range []struct{ hostname, want string }{
+		{"app." + namespace, "*." + namespace},
+		{"api.preview." + namespace, "*.preview." + namespace},
+		{namespace, ""},
+		{"api.bob.studio.routes.example.com", ""},
+	} {
+		if got := PublicURLWildcard(test.hostname, namespace); got != test.want {
+			t.Errorf("wildcard for %q = %q, want %q", test.hostname, got, test.want)
+		}
+	}
+}

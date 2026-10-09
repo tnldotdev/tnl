@@ -9,32 +9,29 @@ import (
 
 func TestPublicURLCertificatePlanDoesNotCrossNamespaceOrScope(t *testing.T) {
 	const namespace = "alex.studio.example.com"
-	first := PublicURLCertificatePlan("web."+namespace, namespace, true, true)
-	second := PublicURLCertificatePlan("api."+namespace, namespace, true, true)
+	first := PublicURLCertificatePlan("web."+namespace, namespace, false, true)
+	second := PublicURLCertificatePlan("api."+namespace, namespace, false, true)
 	if first.CacheKey != namespace || second.CacheKey != namespace ||
-		!slices.Equal(first.Identifiers, []string{"*." + namespace, namespace}) ||
+		!slices.Equal(first.Identifiers, []string{"*." + namespace}) ||
 		!certificateidentity.Covers(first.Identifiers, "api."+namespace) ||
+		certificateidentity.Covers(first.Identifiers, namespace) ||
 		certificateidentity.Covers(first.Identifiers, "web.sam.studio.example.com") ||
 		certificateidentity.Covers(first.Identifiers, "api.preview."+namespace) {
 		t.Fatalf("member pool crossed namespace: first=%#v, second=%#v", first, second)
 	}
-	for _, test := range []struct {
-		name          string
-		hostname      string
-		member        bool
-		dnsAutomation bool
-		method        certificateidentity.ChallengeMethod
-	}{
-		{"nested", "api.preview." + namespace, true, true, certificateidentity.ChallengeDNS01},
-		{"shared", "app.studio.example.com", false, true, certificateidentity.ChallengeDNS01},
-		{"manual_dns", "web." + namespace, true, false, certificateidentity.ChallengeTLSALPN01},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			plan := PublicURLCertificatePlan(test.hostname, namespace, test.member, test.dnsAutomation)
-			if plan.CacheKey != test.hostname || !slices.Equal(plan.Identifiers, []string{test.hostname}) ||
-				plan.ChallengeMethod != test.method {
-				t.Fatalf("exact plan = %#v", plan)
-			}
-		})
+	nested := PublicURLCertificatePlan("api.preview."+namespace, namespace, false, true)
+	if nested.CacheKey != "preview."+namespace || !slices.Equal(nested.Identifiers, []string{"*.preview." + namespace}) {
+		t.Fatalf("nested pool = %#v", nested)
+	}
+	shared := PublicURLCertificatePlan("app.studio.example.com", "studio.example.com", true, true)
+	apex := PublicURLCertificatePlan("studio.example.com", "studio.example.com", true, true)
+	if shared.CacheKey != apex.CacheKey || !slices.Equal(shared.Identifiers, []string{"*.studio.example.com", "studio.example.com"}) ||
+		!slices.Equal(shared.Identifiers, apex.Identifiers) {
+		t.Fatalf("shared pool = %#v, apex = %#v", shared, apex)
+	}
+	manual := PublicURLCertificatePlan("web."+namespace, namespace, false, false)
+	if manual.CacheKey != "web."+namespace || !slices.Equal(manual.Identifiers, []string{"web." + namespace}) ||
+		manual.ChallengeMethod != certificateidentity.ChallengeTLSALPN01 {
+		t.Fatalf("manual DNS plan = %#v", manual)
 	}
 }

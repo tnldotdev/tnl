@@ -1,5 +1,7 @@
 package naming
 
+import "strings"
+
 type ManagedURLMode string
 
 const (
@@ -47,4 +49,14 @@ func MemberNamespace(domain string, managed bool, managedLabel, memberSlug strin
 		label = managedLabel
 	}
 	return label + "." + domain
+}
+
+// PublicURLWildcard returns the narrowest wildcard that covers hostname while
+// staying within the authorized namespace. wildcards cover one DNS label.
+func PublicURLWildcard(hostname, namespace string) string {
+	if depth, within := ChildDepth(hostname, namespace); !within || depth == 0 {
+		return ""
+	}
+	_, parent, _ := strings.Cut(hostname, ".")
+	return "*." + parent
 }
