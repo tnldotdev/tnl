@@ -142,7 +142,6 @@ func runRuntimeStart(ctx context.Context, options runtimeOptions, output io.Writ
 		command := exec.Command(binary, "--no-telemetry", "runtime", "serve", "--directory", project.Root, "--state-dir", state)
 		command.Dir = project.Root
 		command.Env = append(os.Environ(), "TNL_CONFIG="+project.Selection.Path)
-		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		command.Stdin, command.Stdout, command.Stderr = nil, io.Discard, io.Discard
 		if err := command.Start(); err != nil {
 			return err
