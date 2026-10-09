@@ -291,6 +291,7 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	service.Registered, service.Routable, service.Ready = true, false, false
 	service.Target, service.Framework, service.Failure = target, framework, ""
 	service.PublishRunNumber, service.Observation = 0, nil
+	service.ProvisioningStage = ""
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(m.ctx)
 	reg.cancel, reg.done = cancel, make(chan struct{})
@@ -332,10 +333,14 @@ func (m *Manager) Published(id string, run uint64, routable bool) error {
 		}
 		if run != service.PublishRunNumber || !routable {
 			service.Ready, service.Observation = false, nil
+			if run != service.PublishRunNumber {
+				service.ProvisioningStage = ""
+			}
 		}
 		service.PublishRunNumber, service.Routable = run, routable
 		if routable {
 			service.Failure = ""
+			service.ProvisioningStage = ""
 		}
 		m.emitLocked("service.publication", service)
 		return m.writeErr
@@ -369,6 +374,17 @@ func (m *Manager) RecordWarning(name, registrationID, reason string) {
 		service.Failure = reason
 		m.emitLocked("service.warning", service)
 	}
+}
+
+func (m *Manager) SetProvisioningStage(name, registrationID string, run uint64, stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	service := m.serviceLocked(name)
+	if service == nil || !service.Registered || service.Routable || service.RegistrationID != registrationID || service.PublishRunNumber != run || service.ProvisioningStage == stage {
+		return
+	}
+	service.ProvisioningStage = stage
+	m.emitLocked("service.provisioning", service)
 }
 
 func (m *Manager) Observe(observation Observation) bool {
@@ -423,6 +439,7 @@ func (m *Manager) unregister(id, owner string) error {
 		return ErrRegistrationStale
 	}
 	service.Registered, service.Routable, service.Ready = false, false, false
+	service.ProvisioningStage = ""
 	service.Observation = nil
 	m.emitLocked("service.unregistered", service)
 	if reg.cancel != nil {

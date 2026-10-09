@@ -123,6 +123,14 @@ func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
+	if err := manager.Published(id, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	manager.SetProvisioningStage("web", id, 1, "publisher_connections")
+	manager.SetProvisioningStage("web", "reg_outdated", 1, "certificate")
+	if got := manager.Snapshot().Services[0].ProvisioningStage; got != "publisher_connections" {
+		t.Fatalf("provisioning stage = %s", got)
+	}
 	manager.RecordWarning("web", id, "runtime.provisioning_stalled")
 	first := manager.Snapshot()
 	if first.Services[0].Failure != "runtime.provisioning_stalled" {
@@ -136,7 +144,7 @@ func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
 	if err := manager.Published(id, 1, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := manager.Snapshot().Services[0]; got.Failure != "" || !got.Routable {
+	if got := manager.Snapshot().Services[0]; got.Failure != "" || !got.Routable || got.ProvisioningStage != "" {
 		t.Fatalf("warning remained after publication became routable: %+v", got)
 	}
 }

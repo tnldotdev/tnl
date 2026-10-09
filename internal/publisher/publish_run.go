@@ -69,6 +69,10 @@ func runSession(
 		return errors.New("publisher: server returned invalid publish run token")
 	}
 	version := uint64(setup.PublishRun.PublishRunNumber)
+	progress := func(stage string) error {
+		return observe(config, Event{Type: EventProvisioningStep, PublicURLID: setup.PublicUrl.Id,
+			Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version, ProvisioningStage: stage})
+	}
 	parentCtx := ctx
 	sessionCtx, cancelSession := context.WithCancelCause(ctx)
 	defer cancelSession(nil)
@@ -85,6 +89,9 @@ func runSession(
 		<-provisioningDone
 	}()
 	// refresh before setup consumes the publish run; the heartbeat loop takes over after the connections start.
+	if err := progress("heartbeat"); err != nil {
+		return err
+	}
 	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
 		sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, setup.PublishRun.ExpiresAt,
 	)
@@ -130,6 +137,9 @@ func runSession(
 	}
 	var shareRuntime *shareAccess
 	if config.PreviewID != "" && !config.Demo {
+		if err := progress("share_access"); err != nil {
+			return err
+		}
 		client, ok := config.Control.(shareAccessClient)
 		if !ok {
 			return errors.New("publisher: share-capable control client is required for this preview")
@@ -196,6 +206,9 @@ func runSession(
 	}
 	defer route.Close()
 	if err := route.Start(); err != nil {
+		return err
+	}
+	if err := progress("publisher_connections"); err != nil {
 		return err
 	}
 	// sessionCtx stops admission, heartbeats, and certificate renewals.
@@ -278,11 +291,17 @@ func runSession(
 	if err := connections.WaitReady(ctx, 1); err != nil {
 		return err
 	}
+	if err := progress("certificate"); err != nil {
+		return err
+	}
 	material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
 	if err != nil {
 		return err
 	}
 	if err := connections.WaitReady(ctx, 2); err != nil {
+		return err
+	}
+	if err := progress("ready_confirmation"); err != nil {
 		return err
 	}
 	select {
