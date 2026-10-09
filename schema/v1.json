@@ -16,7 +16,7 @@
               "minimum": 1
             }
           ],
-          "description": "Local HTTP URL or port reached by the publisher."
+          "description": "HTTP or HTTPS origin reachable by the publisher, or a local port."
         }
       },
       "additionalProperties": false,

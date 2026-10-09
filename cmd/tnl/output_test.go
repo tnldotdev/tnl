@@ -612,7 +612,7 @@ func TestPublishOutputWarnsWhenRunningLocalServiceFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "local service unavailable") || !strings.Contains(text, "TNL_TARGET_UNAVAILABLE") ||
+	if !strings.Contains(text, "target unavailable") || !strings.Contains(text, "TNL_TARGET_UNAVAILABLE") ||
 		!strings.Contains(text, "https://tnl.dev/e/target") || strings.Contains(text, "localproxy:") {
 		t.Fatalf("target warning = %q", text)
 	}

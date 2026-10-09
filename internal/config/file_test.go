@@ -251,7 +251,7 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
-		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
+		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com/path"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com/path\n", "publish.target:"},
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},

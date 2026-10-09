@@ -60,7 +60,8 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.target_invalid": {
     class: "invalid",
     retry: "after_change",
-    message: "tnl development target must be a local HTTP listener on a port between 1 and 65535",
+    message:
+      "tnl development target must be an HTTP or HTTPS listener on a port between 1 and 65535",
   },
   "sdk.dev_unavailable": {
     class: "unavailable",

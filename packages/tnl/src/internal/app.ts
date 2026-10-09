@@ -4,7 +4,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
-import { canonicalLoopbackTarget, type CanonicalLoopbackTarget } from "./dev.js";
+import { canonicalLoopbackTarget, type CanonicalTarget } from "./dev.js";
 import { resolveNativeBinary } from "./launcher.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import {
@@ -20,6 +20,8 @@ export interface PrepareOptions {
   readonly service?: string;
   readonly directory?: string;
 }
+
+type CanonicalLoopbackTarget = `http://${string}`;
 
 export interface PreparedService extends ProjectRuntime {
   readonly service: string;
@@ -110,7 +112,7 @@ export async function createPreparedService(
   };
   let assignment = parseAssignment(await dependencies.request(socket, "prepare", prepareRequest));
   let server: LocalHTTPServer | undefined;
-  let reportedTarget: CanonicalLoopbackTarget | undefined;
+  let reportedTarget: CanonicalTarget | undefined;
   let closed = false;
   let registered = false;
   let needsPrepare = false;

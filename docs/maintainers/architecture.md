@@ -26,13 +26,13 @@ The arrows show responsibility, not one permanent network connection. Control
 coordinates the system. Visitor bytes travel through ingress and one connected
 relay to the publisher.
 
-| Component                  | Responsibility                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------------- |
-| `tnl` client and publisher | Local tunnel lifecycle, publisher connections, visitor TLS termination, and local HTTP forwarding |
-| Control                    | Durable state, authorization, placement, certificates, administration, and coordination           |
-| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding                    |
-| Relay                      | Publisher connections and visitor streams for locally connected publishers                        |
-| PostgreSQL                 | Authoritative durable server state                                                                |
+| Component                  | Responsibility                                                                          |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `tnl` client and publisher | Tunnel lifecycle, publisher connections, visitor TLS termination, and target forwarding |
+| Control                    | Durable state, authorization, placement, certificates, administration, and coordination |
+| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding          |
+| Relay                      | Publisher connections and visitor streams for locally connected publishers              |
+| PostgreSQL                 | Authoritative durable server state                                                      |
 
 Only control connects to PostgreSQL. Ingress receives a short-lived routing
 table. Each relay knows its own lease and the publishers connected to it.
@@ -64,15 +64,15 @@ relay: open a stream on a ready publisher connection
    | unchanged visitor TLS bytes
    v
 publisher: terminate visitor TLS
-   | validated HTTP over localhost
+   | HTTP or HTTPS to the configured target
    v
-local service
+target service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
 destination. Relay preserves that header and the visitor TLS bytes. A denied
 visitor may use a separate, bounded forwarding budget to reach the publisher
-for an HTTPS 403, but never reaches the local service. The publisher removes
+for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
 The ingress routing table retains the relay process identity and the last

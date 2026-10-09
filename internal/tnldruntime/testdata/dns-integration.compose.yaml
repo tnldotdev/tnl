@@ -2,7 +2,7 @@ name: tnl-dns-integration-test
 
 services:
   postgres:
-    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: public.ecr.aws/docker/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     environment:
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: postgres
@@ -14,7 +14,7 @@ services:
       retries: 10
 
   test:
-    image: golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+    image: public.ecr.aws/docker/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
     init: true
     depends_on:
       postgres:

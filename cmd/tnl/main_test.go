@@ -325,7 +325,7 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 		wantReason failure.Reason
 	}{
 		{command: "dev", wantErr: "start the app with its normal development command", wantReason: failure.AppStartCommandRetired},
-		{command: "publish", wantErr: "local target is required as an argument or publish.target in project configuration", wantReason: failure.MissingTarget},
+		{command: "publish", wantErr: "target is required as an argument or publish.target in project configuration", wantReason: failure.MissingTarget},
 	} {
 		t.Run(test.command, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -576,7 +576,7 @@ func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	}
 	output.Reset()
 	writeCommandError(&output, clioutput.WrapCommand("tnl publish", diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))))
-	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- local service unavailable ") ||
+	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- target unavailable ") ||
 		!strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("classified error output = %q", got)
 	}
