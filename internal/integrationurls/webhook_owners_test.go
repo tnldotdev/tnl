@@ -69,8 +69,8 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 		t.Fatal(err)
 	}
 	var responses atomic.Int32
-	handler.OnReceiverResponse = func(mode string) {
-		if mode != "selected" {
+	handler.OnReceiverResponse = func(endpoint, mode string) {
+		if endpoint != "respond" || mode != "selected" {
 			t.Errorf("delivery mode = %q", mode)
 		}
 		responses.Add(1)

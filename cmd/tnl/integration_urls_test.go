@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -117,5 +119,104 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	}
 	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
 		t.Fatalf("reprovisioning receiver reported ready: %q", mode)
+	}
+}
+
+func TestWebhookProviderReadinessWaitsForEachUsablePolicyAndReceiver(t *testing.T) {
+	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	const server, group, hostname = "https://control.example.test", "project\x00member.example.test", "hooks.member.example.test"
+	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationGroup: group,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	definitions := map[string]config.Webhook{
+		"stripe": {Service: "api", Path: "/hooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}},
+		"slack":  {Service: "api", Path: "/hooks/slack", Provider: "slack", SourceIPs: []string{"192.0.2.0/24"}},
+	}
+	for name, definition := range definitions {
+		encoded, _, err := integrationurls.DefinitionBytes(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tunnel.RegisterWebhookEndpoint(t.Context(), name, encoded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "api.member.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetReady(t.Context(), "https://api.member.example.test", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.MarkIntegrationURLReady(t.Context(), server, hostname, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	var policyReady sync.Map
+	policyReady.Store("stripe", true)
+	policyReady.Store("slack", false)
+	events := make(chan telemetryPayload, 8)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchWebhookReady(ctx, state, server, group, hostname, definitions, telemetryReporterFunc(func(event telemetryPayload) {
+			events <- event
+		}), &policyReady)
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case event := <-events:
+		if event.Event != telemetryWebhookReady || event.Delivery != telemetryFanout {
+			t.Fatalf("first readiness = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first provider did not become ready")
+	}
+	select {
+	case event := <-events:
+		if event.Event != telemetryProviderReady || event.Provider != "stripe" {
+			t.Fatalf("first provider = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first provider was not reported")
+	}
+	_, digest, err := integrationurls.DefinitionBytes(definitions["slack"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ClaimWebhookReceiver(t.Context(), server, group, "slack", tunnel.ID(), digest, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("source policy was unavailable, but readiness was reported: %+v", event)
+	case <-time.After(1200 * time.Millisecond):
+	}
+	policyReady.Store("slack", true)
+	select {
+	case event := <-events:
+		if event.Event != telemetryWebhookReady || event.Delivery != telemetrySelected {
+			t.Fatalf("selected readiness = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second provider did not become ready")
+	}
+	select {
+	case event := <-events:
+		if event.Event != telemetryProviderReady || event.Provider != "slack" {
+			t.Fatalf("second provider = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second provider was not reported")
 	}
 }

@@ -29,7 +29,15 @@ func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event jso
 		return fmt.Errorf("clientstate: begin telemetry queue: %w", err)
 	}
 	defer tx.Rollback()
-	if err := clientstatedb.New(tx).InsertTelemetryEvent(ctx, clientstatedb.InsertTelemetryEventParams{
+	queries := clientstatedb.New(tx)
+	enabled, err := queries.GetTelemetryEnabled(ctx)
+	if err != nil {
+		return fmt.Errorf("clientstate: read telemetry preference: %w", err)
+	}
+	if enabled != 1 {
+		return nil
+	}
+	if err := queries.InsertTelemetryEvent(ctx, clientstatedb.InsertTelemetryEventParams{
 		EventID: id, CreatedAt: d.now().UTC().UnixNano(), EventJson: string(event),
 	}); err != nil {
 		return fmt.Errorf("clientstate: queue telemetry: %w", err)

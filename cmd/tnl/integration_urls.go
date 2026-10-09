@@ -125,6 +125,9 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	slices.Sort(names)
 	registered := make(map[string]config.Webhook, len(names))
 	for _, name := range names {
+		if telemetry != nil {
+			telemetry.Report(newProviderTelemetry(telemetryProviderConfigured, project.Config.Webhooks[name].Provider))
+		}
 		encoded, _, err := integrationurls.DefinitionBytes(project.Config.Webhooks[name])
 		if err == nil {
 			err = tunnel.RegisterWebhookEndpoint(ctx, name, encoded)
@@ -165,22 +168,41 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 		))
 	}
 	var workers sync.WaitGroup
-	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output, telemetry)
+	var policyReady sync.Map
+	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output, telemetry, &policyReady)
 	workers.Go(func() { worker.Maintain(ctx) })
 	if telemetry != nil && len(registered) != 0 {
 		workers.Go(func() {
-			watchWebhookReady(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, registered, telemetry)
+			watchWebhookReady(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, registered, telemetry, &policyReady)
 		})
 	}
 	return func() { cancel(); workers.Wait() }
 }
 
-func watchWebhookReady(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, telemetry telemetryReporter) {
+func watchWebhookReady(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, telemetry telemetryReporter, policyReady *sync.Map) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	seen := map[string]bool{}
+	wanted := map[string]bool{}
+	for _, definition := range definitions {
+		wanted[definition.Provider] = true
+	}
 	for ctx.Err() == nil {
-		if mode := readyWebhookDelivery(ctx, state, server, group, hostname, definitions); mode != "" {
-			telemetry.Report(newIntegrationTelemetry(telemetryWebhookReady, mode))
+		for _, name := range slices.Sorted(maps.Keys(definitions)) {
+			definition := definitions[name]
+			if seen[definition.Provider] {
+				continue
+			}
+			if ready, ok := policyReady.Load(name); !ok || ready != true {
+				continue
+			}
+			if mode := readyWebhookDelivery(ctx, state, server, group, hostname, map[string]config.Webhook{name: definition}); mode != "" {
+				telemetry.Report(newIntegrationTelemetry(telemetryWebhookReady, mode))
+				telemetry.Report(newProviderTelemetry(telemetryProviderReady, definition.Provider))
+				seen[definition.Provider] = true
+			}
+		}
+		if len(seen) == len(wanted) {
 			return
 		}
 		select {
@@ -217,7 +239,7 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 	return ""
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *publishOutput, telemetry telemetryReporter) integrationurls.Publisher {
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *publishOutput, telemetry telemetryReporter, policyReady *sync.Map) integrationurls.Publisher {
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	failure := func(message string) {
@@ -256,15 +278,20 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 				return integrationurls.Snapshot{}, err
 			}
 			for _, name := range slices.Sorted(maps.Keys(definitions)) {
+				policyReady.Store(name, handler.PolicyStatus(name) != "unavailable")
 				reportIntegrationURL(tunnel, output, "webhook policy", "", clioutput.Fields(
 					clioutput.Field{Label: "webhook", Value: name},
 					clioutput.Field{Label: "source policy", Value: handler.PolicyStatus(name)},
 				))
 			}
 			if telemetry != nil {
-				handler.OnReceiverResponse = func(mode string) {
+				handler.OnReceiverResponse = func(endpoint, mode string) {
 					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReady, telemetryWebhookDelivery(mode)))
 					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReached, telemetryWebhookDelivery(mode)))
+					if definition, found := definitions[endpoint]; found {
+						telemetry.Report(newProviderTelemetry(telemetryProviderReady, definition.Provider))
+						telemetry.Report(newProviderTelemetry(telemetryProviderReached, definition.Provider))
+					}
 				}
 			}
 			config := integrationURLConfig(services, origin.Hostname)

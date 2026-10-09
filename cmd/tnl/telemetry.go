@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 const (
@@ -28,15 +29,18 @@ const (
 type telemetryEventName string
 
 const (
-	telemetryCommandStarted    telemetryEventName = "command_started"
-	telemetryCommandCompleted  telemetryEventName = "command_completed"
-	telemetryCommandFailed     telemetryEventName = "command_failed"
-	telemetryPublishRunStarted telemetryEventName = "publish_run_started"
-	telemetryDemoPingReceived  telemetryEventName = "demo_ping_received"
-	telemetryOAuthReady        telemetryEventName = "oauth_callback_url_ready"
-	telemetryOAuthRedirected   telemetryEventName = "oauth_callback_redirected"
-	telemetryWebhookReady      telemetryEventName = "webhook_endpoint_ready"
-	telemetryWebhookReached    telemetryEventName = "webhook_delivery_reached_receiver"
+	telemetryCommandStarted     telemetryEventName = "command_started"
+	telemetryCommandCompleted   telemetryEventName = "command_completed"
+	telemetryCommandFailed      telemetryEventName = "command_failed"
+	telemetryPublishRunStarted  telemetryEventName = "publish_run_started"
+	telemetryDemoPingReceived   telemetryEventName = "demo_ping_received"
+	telemetryOAuthReady         telemetryEventName = "oauth_callback_url_ready"
+	telemetryOAuthRedirected    telemetryEventName = "oauth_callback_redirected"
+	telemetryWebhookReady       telemetryEventName = "webhook_endpoint_ready"
+	telemetryWebhookReached     telemetryEventName = "webhook_delivery_reached_receiver"
+	telemetryProviderConfigured telemetryEventName = "webhook_provider_configured"
+	telemetryProviderReady      telemetryEventName = "webhook_provider_ready"
+	telemetryProviderReached    telemetryEventName = "webhook_provider_reached_receiver"
 )
 
 type telemetryTrackedCommand string
@@ -100,6 +104,7 @@ type telemetryPayload struct {
 	PublishMode    telemetryPublishMode     `json:"publish_mode,omitempty"`
 	Framework      telemetryFrameworkName   `json:"framework,omitempty"`
 	Delivery       telemetryWebhookDelivery `json:"delivery,omitempty"`
+	Provider       string                   `json:"provider,omitempty"`
 	Version        string                   `json:"version"`
 	OS             string                   `json:"os"`
 	Arch           string                   `json:"arch"`
@@ -117,6 +122,8 @@ type telemetryInvocation struct {
 	id              string
 	ready           atomic.Bool
 	integrationOnce [4]atomic.Bool
+	providerMu      sync.Mutex
+	providerOnce    map[telemetryEventName]map[string]bool
 	modeMu          sync.RWMutex
 	mode            telemetryPublishMode
 	action          telemetryCommandAction
@@ -131,6 +138,25 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 }
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
+	providerEvent := payload.Event == telemetryProviderConfigured || payload.Event == telemetryProviderReady || payload.Event == telemetryProviderReached
+	if providerEvent {
+		if !webhookips.Valid(payload.Provider) {
+			return
+		}
+		i.providerMu.Lock()
+		if i.providerOnce == nil {
+			i.providerOnce = make(map[telemetryEventName]map[string]bool)
+		}
+		if i.providerOnce[payload.Event] == nil {
+			i.providerOnce[payload.Event] = make(map[string]bool)
+		}
+		if i.providerOnce[payload.Event][payload.Provider] {
+			i.providerMu.Unlock()
+			return
+		}
+		i.providerOnce[payload.Event][payload.Provider] = true
+		i.providerMu.Unlock()
+	}
 	var once *atomic.Bool
 	switch payload.Event {
 	case telemetryOAuthReady:
@@ -156,6 +182,9 @@ func (i *telemetryInvocation) Report(payload telemetryPayload) {
 		i.ready.Store(true)
 	}
 	i.reporter.Report(payload)
+	if providerEvent {
+		i.flushReady()
+	}
 }
 
 func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
@@ -199,10 +228,12 @@ type asyncTelemetryReporter struct {
 	root   string
 	client *http.Client
 
-	idMu    sync.Mutex
-	id      string
-	wait    sync.WaitGroup
-	flushMu sync.Mutex
+	idMu      sync.Mutex
+	id        string
+	wait      sync.WaitGroup
+	flushMu   sync.Mutex
+	scheduled atomic.Bool
+	dirty     atomic.Bool
 }
 
 func newTelemetryReporter(root string) *asyncTelemetryReporter {
@@ -243,12 +274,23 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 }
 
 func (r *asyncTelemetryReporter) flushReady() {
+	r.dirty.Store(true)
+	if !r.scheduled.CompareAndSwap(false, true) {
+		return
+	}
 	r.wait.Add(1)
 	go func() {
 		defer r.wait.Done()
+		// group the first providers registered by one command into one batch.
+		time.Sleep(50 * time.Millisecond)
+		r.dirty.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		defer cancel()
 		r.flush(ctx)
+		r.scheduled.Store(false)
+		if r.dirty.Swap(false) && ctx.Err() == nil {
+			r.flushReady()
+		}
 	}()
 }
 
@@ -264,35 +306,41 @@ func (r *asyncTelemetryReporter) flush(ctx context.Context) {
 		return
 	}
 	_ = state.PruneTelemetryOutbox(ctx)
-	pending, err := state.PendingTelemetryEvents(ctx, 25)
-	if err != nil || len(pending) == 0 {
-		return
-	}
 	installationID, err := state.InstallationID(ctx)
 	if err != nil {
 		return
 	}
-	events := make([]json.RawMessage, 0, len(pending))
-	for _, item := range pending {
-		events = append(events, item.JSON)
-	}
-	body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
-		Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
-		Events: events})
-	if err != nil {
-		return
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "tnl")
-	response, err := r.client.Do(request)
-	if err == nil {
+	for ctx.Err() == nil {
+		pending, err := state.PendingTelemetryEvents(ctx, 25)
+		if err != nil || len(pending) == 0 {
+			return
+		}
+		events := make([]json.RawMessage, 0, len(pending))
+		for _, item := range pending {
+			events = append(events, item.JSON)
+		}
+		body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
+			Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
+			Events: events})
+		if err != nil {
+			return
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("User-Agent", "tnl")
+		response, err := r.client.Do(request)
+		if err != nil {
+			return
+		}
 		_ = response.Body.Close()
-		if response.StatusCode == http.StatusNoContent || response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
-			_ = state.DeleteTelemetryEvents(ctx, pending)
+		if response.StatusCode != http.StatusNoContent && (response.StatusCode < 400 || response.StatusCode >= 500 || response.StatusCode == http.StatusTooManyRequests) {
+			return
+		}
+		if err := state.DeleteTelemetryEvents(ctx, pending); err != nil {
+			return
 		}
 	}
 }
@@ -360,6 +408,10 @@ func newTelemetryDemoPing() telemetryPayload {
 
 func newIntegrationTelemetry(name telemetryEventName, delivery telemetryWebhookDelivery) telemetryPayload {
 	return telemetryPayload{Event: name, Delivery: delivery}
+}
+
+func newProviderTelemetry(name telemetryEventName, provider string) telemetryPayload {
+	return telemetryPayload{Event: name, Provider: provider}
 }
 
 func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, telemetryCommandAction, bool) {

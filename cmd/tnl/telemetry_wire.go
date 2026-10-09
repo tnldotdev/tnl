@@ -5,21 +5,25 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 type telemetryEventID string
 type telemetryWireEventName string
 
 const (
-	wireCommandStarted   telemetryWireEventName = "command.started"
-	wireCommandCompleted telemetryWireEventName = "command.completed"
-	wireCommandFailed    telemetryWireEventName = "command.failed"
-	wireTunnelReady      telemetryWireEventName = "tunnel.ready"
-	wireDemoFirstPing    telemetryWireEventName = "demo.first_ping"
-	wireOAuthReady       telemetryWireEventName = "oauth.callback_url.ready"
-	wireOAuthRedirected  telemetryWireEventName = "oauth.callback.redirected"
-	wireWebhookReady     telemetryWireEventName = "webhook.endpoint.ready"
-	wireWebhookReached   telemetryWireEventName = "webhook.delivery.reached_receiver"
+	wireCommandStarted     telemetryWireEventName = "command.started"
+	wireCommandCompleted   telemetryWireEventName = "command.completed"
+	wireCommandFailed      telemetryWireEventName = "command.failed"
+	wireTunnelReady        telemetryWireEventName = "tunnel.ready"
+	wireDemoFirstPing      telemetryWireEventName = "demo.first_ping"
+	wireOAuthReady         telemetryWireEventName = "oauth.callback_url.ready"
+	wireOAuthRedirected    telemetryWireEventName = "oauth.callback.redirected"
+	wireWebhookReady       telemetryWireEventName = "webhook.endpoint.ready"
+	wireWebhookReached     telemetryWireEventName = "webhook.delivery.reached_receiver"
+	wireProviderConfigured telemetryWireEventName = "webhook.provider.configured"
+	wireProviderReady      telemetryWireEventName = "webhook.provider.ready"
+	wireProviderReached    telemetryWireEventName = "webhook.provider.reached_receiver"
 )
 
 type telemetryEventCommon struct {
@@ -58,6 +62,10 @@ type telemetryWebhookWirePayload struct {
 	Delivery telemetryWebhookDelivery `json:"delivery"`
 }
 
+type telemetryProviderWirePayload struct {
+	Provider string `json:"provider"`
+}
+
 type telemetryCommandWireEvent struct {
 	telemetryEventCommon
 	Name    telemetryWireEventName      `json:"name"`
@@ -94,12 +102,19 @@ type telemetryWebhookWireEvent struct {
 	Payload telemetryWebhookWirePayload `json:"payload"`
 }
 
-func (telemetryCommandWireEvent) isTelemetryWireEvent() {}
-func (telemetryFailureWireEvent) isTelemetryWireEvent() {}
-func (telemetryTunnelWireEvent) isTelemetryWireEvent()  {}
-func (telemetryDemoWireEvent) isTelemetryWireEvent()    {}
-func (telemetryOAuthWireEvent) isTelemetryWireEvent()   {}
-func (telemetryWebhookWireEvent) isTelemetryWireEvent() {}
+type telemetryProviderWireEvent struct {
+	telemetryEventCommon
+	Name    telemetryWireEventName       `json:"name"`
+	Payload telemetryProviderWirePayload `json:"payload"`
+}
+
+func (telemetryCommandWireEvent) isTelemetryWireEvent()  {}
+func (telemetryFailureWireEvent) isTelemetryWireEvent()  {}
+func (telemetryTunnelWireEvent) isTelemetryWireEvent()   {}
+func (telemetryDemoWireEvent) isTelemetryWireEvent()     {}
+func (telemetryOAuthWireEvent) isTelemetryWireEvent()    {}
+func (telemetryWebhookWireEvent) isTelemetryWireEvent()  {}
+func (telemetryProviderWireEvent) isTelemetryWireEvent() {}
 
 func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEvent {
 	common := telemetryEventCommon{EventID: id, InvocationID: payload.InvocationID, OccurredAt: time.Now().UTC(), EventVersion: 1}
@@ -122,6 +137,17 @@ func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEven
 		return telemetryWebhookWireEvent{common, wireWebhookReady, telemetryWebhookWirePayload{payload.Delivery}}
 	case telemetryWebhookReached:
 		return telemetryWebhookWireEvent{common, wireWebhookReached, telemetryWebhookWirePayload{payload.Delivery}}
+	case telemetryProviderConfigured, telemetryProviderReady, telemetryProviderReached:
+		if !webhookips.Valid(payload.Provider) {
+			return nil
+		}
+		name := wireProviderConfigured
+		if payload.Event == telemetryProviderReady {
+			name = wireProviderReady
+		} else if payload.Event == telemetryProviderReached {
+			name = wireProviderReached
+		}
+		return telemetryProviderWireEvent{common, name, telemetryProviderWirePayload{payload.Provider}}
 	default:
 		return nil
 	}

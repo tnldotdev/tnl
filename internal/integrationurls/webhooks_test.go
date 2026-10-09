@@ -59,8 +59,8 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 		t.Fatal(err)
 	}
 	var received atomic.Int32
-	handler.OnReceiverResponse = func(mode string) {
-		if mode != "fanout" {
+	handler.OnReceiverResponse = func(endpoint, mode string) {
+		if endpoint != "stripe" || mode != "fanout" {
 			t.Errorf("delivery mode = %q", mode)
 		}
 		received.Add(1)

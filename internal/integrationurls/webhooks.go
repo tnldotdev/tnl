@@ -47,8 +47,8 @@ type Webhooks struct {
 	paths                   map[string]webhookEndpoint
 	// report contains only endpoint/tunnel identifiers and fixed failure reasons.
 	report func(string, string, string)
-	// OnReceiverResponse runs after a selected local service returns HTTP headers.
-	OnReceiverResponse func(string)
+	// OnReceiverResponse runs after a local service returns HTTP headers.
+	OnReceiverResponse func(string, string)
 }
 
 func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string)) (*Webhooks, []string, error) {
@@ -229,7 +229,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		}
 		result, err := deliverWebhook(request, receivers[0], body, true)
 		if result.status != 0 && h.OnReceiverResponse != nil {
-			h.OnReceiverResponse("selected")
+			h.OnReceiverResponse(endpoint.name, "selected")
 		}
 		if err != nil && result.status == 0 {
 			h.failure(endpoint.name, receivers[0].ID, "local service unavailable")
@@ -261,7 +261,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 			}
 			results[index], failures[index] = deliverWebhook(request, receiver, body, returnsWebhookResponse(request.Method))
 			if results[index].status != 0 && h.OnReceiverResponse != nil {
-				h.OnReceiverResponse("fanout")
+				h.OnReceiverResponse(endpoint.name, "fanout")
 			}
 			if failures[index] != nil {
 				reason := "local service unavailable"

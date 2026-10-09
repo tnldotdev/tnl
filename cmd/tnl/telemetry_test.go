@@ -304,3 +304,51 @@ func TestIntegrationTelemetryIsTypedPrivateAndOncePerInvocation(t *testing.T) {
 		t.Fatalf("missing integration events: %v", want)
 	}
 }
+
+func TestProviderTelemetryIsPerProviderAndMilestoneWithoutRequestData(t *testing.T) {
+	var mu sync.Mutex
+	events := []telemetryPayload{}
+	invocation, err := newTelemetryInvocation(telemetryReporterFunc(func(event telemetryPayload) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			for _, provider := range []string{"stripe", "discord", "stripe", "svix"} {
+				for _, milestone := range []telemetryEventName{telemetryProviderConfigured, telemetryProviderReady, telemetryProviderReached} {
+					invocation.Report(newProviderTelemetry(milestone, provider))
+				}
+			}
+		})
+	}
+	workers.Wait()
+	if len(events) != 6 {
+		t.Fatalf("provider milestones = %d, want six", len(events))
+	}
+	seen := map[string]bool{}
+	for _, event := range events {
+		encoded, err := json.Marshal(event.wireEvent("tev_0123456789abcdefghijkl"))
+		if err != nil || bytes.Contains(encoded, []byte("https://")) || bytes.Contains(encoded, []byte("path")) || bytes.Contains(encoded, []byte("delivery")) {
+			t.Fatalf("provider telemetry exposed request details: %s, %v", encoded, err)
+		}
+		var wire struct {
+			Name    string `json:"name"`
+			Payload struct {
+				Provider string `json:"provider"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(encoded, &wire); err != nil || wire.Payload.Provider != event.Provider {
+			t.Fatalf("provider wire event = %s, %v", encoded, err)
+		}
+		key := wire.Name + "/" + wire.Payload.Provider
+		if seen[key] {
+			t.Fatalf("duplicate provider milestone %s", key)
+		}
+		seen[key] = true
+	}
+}

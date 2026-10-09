@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
@@ -141,6 +142,59 @@ func TestTypedFailureEventKeepsBoundedFields(t *testing.T) {
 	if decoded.Name != "command.failed" || decoded.Payload.Command != "login" ||
 		decoded.Payload.FailureStage != "authentication" || decoded.Payload.DiagnosticCode != "TNL_AUTHENTICATION_REQUIRED" {
 		t.Fatalf("failure wire event = %s", encoded)
+	}
+}
+
+func TestProviderTelemetryFlushesMultipleBoundedBatches(t *testing.T) {
+	root, reporter := preparedTelemetryReporter(t)
+	var sizes []int
+	reporter.client.Transport = telemetryTransportFunc(func(request *http.Request) (*http.Response, error) {
+		var batch struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&batch); err != nil {
+			t.Error(err)
+		}
+		sizes = append(sizes, len(batch.Events))
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(&emptyReader{}), Header: make(http.Header)}, nil
+	})
+	for range 53 {
+		reporter.Report(newProviderTelemetry(telemetryProviderConfigured, "stripe"))
+	}
+	reporter.flush(context.Background())
+	if !slices.Equal(sizes, []int{25, 25, 3}) {
+		t.Fatalf("telemetry batches = %v", sizes)
+	}
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	remaining, err := state.PendingTelemetryEvents(t.Context(), 25)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("unsent provider events = %d, %v", len(remaining), err)
+	}
+}
+
+func TestTelemetryOptOutDoesNotQueueProviderNames(t *testing.T) {
+	root, reporter := preparedTelemetryReporter(t)
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetTelemetryEnabled(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	_ = state.Close()
+	reporter.Report(newProviderTelemetry(telemetryProviderConfigured, "stripe"))
+	state, err = clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	remaining, err := state.PendingTelemetryEvents(t.Context(), 25)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("disabled telemetry queued %d events: %v", len(remaining), err)
 	}
 }
 
