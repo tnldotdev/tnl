@@ -151,7 +151,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	}
 	for _, name := range slices.Sorted(maps.Keys(registered)) {
 		definition := registered[name]
-		policy := "tnl.dev catalog (pending)"
+		policy := "checking provider policy"
 		if definition.SourceIPs != nil {
 			policy = "source_ips override"
 		} else if definition.Provider == "custom" {
