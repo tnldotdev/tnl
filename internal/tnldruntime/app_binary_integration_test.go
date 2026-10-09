@@ -123,17 +123,20 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}()
 		var tunnel clientstate.TunnelInfo
 		waitForIntegrationCondition(t, 55*time.Second, func(ctx context.Context) (bool, error) {
-			snapshot, err := state.SnapshotProject(ctx, project)
+			app, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
 			if err != nil {
 				return false, err
+			}
+			if len(app.Services) != 1 || !app.Services[0].Routable {
+				return false, fmt.Errorf("app publication is not routable: services=%+v", app.Services)
+			}
+			snapshot, err := state.SnapshotProject(ctx, project)
+			if err != nil {
+				return false, fmt.Errorf("read app tunnel after publication: %w; services=%+v", err, app.Services)
 			}
 			if len(snapshot.Tunnels) == 1 && snapshot.Tunnels[0].State == clientstate.TunnelStateReady {
 				tunnel = snapshot.Tunnels[0]
 				return true, nil
-			}
-			app, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
-			if err != nil {
-				return false, err
 			}
 			return false, fmt.Errorf("app publication is not ready: tunnels=%+v services=%+v", snapshot.Tunnels, app.Services)
 		})
