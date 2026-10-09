@@ -11,7 +11,7 @@ import (
 )
 
 func TestBinaryIntegrationStandalonePublish(t *testing.T) {
-	fixture := startIntegrationBinaryStandalone(t)
+	fixture := startIntegrationBinaryStandalone(t, "simple")
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("X-Tnl-Integration", "binary")
 		_, _ = io.WriteString(response, request.URL.RequestURI())

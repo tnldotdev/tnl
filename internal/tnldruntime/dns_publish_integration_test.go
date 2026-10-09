@@ -40,7 +40,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	}
 	fixture.identity.certificatePlan = controlv1.CertificatePlan{
 		CacheKey: namespace, Scope: namespace,
-		Identifiers: []string{"*." + namespace, namespace}, ChallengeMethod: controlv1.Dns01,
+		Identifiers: []string{"*." + namespace}, ChallengeMethod: controlv1.Dns01,
 	}
 	cleanupStarted, releaseCleanup := make(chan struct{}), make(chan struct{})
 	var blockCleanup, releaseCleanupOnce sync.Once
