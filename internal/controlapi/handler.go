@@ -113,6 +113,7 @@ type BrowserAccessStore interface {
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
 	RedeemBrowserHandoff(context.Context, string, string, time.Time) (string, string, string, bool, time.Time, error)
 	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
+	BrowserAuthorization(context.Context, string, string, time.Time) (controlstate.BrowserAuthorization, error)
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error
 	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
 	RevokeBrowserSession(context.Context, string, string, time.Time) error

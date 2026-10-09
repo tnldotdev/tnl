@@ -68,6 +68,33 @@ Authority mutations take a conflicting guard. A keyed transaction advisory lock
 comes before the team row so new readers cannot starve a waiting authority
 writer.
 
+Browser admission and reviewer feedback writes share that keyed team guard before
+locking a public URL, publish run, or feedback thread. Guest previews use the
+same advisory guard without a local team row. Browser-session refresh happens
+before admission and outside the team guard.
+
+## separate browser identity from visit permission
+
+`browserIdentity` validates the host's preview inclusion, browser-session expiry
+and revocation, and its saved OIDC control credential inside the caller's
+transaction. It shares the browser session, control session, and identity rows
+through commit, so logout, rotation, and identity disable cannot cross a write's
+authorization boundary. Attribution uses the identity's current saved name,
+not a publisher-supplied name or the browser session's older name snapshot.
+
+`browserVisitAllowed` makes the separate visit decision from the enabled public
+URL, the preview's current team access grant, and a current membership in that
+team. The control response calls this decision `visit_allowed`; a signed-in
+identity without that permission may still visit through IP policy or a share.
+
+`reviewerAccess` in `reviewer_access.go` composes those decisions for feedback.
+An allowed IP or current share admits a signed-in nonmember with verified
+attribution. Identity alone never admits a reviewer. Report creation and event
+writes revalidate these boundaries under their write transaction; no caller
+membership flag participates in authorization.
+
+## coordinate publisher connections
+
 Publisher-connection claim and readiness operations share a keyed advisory guard
 and relay-service row guard. Claims use `NO KEY UPDATE` on the selected relay
 lease to serialize capacity checks. Readiness uses compatible `KEY SHARE`

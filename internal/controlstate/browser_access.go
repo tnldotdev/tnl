@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -41,6 +42,19 @@ type BrowserTokenRotation struct {
 	AccessToken     string
 	RefreshToken    string
 	AccessExpiresAt time.Time
+}
+
+// browser identity proves who signed in; visit permission is a separate,
+// current decision about one public URL.
+type BrowserIdentity struct {
+	IdentityID  string
+	DisplayName string
+	PreviewID   string
+}
+
+type BrowserAuthorization struct {
+	Identity     BrowserIdentity
+	VisitAllowed bool
 }
 
 type BrowserHandoff struct {
@@ -372,4 +386,111 @@ func (d *Database) PreviewTeamAccessForPublicURL(ctx context.Context, publicURLI
 		return Preview{}, err
 	}
 	return Preview{ID: row.PreviewID, TeamID: row.TeamID, TeamAccessEnabled: row.TeamAccessEnabled}, nil
+}
+
+// browser authorization rechecks identity and visit permission in one transaction.
+// refresh, when needed, happens before this operation and never under a team lock.
+func (d *Database) BrowserAuthorization(ctx context.Context, publicURLID, token string, now time.Time) (result BrowserAuthorization, retErr error) {
+	digest, err := browserDigest(token)
+	if err != nil {
+		return BrowserAuthorization{}, err
+	}
+	if err := d.requireOpen(); err != nil {
+		return BrowserAuthorization{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return BrowserAuthorization{}, fmt.Errorf("check browser authorization: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "check browser authorization", &retErr)()
+	queries := controlstatedb.New(tx)
+	candidate, err := queries.GetFeedbackPublicURL(ctx, publicURLID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BrowserAuthorization{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return BrowserAuthorization{}, fmt.Errorf("read browser public URL: %w", err)
+	}
+	if err := queries.LockReviewerTeam(ctx, candidate.TeamID); err != nil {
+		return BrowserAuthorization{}, fmt.Errorf("lock browser team: %w", err)
+	}
+	publicURL, err := queries.ShareBrowserPublicURL(ctx, publicURLID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && publicURL.TeamID != candidate.TeamID {
+		return BrowserAuthorization{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return BrowserAuthorization{}, fmt.Errorf("lock browser public URL: %w", err)
+	}
+	identity, err := d.browserIdentity(ctx, queries, publicURL.ID, digest, now)
+	if err != nil {
+		return BrowserAuthorization{}, err
+	}
+	allowed, err := browserVisitAllowed(ctx, queries, publicURL, identity)
+	if err != nil {
+		return BrowserAuthorization{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return BrowserAuthorization{}, fmt.Errorf("commit browser authorization: %w", err)
+	}
+	return BrowserAuthorization{Identity: identity, VisitAllowed: allowed}, nil
+}
+
+// browserIdentity is called with transaction-owned queries. sharing the browser,
+// control-session, and identity rows fences logout, token rotation, and disable.
+func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.Queries, publicURLID string, digest []byte, now time.Time) (BrowserIdentity, error) {
+	row, err := queries.ShareBrowserAccessSession(ctx, controlstatedb.ShareBrowserAccessSessionParams{
+		TokenDigest: digest, PublicURLID: publicURLID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (row.RevokedAt.Valid || !row.ExpiresAt.Time.After(now) || !row.AccessExpiresAt.Time.After(now)) {
+		return BrowserIdentity{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return BrowserIdentity{}, fmt.Errorf("lock browser identity session: %w", err)
+	}
+	access, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.AccessCiphertext)
+	if err != nil {
+		return BrowserIdentity{}, fmt.Errorf("open browser identity credential: %w", err)
+	}
+	tokenID, tokenDigest, err := credentials.ParseAccessToken(credentials.AccessToken(access))
+	if err != nil {
+		return BrowserIdentity{}, ErrPreviewAccess
+	}
+	identity, err := queries.ShareBrowserControlIdentity(ctx, tokenID.String())
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (identity.IdentityID != row.IdentityID ||
+		!credentials.SecretHashMatches(identity.AccessTokenDigest, tokenDigest) || !identity.AccessExpiresAt.Time.After(now) ||
+		!identity.RefreshExpiresAt.Time.After(now) || !validFeedbackText(identity.DisplayName, 256)) {
+		return BrowserIdentity{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return BrowserIdentity{}, fmt.Errorf("lock browser control identity: %w", err)
+	}
+	return BrowserIdentity{IdentityID: identity.IdentityID, DisplayName: identity.DisplayName, PreviewID: row.PreviewID}, nil
+}
+
+// browserVisitAllowed owns the team-grant decision. callers have already locked
+// the team before the public URL; a verified identity is not itself permission.
+func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, publicURL controlstatedb.ControlPublicUrl, identity BrowserIdentity) (bool, error) {
+	if identity.IdentityID == "" || publicURL.LifecycleState != string(PublicURLLifecycleEnabled) {
+		return false, nil
+	}
+	preview, err := queries.GetPreview(ctx, identity.PreviewID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read browser preview grant: %w", err)
+	}
+	if preview.TeamID != publicURL.TeamID || !preview.TeamAccessEnabled {
+		return false, nil
+	}
+	_, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
+		TeamID: publicURL.TeamID, IdentityID: identity.IdentityID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read browser membership: %w", err)
+	}
+	return true, nil
 }

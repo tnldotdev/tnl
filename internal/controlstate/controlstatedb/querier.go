@@ -297,6 +297,10 @@ type Querier interface {
 	// take the assignment-total guard before relay-service guards and lease rows;
 	// lock all services before checking capacity or locking leases.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
+	// reviewer writes and browser admission read current authority under the same
+	// shared guard as publish run creation, before locking public URLs and runs.
+	// guest previews have no local team row, but still use the same lock order.
+	LockReviewerTeam(ctx context.Context, teamID string) error
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
 	LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error)
@@ -384,6 +388,9 @@ type Querier interface {
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
+	ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error)
+	ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error)
+	ShareBrowserPublicURL(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error)

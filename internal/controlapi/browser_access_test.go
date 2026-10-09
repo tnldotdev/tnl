@@ -245,7 +245,7 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 func TestBrowserSessionPreservesAuthorizationAvailabilityFailure(t *testing.T) {
 	cause := errors.Join(authorization.ErrUnavailable, errors.New("private authority failure"))
 	h := &handler{browserAccess: browserSessionStoreStub{}, authorizer: failingBrowserAuthorizer{err: cause}}
-	_, _, _, err := h.browserSessionAccess(httptest.NewRequest(http.MethodGet, "/", nil), controlstate.PublishRunAuthentication{}, "cookie")
+	_, _, err := h.browserSessionIdentity(httptest.NewRequest(http.MethodGet, "/", nil), controlstate.PublishRunAuthentication{}, "cookie")
 	if !errors.Is(err, authorization.ErrUnavailable) {
 		t.Fatalf("authorization failure became an expired session: %v", err)
 	}
@@ -264,4 +264,44 @@ func (a failingBrowserAuthorizer) AuthorizePublicURLReads(context.Context, strin
 
 func (browserSessionStoreStub) BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error) {
 	return controlstate.BrowserAccessSession{AccessExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+type browserAuthorizationStoreStub struct {
+	BrowserAccessStore
+	publicURLID string
+	cookie      string
+}
+
+func (s *browserAuthorizationStoreStub) BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error) {
+	return controlstate.BrowserAccessSession{IdentityID: "identity_1", AccessExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (s *browserAuthorizationStoreStub) BrowserAuthorization(_ context.Context, publicURLID, cookie string, _ time.Time) (controlstate.BrowserAuthorization, error) {
+	s.publicURLID, s.cookie = publicURLID, cookie
+	return controlstate.BrowserAuthorization{Identity: controlstate.BrowserIdentity{IdentityID: "identity_1", DisplayName: "current saved name"}}, nil
+}
+
+func TestBrowserAccessResponseKeepsIdentityWithoutVisitPermission(t *testing.T) {
+	store := &browserAuthorizationStoreStub{}
+	// a previous identity read's memberships and name do not supply visit permission.
+	authorizer := &recordingAuthorizer{principal: publicURLReadPrincipal{
+		identityID: "identity_1", displayName: "older name", teamIDs: map[string]struct{}{"team_1": {}},
+	}}
+	h := &handler{browserAccess: store, authorizer: authorizer, store: &feedbackAuthStoreStub{auth: controlstate.PublishRunAuthentication{
+		PublicURLID: "url_1", PublishRunID: "pr_1", PublishRunNumber: 1,
+	}}}
+	request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_1/browser-access",
+		strings.NewReader(`{"publish_run_number":1,"cookie_secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`))
+	request.Header.Set("Authorization", "Bearer publisher-token")
+	response := httptest.NewRecorder()
+	h.CheckPreviewBrowserAccess(response, request, "pr_1")
+	var body controlv1.BrowserAccessResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || body.IdentityId != "identity_1" || body.DisplayName != "current saved name" || body.VisitAllowed ||
+		!strings.Contains(response.Body.String(), `"visit_allowed":false`) || strings.Contains(response.Body.String(), "team_member") ||
+		store.publicURLID != "url_1" || store.cookie != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" || len(authorizer.requests) != 0 {
+		t.Fatalf("browser identity/visit response = %d %s", response.Code, response.Body.String())
+	}
 }

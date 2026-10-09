@@ -787,7 +787,9 @@ type BrowserAccessRequest struct {
 type BrowserAccessResponse struct {
 	DisplayName string     `json:"display_name"`
 	IdentityId  IdentityID `json:"identity_id"`
-	TeamMember  bool       `json:"team_member"`
+
+	// VisitAllowed Whether the authenticated identity may visit through the preview's current team access grant. Identity alone does not allow a visit.
+	VisitAllowed bool `json:"visit_allowed"`
 }
 
 // BrowserHandoffRequest defines model for BrowserHandoffRequest.
