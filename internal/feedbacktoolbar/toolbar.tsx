@@ -6,7 +6,6 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import * as z from "zod/mini";
 import { usePageFeedback } from "./queries.ts";
 import { observeActions } from "./evidence.ts";
 import type { Action, Summary } from "./model.ts";
@@ -20,27 +19,23 @@ import { Placement, SelectionHint } from "./placement.tsx";
 import { FeedbackList, type ListFilters } from "./list.tsx";
 import type { FeedbackAPI } from "./api.ts";
 import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+import { checkPosting, SignInLink, type Posting } from "./access.tsx";
+import {
+  recoverTarget,
+  restoreDraft,
+  saveDraft,
+  type Recovery,
+  type ReportDraft,
+  type ThreadDraft,
+} from "./drafts.ts";
 
-async function fetchAccount(
-  document: Document,
-  path: string,
-  options: RequestInit,
-): Promise<Response | undefined> {
-  try {
-    return await document.defaultView?.fetch(path, options);
-  } catch (cause) {
-    if (options.signal?.aborted) throw cause;
-    throw new FeedbackError("unavailable", { cause });
-  }
-}
-
-type Draft = { path: string; target?: AnchorTarget | undefined; key: string };
-type Selected = { thread: Summary; threads: Summary[] };
-const browserStatusSchema = z.object({
-  signed_in: z.boolean(),
-  display_name: z.optional(z.string()),
-  team_member: z.optional(z.boolean()),
-});
+type Draft = {
+  path: string;
+  target?: AnchorTarget | undefined;
+  key: string;
+  recovered?: ReportDraft | undefined;
+};
+type Selected = { thread: Summary; threads: Summary[]; recovered?: ThreadDraft | undefined };
 
 function FeedbackLayer({
   api,
@@ -52,41 +47,78 @@ function FeedbackLayer({
   host: Element;
 }) {
   const [path, setPath] = useState(document.location.pathname + document.location.search);
+  const [recovered] = useState(() => restoreDraft(document));
   const [placing, setPlacing] = useState(false);
-  const [draft, setDraft] = useState<Draft>();
+  const [draft, setDraft] = useState<Draft | undefined>(() =>
+    recovered?.mode === "report"
+      ? {
+          path,
+          key: crypto.randomUUID(),
+          target: recoverTarget(document, recovered.anchor),
+          recovered,
+        }
+      : undefined,
+  );
   const [selected, setSelected] = useState<Selected>();
   const [listOpen, setListOpen] = useState(false);
   const [filters, setFilters] = useState<ListFilters>({ pages: "current", state: "open" });
   const actions = useRef<Action[]>([{ type: "navigation", path: document.location.pathname }]);
   const toolbar = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
-  const browserStatus = useQuery({
-    queryKey: ["feedback-browser-status"],
-    queryFn: async ({ signal }) => {
-      const response = await fetchAccount(document, "/__tnl/team/session", {
-        credentials: "same-origin",
-        signal,
-      });
-      if (!response?.ok) throw new FeedbackError("unavailable");
-      try {
-        return browserStatusSchema.parse((await response.json()) as unknown);
-      } catch (cause) {
-        throw new FeedbackError("response_invalid", { cause });
-      }
-    },
+  const unsent = useRef<Recovery | undefined>(recovered);
+  const restoredOnce = useRef(false);
+  const [recoveryError, setRecoveryError] = useState(false);
+  const access = useQuery({
+    queryKey: ["feedback-access"],
+    queryFn: ({ signal }) => api.access(signal),
     retry: false,
-    refetchInterval: 30_000,
+    refetchInterval: 2000,
   });
   const signOut = useMutation({
-    mutationFn: async () => {
-      const response = await fetchAccount(document, "/__tnl/team/logout", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      if (!response?.ok) throw new FeedbackError("unavailable");
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-browser-status"] }),
+    mutationFn: () => api.signOut(new AbortController().signal),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-access"] }),
   });
+  const restoredThread = useQuery({
+    queryKey: ["feedback-restore-thread", recovered?.mode === "thread" ? recovered.id : ""],
+    queryFn: ({ signal }) =>
+      recovered?.mode === "thread"
+        ? api.inspect(recovered.id, signal)
+        : Promise.reject(new FeedbackError("not_found")),
+    enabled: recovered?.mode === "thread" && !restoredOnce.current,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!restoredOnce.current && restoredThread.data && recovered?.mode === "thread") {
+      restoredOnce.current = true;
+      setSelected({ thread: restoredThread.data, threads: [restoredThread.data], recovered });
+    }
+  }, [restoredThread.data, recovered]);
+  const posting: Posting = {
+    access: access.isError || signOut.isPending ? undefined : access.data,
+    error: access.error,
+    path,
+    refresh: () => {
+      void client.invalidateQueries({ queryKey: ["feedback-access"] });
+    },
+    authorize: async (author) => {
+      const current = await client.fetchQuery({
+        queryKey: ["feedback-access"],
+        queryFn: ({ signal }) => api.access(signal),
+        staleTime: 0,
+      });
+      checkPosting(current, author);
+    },
+    signIn: (event) => {
+      if (unsent.current && !saveDraft(document, unsent.current)) {
+        event.preventDefault();
+        setRecoveryError(true);
+      }
+    },
+  };
+  function remember(value: Recovery | undefined): void {
+    unsent.current = value;
+    saveDraft(document, value);
+  }
   const query = usePageFeedback(api, path);
   const threads = [
     ...new Map(
@@ -113,9 +145,11 @@ function FeedbackLayer({
       const next = document.location.pathname + document.location.search;
       if (next !== path) {
         setPath(next);
+        restoredOnce.current = true;
         setDraft(undefined);
         setSelected(undefined);
         setPlacing(false);
+        remember(undefined);
         actions.current = [
           ...actions.current.slice(-19),
           { type: "navigation", path: document.location.pathname },
@@ -125,16 +159,20 @@ function FeedbackLayer({
     return () => window.clearInterval(timer);
   }, [document, path]);
   function newDraft(target?: AnchorTarget): void {
+    restoredOnce.current = true;
     setPlacing(false);
     setListOpen(false);
     setSelected(undefined);
+    remember(undefined);
     setDraft({ path, target, key: crypto.randomUUID() });
   }
   function select(thread: Summary, choices: Summary[]): void {
+    restoredOnce.current = true;
     setSelected({ thread, threads: choices });
     setDraft(undefined);
     setListOpen(false);
     setPlacing(false);
+    remember(undefined);
     if (thread.scope.page_path === path) {
       const anchor = supportedAnchor(thread.anchor);
       const element = anchor ? restoreAnchor(document, anchor)?.element : undefined;
@@ -147,18 +185,26 @@ function FeedbackLayer({
   return (
     <>
       <div ref={toolbar} class="toolbar" role="toolbar" aria-label="Feedback controls">
-        {browserStatus.data?.signed_in ? (
+        {posting.access?.identity_state === "signed_in" && posting.access.identity ? (
           <>
-            <span class="muted">signed in as {browserStatus.data.display_name}</span>
-            <button type="button" onClick={() => signOut.mutate()}>
+            <span class="muted">signed in as {posting.access.identity.display_name}</span>
+            <button type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
               [ sign out ]
             </button>
           </>
-        ) : browserStatus.data ? (
-          <a class="account-link" href={"/__tnl/team/login?return=" + encodeURIComponent(path)}>
-            [ sign in ]
-          </a>
+        ) : posting.access?.sign_in_available ? (
+          <SignInLink posting={posting} />
         ) : null}
+        {posting.access?.identity_state === "expired" && (
+          <small>sign-in expired; your draft is still here</small>
+        )}
+        {access.error && <small role="status">{safeFeedbackMessage(access.error)}</small>}
+        {recoveryError && (
+          <small role="alert">could not preserve the draft; copy your text before signing in</small>
+        )}
+        {restoredThread.error && (
+          <small role="status">{safeFeedbackMessage(restoredThread.error)}</small>
+        )}
         {signOut.error && <small role="status">{safeFeedbackMessage(signOut.error)}</small>}
         <button
           type="button"
@@ -182,7 +228,6 @@ function FeedbackLayer({
           type="button"
           aria-label="Feedback"
           aria-expanded={listOpen}
-          disabled={!!draft}
           onClick={() => {
             setListOpen(!listOpen);
             setSelected(undefined);
@@ -213,7 +258,10 @@ function FeedbackLayer({
           anchor={draft.target?.anchor}
           fallback={fallback}
           title="new feedback"
-          close={() => setDraft(undefined)}
+          close={() => {
+            setDraft(undefined);
+            remember(undefined);
+          }}
         >
           <ReportForm
             key={draft.key}
@@ -222,12 +270,16 @@ function FeedbackLayer({
             document={document}
             actions={() => actions.current}
             target={draft.target}
-            browserName={
-              browserStatus.data?.signed_in ? browserStatus.data.display_name : undefined
-            }
-            cancel={() => setDraft(undefined)}
+            posting={posting}
+            recovered={draft.recovered}
+            changed={remember}
+            cancel={() => {
+              setDraft(undefined);
+              remember(undefined);
+            }}
             saved={(thread) => {
               setDraft(undefined);
+              remember(undefined);
               void client.invalidateQueries({ queryKey: ["feedback-page"] });
               select(thread, [thread]);
             }}
@@ -240,7 +292,10 @@ function FeedbackLayer({
           anchor={anchor}
           fallback={fallback}
           title="feedback"
-          close={() => setSelected(undefined)}
+          close={() => {
+            setSelected(undefined);
+            remember(undefined);
+          }}
         >
           <div class="thread-navigation">
             <button
@@ -299,7 +354,14 @@ function FeedbackLayer({
               the element is no longer on this page; the conversation is still here
             </p>
           )}
-          <ThreadView key={current.id} api={api} id={current.id} />
+          <ThreadView
+            key={current.id}
+            api={api}
+            id={current.id}
+            posting={posting}
+            recovered={selected?.recovered}
+            changed={remember}
+          />
         </Popover>
       )}
       {listOpen && (

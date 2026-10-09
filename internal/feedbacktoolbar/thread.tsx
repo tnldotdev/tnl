@@ -1,10 +1,13 @@
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
 import { mutationKey } from "./async.ts";
 import type { BrowserEvent } from "./model.ts";
 import { supportedAnchor } from "./anchors.ts";
 import { useConversation } from "./queries.ts";
 import { EvidenceView } from "./evidence-view.tsx";
+import { authorKey, canPost, PostingIdentity, type Posting } from "./access.tsx";
+import type { Recovery, ThreadDraft } from "./drafts.ts";
+import { FeedbackError } from "./errors.ts";
 
 const eventLabels = {
   "thread.created": "reported",
@@ -14,24 +17,69 @@ const eventLabels = {
   "thread.reopened": "reopened",
 };
 
-export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
-  const [text, setText] = useState("");
+export function ThreadView({
+  api,
+  id,
+  posting,
+  recovered,
+  changed,
+}: {
+  api: FeedbackAPI;
+  id: string;
+  posting: Posting;
+  recovered?: ThreadDraft | undefined;
+  changed: (draft: Recovery) => void;
+}) {
+  const [text, setText] = useState(recovered?.text ?? "");
+  const [review, setReview] = useState(recovered?.uncertain ?? false);
+  const [attempt, setAttempt] = useState<{
+    type: BrowserEvent;
+    text: string;
+    key: string;
+    author: string;
+  }>();
   const keys = useRef(mutationKey());
-  const { query, append, history } = useConversation(api, id);
+  const uncertain = useRef(false);
+  const { query, append, history } = useConversation(api, id, async (author) => {
+    if (!canPost(posting.access) || review) throw new FeedbackError("sign_in_required");
+    await posting.authorize(author);
+  });
   const data = query.data;
   const error = append.error ?? history.error ?? query.error;
   const anchor = supportedAnchor(data?.thread.anchor);
+  const authorChanged =
+    !!posting.access && !!attempt && attempt.author !== authorKey(posting.access);
   function send(type: BrowserEvent): void {
-    append.mutate(
-      { type, text: text.trim(), key: keys.current({ id, type, text: text.trim() }) },
-      {
-        onSuccess: () => {
-          setText("");
-          keys.current = mutationKey();
-        },
+    if (!canPost(posting.access) || review || (attempt && attempt.type !== type)) return;
+    const current = attempt ?? {
+      type,
+      text: text.trim(),
+      key: keys.current({ id, type, text: text.trim() }),
+      author: authorKey(posting.access),
+    };
+    setAttempt(current);
+    append.mutate(current, {
+      onSuccess: () => {
+        setText("");
+        keys.current = mutationKey();
+        setAttempt(undefined);
+        uncertain.current = false;
       },
-    );
+      onError: (error) => {
+        if (
+          error instanceof FeedbackError &&
+          ["sign_in_required", "access_expired", "input_invalid"].includes(error.code) &&
+          !uncertain.current
+        )
+          setAttempt(undefined);
+        else uncertain.current = true;
+        posting.refresh();
+      },
+    });
   }
+  useEffect(() => {
+    changed({ mode: "thread", id, text, uncertain: review || !!attempt });
+  }, [id, text, review, attempt]);
   return (
     <section aria-label="Feedback thread">
       {error && <p role="status">{safeFeedbackMessage(error)}</p>}
@@ -92,29 +140,78 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
               send("reply");
             }}
           >
+            <PostingIdentity posting={posting} />
+            {authorChanged && (
+              <p role="status">
+                the previous attempt used another posting identity. check the history before editing
+                the draft.
+              </p>
+            )}
+            {recovered && <small>draft restored; review before sending.</small>}
+            {review && (
+              <p role="status">
+                a previous submission may have reached control. check the history before posting
+                again.{" "}
+                <button type="button" onClick={() => setReview(false)}>
+                  I checked; keep editing
+                </button>
+              </p>
+            )}
             <label>
               {data.thread.state === "open" ? "Reply" : "Note (optional)"}
               <textarea
                 disabled={append.isPending}
+                readOnly={!!attempt}
                 maxLength={4000}
                 value={text}
                 onInput={(event) => setText(event.currentTarget.value)}
               />
             </label>
             {data.thread.state === "open" && (
-              <button type="submit" disabled={append.isPending || !text.trim()}>
+              <button
+                type="submit"
+                disabled={
+                  !canPost(posting.access) ||
+                  authorChanged ||
+                  review ||
+                  append.isPending ||
+                  !text.trim() ||
+                  (!!attempt && attempt.type !== "reply")
+                }
+              >
                 Send reply
               </button>
             )}
             <button
               type="button"
-              disabled={append.isPending}
+              disabled={
+                !canPost(posting.access) ||
+                authorChanged ||
+                review ||
+                append.isPending ||
+                (!!attempt &&
+                  attempt.type !==
+                    (data.thread.state === "open" ? "thread.resolved" : "thread.reopened"))
+              }
               onClick={() =>
                 send(data.thread.state === "open" ? "thread.resolved" : "thread.reopened")
               }
             >
               {data.thread.state === "open" ? "Resolve" : "Reopen"}
             </button>
+            {attempt && !append.isPending && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAttempt(undefined);
+                  uncertain.current = false;
+                  keys.current = mutationKey();
+                  setReview(true);
+                }}
+              >
+                edit draft
+              </button>
+            )}
           </form>
         </>
       )}

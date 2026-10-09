@@ -1,4 +1,6 @@
 export type FeedbackErrorCode =
+  | "sign_in_required"
+  | "author_changed"
   | "access_expired"
   | "not_found"
   | "conflict"
@@ -9,7 +11,19 @@ export type FeedbackErrorCode =
   | "text_too_long"
   | "name_too_long";
 const definitions: Record<FeedbackErrorCode, { retryable: boolean; message: string }> = {
-  access_expired: { retryable: false, message: "preview access expired; reopen your share link" },
+  sign_in_required: {
+    retryable: false,
+    message: "sign in to leave feedback; your draft is still here",
+  },
+  author_changed: {
+    retryable: false,
+    message:
+      "your posting identity changed; check the feedback list before starting a new submission",
+  },
+  access_expired: {
+    retryable: false,
+    message: "preview access was denied; check sign-in or reopen your share link",
+  },
   not_found: { retryable: false, message: "feedback was not found; refresh the preview" },
   conflict: { retryable: false, message: "feedback changed; refresh and try again" },
   rate_limited: { retryable: true, message: "too many feedback requests; wait and try again" },

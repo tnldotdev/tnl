@@ -45,7 +45,13 @@ type Conversation = {
   olderCursor: number | undefined;
 };
 
-export function useConversation(api: FeedbackAPI, id: string) {
+export function useConversation(
+  api: FeedbackAPI,
+  id: string,
+  authorize: (author: string) => Promise<void>,
+) {
+  const latestAuthorize = useRef(authorize);
+  latestAuthorize.current = authorize;
   const client = useQueryClient();
   const key = ["feedback-thread", id];
   const signal = useViewSignal();
@@ -75,11 +81,16 @@ export function useConversation(api: FeedbackAPI, id: string) {
       type,
       text,
       key: retryKey,
+      author,
     }: {
       type: BrowserEvent;
       text: string;
       key: string;
-    }) => api.append(id, type, text, retryKey, signal),
+      author: string;
+    }) =>
+      latestAuthorize
+        .current(author)
+        .then(() => api.append(id, type, text, retryKey, signal, author)),
     onSuccess: (event) => {
       client.setQueryData<Conversation>(key, (previous) =>
         previous

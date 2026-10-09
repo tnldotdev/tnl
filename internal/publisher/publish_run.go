@@ -170,6 +170,9 @@ func runSession(
 			return fmt.Errorf("publisher: register browser capability: %w", err)
 		}
 	}
+	if feedback != nil {
+		feedback.browser = browserRuntime
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		BrowserAccess: browserRuntime,
 		Hostname:      setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,

@@ -87,7 +87,15 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
             }),
           );
         });
-      } else if (url.pathname.endsWith("/events"))
+      } else if (url.pathname.endsWith("/access"))
+        response.end(
+          JSON.stringify({
+            require_sign_in: false,
+            sign_in_available: false,
+            identity_state: "anonymous",
+          }),
+        );
+      else if (url.pathname.endsWith("/events"))
         response.end(JSON.stringify({ schema_version: 1, events: [], event_cursor: cursor }));
       else if (url.pathname.endsWith(id)) response.end(JSON.stringify(snapshot()));
       else if (url.pathname.endsWith("/evidence"))
@@ -197,7 +205,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     await page.locator(".selection-hint").click();
     await page.getByRole("textbox", { name: /^feedback$/i }).fill("A text selection suggestion");
     await page.getByRole("button", { name: /^send feedback$/i }).click();
-    expect(reports).toHaveLength(1);
+    await expect.poll(() => reports.length).toBe(1);
     await page.getByRole("heading", { name: "A text selection suggestion" }).waitFor();
     await expect.poll(() => page.locator(".highlight").count()).toBeGreaterThan(0);
     const rectangles = await page.locator(".highlight").count();

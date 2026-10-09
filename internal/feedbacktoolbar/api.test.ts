@@ -24,9 +24,90 @@ test("malformed responses are errors, not a silently empty feedback list", async
   );
 });
 
+test("oversized response streams are canceled before buffering the whole body", async () => {
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(1 << 19));
+    },
+    cancel,
+  });
+  await expect(
+    createFeedbackAPI(async () => new Response(body)).access(new AbortController().signal),
+  ).rejects.toMatchObject({ code: "response_invalid" });
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
+test("generated policy and browser-session validators reject missing, null, old and contradictory identity data", async () => {
+  const signal = new AbortController().signal;
+  const anonymous = {
+    require_sign_in: false,
+    sign_in_available: false,
+    identity_state: "anonymous",
+  };
+  for (const value of [
+    {},
+    { ...anonymous, require_sign_in: null },
+    { ...anonymous, sign_in_available: "yes" },
+    { ...anonymous, identity_state: "signed_in" },
+    { ...anonymous, identity: { identity_id: "sam", display_name: "Sam" } },
+    { ...anonymous, identity_state: "signed_in", identity: { display_name: "Sam" } },
+    { ...anonymous, extra: true },
+  ]) {
+    await expect(
+      createFeedbackAPI(async () => Response.json(value)).access(signal),
+    ).rejects.toMatchObject({ code: "response_invalid" });
+  }
+  for (const required of [true, false]) {
+    expect(
+      await createFeedbackAPI(async () =>
+        Response.json({ ...anonymous, require_sign_in: required }),
+      ).access(signal),
+    ).toMatchObject({ require_sign_in: required });
+  }
+  for (const value of [
+    {},
+    { signed_in: null },
+    { signed_in: true },
+    { signed_in: true, display_name: "Sam", team_member: false },
+    { signed_in: false, display_name: "Sam" },
+  ]) {
+    await expect(
+      createFeedbackAPI(async () => Response.json(value)).session(signal),
+    ).rejects.toMatchObject({ code: "response_invalid" });
+  }
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(
+      Response.json({ signed_in: true, display_name: "Sam", visit_allowed: false }),
+    );
+  expect(await createFeedbackAPI(fetcher).session(signal)).toMatchObject({
+    signed_in: true,
+    visit_allowed: false,
+  });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/__tnl/team/session",
+    expect.objectContaining({ credentials: "same-origin", cache: "no-store" }),
+  );
+});
+
+test("sign-in required, denied access and availability remain distinct and safe", async () => {
+  for (const [status, code] of [
+    [401, "sign_in_required"],
+    [403, "access_expired"],
+    [503, "unavailable"],
+  ] as const) {
+    await expect(
+      createFeedbackAPI(async () => new Response("private-provider-secret", { status })).access(
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code });
+  }
+});
+
 test("access and conflict errors have actionable text without leaking server response bodies", async () => {
   for (const [status, message] of [
-    [403, "preview access expired"],
+    [403, "preview access was denied"],
     [409, "feedback changed"],
   ] as const) {
     const api = createFeedbackAPI(
