@@ -8,8 +8,8 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
-	"strings"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
@@ -138,8 +138,13 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 		return
 	}
 	if first && b.forcedPort != "" {
-		_, registeredPort, splitErr := net.SplitHostPort(strings.TrimPrefix(target, "http://"))
-		if splitErr != nil || registeredPort != b.forcedPort {
+		parsed, parseErr := url.Parse(target)
+		registeredPort := ""
+		var splitErr error
+		if parseErr == nil {
+			_, registeredPort, splitErr = net.SplitHostPort(parsed.Host)
+		}
+		if parseErr != nil || splitErr != nil || registeredPort != b.forcedPort {
 			mismatch := diagnostic.Wrap(
 				diagnostic.TargetMismatch,
 				fmt.Errorf("development server registered port %s instead of port %s required by tnl dev", registeredPort, b.forcedPort),

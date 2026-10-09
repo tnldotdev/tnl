@@ -128,7 +128,7 @@ type Tunnel struct {
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"Local HTTP URL or port reached by the publisher."`
+	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
 }
 
 // Dev remains an internal compile shape for the retired launcher; configuration
@@ -145,7 +145,7 @@ type Readiness struct {
 	Status *int   `json:"status,omitempty" yaml:"status,omitempty" jsonschema:"minimum=200,maximum=499"`
 }
 
-// Target accepts either a local HTTP URL or a literal port.
+// Target accepts an HTTP or HTTPS origin or a literal local port.
 type Target string
 
 func (t *Target) UnmarshalJSON(data []byte) error {

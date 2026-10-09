@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
@@ -118,7 +119,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 		t.Fatalf("response = %d, %#v", response.Code, response.Header())
 	}
 	body := response.Body.String()
-	if !strings.HasPrefix(body, "+--[ tnl ]-- local service unavailable ") ||
+	if !strings.HasPrefix(body, "+--[ tnl ]-- target unavailable ") ||
 		!strings.Contains(body, "+-- TNL_TARGET_UNAVAILABLE ") || !strings.Contains(body, "https://tnl.dev/e/target") {
 		t.Fatalf("body = %q", body)
 	}
@@ -399,6 +400,13 @@ func TestNormalizeTarget(t *testing.T) {
 		"http://[::1]:3000":              "http://[::1]:3000",
 		"http://[0:0:0:0:0:0:0:1]:03000": "http://[::1]:3000",
 		"HTTP://[0:0:0:0:0:0:0:1]:3000":  "http://[::1]:3000",
+		"http://app:3000":                "http://app:3000",
+		"HTTP://WEB-API:03000":           "http://web-api:3000",
+		"http://192.0.2.1:3000":          "http://192.0.2.1:3000",
+		"http://[::2]:3000":              "http://[::2]:3000",
+		"https://localhost:3000":         "https://localhost:3000",
+		"HTTPS://API.EXAMPLE:0443":       "https://api.example:443",
+		"https://127.0.0.1:3000":         "https://127.0.0.1:3000",
 	}
 	for target, want := range accepted {
 		t.Run(target, func(t *testing.T) {
@@ -416,12 +424,12 @@ func TestNormalizeTarget(t *testing.T) {
 		"", "0", "65536", "+3000", "-3000", "30x00", "127.0.0.1:3000",
 		" 3000", "3000 ", "3 000", "\t3000",
 		"localhost", "localhost:", "localhost:3000/path", "localhost:3000:4000",
-		"http://localhost.:3000", "http://192.0.2.1:3000", "http://[::2]:3000",
-		"https://127.0.0.1:3000", "http://127.0.0.1", "http://127.0.0.1:0",
+		"http://localhost.:3000", "http://-app:3000", "http://app_:3000", "http://[fe80::1%25en0]:3000",
+		"http://127.0.0.1", "http://127.0.0.1:0", "https://app", "ftp://app:3000",
 		"http://127.0.0.1:65536", "http://127.0.0.1:bad",
 		"http://127.0.0.1:3000/", "http://127.0.0.1:3000/path",
 		"http://user@127.0.0.1:3000", "http://127.0.0.1:3000?query",
-		"http://127.0.0.1:3000#fragment",
+		"http://127.0.0.1:3000#fragment", "https://user@app:3000", "https://app:3000/",
 	}
 	for _, target := range rejected {
 		t.Run(target, func(t *testing.T) {
@@ -443,6 +451,16 @@ func TestPreflightRequiresAvailableTarget(t *testing.T) {
 	upstream.Close()
 	if err := Preflight(proxyContext(t), upstream.URL); err == nil {
 		t.Fatal("Preflight accepted unavailable target")
+	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+		t.Fatalf("Preflight diagnostic = %q, %t", code, ok)
+	}
+}
+
+func TestPreflightRejectsUntrustedHTTPSTarget(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(upstream.Close)
+	if err := Preflight(proxyContext(t), upstream.URL); err == nil {
+		t.Fatal("Preflight accepted an untrusted HTTPS certificate")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
 		t.Fatalf("Preflight diagnostic = %q, %t", code, ok)
 	}
@@ -576,6 +594,8 @@ func FuzzNormalizeTarget(f *testing.F) {
 		"http://127.0.0.1:3000/path",
 		"http://user@127.0.0.1:3000",
 		"http://127.0.0.1:3000#fragment",
+		"https://api.example:443",
+		"http://app:3000",
 	} {
 		f.Add(target)
 	}
@@ -591,20 +611,24 @@ func FuzzNormalizeTarget(f *testing.F) {
 		}
 
 		parsed, err := url.Parse(canonical)
-		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Host == "" ||
+		if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.User != nil || parsed.Host == "" ||
 			parsed.Path != "" || parsed.RawPath != "" || parsed.ForceQuery || parsed.RawQuery != "" ||
 			parsed.Fragment != "" || parsed.RawFragment != "" || parsed.Opaque != "" {
 			t.Fatalf("unsafe canonical target %q: %#v, %v", canonical, parsed, err)
 		}
-		address, err := netip.ParseAddr(parsed.Hostname())
-		if err != nil || !address.IsLoopback() || address.Zone() != "" {
-			t.Fatalf("canonical target is not local-only: %q", canonical)
+		host := parsed.Hostname()
+		if address, err := netip.ParseAddr(host); err == nil {
+			if address.Zone() != "" || address.String() != host {
+				t.Fatalf("canonical target has invalid IP address: %q", canonical)
+			}
+		} else if normalized, err := naming.CanonicalizeHostname(host); err != nil || normalized != host {
+			t.Fatalf("canonical target has invalid DNS name: %q", canonical)
 		}
 		port, err := strconv.ParseUint(parsed.Port(), 10, 16)
 		if err != nil || port == 0 {
 			t.Fatalf("canonical target has invalid port: %q", canonical)
 		}
-		want := "http://" + net.JoinHostPort(address.String(), strconv.FormatUint(port, 10))
+		want := parsed.Scheme + "://" + net.JoinHostPort(host, strconv.FormatUint(port, 10))
 		if canonical != want {
 			t.Fatalf("canonical target = %q, want %q", canonical, want)
 		}

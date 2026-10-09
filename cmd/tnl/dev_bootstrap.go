@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -104,7 +104,11 @@ func newDevBootstrap(ctx context.Context, forcedTarget, projectRoot string, serv
 		if err != nil {
 			return nil, err
 		}
-		_, forcedPort, err = net.SplitHostPort(strings.TrimPrefix(forcedTarget, "http://"))
+		parsed, parseErr := url.Parse(forcedTarget)
+		if parseErr != nil {
+			return nil, fmt.Errorf("read forced development target: %w", parseErr)
+		}
+		_, forcedPort, err = net.SplitHostPort(parsed.Host)
 		if err != nil {
 			return nil, fmt.Errorf("read forced development target port: %w", err)
 		}

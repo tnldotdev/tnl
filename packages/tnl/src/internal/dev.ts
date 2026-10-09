@@ -59,7 +59,7 @@ export interface TnlTunnelAssignment extends TnlDevBootstrap {
   readonly tunnelID: `tun_${string}`;
 }
 
-export type CanonicalLoopbackTarget = `http://${string}`;
+export type CanonicalTarget = `http://${string}` | `https://${string}`;
 
 export function readDevelopmentContext(
   environment: TnlDevEnvironment = process.env,
@@ -113,30 +113,49 @@ export async function requestTunnelAssignment(
   }
 }
 
-export function canonicalLoopbackTarget(host: string, port: number): CanonicalLoopbackTarget {
+export function canonicalListenerTarget(
+  host: string,
+  port: number,
+  scheme: "http" | "https" = "http",
+): CanonicalTarget {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new TnlError("sdk.target_invalid");
   }
   const hostname = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const lowerHostname = hostname.toLowerCase();
-  if (lowerHostname === "localhost" || hostname === "0.0.0.0") {
-    return `http://127.0.0.1:${port}`;
+  if (hostname === "0.0.0.0") {
+    return `${scheme}://127.0.0.1:${port}`;
   }
   if (hostname === "::") {
-    return `http://[::1]:${port}`;
+    return `${scheme}://[::1]:${port}`;
   }
-  if (isIP(hostname) === 4 && hostname.startsWith("127.")) {
-    return `http://${hostname}:${port}`;
+  if (lowerHostname === "localhost") {
+    return `${scheme}://${scheme === "http" ? "127.0.0.1" : "localhost"}:${port}`;
   }
-  if (hostname === "::1") {
-    return `http://[::1]:${port}`;
+  if (isIP(hostname) === 4) {
+    return `${scheme}://${hostname}:${port}`;
+  }
+  if (isIP(hostname) === 6) {
+    return `${scheme}://[${hostname.toLowerCase()}]:${port}`;
+  }
+  if (
+    lowerHostname.length <= 253 &&
+    lowerHostname
+      .split(".")
+      .every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))
+  ) {
+    return `${scheme}://${lowerHostname}:${port}`;
   }
   throw new TnlError("sdk.target_invalid");
 }
 
+export function canonicalLoopbackTarget(host: string, port: number): `http://${string}` {
+  return canonicalListenerTarget(host, port, "http") as `http://${string}`;
+}
+
 export async function registerLocalTarget(
   assignment: TnlTunnelAssignment,
-  target: CanonicalLoopbackTarget,
+  target: CanonicalTarget,
 ): Promise<void> {
   const body = JSON.stringify({ protocol: 1, framework: assignment.framework, target });
   await sendRequest(

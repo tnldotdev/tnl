@@ -213,7 +213,7 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local HTTP URL or port reached by the publisher.
+   * HTTP or HTTPS origin reachable by the publisher, or a local port.
    */
   target?: string | number;
 }

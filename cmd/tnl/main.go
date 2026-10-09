@@ -32,7 +32,7 @@ type cli struct {
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow ordered local app lifecycle events." group:"start"`
-	Publish     publishCommand   `cmd:"" help:"Publish a local HTTP service or try the built-in demo." group:"start"`
+	Publish     publishCommand   `cmd:"" help:"Publish an HTTP or HTTPS service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
 	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`

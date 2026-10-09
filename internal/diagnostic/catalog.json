@@ -150,44 +150,45 @@
     {
       "code": "TNL_TARGET_UNAVAILABLE",
       "slug": "target",
-      "category": "local service",
-      "title": "local service unavailable",
-      "summary": "tnl could not reach the local service or get a usable response from it. check that the target is running, then try again.",
-      "description": "tnl could not reach the local service at startup or while serving a visitor request.",
-      "diagram_label": "tnl cannot reach the local service",
+      "category": "target",
+      "title": "target unavailable",
+      "summary": "tnl could not reach the target or get a usable response from it. check that the target is running, then try again.",
+      "description": "tnl could not reach the target at startup or while serving a visitor request.",
+      "diagram_label": "tnl cannot reach the target",
       "surfaces": ["cli", "browser"],
       "http_status": 502,
       "flow": [
         { "label": "visitor" },
         { "label": "tnl server" },
-        { "label": "tnl", "detail": "local service unavailable", "failure": true },
-        { "label": "local service" }
+        { "label": "tnl", "detail": "target unavailable", "failure": true },
+        { "label": "target" }
       ],
       "causes": [
-        "the local service stopped or has not finished starting",
-        "the target points to the wrong port or loopback address",
-        "the local service closed the connection or returned an invalid HTTP response"
+        "the target stopped or has not finished starting",
+        "the target hostname or port cannot be reached from the machine running tnl",
+        "the HTTPS target's certificate is not trusted or does not match its hostname",
+        "the target closed the connection or returned an invalid HTTP response"
       ],
       "cases": [
         {
           "id": "connection-refused",
-          "description": "the local service refused the connection on the configured target.",
-          "action": "start the local service and check its listening port",
-          "diagram_detail": "local service refused connection"
+          "description": "the target refused the connection.",
+          "action": "start the target and check its listening port",
+          "diagram_detail": "target refused connection"
         },
         {
           "id": "timeout",
-          "description": "the local service did not respond before the connection timed out.",
-          "action": "check whether the local service is running and accepting requests",
-          "diagram_detail": "local service timed out"
+          "description": "the target did not respond before the connection timed out.",
+          "action": "check whether the target is running and accepting requests",
+          "diagram_detail": "target timed out"
         }
       ],
       "actions": {
-        "visitor": ["ask the public URL owner to check the local service, then retry"],
+        "visitor": ["ask the public URL owner to check the target, then retry"],
         "publisher": [
           "check the target passed to `tnl publish` or registered with `tnl dev`",
-          "start the local service and verify that its target accepts connections on the machine running `tnl`",
-          "if the command failed at startup, rerun it; if the tunnel is still running, retry the visit after restarting the local service"
+          "verify that the target accepts connections from the machine running `tnl` and that its HTTPS certificate is trusted",
+          "if the command failed at startup, rerun it; if the tunnel is still running, retry the visit after restarting the target"
         ]
       }
     },
@@ -196,23 +197,23 @@
       "slug": "config",
       "category": "configuration",
       "title": "invalid target",
-      "summary": "tnl could not use the target configured for the local service.",
-      "description": "tnl rejected the target before contacting the local service.",
+      "summary": "tnl could not use the configured target.",
+      "description": "tnl rejected the target before contacting it.",
       "diagram_label": "the target configuration is invalid",
       "surfaces": ["cli"],
       "flow": [
         { "label": "tnl" },
         { "label": "target configuration", "detail": "invalid host or port", "failure": true },
-        { "label": "local service (not contacted)" }
+        { "label": "target (not contacted)" }
       ],
       "causes": [
         "the target port is missing or outside the valid range",
         "the target contains a path, query, fragment, credentials, or whitespace",
-        "the target uses HTTPS or a host other than `localhost`, a `127.x.x.x` address, or `::1`"
+        "the target is not an HTTP or HTTPS origin with a valid DNS name or IP address"
       ],
       "actions": {
         "publisher": [
-          "use a bare port such as `3000`, `localhost:3000`, or an HTTP loopback origin",
+          "use a bare port such as `3000`, `localhost:3000`, or an HTTP or HTTPS origin",
           "run the command again with the corrected target"
         ]
       }
