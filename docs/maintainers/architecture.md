@@ -231,6 +231,7 @@ provider retries may revisit already successful worktrees. GET, HEAD, and
 OPTIONS verification requires matching bounded responses. No request journal or
 replay is retained.
 Changed declarations drain the webhook publish run before re-publication;
+provider IP ranges are resolved once per new run, independently of OAuth.
 Control and standalone serve `/v1/webhook-providers/{provider}/source` using a
 fixed provider enum. They read only documented webhook sender feeds and bounded
 static ranges, with a short-lived in-process cache and a bounded last-good
