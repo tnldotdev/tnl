@@ -44,6 +44,11 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
+        if (request.method === "GET" && request.url === "/v1/health") {
+          // readiness probes are not registration messages.
+          response.writeHead(204).end();
+          return;
+        }
         const body = Buffer.concat(chunks).toString("utf8");
         requests.push({
           authorization: request.headers.authorization,
@@ -179,7 +184,7 @@ export async function waitForBootstrapRequest(
     const request = bootstrap.requests[index];
     if (request !== undefined) return request;
     assertRunning();
-    if (Date.now() >= deadline) throw new Error("framework did not register with tnl dev");
+    if (Date.now() >= deadline) throw new Error("framework did not register with tnl");
     await delay(50);
   }
 }

@@ -140,9 +140,10 @@ listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native commands
-`tnl runtime start` and `tnl runtime serve` discover or maintain one Unix socket
-per canonical project/worktree/client-state identity. the socket is user-owned
+readiness, and a bounded durable local event journal. the private native command
+`tnl runtime address` locates one Unix socket per canonical
+project/worktree/client-state identity. the app starts `tnl runtime serve` to
+maintain it. the socket is user-owned
 and mode 0600 beneath a stable, short mode-0700 directory under `/tmp`.
 `internal/privateprotocol` bounds and
 validates requests; golden fixtures describe its wire shape. control credentials

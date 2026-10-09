@@ -385,8 +385,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
-	case "runtime start":
-		return runRuntimeStart(ctx, flags.Runtime.Start, stdout)
+	case "runtime address":
+		return runRuntimeAddress(ctx, flags.Runtime.Address, stdout)
 	case "runtime serve":
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":

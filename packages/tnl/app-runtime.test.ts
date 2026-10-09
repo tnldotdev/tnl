@@ -1,13 +1,48 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
-import { createPreparedService, runtimeRequest } from "./dist/internal/app.js";
+import { createPreparedService, runtimeRequest, startRuntime } from "./dist/internal/app.js";
 import { TnlError } from "./dist/errors.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { testPublicProject } from "./test-helper/project.js";
 import { record } from "./dist/internal/runtime.js";
 
 afterEach(() => vi.useRealTimers());
+
+test("starts a local publisher as a child of the app, then waits for its health", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-runtime-"));
+  const binary = join(directory, "fake-tnl.mjs");
+  let workerPID: number | undefined;
+  try {
+    await writeFile(
+      binary,
+      `#!/usr/bin/env node
+import http from "node:http";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const directory = process.argv[process.argv.indexOf("--directory") + 1];
+const socket = join(directory, "manager.sock");
+if (process.argv.includes("address")) process.stdout.write(JSON.stringify({ protocol: 1, socket }) + "\\n");
+else if (process.argv.includes("serve")) {
+  const server = http.createServer((_request, response) => response.writeHead(204).end());
+  server.listen(socket);
+  writeFileSync(join(directory, "pid"), String(process.pid));
+  process.on("SIGTERM", () => server.close(() => process.exit(0)));
+}
+`,
+    );
+    await chmod(binary, 0o700);
+    const socket = await startRuntime(directory, binary);
+    expect(socket).toBe(join(directory, "manager.sock"));
+    workerPID = Number(await readFile(join(directory, "pid"), "utf8"));
+    expect(workerPID).toBeGreaterThan(0);
+  } finally {
+    if (workerPID !== undefined) process.kill(workerPID, "SIGTERM");
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("accepts the native private protocol golden assignment", async () => {
   const golden: unknown = JSON.parse(

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 import * as path from "node:path";
@@ -388,11 +388,14 @@ function parseAssignment(value: unknown): Assignment {
   }
 }
 
-async function startRuntime(directory: string): Promise<string> {
+export async function startRuntime(
+  directory: string,
+  binary: string = resolveNativeBinary(),
+): Promise<string> {
   try {
     const { stdout } = await promisify(execFile)(
-      resolveNativeBinary(),
-      ["--no-telemetry", "runtime", "start", "--directory", directory],
+      binary,
+      ["--no-telemetry", "runtime", "address", "--directory", directory],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
@@ -405,11 +408,46 @@ async function startRuntime(directory: string): Promise<string> {
       object.socket.includes("\0")
     )
       throw new TnlError("sdk.response_invalid");
+    if (!(await runtimeHealthy(object.socket))) {
+      // the app process owns the local publisher's lifetime. a second service
+      // can race this spawn: the runtime's hostname lock elects one owner.
+      const process_ = spawn(
+        binary,
+        ["--no-telemetry", "runtime", "serve", "--directory", directory],
+        {
+          cwd: directory,
+          stdio: "ignore",
+        },
+      );
+      process_.once("error", () => {
+        // an available sibling runtime may still win the socket election.
+      });
+      process_.unref();
+      const deadline = Date.now() + 15_000;
+      while (!(await runtimeHealthy(object.socket))) {
+        if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+    }
     return object.socket;
   } catch (cause) {
     if (cause instanceof TnlError) throw cause;
     throw new TnlError("sdk.dev_unavailable", { cause });
   }
+}
+
+function runtimeHealthy(socket: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const request = http.get(
+      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
+      (response) => {
+        response.resume();
+        resolve(response.statusCode === 204);
+      },
+    );
+    request.on("error", () => resolve(false));
+    request.on("timeout", () => request.destroy());
+  });
 }
 
 export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
