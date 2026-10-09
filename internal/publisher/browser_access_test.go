@@ -25,6 +25,8 @@ type browserAccessStub struct {
 	next         string
 	bridge       bool
 	response     *controlv1.BrowserAccessResponse
+	handoffErr   error
+	logoutErr    error
 }
 
 func (*browserAccessStub) EnableBrowserAccess(context.Context, string, uint64, credentials.PublishRunToken) error {
@@ -32,6 +34,9 @@ func (*browserAccessStub) EnableBrowserAccess(context.Context, string, uint64, c
 }
 
 func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	if s.handoffErr != nil {
+		return controlv1.BrowserHandoffResponse{}, s.handoffErr
+	}
 	response := controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: "/settings", ExpiresAt: time.Now().Add(time.Hour)}
 	if s.next != "" {
 		response.NextUrl = &s.next
@@ -58,7 +63,7 @@ func TestBrowserAccessForAppRunsDoesNotRequirePreviewOrShares(t *testing.T) {
 		for _, purpose := range []controlv1.PublicURLPurpose{controlv1.App, controlv1.Alias, controlv1.Demo, controlv1.Oauth, controlv1.Webhooks} {
 			config := Config{Control: &browserAccessStub{}, ControlURL: "https://control.example.test", BrowserLoginAvailable: true, PreviewID: previewID, Purpose: purpose}
 			setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{Purpose: purpose, Id: "url_app"}, PublishRun: controlv1.PublishRun{Id: "pr_app", PublishRunNumber: 7}}
-			access := browserAccessForRun(config, setup, "token", nil)
+			access := browserAccessForRun(config, setup, "token")
 			if (access != nil) != (purpose == controlv1.App) {
 				t.Fatalf("browser capability for preview=%q purpose=%q = %t", previewID, purpose, access != nil)
 			}
@@ -85,7 +90,7 @@ func TestBrowserAccessForAppRunsDoesNotRequirePreviewOrShares(t *testing.T) {
 				case "different purpose":
 					candidateSetup.PublicUrl.Purpose = controlv1.Oauth
 				}
-				if browserAccessForRun(candidate, candidateSetup, "token", nil) != nil {
+				if browserAccessForRun(candidate, candidateSetup, "token") != nil {
 					t.Fatalf("browser access accepted %s", disabled)
 				}
 			}
@@ -142,8 +147,8 @@ func TestAppRunRegistersBrowserCapabilityBeforeReady(t *testing.T) {
 	}
 }
 
-func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
-	return nil
+func (s *browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
+	return s.logoutErr
 }
 
 func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testing.T) {
@@ -156,7 +161,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	shares := &shareAccess{confirmed: time.Now(), teamAccessEnabled: true, shares: map[string]cachedShare{}}
 	client := &browserAccessStub{visitAllowed: true}
 	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
-		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test", shares: shares}
+		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test"}
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +189,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	navigation = navigation.WithContext(context.WithValue(navigation.Context(), denialContextKey{}, true))
 	redirect := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(redirect, navigation)
-	if redirect.Code != http.StatusSeeOther || redirect.Header().Get("Location") != "/__tnl/team/login?return=%2Fsettings%3Ftab%3Dprofile" {
+	if redirect.Code != http.StatusForbidden || redirect.Header().Get("Location") != "" || !strings.Contains(redirect.Body.String(), `href="/__tnl/team/login?return=%2Fsettings%3Ftab%3Dprofile"`) {
 		t.Fatalf("unallowed browser navigation = %d %q", redirect.Code, redirect.Header().Get("Location"))
 	}
 	login := serve("/__tnl/team/login?return=%2Fsettings", "", true)

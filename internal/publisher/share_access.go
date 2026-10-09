@@ -88,12 +88,6 @@ func (a *shareAccess) refresh(ctx context.Context) error {
 	return nil
 }
 
-func (a *shareAccess) permitsTeamLogin() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.teamAccessEnabled && !a.confirmed.IsZero() && time.Since(a.confirmed) <= shareStateFreshness
-}
-
 func (a *shareAccess) permission(request *http.Request) (time.Time, bool) {
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {

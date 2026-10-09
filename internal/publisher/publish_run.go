@@ -204,7 +204,7 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	browserRuntime := browserAccessForRun(config, setup, publishRunToken, shareRuntime)
+	browserRuntime := browserAccessForRun(config, setup, publishRunToken)
 	if browserRuntime != nil {
 		if err := browserRuntime.client.EnableBrowserAccess(ctx, setup.PublishRun.Id, version, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: register browser capability: %w", err)

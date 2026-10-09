@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"syscall"
@@ -216,22 +217,60 @@ func WritePolicyDenial(output io.Writer, command string, newlyBlocked, total uin
 	return err
 }
 
-func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID ...string) {
-	status := definitionFor(code).HTTPStatus
-	if status < 400 || status > 599 {
-		panic("diagnostic: code is not an HTTP failure " + code)
+// SecondaryAction adds one same-origin action below an HTML diagnostic.
+type SecondaryAction struct {
+	Label string
+	Path  string
+	Post  bool
+}
+
+// IsHTMLDocumentRequest recognizes browser navigation, including clients that
+// do not send fetch metadata. explicit asset or fetch metadata never qualifies.
+func IsHTMLDocumentRequest(request *http.Request) bool {
+	return request.Method == http.MethodGet && acceptsHTML(request.Header.Get("Accept")) &&
+		(request.Header.Get("Sec-Fetch-Dest") == "" || request.Header.Get("Sec-Fetch-Dest") == "document") &&
+		(request.Header.Get("Sec-Fetch-Mode") == "" || request.Header.Get("Sec-Fetch-Mode") == "navigate")
+}
+
+// WriteRestrictedBrowserHTTP retains the policy diagnostic and its presentation
+// while offering a small action on a browser document.
+func WriteRestrictedBrowserHTTP(response http.ResponseWriter, request *http.Request, action SecondaryAction) {
+	parsed, err := url.ParseRequestURI(action.Path)
+	if !IsHTMLDocumentRequest(request) || action.Label == "" || err != nil || parsed.IsAbs() || parsed.Host != "" ||
+		!strings.HasPrefix(action.Path, "/") || strings.HasPrefix(parsed.Path, "//") || strings.ContainsAny(action.Path, "\\\r\n#") || strings.ContainsAny(parsed.Path, "\\\r\n") {
+		WriteHTTP(response, request, IPPolicyDenied)
+		return
 	}
+	writeHTTP(response, request, IPPolicyDenied, "", &action)
+}
+
+func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID ...string) {
 	variant := ""
 	if len(caseID) > 0 && caseFor(code, caseID[0]) != nil {
 		variant = caseID[0]
 	}
+	writeHTTP(response, request, code, variant, nil)
+}
+
+func writeHTTP(response http.ResponseWriter, request *http.Request, code Code, variant string, action *SecondaryAction) {
+	status := definitionFor(code).HTTPStatus
+	if status < 400 || status > 599 {
+		panic("diagnostic: code is not an HTTP failure " + code)
+	}
 	body := renderText("tnl", code, variant, definitionFor(code).Summary)
 	contentType := "text/plain; charset=utf-8"
 	if acceptsHTML(request.Header.Get("Accept")) {
-		body = renderHTML(code, variant)
+		body = renderHTML(code, variant, action)
 		contentType = "text/html; charset=utf-8"
 		response.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+		if action != nil && action.Post {
+			response.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		}
 		response.Header().Set("Referrer-Policy", "no-referrer")
+		if action != nil && action.Post {
+			// same-origin forms need a non-null Origin; external links still get no referrer.
+			response.Header().Set("Referrer-Policy", "same-origin")
+		}
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Length", strconv.Itoa(len(body)))
@@ -275,9 +314,10 @@ func renderText(command string, code Code, caseID string, details ...string) str
 	return text
 }
 
-func renderHTML(code Code, caseID string) string {
+func renderHTML(code Code, caseID string, secondary *SecondaryAction) string {
 	definition := definitionFor(code)
 	url := HelpURL(code, caseID)
+	title, summary := definition.Title, definition.Summary
 	action := ""
 	if len(definition.Actions.Visitor) != 0 {
 		action = "<p>" + html.EscapeString(definition.Actions.Visitor[0]) + "</p>"
@@ -285,25 +325,37 @@ func renderHTML(code Code, caseID string) string {
 	if variant := caseFor(code, caseID); variant != nil {
 		action += "<p>" + html.EscapeString(variant.Description) + " " + html.EscapeString(variant.Action) + "</p>"
 	}
+	secondaryHTML := ""
+	secondaryStyle := ""
+	if secondary != nil {
+		title, summary = "this public url is restricted", "sign in if you have access, or ask the person sharing this public URL."
+		action = ""
+		label, path := html.EscapeString(secondary.Label), html.EscapeString(secondary.Path)
+		secondaryHTML = `<p class="secondary"><a href="` + path + `">` + label + `</a></p>`
+		if secondary.Post {
+			secondaryHTML = `<form class="secondary" method="post" action="` + path + `"><button type="submit">` + label + `</button></form>`
+		}
+		secondaryStyle = `.secondary{font-size:.85rem}button{font:inherit;color:inherit;background:none;border:0;padding:0;text-decoration:underline;text-underline-offset:.2em;cursor:pointer}button:focus-visible{outline:1px dashed #111;outline-offset:4px}` + "\n"
+	}
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>` + html.EscapeString(definition.Title) + ` - tnl</title>
+<title>` + html.EscapeString(title) + ` - tnl</title>
 <style>
 html{background:#fff;color:#111;font-family:"Fira Code","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-variant-ligatures:none}
 body{margin:0;padding:clamp(1.25rem,6vw,4rem);max-width:64ch;line-height:1.6}
 h1{font-size:1.35rem;line-height:1.3}code{font:inherit}
 a{color:inherit;text-underline-offset:.2em}
 a:focus-visible{outline:1px dashed #111;outline-offset:4px}
-</style>
+` + secondaryStyle + `</style>
 </head>
 <body>
-<main><h1>` + html.EscapeString(definition.Title) + `</h1>
-<p>` + html.EscapeString(definition.Summary) + `</p>
-` + action + `<p><code>` + html.EscapeString(string(code)) + `</code> · <a href="` + html.EscapeString(url) + `">help with this error</a></p></main>
+<main><h1>` + html.EscapeString(title) + `</h1>
+<p>` + html.EscapeString(summary) + `</p>
+` + action + `<p><code>` + html.EscapeString(string(code)) + `</code> · <a href="` + html.EscapeString(url) + `">help with this error</a></p>` + secondaryHTML + `</main>
 </body>
 </html>
 `
