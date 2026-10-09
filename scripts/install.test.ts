@@ -13,10 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 
-const script = readFileSync(new URL("install.sh", import.meta.url), "utf8").replace(
-  "@TNL_VERSION@",
-  "1.2.3",
-);
+const script = readFileSync(new URL("install.sh", import.meta.url), "utf8");
 const directories: string[] = [];
 afterEach(() => {
   for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -43,6 +40,7 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s\\n' "$url" >> "$FIXTURE/urls"
 case "$url" in
+  */releases/latest) printf '%s' "$LATEST_RELEASE_URL" ;;
   */checksums.txt) cp "$FIXTURE/checksums.txt" "$output" ;;
   *.tar.gz) cp "$FIXTURE/archive.tar.gz" "$output" ;;
   *) exit 1 ;;
@@ -62,7 +60,10 @@ esac`,
   writeFileSync(join(root, "checksums.txt"), `${checksums}\n`);
   const binary = join(dir, "tnl");
   writeFileSync(binary, "old binary");
-  const run = (override = "") =>
+  const run = (
+    override = "",
+    latest = `https://github.com/tnldotdev/tnl/releases/tag/v${version}`,
+  ) =>
     spawnSync("sh", [], {
       input: script,
       encoding: "utf8",
@@ -70,6 +71,7 @@ esac`,
         ...process.env,
         PATH: `${tools}:${process.env.PATH}`,
         FIXTURE: root,
+        LATEST_RELEASE_URL: latest,
         TNL_INSTALL: dir,
         TNL_VERSION: override,
         TMPDIR: scratch,
@@ -78,7 +80,7 @@ esac`,
   return { root, dir, scratch, binary, run, executable, checksums };
 }
 
-test("installs the website-pinned release, retains notices, and cleans up", () => {
+test("installs GitHub's latest stable release, retains notices, and cleans up", () => {
   const f = fixture();
   const result = f.run();
   expect(result.status, result.stderr).toBe(0);
@@ -95,10 +97,28 @@ test("installs the website-pinned release, retains notices, and cleans up", () =
   expect(readdirSync(f.dir)).toEqual(["tnl", "tnl-notices"]);
 });
 
-test("an explicit version overrides the website pin", () => {
+test("an explicit version skips latest release lookup", () => {
   const f = fixture("1.2.4");
   expect(f.run("v1.2.4").status).toBe(0);
-  expect(readFileSync(join(f.root, "urls"), "utf8")).toContain("/releases/download/v1.2.4/");
+  const urls = readFileSync(join(f.root, "urls"), "utf8");
+  expect(urls).toContain("/releases/download/v1.2.4/");
+  expect(urls).not.toContain("/releases/latest");
+});
+
+test.each([
+  "https://github.com/tnldotdev/tnl/releases",
+  "https://github.com/tnldotdev/tnl/releases/tag/v1.2.3-rc.1",
+])("does not fall back when latest stable resolves to %s", (latest) => {
+  const f = fixture();
+  const result = f.run("", latest);
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("could not find a stable tnl release");
+  expect(result.stdout).toBe("");
+  expect(readFileSync(join(f.root, "urls"), "utf8").trim()).toBe(
+    "https://github.com/tnldotdev/tnl/releases/latest",
+  );
+  expect(readFileSync(f.binary, "utf8")).toBe("old binary");
+  expect(readdirSync(f.scratch)).toEqual([]);
 });
 
 test("a checksum mismatch preserves the existing binary", () => {

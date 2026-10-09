@@ -1,7 +1,7 @@
 #!/bin/sh
 # generated from scripts/install.sh.in; do not edit install.sh.
 # curl -fsSL https://tnl.dev/install | sh
-# TNL_VERSION overrides the client version pinned by tnl.dev.
+# TNL_VERSION selects an exact release (default: latest stable).
 # TNL_INSTALL overrides ~/.local/bin; legal files go in its tnl-notices directory.
 
 @MESSAGES@
@@ -25,14 +25,26 @@ tnl_install() (
     arm64|aarch64) arch=arm64 ;;
     *) exit 1 ;;
   esac
-  version=${TNL_VERSION:-@TNL_VERSION@}
+  repo=https://github.com/tnldotdev/tnl
+  version=${TNL_VERSION:-}
+  if [ -z "$version" ]; then
+    failure=stable_failed
+    latest=$(curl -fsSL --head --proto '=https' --proto-redir '=https' \
+      --output /dev/null --write-out '%{url_effective}' "$repo/releases/latest")
+    case "$latest" in
+      "$repo"/releases/tag/v*) version=${latest##*/} ;;
+      *) exit 1 ;;
+    esac
+    printf '%s\n' "$version" | awk 'NR != 1 || $0 !~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { exit 1 }'
+    failure=failed
+  fi
   version=${version#v}
   case "$version" in ''|*[!0-9A-Za-z.-]*) exit 1 ;; esac
   dir=${TNL_INSTALL:-$HOME/.local/bin}
   case "$dir" in /*) ;; *) dir="$(pwd)/$dir" ;; esac
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/tnl-install.XXXXXXXX")
   archive="tnl_${version}_${os}_${arch}.tar.gz"
-  base="https://github.com/tnldotdev/tnl/releases/download/v$version"
+  base="$repo/releases/download/v$version"
   curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/$archive" "$base/$archive"
   curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/checksums.txt" "$base/checksums.txt"
 
