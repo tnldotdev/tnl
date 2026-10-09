@@ -535,7 +535,7 @@
           "type": "string",
           "enum": ["simple", "generated"],
           "description": "Managed-domain public URL names: ${enum}.",
-          "default": "generated"
+          "default": "simple"
         },
         "managed_domain_max_member_child_labels": {
           "type": "integer",
