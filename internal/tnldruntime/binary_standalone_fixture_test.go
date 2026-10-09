@@ -93,7 +93,7 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"SSL_CERT_FILE": trustFile, "TNL_LOGIN_TOKEN": testLoginToken, "TNL_NO_TELEMETRY": "1",
 		"TNL_SERVER": "https://control.127.0.0.1.nip.io", "TNL_STATE_DIR": stateDirectory,
 	})
-	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "login", "--token")
+	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--token")
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
 		stateDirectory: stateDirectory, environment: clientEnvironment, server: server, pebble: pebble}

@@ -131,7 +131,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNL_SERVER":       "https://" + controlHost,
 		"TNL_STATE_DIR":    stateDirectory,
 	})
-	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "login", "--token")
+	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--token")
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 
 	return &integrationBinarySplit{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
