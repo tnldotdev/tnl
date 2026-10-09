@@ -105,7 +105,7 @@ func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID
 		return "", fmt.Errorf("controlstate: expire browser logins: %w", err)
 	}
 	if err := queries.InsertBrowserLoginAttempt(ctx, controlstatedb.InsertBrowserLoginAttemptParams{
-		StateDigest: digest, BindingDigest: bindingDigest[:], PreviewID: previewID, PublicURLID: publicURLID,
+		StateDigest: digest, BindingDigest: bindingDigest[:], PreviewID: nullableText(previewID), PublicURLID: publicURLID,
 		ReturnPath: path, Nonce: nonce, VerifierCiphertext: sealed,
 		VerifierStorageKeyID: d.storageKey.CurrentID(), ExpiresAt: timestamptz(now.Add(5 * time.Minute)),
 	}); err != nil {
@@ -133,7 +133,7 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 	if err != nil {
 		return BrowserLoginAttempt{}, err
 	}
-	return BrowserLoginAttempt{PreviewID: row.PreviewID, PublicURLID: row.PublicURLID,
+	return BrowserLoginAttempt{PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
 		ReturnPath: row.ReturnPath, Nonce: row.Nonce, Verifier: string(verifier)}, nil
 }
 
@@ -167,7 +167,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	defer tx.Rollback(ctx)
 	queries := controlstatedb.New(tx)
 	if err := queries.InsertBrowserAccessSession(ctx, controlstatedb.InsertBrowserAccessSessionParams{
-		TokenDigest: cookieDigest, PreviewID: attempt.PreviewID, PublicURLID: attempt.PublicURLID,
+		TokenDigest: cookieDigest, PreviewID: nullableText(attempt.PreviewID), PublicURLID: attempt.PublicURLID,
 		IdentityID: session.IdentityID, DisplayName: session.DisplayName,
 		AccessCiphertext: access, RefreshCiphertext: refresh, StorageKeyID: d.storageKey.CurrentID(),
 		AccessExpiresAt: timestamptz(session.AccessExpiresAt), ExpiresAt: timestamptz(session.ExpiresAt),
@@ -273,7 +273,7 @@ func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string
 	if err != nil {
 		return BrowserAccessSession{}, err
 	}
-	return BrowserAccessSession{PreviewID: row.PreviewID, PublicURLID: row.PublicURLID,
+	return BrowserAccessSession{PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
 		IdentityID: row.IdentityID, DisplayName: row.DisplayName, AccessToken: string(access), RefreshToken: string(refresh),
 		AccessExpiresAt: row.AccessExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time}, nil
 }
@@ -334,7 +334,7 @@ func (d *Database) RefreshBrowserSession(ctx context.Context, publicURLID, token
 		return BrowserAccessSession{}, err
 	}
 	session := BrowserAccessSession{
-		PreviewID: row.PreviewID, PublicURLID: row.PublicURLID, IdentityID: row.IdentityID, DisplayName: row.DisplayName,
+		PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID, IdentityID: row.IdentityID, DisplayName: row.DisplayName,
 		AccessToken: string(access), RefreshToken: string(refreshToken),
 		AccessExpiresAt: row.AccessExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time,
 	}
@@ -464,7 +464,7 @@ func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.
 	if err != nil {
 		return BrowserIdentity{}, fmt.Errorf("lock browser control identity: %w", err)
 	}
-	return BrowserIdentity{IdentityID: identity.IdentityID, DisplayName: identity.DisplayName, PreviewID: row.PreviewID}, nil
+	return BrowserIdentity{IdentityID: identity.IdentityID, DisplayName: identity.DisplayName, PreviewID: row.PreviewID.String}, nil
 }
 
 // browserVisitAllowed owns the team-grant decision. callers have already locked

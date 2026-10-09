@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
@@ -139,6 +141,95 @@ func TestIntegrationCustomDomainMigrationConvertsExistingRows(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `UPDATE control.domains SET kind = 'claimed' WHERE id = 'domain_custom_upgrade'`); err == nil {
 		t.Fatal("legacy domain kind was still writable")
+	}
+}
+
+func TestIntegrationBrowserAccessAndFeedbackPolicyMigration(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "browser_policy_migration")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 17); err != nil {
+		t.Fatal(err)
+	}
+	if old, err := Open(ctx, url, testStorageKey, ""); err == nil {
+		old.Close()
+		t.Fatal("runtime accepted schema 17 before its generated columns were available")
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	keyring, err := storagekey.New(testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Database{pool: pool, storageKey: keyring}
+	now := time.Now().UTC().Truncate(time.Second)
+	seedControlPublicURL(t, legacy, now, "browser_upgrade")
+	insertTestPublishRun(t, legacy, testPublishRun{
+		ID: "run_browser_upgrade", PublicURLID: "public_url_browser_upgrade", TeamID: "team_browser_upgrade", ActingIdentityID: "identity_browser_upgrade",
+		CertificateCacheKey: "browser-upgrade", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-browser-upgrade.example.test"},
+		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	for _, statement := range []string{
+		`INSERT INTO control.previews (id, team_id, created_by_identity_id, idempotency_key, created_at)
+		 VALUES ('preview_browser_upgrade', 'team_browser_upgrade', 'identity_browser_upgrade', 'upgrade', $1)`,
+		`INSERT INTO control.browser_login_attempts
+		 (state_digest, binding_digest, preview_id, public_url_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id, expires_at)
+		 VALUES (decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'), 'preview_browser_upgrade',
+		 'public_url_browser_upgrade', '/', 'upgrade-nonce', decode('03', 'hex'), 'test', $1::timestamptz + interval '1 hour')`,
+		`INSERT INTO control.browser_access_sessions
+		 (token_digest, preview_id, public_url_id, identity_id, display_name, access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at)
+		 VALUES (decode(repeat('04', 32), 'hex'), 'preview_browser_upgrade', 'public_url_browser_upgrade', 'identity_browser_upgrade',
+		 'upgrade name', decode('05', 'hex'), decode('06', 'hex'), 'test', $1::timestamptz + interval '1 hour', $1::timestamptz + interval '1 day')`,
+	} {
+		if _, err := pool.Exec(ctx, statement, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	database, err := Open(ctx, url, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	queries := controlstatedb.New(database.pool)
+	run, err := queries.GetPublishRun(ctx, "run_browser_upgrade")
+	if err != nil || run.BrowserCapable {
+		t.Fatalf("existing run's browser capability = %t, %v", run.BrowserCapable, err)
+	}
+	var requireSignIn bool
+	if err := database.pool.QueryRow(ctx, `SELECT feedback_require_sign_in FROM control.teams WHERE id = 'team_browser_upgrade'`).Scan(&requireSignIn); err != nil || requireSignIn {
+		t.Fatalf("existing team's sign-in policy = %t, %v", requireSignIn, err)
+	}
+	for _, table := range []string{"browser_login_attempts", "browser_access_sessions"} {
+		var previewID string
+		if err := database.pool.QueryRow(ctx, "SELECT preview_id FROM control."+table).Scan(&previewID); err != nil || previewID != "preview_browser_upgrade" {
+			t.Fatalf("%s preview after upgrade = %q, %v", table, previewID, err)
+		}
+		if _, err := database.pool.Exec(ctx, "UPDATE control."+table+" SET preview_id = NULL"); err != nil {
+			t.Fatalf("%s rejected a nullable preview reference: %v", table, err)
+		}
 	}
 }
 
