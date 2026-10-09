@@ -25,17 +25,24 @@ func newBrowserReviewer(t *testing.T, database *Database, previewID, publicURLID
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
-		PreviewID: previewID, PublicURLID: publicURLID, ReturnPath: "/",
-	}, BrowserAccessSession{
-		IdentityID: identityID, DisplayName: "stale session name", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(),
-		AccessExpiresAt: session.AccessExpiresAt, ExpiresAt: session.RefreshExpiresAt,
-	}, now)
+	cookie, _, err := randomBrowserSecret()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), publicURLID, handoff.Token, now)
+	digest, _ := browserDigest(cookie)
+	access, err := database.storageKey.Seal(browserContext(digest), []byte(session.AccessToken))
 	if err != nil {
+		t.Fatal(err)
+	}
+	refresh, err := database.storageKey.Seal(browserContext(digest), []byte(session.RefreshToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controlstatedb.New(database.pool).InsertBrowserAccessSession(t.Context(), controlstatedb.InsertBrowserAccessSessionParams{
+		TokenDigest: digest, PreviewID: nullableText(previewID), PublicURLID: publicURLID, IdentityID: identityID, DisplayName: "stale session name",
+		AccessCiphertext: access, RefreshCiphertext: refresh, StorageKeyID: database.storageKey.CurrentID(),
+		AccessExpiresAt: timestamptz(session.AccessExpiresAt), ExpiresAt: timestamptz(session.RefreshExpiresAt),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(cookie)
@@ -87,14 +94,14 @@ func TestIntegrationBrowserAuthorizationUsesCurrentGrantAndMembership(t *testing
 	f := newPublishRunFixture(t)
 	preview := browserFeedbackPreview(t, f)
 	database, now := f.database, f.now
-	// the fixture's owner may sign in, but needs the same opt-in grant as other members.
+	// ownership admits the current owner without a preview grant.
 	owner, ownerCookie, _ := newBrowserReviewer(t, database, preview.ID, f.setup.PublicURLID, f.request.ActingIdentityID, now)
 	access, err := database.BrowserAuthorization(t.Context(), f.setup.PublicURLID, ownerCookie, now)
-	if err != nil || access.Identity.IdentityID != owner.IdentityID || access.VisitAllowed {
+	if err != nil || access.Identity.IdentityID != owner.IdentityID || !access.VisitAllowed {
 		t.Fatalf("owner without grant = %+v, %v", access, err)
 	}
-	if _, err := database.CreateFeedback(t.Context(), f.authentication(), browserFeedbackReport(t, preview.ID, owner, "no-grant"), now); !errors.Is(err, ErrFeedbackAccess) {
-		t.Fatalf("identity alone posted feedback: %v", err)
+	if report, err := database.CreateFeedback(t.Context(), f.authentication(), browserFeedbackReport(t, preview.ID, owner, "no-grant"), now); err != nil || !report.AuthorVerified {
+		t.Fatalf("owner feedback without team grant: %v", err)
 	}
 	// use a current ordinary membership on a shared public URL, rather than an owner capability.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET kind = 'organization' WHERE id = $1`, f.request.TeamID); err != nil {
@@ -131,8 +138,8 @@ func TestIntegrationBrowserAuthorizationUsesCurrentGrantAndMembership(t *testing
 	}
 	setBrowserTeamGrant(t, f, preview, false)
 	access, err = database.BrowserAuthorization(t.Context(), f.setup.PublicURLID, ownerCookie, now)
-	if err != nil || access.VisitAllowed {
-		t.Fatalf("disabled grant = %+v, %v", access, err)
+	if err != nil || !access.VisitAllowed {
+		t.Fatalf("owner lost access with disabled grant = %+v, %v", access, err)
 	}
 }
 
@@ -221,7 +228,11 @@ func TestIntegrationReviewerWritesWaitForTeamBeforePublicURL(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			f := newPublishRunFixture(t)
 			preview := browserFeedbackPreview(t, f)
-			actor, _, _ := newBrowserReviewer(t, f.database, preview.ID, f.setup.PublicURLID, f.request.ActingIdentityID, f.now)
+			if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.teams SET kind = 'organization' WHERE id = $1`, f.request.TeamID); err != nil {
+				t.Fatal(err)
+			}
+			member := addAuthorityMember(t, f.database, f.now, f.request.ActingIdentityID, f.request.TeamID, "queued-reviewer", TeamRoleMember)
+			actor, _, _ := newBrowserReviewer(t, f.database, preview.ID, f.setup.PublicURLID, member.IdentityID, f.now)
 			setBrowserTeamGrant(t, f, preview, true)
 			thread, err := f.database.CreateFeedback(t.Context(), f.authentication(), browserFeedbackReport(t, preview.ID, actor, "initial"), f.now)
 			if err != nil {

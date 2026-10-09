@@ -12,12 +12,13 @@ paths:
   /v1/browser/login:
     get:
       operationId: beginPreviewBrowserLogin
-      summary: Start sign-in for a preview visitor
+      summary: Start browser sign-in for an app public URL
       security: []
       parameters:
         - name: preview_id
           in: query
-          required: true
+          description: When omitted, the session is scoped to this public URL only.
+          required: false
           schema:
             $ref: "#/components/schemas/PreviewID"
         - name: public_url_id
@@ -40,7 +41,7 @@ paths:
   /v1/browser/callback:
     get:
       operationId: completePreviewBrowserLogin
-      summary: Return a signed-in visitor to the preview
+      summary: Return a signed-in visitor to the public URL
       security: []
       parameters:
         - name: state
@@ -56,6 +57,25 @@ paths:
       responses:
         "303":
           description: Redirect to a one-time handoff on the public URL
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/browser/capability:
+    post:
+      operationId: enableBrowserAccess
+      summary: Register browser access support before an app publish run is ready
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "204":
+          description: Browser capability registered for this exact live publish run
         default:
           $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/browser/handoff:
@@ -84,7 +104,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/browser/access:
     post:
       operationId: checkPreviewBrowserAccess
-      summary: Check a browser cookie against current preview access
+      summary: Check browser identity and current permission to visit this app public URL
       security:
         - publishRunBearer: []
       parameters:
@@ -97,7 +117,7 @@ paths:
               $ref: "#/components/schemas/BrowserAccessRequest"
       responses:
         "200":
-          description: Browser identity and current team access
+          description: Browser identity and current visit permission
           content:
             application/json:
               schema:
@@ -1648,7 +1668,7 @@ components:
           maxLength: 256
         visit_allowed:
           type: boolean
-          description: Whether the authenticated identity may visit through the preview's current team access grant. Identity alone does not allow a visit.
+          description: Whether the authenticated identity currently owns this app public URL or may visit through the session preview's current team access grant. Identity alone does not allow a visit.
     Preview:
       type: object
       additionalProperties: false

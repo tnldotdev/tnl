@@ -12,12 +12,43 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
 )
+
+func readyBrowserTestRun(t *testing.T, database *Database, auth PublishRunAuthentication, now time.Time) {
+	t.Helper()
+	if err := database.EnableBrowserAccess(t.Context(), auth, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2 WHERE id = $1`, auth.PublishRunID, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertBrowserTestRun(t *testing.T, database *Database, run testPublishRun) PublishRunAuthentication {
+	t.Helper()
+	insertTestPublishRun(t, database, run)
+	token, id, digest, err := credentials.NewPublishRunToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publish_run_token_id = $2, publish_run_token_digest = $3 WHERE id = $1`, run.ID, id.String(), digest[:]); err != nil {
+		t.Fatal(err)
+	}
+	auth := PublishRunAuthentication{PublishRunID: run.ID, PublicURLID: run.PublicURLID, PublishRunNumber: 1, PublishRunToken: token}
+	readyBrowserTestRun(t, database, auth, run.CreatedAt)
+	return auth
+}
 
 func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "browser-access")
 	request := builtinRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, request, now)
+	auth := insertBrowserTestRun(t, database, testPublishRun{
+		ID: "pr_browser_login", PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: request.ActingIdentityID,
+		CertificateCacheKey: "browser-login", CertificateScope: "public-url", CertificateIdentifiers: []string{route.CanonicalHostname}, ChallengeMethod: "tls-alpn-01",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
 	preview, err := database.CreatePreview(t.Context(), route.TeamID, request.ActingIdentityID, "browser-access", now)
 	if err != nil {
 		t.Fatal(err)
@@ -60,14 +91,16 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	if bytes.Contains(accessCiphertext, []byte(access)) || bytes.Contains(refreshCiphertext, []byte(refresh)) {
 		t.Fatal("browser tokens were stored in plaintext")
 	}
-	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), "url_different", handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+	wrongURL := auth
+	wrongURL.PublicURLID = "url_different"
+	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), wrongURL, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("different URL redeemed browser handoff: %v", err)
 	}
-	cookie, path, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), route.ID, handoff.Token, now)
+	cookie, path, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
 	if err != nil || cookie == "" || path != login.ReturnPath {
 		t.Fatalf("browser handoff = %q, %q, %v", cookie, path, err)
 	}
-	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), route.ID, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("replayed browser handoff = %v", err)
 	}
 	session, err := database.BrowserSession(t.Context(), route.ID, cookie, now)
@@ -141,7 +174,7 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.identities SET display_name = 'Sam' WHERE id = $1`, identityID); err != nil {
 		t.Fatal(err)
 	}
-	actor, _, _ := newBrowserReviewer(t, database, preview.ID, f.setup.PublicURLID, identityID, now)
+	actor, _, _ := newBrowserReviewer(t, database, "", f.setup.PublicURLID, identityID, now)
 	actor.AllowedIP = true
 	thread, err := database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
@@ -194,6 +227,7 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
+	readyBrowserTestRun(t, database, f.authentication(), now)
 	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "browser-multi-host", now)
 	if err != nil {
 		t.Fatal(err)
@@ -224,17 +258,13 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	insertTestPublishRun(t, database, testPublishRun{
+	otherAuth := insertBrowserTestRun(t, database, testPublishRun{
 		ID: "pr_browser_api", PublicURLID: otherID, TeamID: f.request.TeamID,
 		MembershipID: f.request.MembershipID, ActingIdentityID: f.request.ActingIdentityID,
 		CertificateCacheKey: "certificate_session", CertificateScope: "public-url",
 		CertificateIdentifiers: []string{"api-session.example.test"}, ChallengeMethod: "tls-alpn-01",
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2,
-		share_capable = true WHERE id = $1`, "pr_browser_api", now); err != nil {
-		t.Fatal(err)
-	}
 	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
 		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/settings",
 	}, BrowserAccessSession{
@@ -244,12 +274,12 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, path, next, _, _, err := database.RedeemBrowserHandoff(t.Context(), f.setup.PublicURLID, handoff.Token, now)
+	cookie, path, next, _, _, err := database.RedeemBrowserHandoff(t.Context(), f.authentication(), handoff.Token, now)
 	if err != nil || path != "/settings" || !strings.HasPrefix(next, "https://api-session.example.test/__tnl/team/handoff/") {
 		t.Fatalf("first host returned %q, %q, %v", path, next, err)
 	}
 	otherTicket := strings.TrimPrefix(next, "https://api-session.example.test/__tnl/team/handoff/")
-	otherCookie, _, finish, _, _, err := database.RedeemBrowserHandoff(t.Context(), otherID, otherTicket, now)
+	otherCookie, _, finish, _, _, err := database.RedeemBrowserHandoff(t.Context(), otherAuth, otherTicket, now)
 	if err != nil || otherCookie != cookie || finish != "https://route-session.example.test/settings" {
 		t.Fatalf("other host handoff = %t, %q, %v", otherCookie == cookie, finish, err)
 	}
