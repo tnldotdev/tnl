@@ -38,6 +38,7 @@ type Metrics struct {
 	relayAttempts           *prometheus.CounterVec
 	apiDuration             *prometheus.HistogramVec
 	apiInFlight             *prometheus.GaugeVec
+	webhookProviderSources  *prometheus.CounterVec
 	readinessDuration       *prometheus.HistogramVec
 	readinessAge            *prometheus.HistogramVec
 	certificateDuration     *prometheus.HistogramVec
@@ -123,6 +124,9 @@ func New(role string) *Metrics {
 		apiInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_control_api_requests_in_flight", Help: "Control-served HTTP requests currently executing by API surface.",
 		}, []string{"surface"}),
+		webhookProviderSources: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_control_webhook_provider_source_requests_total", Help: "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.",
+		}, []string{"provider", "outcome"}),
 		readinessDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_control_publish_run_readiness_duration_seconds", Help: "Time spent checking and publishing publish run readiness; count is the number of attempts.", Buckets: DurationBucketsSeconds(),
 		}, []string{"outcome"}),
@@ -180,7 +184,7 @@ func New(role string) *Metrics {
 	if role == "control" || role == "standalone" {
 		registered = append(registered, metrics.routingHistoryRows, metrics.routingHistorySkipped,
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_control_routing_history_retained_after_revision", Help: "Highest committed routing-history retention floor observed by this process."}, func() float64 { return float64(metrics.routingHistoryFloor.Load()) }))
-		registered = append(registered, metrics.apiDuration, metrics.apiInFlight,
+		registered = append(registered, metrics.apiDuration, metrics.apiInFlight, metrics.webhookProviderSources,
 			metrics.readinessDuration, metrics.readinessAge, metrics.certificateDuration, metrics.certificateMilestone,
 			metrics.databaseQueryDuration, metrics.databaseGuardDuration, metrics.databaseAcquireDuration, metrics.databaseFailures, metrics.controlOperations, metrics.recoveryDuration,
 			metrics.certificateClaims, metrics.certificateOrders, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,

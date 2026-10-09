@@ -536,6 +536,117 @@ func (e SourceFileStateStatus) Valid() bool {
 	}
 }
 
+// Defines values for WebhookProvider.
+const (
+	AmazonSns    WebhookProvider = "amazon-sns"
+	Auth0        WebhookProvider = "auth0"
+	Clerk        WebhookProvider = "clerk"
+	Custom       WebhookProvider = "custom"
+	Discord      WebhookProvider = "discord"
+	Github       WebhookProvider = "github"
+	Gitlab       WebhookProvider = "gitlab"
+	IncidentIo   WebhookProvider = "incident-io"
+	LemonSqueezy WebhookProvider = "lemon-squeezy"
+	Linear       WebhookProvider = "linear"
+	Loops        WebhookProvider = "loops"
+	Paddle       WebhookProvider = "paddle"
+	Postmark     WebhookProvider = "postmark"
+	Resend       WebhookProvider = "resend"
+	Sendgrid     WebhookProvider = "sendgrid"
+	Shopify      WebhookProvider = "shopify"
+	Slack        WebhookProvider = "slack"
+	Stripe       WebhookProvider = "stripe"
+	Supabase     WebhookProvider = "supabase"
+	Telegram     WebhookProvider = "telegram"
+	Twilio       WebhookProvider = "twilio"
+	Vercel       WebhookProvider = "vercel"
+	Workos       WebhookProvider = "workos"
+)
+
+// Valid indicates whether the value is a known member of the WebhookProvider enum.
+func (e WebhookProvider) Valid() bool {
+	switch e {
+	case AmazonSns:
+		return true
+	case Auth0:
+		return true
+	case Clerk:
+		return true
+	case Custom:
+		return true
+	case Discord:
+		return true
+	case Github:
+		return true
+	case Gitlab:
+		return true
+	case IncidentIo:
+		return true
+	case LemonSqueezy:
+		return true
+	case Linear:
+		return true
+	case Loops:
+		return true
+	case Paddle:
+		return true
+	case Postmark:
+		return true
+	case Resend:
+		return true
+	case Sendgrid:
+		return true
+	case Shopify:
+		return true
+	case Slack:
+		return true
+	case Stripe:
+		return true
+	case Supabase:
+		return true
+	case Telegram:
+		return true
+	case Twilio:
+		return true
+	case Vercel:
+		return true
+	case Workos:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WebhookProviderSourceResponseSource0Kind.
+const (
+	IpRanges WebhookProviderSourceResponseSource0Kind = "ip_ranges"
+)
+
+// Valid indicates whether the value is a known member of the WebhookProviderSourceResponseSource0Kind enum.
+func (e WebhookProviderSourceResponseSource0Kind) Valid() bool {
+	switch e {
+	case IpRanges:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WebhookProviderSourceResponseSource1Kind.
+const (
+	Asterisk WebhookProviderSourceResponseSource1Kind = "*"
+)
+
+// Valid indicates whether the value is a known member of the WebhookProviderSourceResponseSource1Kind enum.
+func (e WebhookProviderSourceResponseSource1Kind) Valid() bool {
+	switch e {
+	case Asterisk:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
 type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
@@ -1329,6 +1440,36 @@ type UpdatePublicURLRequest struct {
 	Target            string   `json:"target"`
 }
 
+// WebhookProvider defines model for WebhookProvider.
+type WebhookProvider string
+
+// WebhookProviderSourceResponse defines model for WebhookProviderSourceResponse.
+type WebhookProviderSourceResponse struct {
+	Source WebhookProviderSourceResponse_Source `json:"source"`
+}
+
+// WebhookProviderSourceResponseSource0 defines model for WebhookProviderSourceResponse.Source.0.
+type WebhookProviderSourceResponseSource0 struct {
+	Kind   WebhookProviderSourceResponseSource0Kind `json:"kind"`
+	Ranges []string                                 `json:"ranges"`
+}
+
+// WebhookProviderSourceResponseSource0Kind defines model for WebhookProviderSourceResponse.Source.0.Kind.
+type WebhookProviderSourceResponseSource0Kind string
+
+// WebhookProviderSourceResponseSource1 defines model for WebhookProviderSourceResponse.Source.1.
+type WebhookProviderSourceResponseSource1 struct {
+	Kind WebhookProviderSourceResponseSource1Kind `json:"kind"`
+}
+
+// WebhookProviderSourceResponseSource1Kind defines model for WebhookProviderSourceResponse.Source.1.Kind.
+type WebhookProviderSourceResponseSource1Kind string
+
+// WebhookProviderSourceResponse_Source defines model for WebhookProviderSourceResponse.Source.
+type WebhookProviderSourceResponse_Source struct {
+	union json.RawMessage
+}
+
 // CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
 type CanonicalHostnameQuery = CanonicalHostname
 
@@ -1510,6 +1651,68 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
+
+// AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
+func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
+	var body WebhookProviderSourceResponseSource0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWebhookProviderSourceResponseSource0 overwrites any union data inside the WebhookProviderSourceResponse_Source as the provided WebhookProviderSourceResponseSource0
+func (t *WebhookProviderSourceResponse_Source) FromWebhookProviderSourceResponseSource0(v WebhookProviderSourceResponseSource0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeWebhookProviderSourceResponseSource0 performs a merge with any union data inside the WebhookProviderSourceResponse_Source, using the provided WebhookProviderSourceResponseSource0
+func (t *WebhookProviderSourceResponse_Source) MergeWebhookProviderSourceResponseSource0(v WebhookProviderSourceResponseSource0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWebhookProviderSourceResponseSource1 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource1
+func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource1() (WebhookProviderSourceResponseSource1, error) {
+	var body WebhookProviderSourceResponseSource1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWebhookProviderSourceResponseSource1 overwrites any union data inside the WebhookProviderSourceResponse_Source as the provided WebhookProviderSourceResponseSource1
+func (t *WebhookProviderSourceResponse_Source) FromWebhookProviderSourceResponseSource1(v WebhookProviderSourceResponseSource1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeWebhookProviderSourceResponseSource1 performs a merge with any union data inside the WebhookProviderSourceResponse_Source, using the provided WebhookProviderSourceResponseSource1
+func (t *WebhookProviderSourceResponse_Source) MergeWebhookProviderSourceResponseSource1(v WebhookProviderSourceResponseSource1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t WebhookProviderSourceResponse_Source) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *WebhookProviderSourceResponse_Source) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -2074,6 +2277,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWebhookProviderSource Read one webhook provider source policy
+	//
+	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
+	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -3336,6 +3544,21 @@ func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...Re
 // Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeShareRequest(c.Server, shareId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWebhookProviderSource Read one webhook provider source policy
+//
+// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
+func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWebhookProviderSourceRequest(c.Server, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -5782,6 +6005,40 @@ func NewRevokeShareRequest(server string, shareId ShareID) (*http.Request, error
 	return req, nil
 }
 
+// NewGetWebhookProviderSourceRequest constructs an http.Request for the GetWebhookProviderSource method
+func NewGetWebhookProviderSourceRequest(server string, provider WebhookProvider) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "provider", provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/webhook-providers/%s/source", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -6371,6 +6628,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error)
+
+	// GetWebhookProviderSourceWithResponse Read one webhook provider source policy
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
+	GetWebhookProviderSourceWithResponse(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*GetWebhookProviderSourceResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -8882,6 +9146,62 @@ func (r RevokeShareResponse) ContentType() string {
 	return ""
 }
 
+// GetWebhookProviderSourceResponse200Headers the declared response headers of an HTTP 200 response for GetWebhookProviderSource
+type GetWebhookProviderSourceResponse200Headers struct {
+	CacheControl *string
+	ETag         *string
+}
+
+type GetWebhookProviderSourceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WebhookProviderSourceResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetWebhookProviderSourceResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWebhookProviderSourceResponse) GetJSON200() *WebhookProviderSourceResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetWebhookProviderSourceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWebhookProviderSourceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWebhookProviderSourceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWebhookProviderSourceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWebhookProviderSourceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
 // Returns a wrapper object for the known response body format(s).
@@ -9894,6 +10214,19 @@ func (c *ClientWithResponses) RevokeShareWithResponse(ctx context.Context, share
 		return nil, err
 	}
 	return ParseRevokeShareResponse(rsp)
+}
+
+// GetWebhookProviderSourceWithResponse Read one webhook provider source policy
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
+func (c *ClientWithResponses) GetWebhookProviderSourceWithResponse(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*GetWebhookProviderSourceResponse, error) {
+	rsp, err := c.GetWebhookProviderSource(ctx, provider, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWebhookProviderSourceResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -11628,6 +11961,62 @@ func ParseRevokeShareResponse(rsp *http.Response) (*RevokeShareResponse, error) 
 	return response, nil
 }
 
+// ParseGetWebhookProviderSourceResponse parses an HTTP response from a GetWebhookProviderSourceWithResponse call
+func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProviderSourceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWebhookProviderSourceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebhookProviderSourceResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 304:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetWebhookProviderSourceResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListMaintenanceControls List maintenance controls
@@ -11789,6 +12178,9 @@ type ServerInterface interface {
 	// RevokeShare Stop new access through one share
 	// (POST /v1/shares/{share_id}/revoke)
 	RevokeShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
+	// GetWebhookProviderSource Read one webhook provider source policy
+	// (GET /v1/webhook-providers/{provider}/source)
+	GetWebhookProviderSource(w http.ResponseWriter, r *http.Request, provider WebhookProvider)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -13500,6 +13892,32 @@ func (siw *ServerInterfaceWrapper) RevokeShare(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// GetWebhookProviderSource operation middleware
+func (siw *ServerInterfaceWrapper) GetWebhookProviderSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "provider" -------------
+	var provider WebhookProvider
+
+	err = runtime.BindStyledParameterWithOptions("simple", "provider", r.PathValue("provider"), &provider, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWebhookProviderSource(w, r, provider)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -13630,6 +14048,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/client-ip", wrapper.GetClientIP)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-providers/{provider}/source", wrapper.GetWebhookProviderSource)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)

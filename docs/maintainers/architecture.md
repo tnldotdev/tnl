@@ -217,6 +217,12 @@ OPTIONS verification requires matching bounded responses. No request journal or
 replay is retained.
 Changed declarations drain the webhook publish run before re-publication;
 provider IP ranges are resolved once per new run, independently of OAuth.
+Control and standalone serve `/v1/webhook-providers/{provider}/source` using a
+fixed provider enum. They read only documented webhook sender feeds and bounded
+static ranges, with a short-lived in-process cache and a bounded last-good
+fallback. If no usable range exists, the response is unavailable rather than
+an unrestricted policy. The provider-labelled API request metric measures
+lookups, not configured endpoints or actual webhook deliveries.
 
 Exclusive endpoints instead select one explicitly claimed receiver. Ownership
 is tied to that tunnel's liveness lease, not to publisher leadership or its

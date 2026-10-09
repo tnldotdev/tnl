@@ -208,6 +208,35 @@ paths:
                 $ref: "#/components/schemas/ControlDiscovery"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/webhook-providers/{provider}/source:
+    get:
+      operationId: getWebhookProviderSource
+      summary: Read one webhook provider source policy
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/WebhookProvider"
+      responses:
+        "200":
+          description: Webhook provider source policy
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookProviderSourceResponse"
+        "304":
+          description: Source policy matches If-None-Match
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/guest-demo:
     post:
       operationId: createGuestDemo
@@ -1166,6 +1195,62 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    WebhookProvider:
+      type: string
+      enum:
+        [
+          amazon-sns,
+          auth0,
+          clerk,
+          custom,
+          discord,
+          github,
+          gitlab,
+          incident-io,
+          lemon-squeezy,
+          linear,
+          loops,
+          paddle,
+          postmark,
+          resend,
+          sendgrid,
+          shopify,
+          slack,
+          stripe,
+          supabase,
+          telegram,
+          twilio,
+          vercel,
+          workos,
+        ]
+    WebhookProviderSourceResponse:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, ranges]
+              properties:
+                kind:
+                  type: string
+                  const: ip_ranges
+                ranges:
+                  type: array
+                  minItems: 1
+                  maxItems: 512
+                  uniqueItems: true
+                  items:
+                    type: string
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  const: "*"
     ResourceID:
       type: string
       minLength: 1
