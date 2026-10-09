@@ -234,6 +234,10 @@ func bootstrapBuiltinIdentity(
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
+	name, err := availablePersonalTeamName(ctx, queries, "local-administrator", now)
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
 	createdAt := timestamp(now)
 	if err := queries.CreateIdentity(ctx, controlstatedb.CreateIdentityParams{
 		ID: identityID, Kind: "builtin", DisplayName: "Local administrator",
@@ -242,7 +246,7 @@ func bootstrapBuiltinIdentity(
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin identity: %w", err)
 	}
 	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
-		ID: teamID, DisplayName: label, ManagedLabel: label,
+		ID: teamID, DisplayName: name, ManagedLabel: label,
 		CreatedByIdentityID: identityID, CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin personal team: %w", err)
@@ -294,6 +298,14 @@ func createOIDCIdentity(
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
+	memberSlug := naming.MemberSlugFromDisplayName(identity.DisplayName)
+	if !naming.ValidAuthorityLabel(memberSlug) {
+		memberSlug = "member"
+	}
+	personalName, err := availablePersonalTeamName(ctx, queries, memberSlug, now)
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
 	createdAt := timestamp(now)
 	stored, err := queries.CreateOIDCIdentity(ctx, controlstatedb.CreateOIDCIdentityParams{
 		ID: identityID, Issuer: text(identity.Issuer), Subject: text(identity.Subject),
@@ -304,17 +316,13 @@ func createOIDCIdentity(
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC identity: %w", err)
 	}
 	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
-		ID: teamID, DisplayName: label, ManagedLabel: label,
+		ID: teamID, DisplayName: personalName, ManagedLabel: label,
 		CreatedByIdentityID: identityID, CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC personal team: %w", err)
 	}
-	memberSlug := naming.MemberSlugFromDisplayName(identity.DisplayName)
-	if !naming.ValidAuthorityLabel(memberSlug) {
-		memberSlug = label
-	}
 	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
-		ID: reservationID, TeamID: teamID, MemberSlug: memberSlug,
+		ID: reservationID, TeamID: teamID, MemberSlug: personalName,
 		IdentityID: text(identityID), CreatedAt: createdAt,
 	}); err != nil {
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: reserve OIDC member slug: %w", err)
@@ -374,6 +382,24 @@ func availableManagedLabel(ctx context.Context, queries *controlstatedb.Queries,
 		}
 	}
 	return "", errors.New("controlstate: managed label selection exhausted")
+}
+
+func availablePersonalTeamName(ctx context.Context, queries *controlstatedb.Queries, candidate string, now time.Time) (string, error) {
+	for number := 1; number <= 32; number++ {
+		name := candidate
+		if number > 1 {
+			suffix := fmt.Sprintf("-%d", number)
+			name = candidate[:min(len(candidate), naming.MaxLabelBytes-len(suffix))] + suffix
+		}
+		if _, err := queries.ReserveManagedLabel(ctx, controlstatedb.ReserveManagedLabelParams{
+			Label: name, CreatedAt: timestamp(now),
+		}); err == nil {
+			return name, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("controlstate: reserve personal team name: %w", err)
+		}
+	}
+	return "", ErrTeamNameUnavailable
 }
 
 func (d *Database) createControlSession(

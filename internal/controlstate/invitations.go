@@ -160,6 +160,13 @@ func (d *Database) CreateTeamInvitation(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: read idempotent invitation: %w", err)
 	}
+	if occupied, err := queries.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{
+		TeamID: request.TeamID, Label: request.MemberSlug,
+	}); err != nil {
+		return InvitationSecret{}, fmt.Errorf("controlstate: check team shared name: %w", err)
+	} else if occupied {
+		return InvitationSecret{}, ErrAuthorityConflict
+	}
 	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
 	if err != nil {
 		return InvitationSecret{}, err

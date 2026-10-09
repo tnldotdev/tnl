@@ -2049,6 +2049,27 @@ func (q *Queries) SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuth
 	return result.RowsAffected(), nil
 }
 
+const teamMemberSlugReserved = `-- name: TeamMemberSlugReserved :one
+SELECT EXISTS (
+    SELECT 1 FROM control.member_slug_reservations
+    WHERE team_id = $1
+      AND member_slug = $2
+      AND state <> 'released'
+)
+`
+
+type TeamMemberSlugReservedParams struct {
+	TeamID string
+	Label  string
+}
+
+func (q *Queries) TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamMemberSlugReserved, arg.TeamID, arg.Label)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const teamMembershipIdentityExists = `-- name: TeamMembershipIdentityExists :one
 SELECT EXISTS (
     SELECT 1
@@ -2066,6 +2087,31 @@ type TeamMembershipIdentityExistsParams struct {
 
 func (q *Queries) TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error) {
 	row := q.db.QueryRow(ctx, teamMembershipIdentityExists, arg.TeamID, arg.IdentityID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const teamSharedNameInUse = `-- name: TeamSharedNameInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM control.public_urls AS public_url
+    JOIN control.domains AS domain ON domain.id = public_url.domain_id
+    WHERE public_url.team_id = $1
+      AND public_url.public_url_scope = 'shared'
+      AND public_url.lifecycle_state <> 'deleted'
+      AND domain.kind = 'custom'
+      AND (public_url.canonical_hostname = $2::text || '.' || domain.canonical_domain
+        OR public_url.canonical_hostname LIKE '%.' || $2::text || '.' || domain.canonical_domain)
+)
+`
+
+type TeamSharedNameInUseParams struct {
+	TeamID string
+	Label  string
+}
+
+func (q *Queries) TeamSharedNameInUse(ctx context.Context, arg TeamSharedNameInUseParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamSharedNameInUse, arg.TeamID, arg.Label)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

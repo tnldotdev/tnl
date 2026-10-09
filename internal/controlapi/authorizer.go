@@ -20,6 +20,7 @@ type localAuthorizer struct {
 	sourceRevision                    int64
 	dnsAutomation                     bool
 	managedDomainMaxMemberChildLabels int
+	managedURLMode                    naming.ManagedURLMode
 }
 
 type publicURLReadPrincipal struct {
@@ -131,12 +132,16 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
-	namespace := naming.MemberNamespace(domain.CanonicalDomain, domain.Kind == controlstate.DomainKindManaged,
-		acting.ManagedLabel, acting.MemberSlug)
+	namespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: domain.CanonicalDomain, Managed: domain.Kind == controlstate.DomainKindManaged,
+		Mode: a.managedURLMode, Personal: acting.TeamKind == controlstate.TeamKindPersonal,
+		Builtin:  principal.Administrator && acting.TeamKind == controlstate.TeamKindPersonal,
+		TeamName: acting.TeamDisplayName, MemberSlug: acting.MemberSlug, ManagedLabel: acting.ManagedLabel,
+	})
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
 		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
 		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
-		if !within {
+		if direct || !within || depth == 0 {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 		if domain.Kind == controlstate.DomainKindManaged && a.managedDomainMaxMemberChildLabels > 0 && depth > a.managedDomainMaxMemberChildLabels {

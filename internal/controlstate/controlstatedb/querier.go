@@ -354,6 +354,7 @@ type Querier interface {
 	ReplacePublishRunConnection(ctx context.Context, arg ReplacePublishRunConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
+	ReserveManagedDirectName(ctx context.Context, arg ReserveManagedDirectNameParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
@@ -386,7 +387,9 @@ type Querier interface {
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error)
+	TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
+	TeamSharedNameInUse(ctx context.Context, arg TeamSharedNameInUseParams) (bool, error)
 	// cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)

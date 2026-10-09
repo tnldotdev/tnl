@@ -396,6 +396,26 @@ ON CONFLICT (team_id, member_slug) DO UPDATE SET
 WHERE control.member_slug_reservations.state = 'released'
 RETURNING id;
 
+-- name: TeamSharedNameInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM control.public_urls AS public_url
+    JOIN control.domains AS domain ON domain.id = public_url.domain_id
+    WHERE public_url.team_id = sqlc.arg(team_id)
+      AND public_url.public_url_scope = 'shared'
+      AND public_url.lifecycle_state <> 'deleted'
+      AND domain.kind = 'custom'
+      AND (public_url.canonical_hostname = sqlc.arg(label)::text || '.' || domain.canonical_domain
+        OR public_url.canonical_hostname LIKE '%.' || sqlc.arg(label)::text || '.' || domain.canonical_domain)
+);
+
+-- name: TeamMemberSlugReserved :one
+SELECT EXISTS (
+    SELECT 1 FROM control.member_slug_reservations
+    WHERE team_id = sqlc.arg(team_id)
+      AND member_slug = sqlc.arg(label)
+      AND state <> 'released'
+);
+
 -- name: CreateTeamInvitation :one
 INSERT INTO control.team_invitations (
     id,

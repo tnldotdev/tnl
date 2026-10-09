@@ -114,7 +114,8 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
 		PublicURLScope: controlstate.PublicURLScope(decision.PublicURLScope), AllowedIPPrefixes: allowedIPPrefixes,
-		DNSState: dnsState, DNSAuthorityReference: dnsAuthorityReference,
+		ManagedURLMode: h.config.ManagedURLMode,
+		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,
 		Ephemeral:      ephemeral,
 	}, time.Now())

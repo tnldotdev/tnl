@@ -26,6 +26,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 	return controlapi.Config{
 		Role:                              cfg.Role,
 		ManagedDomain:                     cfg.ManagedDomain,
+		ManagedURLMode:                    cfg.ManagedURLMode,
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		ControlURL:                        cfg.ControlOrigin(),
