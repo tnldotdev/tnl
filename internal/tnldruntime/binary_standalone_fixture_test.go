@@ -20,7 +20,7 @@ type integrationBinaryStandalone struct {
 	pebble         integrationPebble
 }
 
-func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone {
+func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integrationBinaryStandalone {
 	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	if runtime.GOOS == "darwin" {
@@ -79,6 +79,9 @@ func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone
 		"TNLD_SERVER_DOMAIN":                "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                  testStorageKey,
 	})
+	if len(modes) != 0 {
+		serveEnvironment = append(serveEnvironment, "TNLD_MANAGED_URL_MODE="+modes[0])
+	}
 	owner := newBinaryTopology(t)
 	server := owner.start(t, tnldconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, server, metricsAddress, databaseURL)
