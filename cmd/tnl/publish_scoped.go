@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -82,8 +83,14 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if err != nil {
 		return classifyScopedPublishError(err)
 	}
-	if route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
-		flags.PublicURL != "" && flags.PublicURL != "https://"+route.CanonicalHostname {
+	selectedHostname := route.CanonicalHostname
+	if flags.PublicURL != "" {
+		selectedHostname, err = naming.ParseExactPublicURL(flags.PublicURL)
+		if err != nil {
+			return failure.Wrap("validate scoped publish public URL", failure.InvalidTunnelFlags, err)
+		}
+	}
+	if route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled || selectedHostname != route.CanonicalHostname {
 		return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("credential is bound to another public URL or target"))
 	}
 	target, err := selectScopedPublishTarget(route.Target, flags.Target)

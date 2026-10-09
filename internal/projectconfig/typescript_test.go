@@ -53,6 +53,24 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	}
 }
 
+func TestResolveNormalizesTypeScriptExactPublicURL(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tnl.config.ts")
+	if err := os.WriteFile(path, []byte(`export default {services: {api: {tunnel: {publicURL: "api.example.test"}}}, aliases: {review: {service: "api", publicURL: "review.example.test"}}};`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *project.Config.Services["api"].Tunnel.PublicURL; got != "https://api.example.test" {
+		t.Fatalf("service public URL = %q", got)
+	}
+	if got := *project.Config.Aliases["review"].PublicURL; got != "https://review.example.test" {
+		t.Fatalf("alias public URL = %q", got)
+	}
+}
+
 func TestLoadResolvesProjectImportsAndTsconfigPaths(t *testing.T) {
 	root := t.TempDir()
 	api := filepath.Join(root, "apps", "api")

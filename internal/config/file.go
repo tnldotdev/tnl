@@ -59,6 +59,9 @@ func LoadDocument(path string) (Document, error) {
 	if err := ValidateDocument(document); err != nil {
 		return Document{}, fmt.Errorf("load config %s: %w", path, err)
 	}
+	if document.TNL != nil {
+		NormalizePublicURLs(document.TNL)
+	}
 	return document, nil
 }
 
@@ -258,10 +261,8 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 			}
 		}
 		if tunnel.PublicURL != nil {
-			hostname := strings.TrimPrefix(*tunnel.PublicURL, "https://")
-			canonical, err := naming.CanonicalizeHostname(hostname)
-			if err != nil || canonical != hostname || "https://"+hostname != *tunnel.PublicURL {
-				return errors.New("tunnel.public_url must be an HTTPS public URL without a port, path, query, or fragment")
+			if _, err := naming.ParseExactPublicURL(*tunnel.PublicURL); err != nil {
+				return errors.New("tunnel.public_url must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
 		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {

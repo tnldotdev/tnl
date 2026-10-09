@@ -167,10 +167,9 @@ func resolvePublishHostname(
 	var err error
 	hostname := ""
 	if publicURL != "" {
-		hostname = strings.TrimPrefix(publicURL, "https://")
-		canonical, canonicalErr := naming.CanonicalizeHostname(hostname)
-		if canonicalErr != nil || canonical != hostname || "https://"+hostname != publicURL {
-			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL", failure.InvalidTunnelFlags, errors.Join(canonicalErr, errors.New("public URL must be an HTTPS origin with a canonical hostname")))
+		hostname, err = naming.ParseExactPublicURL(publicURL)
+		if err != nil {
+			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL", failure.InvalidTunnelFlags, err)
 		}
 		domain, err = readyDomainForHostname(current.domains, hostname)
 	} else {

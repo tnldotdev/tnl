@@ -37,6 +37,13 @@ func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
 	if a.PublicURL == nil {
 		name := a.RelativeName(key)
 		a.Name = &name
+	} else {
+		hostname, err := naming.ParseExactPublicURL(*a.PublicURL)
+		if err != nil {
+			return nil, [32]byte{}, err
+		}
+		publicURL := "https://" + hostname
+		a.PublicURL = &publicURL
 	}
 	a.AllowIP = slices.Sorted(slices.Values(a.AllowIP))
 	encoded, err := json.Marshal(struct {
@@ -74,7 +81,8 @@ func ValidateAliases(config TNL) error {
 			if alias.Domain != nil {
 				return fmt.Errorf("aliases.%s: public_url selects its domain; omit domain", key)
 			}
-			identity = *alias.PublicURL
+			hostname, _ := naming.ParseExactPublicURL(*alias.PublicURL)
+			identity = hostname
 		} else {
 			name := alias.RelativeName(key)
 			canonical, err := naming.CanonicalizeHostname(name)
