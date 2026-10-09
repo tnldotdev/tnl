@@ -22,11 +22,15 @@ func TestMemberURLDescendantsRetainMembershipOwnership(t *testing.T) {
 				context.DomainTeamID = text("team_actor")
 			}
 			request := CreatePublicURLRequest{TeamID: "team_actor", MembershipID: "membership_actor", PublicURLScope: PublicURLScopeMember}
-			for _, hostname := range []string{label + ".example.test", "review." + label + ".example.test", "api.shop." + label + ".example.test"} {
+			for _, hostname := range []string{"review." + label + ".example.test", "api.shop." + label + ".example.test"} {
 				request.CanonicalHostname = hostname
 				if err := authorizeRouteCreation(request, context, nil); err != nil {
 					t.Fatalf("own descendant %q rejected: %v", hostname, err)
 				}
+			}
+			request.CanonicalHostname = label + ".example.test"
+			if err := authorizeRouteCreation(request, context, nil); !errors.Is(err, ErrPublicURLAccess) {
+				t.Fatalf("member namespace apex was published: %v", err)
 			}
 			for _, hostname := range []string{"api.shop.other.example.test", "api.shop.not-" + label + ".example.test", "api.example.test"} {
 				request.CanonicalHostname = hostname

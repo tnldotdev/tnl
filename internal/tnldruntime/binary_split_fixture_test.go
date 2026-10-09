@@ -78,6 +78,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_LEASE_RENEWAL_INTERVAL":       "500ms",
 		"TNLD_LOGIN_TOKEN":                  testLoginToken,
 		"TNLD_MANAGED_DOMAIN":               "routes.127.0.0.1.nip.io",
+		"TNLD_MANAGED_URL_MODE":             "simple",
 		"TNLD_METRICS_LISTEN":               controlMetrics,
 		"TNLD_ROLE":                         "control",
 		"TNLD_PRIVATE_CONTROL_LISTEN":       "127.0.0.2:9443",

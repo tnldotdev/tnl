@@ -117,7 +117,8 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	}
 	var setup controlv1.PublishRunSetup
 	if err := json.Unmarshal(started.Body.Bytes(), &setup); err != nil ||
-		setup.CertificatePlan.Scope != guest.Namespace || len(setup.CertificatePlan.Identifiers) != 2 {
+		setup.CertificatePlan.Scope != guest.Namespace || len(setup.CertificatePlan.Identifiers) != 1 ||
+		setup.CertificatePlan.Identifiers[0] != "*."+guest.Namespace {
 		t.Fatalf("guest certificate plan = %+v, error = %v", setup.CertificatePlan, err)
 	}
 	if repeated := startRun("guest-second-run"); repeated.Code != http.StatusConflict {

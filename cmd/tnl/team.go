@@ -244,10 +244,17 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 	}
 	blocks := make([]clioutput.Block, 0, len(page.Memberships))
 	for _, value := range page.Memberships {
+		namespace, _ := naming.PublicURLNamespace(naming.NamespaceFacts{
+			Domain: session.authenticated.Discovery.ManagedDomain, Managed: true,
+			Mode:     naming.ManagedURLMode(session.authenticated.Discovery.ManagedUrlMode),
+			Personal: value.TeamKind == authorityv1.Personal,
+			Builtin:  session.identity.Identity.Administrator && value.TeamId == session.identity.PersonalTeamId,
+			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: value.ManagedLabel,
+		})
 		blocks = append(blocks, clioutput.Section(value.MemberSlug, clioutput.Fields(
 			clioutput.Field{Label: "role", Value: string(value.Role)},
 			clioutput.Field{Label: "identity ID", Value: value.IdentityId},
-			clioutput.Field{Label: "managed label", Value: value.ManagedLabel},
+			clioutput.Field{Label: "managed namespace", Value: namespace},
 			clioutput.Field{Label: "membership ID", Value: value.Id},
 		)))
 	}

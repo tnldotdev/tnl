@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 type localAuthorizationStoreStub struct {
@@ -16,6 +17,60 @@ type localAuthorizationStoreStub struct {
 	identity            controlstate.IdentityContext
 	domains             []controlstate.Domain
 	authenticationError error
+}
+
+func TestSimpleManagedOrganizationUsesFullMemberNamespace(t *testing.T) {
+	store := localAuthorizationStoreStub{
+		principal: controlstate.ControlPrincipal{IdentityID: "alex"},
+		identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
+			ID: "membership", TeamID: "studio", TeamKind: controlstate.TeamKindOrganization,
+			TeamDisplayName: "studio", MemberSlug: "alex", ManagedLabel: "generated-name", Role: controlstate.TeamRoleMember,
+			PolicyRevision: 1,
+		}}},
+		domains: []controlstate.Domain{{ID: "managed", Kind: controlstate.DomainKindManaged,
+			CanonicalDomain: "routes.example.com", State: controlstate.DomainReady}},
+	}
+	authorizer := localAuthorizer{store: store, managedURLMode: naming.ManagedURLModeSimple}
+	request := authorization.Request{Operation: authorization.OperationPublicURLCreate, TeamID: "studio",
+		DomainID: "managed", PublicURLScope: authorization.PublicURLScopeMember,
+		CanonicalHostname: "app.alex.studio.routes.example.com"}
+	if _, err := authorizer.Authorize(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	for _, hostname := range []string{"alex.studio.routes.example.com", "app.generated-name.routes.example.com", "app.bob.studio.routes.example.com"} {
+		request.CanonicalHostname = hostname
+		if _, err := authorizer.Authorize(t.Context(), request); !errors.Is(err, authorization.ErrForbidden) {
+			t.Errorf("authorized %q: %v", hostname, err)
+		}
+	}
+}
+
+func TestPersonalDirectURLCannotUseMemberScope(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		kind := controlstate.DomainKindCustom
+		if managed {
+			kind = controlstate.DomainKindManaged
+		}
+		store := localAuthorizationStoreStub{
+			principal: controlstate.ControlPrincipal{IdentityID: "admin", Administrator: true},
+			identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
+				ID: "membership", TeamID: "personal", TeamKind: controlstate.TeamKindPersonal,
+				TeamDisplayName: "local-administrator", Role: controlstate.TeamRoleOwner, MemberSlug: "local-administrator",
+			}}},
+			domains: []controlstate.Domain{{ID: "domain", Kind: kind, CanonicalDomain: "dev.example.com", State: controlstate.DomainReady}},
+		}
+		authorizer := localAuthorizer{store: store, managedURLMode: naming.ManagedURLModeSimple}
+		request := authorization.Request{Operation: authorization.OperationPublicURLCreate, TeamID: "personal",
+			DomainID: "domain", PublicURLScope: authorization.PublicURLScopeMember,
+			CanonicalHostname: "app.dev.example.com"}
+		if _, err := authorizer.Authorize(t.Context(), request); !errors.Is(err, authorization.ErrForbidden) {
+			t.Errorf("member scope used a direct domain (%s): %v", kind, err)
+		}
+		request.PublicURLScope = authorization.PublicURLScopeShared
+		if _, err := authorizer.Authorize(t.Context(), request); err != nil {
+			t.Errorf("shared scope rejected a direct domain (%s): %v", kind, err)
+		}
+	}
 }
 
 func (s localAuthorizationStoreStub) AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error) {

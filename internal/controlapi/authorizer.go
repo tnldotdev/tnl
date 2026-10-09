@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -21,6 +20,7 @@ type localAuthorizer struct {
 	sourceRevision                    int64
 	dnsAutomation                     bool
 	managedDomainMaxMemberChildLabels int
+	managedURLMode                    naming.ManagedURLMode
 }
 
 type publicURLReadPrincipal struct {
@@ -132,15 +132,19 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
-	label := acting.MemberSlug
-	if domain.Kind == controlstate.DomainKindManaged {
-		label = acting.ManagedLabel
+	namespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: domain.CanonicalDomain, Managed: domain.Kind == controlstate.DomainKindManaged,
+		Mode: a.managedURLMode, Personal: acting.TeamKind == controlstate.TeamKindPersonal,
+		Builtin:  principal.Administrator && acting.TeamKind == controlstate.TeamKindPersonal,
+		TeamName: acting.TeamDisplayName, MemberSlug: acting.MemberSlug, ManagedLabel: acting.ManagedLabel,
+	})
+	if request.PublicURLScope == authorization.PublicURLScopeShared {
+		namespace = domain.CanonicalDomain
 	}
-	namespace := label + "." + domain.CanonicalDomain
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
 		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
 		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
-		if !within {
+		if direct || !within || depth == 0 {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 		if domain.Kind == controlstate.DomainKindManaged && a.managedDomainMaxMemberChildLabels > 0 && depth > a.managedDomainMaxMemberChildLabels {
@@ -148,20 +152,8 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		}
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
-		decision.CertificatePlan = &authorization.CertificatePlan{
-			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
-			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
-		}
-		if a.dnsAutomation {
-			plan := decision.CertificatePlan
-			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
-			if request.PublicURLScope == authorization.PublicURLScopeMember {
-				if depth, within := naming.ChildDepth(request.CanonicalHostname, namespace); within && depth <= 1 {
-					plan.CacheKey, plan.Scope = namespace, namespace
-					plan.Identifiers = []string{"*." + namespace, namespace}
-				}
-			}
-		}
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace,
+			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
 	}
 	return decision, nil
 }

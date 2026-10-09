@@ -1147,7 +1147,7 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMe
 }
 
 const lockDomainPublicURLs = `-- name: LockDomainPublicURLs :many
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, purpose
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose
 FROM control.public_urls
 WHERE team_id = $1
   AND domain_id = $2
@@ -1208,6 +1208,7 @@ func (q *Queries) LockDomainPublicURLs(ctx context.Context, arg LockDomainPublic
 			&i.AllowedIpHashKeyID,
 			&i.RequestDigestCiphertext,
 			&i.RequestDigestStorageKeyID,
+			&i.Namespace,
 			&i.Purpose,
 		); err != nil {
 			return nil, err
@@ -1396,7 +1397,7 @@ func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain,
 }
 
 const lockMembershipPublicURLs = `-- name: LockMembershipPublicURLs :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.purpose
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.namespace, routes.purpose
 FROM control.public_urls AS routes
 WHERE routes.team_id = $1
   AND (
@@ -1466,6 +1467,7 @@ func (q *Queries) LockMembershipPublicURLs(ctx context.Context, arg LockMembersh
 			&i.AllowedIpHashKeyID,
 			&i.RequestDigestCiphertext,
 			&i.RequestDigestStorageKeyID,
+			&i.Namespace,
 			&i.Purpose,
 		); err != nil {
 			return nil, err
@@ -2051,6 +2053,27 @@ func (q *Queries) SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuth
 	return result.RowsAffected(), nil
 }
 
+const teamMemberSlugReserved = `-- name: TeamMemberSlugReserved :one
+SELECT EXISTS (
+    SELECT 1 FROM control.member_slug_reservations
+    WHERE team_id = $1
+      AND member_slug = $2
+      AND state <> 'released'
+)
+`
+
+type TeamMemberSlugReservedParams struct {
+	TeamID string
+	Label  string
+}
+
+func (q *Queries) TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamMemberSlugReserved, arg.TeamID, arg.Label)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const teamMembershipIdentityExists = `-- name: TeamMembershipIdentityExists :one
 SELECT EXISTS (
     SELECT 1
@@ -2068,6 +2091,31 @@ type TeamMembershipIdentityExistsParams struct {
 
 func (q *Queries) TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error) {
 	row := q.db.QueryRow(ctx, teamMembershipIdentityExists, arg.TeamID, arg.IdentityID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const teamSharedNameInUse = `-- name: TeamSharedNameInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM control.public_urls AS public_url
+    JOIN control.domains AS domain ON domain.id = public_url.domain_id
+    WHERE public_url.team_id = $1
+      AND public_url.public_url_scope = 'shared'
+      AND public_url.lifecycle_state <> 'deleted'
+      AND domain.kind = 'custom'
+      AND (public_url.canonical_hostname = $2::text || '.' || domain.canonical_domain
+        OR public_url.canonical_hostname LIKE '%.' || $2::text || '.' || domain.canonical_domain)
+)
+`
+
+type TeamSharedNameInUseParams struct {
+	TeamID string
+	Label  string
+}
+
+func (q *Queries) TeamSharedNameInUse(ctx context.Context, arg TeamSharedNameInUseParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamSharedNameInUse, arg.TeamID, arg.Label)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

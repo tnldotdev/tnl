@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -105,6 +106,41 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 			}
 			if hostname != wantHost || domain.Id != "domain_1" || scope != wantScope {
 				t.Fatalf("resolution = %q, %q, %q; want %q, %q", hostname, domain.Id, scope, wantHost, wantScope)
+			}
+		})
+	}
+}
+
+func TestManagedAndCustomDefaultURLShapes(t *testing.T) {
+	for _, test := range []struct {
+		name, mode, teamKind, domainKind, teamName, domain, want, scope string
+		builtin                                                         bool
+	}{
+		{"builtin_managed", "simple", "personal", "managed", "local-administrator", "routes.example.test", "app.routes.example.test", "shared", true},
+		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member", false},
+		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member", false},
+		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared", false},
+		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member", false},
+		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := teamContext{
+				team: authorityv1.Team{Id: "team", Kind: authorityv1.TeamKind(test.teamKind), DisplayName: test.teamName, DefaultDomainId: "domain"},
+				membership: authorityv1.Membership{Id: "member", TeamId: "team", Role: authorityv1.TeamRoleOwner,
+					MemberSlug: "alex", ManagedLabel: "ecstatic-penguin"},
+				domains: []authorityv1.Domain{{Id: "domain", Kind: authorityv1.DomainKind(test.domainKind),
+					CanonicalDomain: test.domain, State: authorityv1.DomainStateReady}},
+				mode: naming.ManagedURLMode(test.mode), builtin: test.builtin,
+			}
+			hostname, _, scope, err := resolvePublishHostname("", "app", "", current)
+			if err != nil || hostname != test.want || string(scope) != test.scope {
+				t.Fatalf("hostname=%q scope=%q error=%v; want %q %q", hostname, scope, err, test.want, test.scope)
+			}
+			if test.scope == "member" {
+				namespace := namespaceForMembership(current, current.domains[0])
+				if _, _, _, err := resolvePublishHostname("https://"+namespace, "", "", current); err == nil {
+					t.Fatal("member namespace apex was accepted")
+				}
 			}
 		})
 	}

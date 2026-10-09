@@ -62,12 +62,13 @@ type Config struct {
 	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
 	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
 
-	ServerDomain                      string `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
-	ControlHostname                   string `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
-	PrivateControlAddress             string `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
-	ManagedDomain                     string `name:"managed-domain" env:"TNLD_MANAGED_DOMAIN" help:"Server-controlled domain used for namespaces."`
-	ManagedDomainMaxMemberChildLabels int    `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
-	CustomDomainsEnabled              bool   `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
+	ServerDomain                      string                `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
+	ControlHostname                   string                `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
+	PrivateControlAddress             string                `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
+	ManagedDomain                     string                `name:"managed-domain" env:"TNLD_MANAGED_DOMAIN" help:"Server-controlled domain used for namespaces."`
+	ManagedURLMode                    naming.ManagedURLMode `name:"managed-url-mode" env:"TNLD_MANAGED_URL_MODE" default:"simple" enum:"simple,generated" help:"Managed-domain public URL names: ${enum}."`
+	ManagedDomainMaxMemberChildLabels int                   `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
+	CustomDomainsEnabled              bool                  `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
 	ControlTLSCertificateFile   string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static control certificate chain."`
 	ControlTLSPrivateKeyFile    string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static control private key."`
@@ -275,6 +276,9 @@ func (c Config) validateControl() error {
 	}
 	if err := validateCanonicalHostname(c.ManagedDomain, "managed domain"); err != nil {
 		return err
+	}
+	if c.ManagedURLMode != "" && c.ManagedURLMode != naming.ManagedURLModeSimple && c.ManagedURLMode != naming.ManagedURLModeGenerated {
+		return errors.New("managed URL mode must be simple or generated")
 	}
 	if c.ControlHostname != "" || c.PrivateControlAddress != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
 		return errors.New("split-process configuration is invalid for control and standalone")

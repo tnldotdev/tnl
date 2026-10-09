@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 // EnsureServiceIdentity resolves identity facts supplied by the configured OIDC
@@ -33,7 +34,7 @@ func (d *Database) EnsureServiceIdentity(ctx context.Context, managedDomain stri
 	if err := queries.LockIdentityBootstrap(ctx); err != nil {
 		return result, err
 	}
-	stored, err := ensureOIDCIdentity(ctx, queries, managedDomain, identity, now)
+	stored, err := ensureOIDCIdentity(ctx, queries, managedDomain, d.managedURLMode, identity, now)
 	if err != nil {
 		return result, err
 	}
@@ -44,14 +45,14 @@ func (d *Database) EnsureServiceIdentity(ctx context.Context, managedDomain stri
 	return result, tx.Commit(ctx)
 }
 
-func ensureOIDCIdentity(ctx context.Context, queries *controlstatedb.Queries, managedDomain string, identity OIDCIdentity, now time.Time) (controlstatedb.ControlIdentity, error) {
+func ensureOIDCIdentity(ctx context.Context, queries *controlstatedb.Queries, managedDomain string, mode naming.ManagedURLMode, identity OIDCIdentity, now time.Time) (controlstatedb.ControlIdentity, error) {
 	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
 	stored, err := queries.FindOIDCIdentity(ctx, controlstatedb.FindOIDCIdentityParams{Issuer: text(identity.Issuer), Subject: text(identity.Subject)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return createOIDCIdentity(ctx, queries, domain.ID, identity, now)
+		return createOIDCIdentity(ctx, queries, domain.ID, mode, identity, now)
 	}
 	if err != nil {
 		return stored, err

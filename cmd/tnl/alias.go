@@ -66,7 +66,7 @@ func checkAliasHostnamePolicy(services publisherServices) error {
 		return failure.Wrap("read alias hostname policy", failure.ServerResponseInvalid, errors.New("negative member hostname depth limit"))
 	}
 	depth, member := naming.ChildDepth(services.hostname, services.namespace)
-	if !member || services.domainKind != authorityv1.Managed || limit == 0 || depth <= limit {
+	if !member || services.publicURLScope != controlv1.Member || services.domainKind != authorityv1.Managed || limit == 0 || depth <= limit {
 		return nil
 	}
 	name := strings.TrimSuffix(services.hostname, "."+services.namespace)

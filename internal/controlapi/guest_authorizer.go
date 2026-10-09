@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
@@ -109,16 +108,7 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		RetrySecret: retrySecret,
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
-		plan := &authorization.CertificatePlan{
-			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
-			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
-		}
-		if a.dnsAutomation {
-			plan.CacheKey, plan.Scope = namespace, namespace
-			plan.Identifiers = []string{"*." + namespace, namespace}
-			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
-		}
-		decision.CertificatePlan = plan
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace, false, a.dnsAutomation)
 	}
 	return decision, nil
 }

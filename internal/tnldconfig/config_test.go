@@ -3,6 +3,8 @@ package tnldconfig
 import (
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
@@ -37,6 +39,9 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	if config.ManagedDomainMaxMemberChildLabels != 0 || config.CustomDomainsEnabled {
 		t.Fatal("standalone should allow nested managed-domain URLs and require custom-domain opt-in")
 	}
+	if config.ManagedURLMode != naming.ManagedURLModeSimple {
+		t.Fatalf("managed URL mode = %q", config.ManagedURLMode)
+	}
 	if config.PublisherConnectionLimit < 1 {
 		t.Fatalf("publisher connection limit = %d", config.PublisherConnectionLimit)
 	}
@@ -69,6 +74,12 @@ func TestParseDomainPolicy(t *testing.T) {
 	}
 	if _, err := Parse(append(base, "--custom-domains-enabled")); err == nil {
 		t.Fatal("custom-domain opt-in without DNS automation accepted")
+	}
+	if _, err := Parse(append(base, "--managed-url-mode=unknown")); err == nil {
+		t.Fatal("unknown managed URL mode accepted")
+	}
+	if cfg, err := Parse(append(base, "--managed-url-mode=simple")); err != nil || cfg.ManagedURLMode != naming.ManagedURLModeSimple {
+		t.Fatalf("simple managed URL mode = %q, %v", cfg.ManagedURLMode, err)
 	}
 	cfg, err := Parse(append(base, "--custom-domains-enabled", "--managed-domain-max-member-child-labels=1",
 		"--route53-managed-zone-id", "ZMANAGED", "--ingress-ipv4-address", "192.0.2.1"))

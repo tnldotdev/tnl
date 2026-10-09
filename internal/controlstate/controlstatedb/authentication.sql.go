@@ -692,6 +692,27 @@ func (q *Queries) LockIdentityBootstrap(ctx context.Context) error {
 	return err
 }
 
+const reserveManagedDirectName = `-- name: ReserveManagedDirectName :one
+INSERT INTO control.managed_label_reservations (label, created_at, direct_team_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (label) DO UPDATE SET direct_team_id = EXCLUDED.direct_team_id
+WHERE control.managed_label_reservations.direct_team_id = EXCLUDED.direct_team_id
+RETURNING label
+`
+
+type ReserveManagedDirectNameParams struct {
+	Label     string
+	CreatedAt pgtype.Timestamptz
+	TeamID    pgtype.Text
+}
+
+func (q *Queries) ReserveManagedDirectName(ctx context.Context, arg ReserveManagedDirectNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, reserveManagedDirectName, arg.Label, arg.CreatedAt, arg.TeamID)
+	var label string
+	err := row.Scan(&label)
+	return label, err
+}
+
 const reserveManagedLabel = `-- name: ReserveManagedLabel :one
 INSERT INTO control.managed_label_reservations (label, created_at)
 VALUES ($1, $2)

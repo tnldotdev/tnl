@@ -99,7 +99,8 @@ func (p *Route53Provider) PublishPublicURL(ctx context.Context, record PublicURL
 }
 
 func (p *Route53Provider) publishMemberWildcard(ctx context.Context, zone Zone, record PublicURLRecord) (Zone, error) {
-	if naming.MemberWildcardHostname(record.CanonicalHostname, record.ZoneDomain) != record.WildcardHostname {
+	if !naming.IsWithin(record.Namespace, record.ZoneDomain) ||
+		naming.PublicURLWildcard(record.CanonicalHostname, record.Namespace) != record.WildcardHostname {
 		return Zone{}, terminalf("member wildcard does not match its public URL")
 	}
 	ownerName := memberWildcardOwnerName(record.WildcardHostname)

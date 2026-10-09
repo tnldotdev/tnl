@@ -72,6 +72,7 @@ type CreatePublicURLRequest struct {
 	Target                string
 	PublicURLScope        PublicURLScope
 	Purpose               PublicURLPurpose
+	ManagedURLMode        naming.ManagedURLMode
 	AllowedIPPrefixes     []string
 	DNSState              PublicURLDNSState
 	DNSAuthorityReference string
@@ -130,6 +131,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
 	}
 	policyRevision := int64(0)
+	namespace := ""
 	if request.GuestID != "" {
 		policyRevision = positive(request.PolicyRevision)
 	}
@@ -181,6 +183,11 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			request.DNSState != PublicURLDNSUnmanaged && request.DNSAuthorityReference != guest.DnsAuthorityReference {
 			return PublicURL{}, ErrPublicURLAccess
 		}
+		managed, err := queries.FindManagedDomain(ctx)
+		if err != nil || managed.ID != guest.DomainID {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+		namespace = guest.NamespaceLabel + "." + managed.CanonicalDomain
 		count, err := queries.CountGuestCurrentPublicURLs(ctx, request.GuestID)
 		if err != nil {
 			return PublicURL{}, err
@@ -214,6 +221,38 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
 		}
+		if request.PublicURLScope == PublicURLScopeShared {
+			namespace = creation.CanonicalDomain
+		} else {
+			namespace, _ = naming.PublicURLNamespace(naming.NamespaceFacts{
+				Domain: creation.CanonicalDomain, Managed: creation.DomainKind == "managed",
+				Mode: request.ManagedURLMode, Personal: creation.TeamKind == "personal",
+				TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug,
+				ManagedLabel: creation.ActorManagedLabel,
+			})
+		}
+		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
+			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			label := relative[strings.LastIndex(relative, ".")+1:]
+			if reserved, err := queries.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{
+				TeamID: request.TeamID, Label: label,
+			}); err != nil {
+				return PublicURL{}, fmt.Errorf("controlstate: check reserved member slug: %w", err)
+			} else if reserved {
+				return PublicURL{}, ErrPublicURLConflict
+			}
+		}
+		if creation.DomainKind == "managed" && request.PublicURLScope == PublicURLScopeShared {
+			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			label := relative[strings.LastIndex(relative, ".")+1:]
+			if _, err := queries.ReserveManagedDirectName(ctx, controlstatedb.ReserveManagedDirectNameParams{
+				Label: label, TeamID: text(request.TeamID), CreatedAt: timestamp(now),
+			}); errors.Is(err, pgx.ErrNoRows) {
+				return PublicURL{}, ErrPublicURLConflict
+			} else if err != nil {
+				return PublicURL{}, fmt.Errorf("controlstate: reserve managed direct name: %w", err)
+			}
+		}
 		policyRevision = creation.PolicyRevision
 	}
 
@@ -242,7 +281,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
-		CanonicalHostname:         request.CanonicalHostname, Target: request.Target,
+		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
 		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
@@ -939,14 +978,15 @@ func authorizeRouteCreation(
 	if request.DNSState == PublicURLDNSPending && request.DNSAuthorityReference != context.DnsAuthorityReference.String {
 		return ErrPublicURLAccess
 	}
-	actorLabel := context.ActorMemberSlug
-	if context.DomainKind == "managed" {
-		actorLabel = context.ActorManagedLabel
-	}
-	actorNamespace := actorLabel + "." + context.CanonicalDomain
+	actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: context.CanonicalDomain, Managed: context.DomainKind == "managed",
+		Mode: request.ManagedURLMode, Personal: context.TeamKind == "personal",
+		Builtin:  context.IdentityKind == "builtin" && context.TeamCreatorIdentityID == request.ActingIdentityID,
+		TeamName: context.TeamDisplayName, MemberSlug: context.ActorMemberSlug, ManagedLabel: context.ActorManagedLabel,
+	})
 	if request.PublicURLScope == "member" {
-		if request.MembershipID != context.ActorMembershipID ||
-			!hostnameWithin(request.CanonicalHostname, actorNamespace) {
+		if direct || request.MembershipID != context.ActorMembershipID ||
+			request.CanonicalHostname == actorNamespace || !hostnameWithin(request.CanonicalHostname, actorNamespace) {
 			return ErrPublicURLAccess
 		}
 		return nil
@@ -955,9 +995,9 @@ func authorizeRouteCreation(
 		return ErrPublicURLAccess
 	}
 	if context.DomainKind == "managed" {
-		if context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
+		if request.ManagedURLMode != naming.ManagedURLModeSimple || context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
 			context.TeamCreatorIdentityID != request.ActingIdentityID ||
-			!oneLabelBeneath(request.CanonicalHostname, context.CanonicalDomain) {
+			request.CanonicalHostname == context.CanonicalDomain {
 			return ErrPublicURLAccess
 		}
 		return nil
@@ -973,15 +1013,6 @@ func authorizeRouteCreation(
 
 func hostnameWithin(hostname, domain string) bool {
 	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
-}
-
-func oneLabelBeneath(hostname, domain string) bool {
-	suffix := "." + domain
-	if !strings.HasSuffix(hostname, suffix) {
-		return false
-	}
-	label := strings.TrimSuffix(hostname, suffix)
-	return label != "" && !strings.Contains(label, ".")
 }
 
 func routeIPPolicy(prefixes []netip.Prefix) IPPolicy {
