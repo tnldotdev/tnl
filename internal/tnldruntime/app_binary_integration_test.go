@@ -12,9 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
@@ -90,6 +92,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		// renewal belongs to the app. keep the fixture's registration current
 		// while certificate issuance and public readiness finish.
 		stopRenewal, renewalDone := make(chan struct{}), make(chan struct{})
+		var renewalOnce sync.Once
+		stop := func() {
+			renewalOnce.Do(func() { close(stopRenewal) })
+			<-renewalDone
+		}
+		t.Cleanup(stop)
 		go func() {
 			defer close(renewalDone)
 			ticker := time.NewTicker(3 * time.Second)
@@ -123,7 +131,11 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 				tunnel = snapshot.Tunnels[0]
 				return true, nil
 			}
-			return false, nil
+			app, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
+			if err != nil {
+				return false, err
+			}
+			return false, fmt.Errorf("app publication is not ready: tunnels=%+v services=%+v", snapshot.Tunnels, app.Services)
 		})
 		if tunnel.PublicURL != assigned.PublicURL || tunnel.Target != app.URL || tunnel.PublishRunNumber != uint64(index) {
 			t.Fatalf("app-led tunnel = %+v; assignment = %+v", tunnel, assigned)
@@ -137,8 +149,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		if status := request("unregister", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("unregister status %d", status)
 		}
-		close(stopRenewal)
-		<-renewalDone
+		stop()
 		waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 			snapshot, err := state.SnapshotProject(ctx, project)
 			return err == nil && len(snapshot.Tunnels) == 0, err
