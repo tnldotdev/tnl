@@ -3,7 +3,7 @@
   "configuration": { "protocol": 1, "framework": "vite" },
   "invalidConfiguration": { "protocol": 1, "framework": "Next" },
   "target": { "protocol": 1, "framework": "vite", "target": "http://127.0.0.2:5174" },
-  "invalidTarget": { "protocol": 1, "framework": "vite", "target": "http://192.0.2.1:5174" },
+  "invalidTarget": { "protocol": 1, "framework": "vite", "target": "https://api.example:443/path" },
   "invalidAssignmentOverride": { "unexpected": true },
   "assignment": {
     "protocol": 1,

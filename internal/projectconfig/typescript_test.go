@@ -182,7 +182,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"request limit":      {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
 		"request inspection": {`export default {services: {api: {requestInspection: "all"}}};`, "services.api.request_inspection: must be summary or detailed"},
 		"duration":           {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
-		"target":             {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
+		"target":             {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
 		"ip":                 {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
 		"duplicate":          {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
 	} {

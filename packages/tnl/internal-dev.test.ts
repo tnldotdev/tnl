@@ -395,9 +395,7 @@ describe("protocol v1", () => {
     expect(() => canonicalLoopbackTarget("127.0.0.1", 0)).toThrow(
       new TnlError("sdk.target_invalid"),
     );
-    expect(() => canonicalLoopbackTarget("192.0.2.1", 3000)).toThrow(
-      new TnlError("sdk.target_invalid"),
-    );
+    expect(canonicalLoopbackTarget("192.0.2.1", 3000)).toBe("http://192.0.2.1:3000");
     expect(bootstrap.requests).toHaveLength(0);
   });
 
