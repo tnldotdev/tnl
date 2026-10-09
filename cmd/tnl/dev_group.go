@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"slices"
 	"sync"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -22,30 +20,6 @@ type devMetadataWriter struct {
 func (w *devMetadataWriter) write(ctx context.Context, root string, metadata projectmeta.Metadata) error {
 	w.once.Do(func() { w.err = projectmeta.Write(ctx, root, metadata) })
 	return w.err
-}
-
-func runCoordinatedDev(ctx context.Context, project projectConfiguration, flags devCommand, stdin io.Reader, stdout, stderr io.Writer, reporters ...telemetryReporter) error {
-	names := make([]string, 0, len(project.Config.Services))
-	for name := range project.Config.Services {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	if len(names) > 1 && (len(flags.Command) != 0 || flags.Port != 0 || flags.StartupTimeout != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral || flags.AllowAllIPs || flags.AllowIP != nil || flags.RequestLimit != nil) {
-		return failure.Wrap("select development services", failure.InvalidTunnelFlags, errors.New("select a service when overriding its command, port, or public URL settings"))
-	}
-	writer := &devMetadataWriter{}
-	targets := newDevGroupTargets(len(names))
-	return coordinateDev(ctx, names, func(runCtx context.Context, name string) error {
-		serviceFlags := flags
-		serviceFlags.Service = name
-		serviceFlags.metadataWriter = writer
-		serviceFlags.groupTargets = targets
-		serviceFlags.coordinated = len(names) > 1
-		if err := project.applyDev(&serviceFlags); err != nil {
-			return err
-		}
-		return runDev(runCtx, serviceFlags, stdin, stdout, stderr, reporters...)
-	})
 }
 
 func coordinateDev(ctx context.Context, names []string, run func(context.Context, string) error) error {

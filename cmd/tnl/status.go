@@ -56,7 +56,6 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		return err
 	}
 	appSnapshot := clientruntime.Snapshot{Cursor: "0", Services: []clientruntime.Service{}}
-	projects := []clientruntime.Snapshot{}
 	if !flags.All {
 		project, resolveErr := flags.Configuration, error(nil)
 		if project.Root == "" {
@@ -69,7 +68,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			}
 		}
 	} else {
-		projects, err = clientruntime.ListSnapshots(root)
+		projects, err := clientruntime.ListSnapshots(root)
 		if err != nil {
 			return err
 		}

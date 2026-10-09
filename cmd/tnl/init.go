@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -47,7 +46,6 @@ type initPlan struct {
 	apiDev           bool
 	devCommand       []string
 	devPort          int
-	devAction        string
 	scriptHint       string
 }
 
@@ -264,79 +262,6 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 		}
 	}
 	return plan, nil
-}
-
-func updateInitDevAction(plan *initPlan) {
-	if plan.devAction != "" {
-		plan.actions = slices.DeleteFunc(plan.actions, func(action string) bool { return action == plan.devAction })
-	}
-	plan.devAction = ""
-	if plan.devPort == 0 {
-		if len(plan.devCommand) == 0 {
-			plan.devAction = "set services.app.dev.command and services.app.dev.port in tnl.config.ts."
-		} else {
-			plan.devAction = "set services.app.dev.port in tnl.config.ts to your app's listening port."
-		}
-	} else if len(plan.devCommand) == 0 {
-		plan.devAction = "set services.app.dev.command in tnl.config.ts to start your app."
-	}
-	if plan.devAction != "" {
-		plan.actions = append(plan.actions, plan.devAction)
-	}
-	if len(plan.generatedConfig) == 0 {
-		plan.configData = initConfigSourceWithPort("app", plan.devCommand, plan.devPort)
-	}
-}
-
-func promptInitDev(plan *initPlan, input io.Reader, output io.Writer) error {
-	reader := bufio.NewReader(input)
-	if len(plan.devCommand) == 0 {
-		command, err := readInitAnswer(reader, output, "dev command", "command to start your app", parseInitCommand)
-		if err != nil {
-			return err
-		}
-		plan.devCommand = command
-	}
-	if plan.devPort == 0 {
-		port, err := readInitAnswer(reader, output, "dev port", "port used by your app (1-65535)", parseInitPort)
-		if err != nil {
-			return err
-		}
-		plan.devPort = port
-	}
-	updateInitDevAction(plan)
-	return nil
-}
-
-func readInitAnswer[T any](input *bufio.Reader, output io.Writer, label, description string, parse func(string) (T, error)) (T, error) {
-	var empty T
-	for {
-		if err := writeHumanFrame(output, "tnl init", "needs input", "enter a value or press enter to skip",
-			clioutput.Fields(clioutput.Field{Label: label, Value: description}),
-		); err != nil {
-			return empty, err
-		}
-		answer, err := input.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return empty, err
-		}
-		value := strings.TrimSpace(answer)
-		if value == "" {
-			return empty, nil
-		}
-		parsed, invalid := parse(value)
-		if invalid != nil {
-			if err := writeHumanFrame(output, "tnl init", "invalid input", "enter a value or press enter to skip",
-				clioutput.Text(presentFailure(failure.Wrap("read setup input", failure.InvalidSetupInput, invalid)).message)); err != nil {
-				return empty, err
-			}
-			if errors.Is(err, io.EOF) {
-				return empty, nil
-			}
-			continue
-		}
-		return parsed, nil
-	}
 }
 
 func parseInitPort(value string) (int, error) {
