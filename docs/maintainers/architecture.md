@@ -200,37 +200,41 @@ redirect URI. control and relays receive neither login state nor callback
 contents. a callback to a stopped or replaced run fails instead of reaching
 another worktree.
 
-Declared webhook endpoints use a saved `hooks-…` hostname. Each live participant
+Declared webhook endpoints use one saved `hooks-…` hostname. Each live participant
 registers its declarations separately from receiver selection. All declarations
 for a named endpoint must agree on service, exact path, methods, and source
 policy. SQLite registration rejects conflicting names and paths atomically.
 Only ready tunnels of the named service receive requests; subscriptions in
 other contexts and expired tunnel leases cannot become receivers.
 
-Ingress admits the union of the declared source ranges because HTTP paths remain
+Ingress admits the union of the resolved source ranges because HTTP paths remain
 encrypted until the publisher. The local handler checks the trusted source IP,
 exact escaped path, and method before reading the body. It snapshots ready
 receivers and forwards identical body bytes and signature inputs to each.
-Every receiver must return 2xx. Failed attempts are not retried locally, and
+In fanout mode every receiver must return 2xx; tnl then acknowledges with 200.
+Failed attempts are not retried locally, and
 provider retries may revisit already successful worktrees. GET, HEAD, and
 OPTIONS verification requires matching bounded responses. No request journal or
 replay is retained.
 Changed declarations drain the webhook publish run before re-publication;
-provider IP ranges are resolved once per new run, independently of OAuth.
+tnl reads provider source policies from tnl.dev, with ETag revalidation and a
+bounded last-good SQLite cache. An unavailable source affects only its endpoint.
+Overrides replace rather than union with catalog ranges. New runs resolve
+sources independently of OAuth; the app handles request authentication.
 
-Exclusive endpoints instead select one explicitly claimed receiver. Ownership
+Selected endpoints instead select one explicitly claimed receiver. Ownership
 is tied to that tunnel's liveness lease, not to publisher leadership or its
 current ready/provisioning phase. Ordinary `tnl webhook use NAME` cannot replace
 a live claim; `tnl webhook use NAME --force` atomically selects a ready receiver
 in the calling worktree. Already-dispatched requests may finish at the old one.
-Source/path/method admission runs before delivery in either mode. An exclusive
+Source/path/method admission runs before delivery in either mode. A selected
 handler's status and bounded body are returned directly to the provider.
 
 `tnl status` reads app tunnels, saved integration URL hostnames, publisher
-readiness leases, webhook declarations, and exclusive ownership in one SQLite
-snapshot. The version-2 JSON result includes ready receivers from linked
+readiness leases, webhook declarations, and selected ownership in one SQLite
+snapshot. The version-3 JSON result includes ready receivers from linked
 worktrees even when the command selects just the current checkout's tunnels.
-An expired publisher lease is stale; a live exclusive owner in provisioning
+An expired publisher lease is stale; a live selected owner in provisioning
 remains selected but is not a ready receiver. Status includes only saved
 hostnames, endpoint configuration, local tunnel identity, and authored reasons;
 it never includes OAuth state, codes, signature headers, or request bodies.

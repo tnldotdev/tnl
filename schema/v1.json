@@ -287,8 +287,7 @@
               },
               "delivery": {
                 "type": "string",
-                "enum": ["fanout", "exclusive"],
-                "default": "fanout"
+                "enum": ["fanout", "selected"]
               },
               "methods": {
                 "items": {
@@ -299,72 +298,46 @@
                 "minItems": 1,
                 "uniqueItems": true
               },
-              "allow_from": {
-                "oneOf": [
-                  {
-                    "const": "*"
-                  },
-                  {
-                    "properties": {
-                      "providers": {
-                        "items": {
-                          "type": "string",
-                          "enum": ["github", "stripe"]
-                        },
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["providers"]
-                  },
-                  {
-                    "properties": {
-                      "ips": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["ips"]
-                  },
-                  {
-                    "properties": {
-                      "providers": {
-                        "items": {
-                          "type": "string",
-                          "enum": ["github", "stripe"]
-                        },
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true
-                      },
-                      "ips": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["providers", "ips"]
-                  }
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "amazon-sns",
+                  "auth0",
+                  "clerk",
+                  "custom",
+                  "discord",
+                  "github",
+                  "gitlab",
+                  "incident-io",
+                  "lemon-squeezy",
+                  "linear",
+                  "loops",
+                  "paddle",
+                  "postmark",
+                  "resend",
+                  "sendgrid",
+                  "shopify",
+                  "slack",
+                  "stripe",
+                  "supabase",
+                  "telegram",
+                  "twilio",
+                  "vercel",
+                  "workos"
                 ]
+              },
+              "source_ips": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true
               }
             },
             "additionalProperties": false,
             "type": "object",
-            "required": ["path", "service", "allow_from"]
+            "required": ["path", "service", "provider"]
           },
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"

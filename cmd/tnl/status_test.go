@@ -214,8 +214,8 @@ func TestStatusShowsIntegrationURLSubscribersAndExclusiveOwner(t *testing.T) {
 		}
 	}
 	definition := config.Webhook{
-		Service: "api", Path: "/hooks/payments", Delivery: "exclusive",
-		AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}},
+		Service: "api", Path: "/hooks/payments", Provider: "slack", Delivery: "selected",
+		SourceIPs: []string{"192.0.2.0/24"},
 	}
 	encoded, digest, err := integrationurls.DefinitionBytes(definition)
 	if err != nil {

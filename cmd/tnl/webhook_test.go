@@ -53,7 +53,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	if err := tunnel.SetReady(t.Context(), "https://api.project.example.test", 1); err != nil {
 		t.Fatal(err)
 	}
-	definition := config.Webhook{Service: "api", Path: "/hooks/stripe", Delivery: "exclusive", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}}
+	definition := config.Webhook{Service: "api", Path: "/hooks/stripe", Provider: "slack", Delivery: "selected", SourceIPs: []string{"192.0.2.0/24"}}
 	encoded, _, err := integrationurls.DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)

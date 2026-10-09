@@ -2,88 +2,107 @@ package webhookips
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/httpjson"
+	"time"
 )
 
-func TestResolveProviderWebhookLists(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/stripe":
-			_, _ = response.Write([]byte(`{"WEBHOOKS":["192.0.2.7","192.0.2.7/32","2001:db8::1/64"]}`))
-		case "/github":
-			if request.Header.Get("User-Agent") != "tnl" {
-				t.Errorf("GitHub user agent = %q", request.Header.Get("User-Agent"))
-			}
-			_, _ = response.Write([]byte(`{"hooks":["198.51.100.0/24","192.0.2.7/32"],"actions":["0.0.0.0/0"]}`))
-		default:
-			response.WriteHeader(http.StatusNotFound)
+type memoryCache map[string]CacheEntry
+
+func (c memoryCache) CachedWebhookPolicy(_ context.Context, name string) (CacheEntry, error) {
+	if entry, found := c[name]; found {
+		return entry, nil
+	}
+	return CacheEntry{}, sql.ErrNoRows
+}
+func (c memoryCache) SaveWebhookPolicy(_ context.Context, name string, entry CacheEntry) error {
+	c[name] = entry
+	return nil
+}
+
+func TestProviderCatalogRevalidationAndBoundedOutage(t *testing.T) {
+	now := time.Now()
+	var unavailable bool
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.URL.Path != "/api/w/stripe" || request.Header.Get("User-Agent") != "tnl" {
+			t.Errorf("unexpected catalog request: %s", request.URL)
 		}
+		if unavailable {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		response.Header().Set("Cache-Control", "public, max-age=300")
+		response.Header().Set("ETag", `"first"`)
+		if request.Header.Get("If-None-Match") == `"first"` {
+			response.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = response.Write([]byte(`{"source":{"kind":"ip_ranges","ranges":["192.0.2.1/32","198.51.100.0/24"]}}`))
 	}))
 	defer server.Close()
-	catalog := map[string]provider{
-		"github": {url: server.URL + "/github", field: "hooks"},
-		"stripe": {url: server.URL + "/stripe", field: "WEBHOOKS"},
+	cache := memoryCache{}
+	read := func(at time.Time) (Source, error) {
+		return resolve(t.Context(), server.Client(), cache, server.URL+"/api/w/", "stripe", at)
 	}
-	sources, err := resolve(t.Context(), server.Client(), catalog, []string{"stripe", "github"})
-	if err != nil {
-		t.Fatal(err)
+	source, err := read(now)
+	if err != nil || !slices.Equal(source.Prefixes, []string{"192.0.2.1/32", "198.51.100.0/24"}) {
+		t.Fatalf("source = %+v, %v", source, err)
 	}
-	if len(sources) != 2 || sources[0].Name != "github" || sources[1].Name != "stripe" ||
-		!slices.Equal(sources[0].Prefixes, []string{"192.0.2.7/32", "198.51.100.0/24"}) ||
-		!slices.Equal(sources[1].Prefixes, []string{"192.0.2.7/32", "2001:db8::/64"}) {
-		t.Fatalf("resolved sources = %#v", sources)
+	if _, err := read(now.Add(4 * time.Minute)); err != nil || requests != 1 {
+		t.Fatalf("fresh cached source requested again: %d, %v", requests, err)
+	}
+	if _, err := read(now.Add(6 * time.Minute)); err != nil || requests != 2 {
+		t.Fatalf("304 did not refresh cache: %d, %v", requests, err)
+	}
+	unavailable = true
+	source, err = read(now.Add(12 * time.Minute))
+	if err != nil || !source.Stale {
+		t.Fatalf("short outage discarded cached source: %+v, %v", source, err)
+	}
+	if _, err := read(now.Add(25 * time.Hour)); err == nil {
+		t.Fatal("expired last-good source was used")
 	}
 }
 
-func TestResolveProviderFailsWithoutCompleteUsableList(t *testing.T) {
-	for _, test := range []struct {
-		name, body, want string
-		status           int
-	}{
-		{"empty", `{"hooks":[]}`, "no webhook IPs", http.StatusOK},
-		{"missing", `{"web":["192.0.2.1"]}`, "no webhook IPs", http.StatusOK},
-		{"null", `{"hooks":null}`, "no webhook IPs", http.StatusOK},
-		{"invalid address", `{"hooks":["192.0.2.1","not-an-ip"]}`, "invalid IP prefix", http.StatusOK},
-		{"public IPv4", `{"hooks":["0.0.0.0/0"]}`, "allowing every IP", http.StatusOK},
-		{"public IPv6", `{"hooks":["::/0"]}`, "allowing every IP", http.StatusOK},
-		{"invalid JSON", `{"hooks":[`, "invalid JSON", http.StatusOK},
-		{"http error", `{}`, "HTTP 503", http.StatusServiceUnavailable},
+func TestCatalogRejectsInvalidSourcesWithoutWidening(t *testing.T) {
+	for _, body := range []string{
+		`{"source":{"kind":"ip_ranges","ranges":[]}}`,
+		`{"source":{"kind":"ip_ranges","ranges":["0.0.0.0/0"]}}`,
+		`{"source":{"kind":"ip_ranges","ranges":["::/0"]}}`,
+		`{"source":{"kind":"ip_ranges","ranges":["not-ip"]}}`,
+		`{"source":{"kind":"ip_ranges","ranges":["192.0.2.4/24"]}}`,
+		`{"source":{"kind":"*","ranges":["192.0.2.1"]}}`,
+		`{"source":{"kind":"other"}}`,
+		`{"source":{"kind":"*"},"unexpected":"x"}`,
+		`{"source":{"kind":"*"}}{"source":{"kind":"*"}}`,
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-				response.WriteHeader(test.status)
-				_, _ = response.Write([]byte(test.body))
-			}))
-			defer server.Close()
-			_, err := resolve(t.Context(), server.Client(), map[string]provider{
-				"github": {url: server.URL, field: "hooks"},
-			}, []string{"github"})
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("resolution error = %v, want %q", err, test.want)
-			}
-		})
+		if _, err := parseCatalog([]byte(body), "stripe"); err == nil {
+			t.Errorf("accepted invalid catalog source: %s", body)
+		}
 	}
-}
-
-func TestResolveProviderBoundsAndCancellation(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = response.Write([]byte(`{"hooks":["192.0.2.1"],"other":"` + strings.Repeat("x", maxProviderResponseBytes) + `"}`))
+	if source, err := parseCatalog([]byte(`{"source":{"kind":"*"}}`), "discord"); err != nil || !source.Any || len(source.Prefixes) != 0 {
+		t.Fatalf("wildcard source = %+v, %v", source, err)
+	}
+	if !Valid("custom") || Valid("svix") || len(Names()) != 23 {
+		t.Fatal("provider enum changed unexpectedly")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"source":{"kind":"ip_ranges","ranges":[]}}`))
 	}))
 	defer server.Close()
-	catalog := map[string]provider{"github": {url: server.URL, field: "hooks"}}
-	if _, err := resolve(t.Context(), server.Client(), catalog, []string{"github"}); !errors.Is(err, httpjson.ErrTooLarge) {
-		t.Fatalf("oversized response error = %v", err)
+	if _, err := resolve(t.Context(), server.Client(), memoryCache{}, server.URL+"/api/w/", "stripe", time.Now()); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("invalid network source was admitted: %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := resolve(ctx, server.Client(), catalog, []string{"github"}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled resolution error = %v", err)
+	if _, err := resolve(ctx, server.Client(), memoryCache{}, server.URL+"/api/w/", "stripe", time.Now()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled catalog = %v", err)
 	}
 }

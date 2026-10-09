@@ -40,7 +40,7 @@ type cli struct {
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
-	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for an exclusive webhook." group:"manage"`
+	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
 	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`

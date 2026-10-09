@@ -15,7 +15,7 @@ import (
 
 func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 	state, _ := callbackState(t)
-	definition := config.Webhook{Service: "api", Path: "/hooks/respond", Delivery: "exclusive", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}}
+	definition := config.Webhook{Service: "api", Path: "/hooks/respond", Provider: "slack", Delivery: "selected", SourceIPs: []string{"192.0.2.0/24"}}
 	encoded, digest, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 	}
 	var responses atomic.Int32
 	handler.OnReceiverResponse = func(mode string) {
-		if mode != "exclusive" {
+		if mode != "selected" {
 			t.Errorf("delivery mode = %q", mode)
 		}
 		responses.Add(1)
@@ -104,7 +104,7 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 
 func TestExclusiveWebhookForceRequiresReadyReceiverAndSwitchesAtomically(t *testing.T) {
 	state, _ := callbackState(t)
-	definition := config.Webhook{Service: "api", Path: "/hooks/payments", Delivery: "exclusive", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}}
+	definition := config.Webhook{Service: "api", Path: "/hooks/payments", Provider: "slack", Delivery: "selected", SourceIPs: []string{"192.0.2.0/24"}}
 	encoded, digest, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)

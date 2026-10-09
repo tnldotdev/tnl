@@ -79,8 +79,8 @@ type telemetryPublishMode string
 type telemetryWebhookDelivery string
 
 const (
-	telemetryFanout    telemetryWebhookDelivery = "fanout"
-	telemetryExclusive telemetryWebhookDelivery = "exclusive"
+	telemetryFanout   telemetryWebhookDelivery = "fanout"
+	telemetrySelected telemetryWebhookDelivery = "selected"
 )
 
 const (

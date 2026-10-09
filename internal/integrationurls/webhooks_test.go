@@ -19,7 +19,7 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	const body = "{\"event\":\"paid\", \"amount\":300}\n"
 	var failed atomic.Bool
 	var calls atomic.Int32
-	definition := config.Webhook{Service: "api", Path: "/api/webhooks/stripe", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}}
+	definition := config.Webhook{Service: "api", Path: "/api/webhooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}}
 	encoded, _, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 	if calls.Load() != 0 || received.Load() != 0 {
 		t.Fatal("denied requests reached a worktree")
 	}
-	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusNoContent)
+	send("192.0.2.1", http.MethodPost, "/api/webhooks/stripe?value=a%2Fb&value=a+b", http.StatusOK)
 	if calls.Load() != 2 || received.Load() != 2 {
 		t.Fatalf("fanout delivered %d requests, observed %d responses", calls.Load(), received.Load())
 	}
@@ -103,8 +103,8 @@ func (*untrustedBody) Close() error               { return nil }
 func TestWebhookPathAndIPAdmissionPrecedesBodyRead(t *testing.T) {
 	state, _ := callbackState(t)
 	handler, _, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
-		"stripe": {Service: "api", Path: "/hooks/stripe", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}},
-		"github": {Service: "api", Path: "/hooks/github", AllowFrom: config.WebhookSources{IPs: []string{"198.51.100.0/24"}}},
+		"stripe": {Service: "api", Path: "/hooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}},
+		"github": {Service: "api", Path: "/hooks/github", Provider: "github", SourceIPs: []string{"198.51.100.0/24"}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +123,8 @@ func TestWebhookPathAndIPAdmissionPrecedesBodyRead(t *testing.T) {
 func TestWebhookWildcardSourceDoesNotBroadenAnotherEndpoint(t *testing.T) {
 	state, _ := callbackState(t)
 	handler, ingressIPs, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
-		"open":       {Service: "api", Path: "/hooks/open", AllowFrom: config.AnyWebhookSources()},
-		"restricted": {Service: "api", Path: "/hooks/restricted", AllowFrom: config.WebhookSources{IPs: []string{"192.0.2.0/24"}}},
+		"open":       {Service: "api", Path: "/hooks/open", Provider: "custom"},
+		"restricted": {Service: "api", Path: "/hooks/restricted", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}},
 	}, nil)
 	if err != nil || len(ingressIPs) != 0 {
 		t.Fatalf("wildcard publisher policy = %v, %v", ingressIPs, err)
@@ -148,7 +148,7 @@ func TestWebhookCustomProviderCanUseAnExplicitHTTPMethod(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(target.Close)
-	definition := config.Webhook{Service: "api", Path: "/hooks/custom", Methods: []string{http.MethodPut}, AllowFrom: config.WebhookSources{IPs: []string{"198.51.100.0/24"}}}
+	definition := config.Webhook{Service: "api", Path: "/hooks/custom", Provider: "custom", Methods: []string{http.MethodPut}, SourceIPs: []string{"198.51.100.0/24"}}
 	encoded, _, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestWebhookCustomProviderCanUseAnExplicitHTTPMethod(t *testing.T) {
 	request.RemoteAddr = "198.51.100.1:1234"
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
+	if response.Code != http.StatusOK {
 		t.Fatalf("custom provider delivery = %d", response.Code)
 	}
 	select {
@@ -180,7 +180,7 @@ func TestWebhookCustomProviderCanUseAnExplicitHTTPMethod(t *testing.T) {
 
 func TestWebhookVerificationReturnsOnlyMatchingResponses(t *testing.T) {
 	state, _ := callbackState(t)
-	definition := config.Webhook{Service: "api", Path: "/hooks/verify", Methods: []string{"GET"}, AllowFrom: config.AnyWebhookSources()}
+	definition := config.Webhook{Service: "api", Path: "/hooks/verify", Provider: "custom", Methods: []string{"GET"}}
 	encoded, _, err := DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)

@@ -58,13 +58,14 @@ const integrationConfig = defineConfig({
     payments: {
       service: "api",
       path: "/api/webhooks/payments",
-      allowFrom: { providers: ["stripe"], ips: ["198.51.100.0/24"] },
+      provider: "stripe",
+      sourceIPs: ["198.51.100.0/24"],
     },
-    unknownProvider: { service: "api", path: "/hooks/other", allowFrom: "*" },
+    customProvider: { service: "api", path: "/hooks/other", provider: "custom" },
   },
 } as const);
 integrationConfig.oauth satisfies true;
-integrationConfig.webhooks.unknownProvider.allowFrom satisfies "*";
+integrationConfig.webhooks.customProvider.provider satisfies "custom";
 
 const aliasConfig = defineConfig({
   services: {
@@ -93,7 +94,7 @@ if (aliasFactoryResult.aliases?.review) {
 const explicitServices = {
   services: { api: {}, web: { paths: { "/api": "api" } } },
   aliases: { review: { service: "web" } },
-  webhooks: { hook: { service: "api", path: "/hook", allowFrom: "*" } },
+  webhooks: { hook: { service: "api", path: "/hook", provider: "custom" } },
 } satisfies TnlConfigForServices<"api" | "web">;
 ({
   services: { api: {} },
@@ -111,7 +112,7 @@ const explicitServices = {
       // @ts-expect-error "missing" is not assignable to configured service "api".
       service: "missing",
       path: "/hook",
-      allowFrom: "*",
+      provider: "custom",
     },
   },
 }) satisfies TnlConfigForServices<"api">;
@@ -130,7 +131,7 @@ defineConfig({ services: { api: {} }, aliases: { review: { service: "missing" } 
 defineConfig({
   // @ts-expect-error webhook service references are checked too.
   services: { api: {} },
-  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+  webhooks: { hook: { service: "missing", path: "/hook", provider: "custom" } },
 });
 // @ts-expect-error string path mounts name a configured service.
 defineConfig({ services: { web: { paths: { "/api": "missing" } }, api: {} } });
@@ -145,12 +146,12 @@ defineConfig(async () => ({ services: { api: {} }, aliases: { review: { service:
 defineConfig(() => ({
   services: { api: {} },
   // @ts-expect-error factory webhook references must match service keys too.
-  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+  webhooks: { hook: { service: "missing", path: "/hook", provider: "custom" } },
 }));
 // @ts-expect-error async factory webhook references must match service keys too.
 defineConfig(async () => ({
   services: { api: {} },
-  webhooks: { hook: { service: "missing", path: "/hook", allowFrom: "*" } },
+  webhooks: { hook: { service: "missing", path: "/hook", provider: "custom" } },
 }));
 // @ts-expect-error factory string mounts retain service-reference checks.
 defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": "missing" } } } }));

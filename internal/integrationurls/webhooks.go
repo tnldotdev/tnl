@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,10 +32,13 @@ func DefinitionBytes(definition config.Webhook) ([]byte, [32]byte, error) {
 }
 
 type webhookEndpoint struct {
-	name       string
-	definition config.Webhook
-	digest     [32]byte
-	prefixes   []netip.Prefix
+	name        string
+	definition  config.Webhook
+	digest      [32]byte
+	prefixes    []netip.Prefix
+	any         bool
+	unavailable bool
+	stale       bool
 }
 
 type Webhooks struct {
@@ -54,8 +58,8 @@ func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group
 		if definition.Service != "" {
 			services[definition.Service] = config.Service{}
 		}
-		for _, name := range definition.AllowFrom.Providers {
-			providers[name] = true
+		if definition.SourceIPs == nil {
+			providers[definition.Provider] = true
 		}
 	}
 	if err := config.ValidateTNL(config.TNL{Services: services, Webhooks: definitions}); err != nil {
@@ -66,13 +70,13 @@ func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	sources, err := webhookips.Resolve(ctx, names)
-	if err != nil {
-		return nil, nil, err
-	}
-	ranges := map[string][]string{}
-	for _, source := range sources {
-		ranges[source.Name] = source.Prefixes
+	sources := map[string]webhookips.Source{}
+	for _, name := range names {
+		source, err := webhookips.Resolve(ctx, state, name)
+		if err != nil {
+			continue
+		}
+		sources[name] = source
 	}
 	handler := &Webhooks{state: state, server: server, group: group, hostname: hostname, paths: map[string]webhookEndpoint{}, report: report}
 	union := map[string]bool{}
@@ -83,11 +87,21 @@ func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group
 			return nil, nil, err
 		}
 		endpoint := webhookEndpoint{name: name, definition: definition, digest: digest}
-		allowAll = allowAll || definition.AllowFrom.Any()
-		prefixes := slices.Clone(definition.AllowFrom.IPs)
-		for _, provider := range definition.AllowFrom.Providers {
-			prefixes = append(prefixes, ranges[provider]...)
+		prefixes := slices.Clone(definition.SourceIPs)
+		if definition.SourceIPs == nil {
+			source, found := sources[definition.Provider]
+			if !found {
+				endpoint.unavailable = true
+				if report != nil {
+					report(name, "provider catalog", "source policy unavailable")
+				}
+			} else {
+				endpoint.any = source.Any
+				endpoint.stale = source.Stale
+				prefixes = source.Prefixes
+			}
 		}
+		allowAll = allowAll || endpoint.any
 		for _, value := range prefixes {
 			prefix, err := netip.ParsePrefix(value)
 			if err != nil {
@@ -112,6 +126,27 @@ func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group
 	return handler, prefixes, nil
 }
 
+// PolicyStatus describes the actual source policy selected for an endpoint.
+func (h *Webhooks) PolicyStatus(name string) string {
+	for _, endpoint := range h.paths {
+		if endpoint.name != name {
+			continue
+		}
+		if endpoint.unavailable {
+			return "unavailable"
+		}
+		value := "all sources"
+		if !endpoint.any {
+			value = strconv.Itoa(len(endpoint.prefixes)) + " IP ranges"
+		}
+		if endpoint.stale {
+			value += " (cached)"
+		}
+		return value
+	}
+	return "unavailable"
+}
+
 func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	authority, err := naming.CanonicalizeAuthority(request.Host)
@@ -133,12 +168,16 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
 		return
 	}
+	if endpoint.unavailable {
+		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+		return
+	}
 	source, err := netip.ParseAddrPort(request.RemoteAddr)
 	if err != nil {
 		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
 		return
 	}
-	allowed := endpoint.definition.AllowFrom.Any()
+	allowed := endpoint.any
 	for _, prefix := range endpoint.prefixes {
 		allowed = allowed || prefix.Contains(source.Addr().Unmap())
 	}
@@ -147,7 +186,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		return
 	}
 	var receivers []clientstate.TunnelInfo
-	if endpoint.definition.Delivery == "exclusive" {
+	if endpoint.definition.DeliveryMode() == "selected" {
 		owner, ownerErr := h.state.ExclusiveWebhookReceiver(request.Context(), h.server, h.group, endpoint.name, endpoint.digest)
 		err = ownerErr
 		if err == nil {
@@ -160,7 +199,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		if errors.Is(err, clientstate.ErrWebhookPolicyConflict) {
 			h.failure(endpoint.name, "local worktrees", "endpoint policies conflict")
 		} else {
-			h.failure(endpoint.name, "local worktrees", "local state unavailable or exclusive receiver unready")
+			h.failure(endpoint.name, "local worktrees", "local state unavailable or selected receiver unready")
 		}
 		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
 		return
@@ -175,7 +214,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
 		return
 	}
-	if endpoint.definition.Delivery == "exclusive" {
+	if endpoint.definition.DeliveryMode() == "selected" {
 		current, currentErr := h.state.WebhookReceiverCurrent(request.Context(), receivers[0])
 		if currentErr != nil || !current {
 			if currentErr != nil {
@@ -186,7 +225,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		}
 		result, err := deliverWebhook(request, receivers[0], body, true)
 		if result.status != 0 && h.OnReceiverResponse != nil {
-			h.OnReceiverResponse("exclusive")
+			h.OnReceiverResponse("selected")
 		}
 		if err != nil && result.status == 0 {
 			h.failure(endpoint.name, receivers[0].ID, "local service unavailable")
@@ -246,7 +285,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		writeWebhookResponse(response, results[0])
 		return
 	}
-	response.WriteHeader(http.StatusNoContent)
+	response.WriteHeader(http.StatusOK)
 }
 
 func returnsWebhookResponse(method string) bool {

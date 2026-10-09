@@ -17,25 +17,36 @@ import (
 
 // Webhook declares one exact endpoint on the project's stable webhook hostname.
 type Webhook struct {
-	Service   string         `json:"service" yaml:"service"`
-	Path      string         `json:"path" yaml:"path"`
-	Delivery  string         `json:"delivery,omitempty" yaml:"delivery,omitempty"`
-	Methods   []string       `json:"methods,omitempty" yaml:"methods,omitempty" jsonschema:"uniqueItems=true"`
-	AllowFrom WebhookSources `json:"allow_from" yaml:"allow_from"`
+	Service   string   `json:"service" yaml:"service"`
+	Path      string   `json:"path" yaml:"path"`
+	Provider  string   `json:"provider" yaml:"provider" jsonschema:"enum=amazon-sns,enum=auth0,enum=clerk,enum=custom,enum=discord,enum=github,enum=gitlab,enum=incident-io,enum=lemon-squeezy,enum=linear,enum=loops,enum=paddle,enum=postmark,enum=resend,enum=sendgrid,enum=shopify,enum=slack,enum=stripe,enum=supabase,enum=telegram,enum=twilio,enum=vercel,enum=workos"`
+	Delivery  string   `json:"delivery,omitempty" yaml:"delivery,omitempty" jsonschema:"enum=fanout,enum=selected"`
+	Methods   []string `json:"methods,omitempty" yaml:"methods,omitempty" jsonschema:"uniqueItems=true"`
+	SourceIPs []string `json:"source_ips,omitempty" yaml:"source_ips,omitempty" jsonschema:"uniqueItems=true,minItems=1"`
+}
+
+// DeliveryMode resolves the provider default without changing the declaration.
+func (w Webhook) DeliveryMode() string {
+	if w.Delivery != "" {
+		return w.Delivery
+	}
+	switch w.Provider {
+	case "amazon-sns", "discord", "slack", "telegram", "twilio":
+		return "selected"
+	default:
+		return "fanout"
+	}
 }
 
 // DefinitionBytes gives equivalent declarations the same fingerprint without
 // modifying the caller's slices. fingerprints fence local receiver selection.
 func (w Webhook) DefinitionBytes() ([]byte, [32]byte, error) {
-	if w.Delivery == "" {
-		w.Delivery = "fanout"
-	}
+	w.Delivery = w.DeliveryMode()
 	if len(w.Methods) == 0 {
 		w.Methods = []string{http.MethodPost}
 	}
 	w.Methods = slices.Sorted(slices.Values(w.Methods))
-	w.AllowFrom.IPs = slices.Sorted(slices.Values(w.AllowFrom.IPs))
-	w.AllowFrom.Providers = slices.Sorted(slices.Values(w.AllowFrom.Providers))
+	w.SourceIPs = slices.Sorted(slices.Values(w.SourceIPs))
 	encoded, err := json.Marshal(w)
 	return encoded, sha256.Sum256(encoded), err
 }
@@ -68,8 +79,11 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			return fmt.Errorf("webhooks.%s: path is also used by %s", name, previous)
 		}
 		paths[endpoint.Path] = name
-		if endpoint.Delivery != "" && endpoint.Delivery != "fanout" && endpoint.Delivery != "exclusive" {
-			return fmt.Errorf("webhooks.%s: delivery must be fanout or exclusive", name)
+		if !webhookips.Valid(endpoint.Provider) {
+			return fmt.Errorf("webhooks.%s: provider must be a supported provider", name)
+		}
+		if endpoint.Delivery != "" && endpoint.Delivery != "fanout" && endpoint.Delivery != "selected" {
+			return fmt.Errorf("webhooks.%s: delivery must be fanout or selected", name)
 		}
 		methods := make(map[string]bool, len(endpoint.Methods))
 		for _, method := range endpoint.Methods {
@@ -78,21 +92,14 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			}
 			methods[method] = true
 		}
-		if !endpoint.AllowFrom.Any() && len(endpoint.AllowFrom.IPs) == 0 && len(endpoint.AllowFrom.Providers) == 0 {
-			return fmt.Errorf("webhooks.%s: allow_from requires a provider, an IP, or \"*\"", name)
+		if endpoint.SourceIPs != nil && len(endpoint.SourceIPs) == 0 {
+			return fmt.Errorf("webhooks.%s: source_ips must not be empty", name)
 		}
-		providers := make(map[string]bool, len(endpoint.AllowFrom.Providers))
-		for _, provider := range endpoint.AllowFrom.Providers {
-			if !webhookips.Valid(provider) || providers[provider] {
-				return fmt.Errorf("webhooks.%s: unknown or duplicate provider %q", name, provider)
-			}
-			providers[provider] = true
-		}
-		ips, err := authorization.CanonicalizeIPPrefixes(endpoint.AllowFrom.IPs)
-		if err != nil || len(ips) != len(endpoint.AllowFrom.IPs) {
+		ips, err := authorization.CanonicalizeIPPrefixes(endpoint.SourceIPs)
+		if err != nil || len(ips) != len(endpoint.SourceIPs) {
 			return fmt.Errorf("webhooks.%s: invalid or duplicate IP prefix", name)
 		}
-		for _, ip := range endpoint.AllowFrom.IPs {
+		for _, ip := range endpoint.SourceIPs {
 			if !canonicalIPText(ip) {
 				return fmt.Errorf("webhooks.%s: IP prefix %q must be canonical", name, ip)
 			}

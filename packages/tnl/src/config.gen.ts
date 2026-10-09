@@ -134,7 +134,7 @@ export interface TnlConfig {
       | {
           service: string;
           path: string;
-          delivery?: "fanout" | "exclusive";
+          delivery?: "fanout" | "selected";
           /**
            * @minItems 1
            */
@@ -142,30 +142,34 @@ export interface TnlConfig {
             "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE",
             ...("GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE")[],
           ];
-          allowFrom:
-            | "*"
-            | {
-                /**
-                 * @minItems 1
-                 */
-                providers: ["github" | "stripe", ...("github" | "stripe")[]];
-              }
-            | {
-                /**
-                 * @minItems 1
-                 */
-                ips: [string, ...string[]];
-              }
-            | {
-                /**
-                 * @minItems 1
-                 */
-                providers: ["github" | "stripe", ...("github" | "stripe")[]];
-                /**
-                 * @minItems 1
-                 */
-                ips: [string, ...string[]];
-              };
+          provider:
+            | "amazon-sns"
+            | "auth0"
+            | "clerk"
+            | "custom"
+            | "discord"
+            | "github"
+            | "gitlab"
+            | "incident-io"
+            | "lemon-squeezy"
+            | "linear"
+            | "loops"
+            | "paddle"
+            | "postmark"
+            | "resend"
+            | "sendgrid"
+            | "shopify"
+            | "slack"
+            | "stripe"
+            | "supabase"
+            | "telegram"
+            | "twilio"
+            | "vercel"
+            | "workos";
+          /**
+           * @minItems 1
+           */
+          sourceIPs?: [string, ...string[]];
         }
       | undefined;
   };

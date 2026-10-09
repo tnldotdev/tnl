@@ -78,12 +78,12 @@ tnl:
 	}
 }
 
-func TestWebhookAllowFromSupportsCustomIPsAndUnrestrictedSources(t *testing.T) {
+func TestWebhookProviderAndSourceOverrideInStaticFiles(t *testing.T) {
 	for name, contents := range map[string]string{
-		"restricted.json":   `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","allow_from":{"providers":["stripe"],"ips":["198.51.100.0/24"]}}}}}`,
-		"unrestricted.json": `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","allow_from":"*"}}}}`,
-		"restricted.yml":    "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      allow_from:\n        providers: [stripe]\n        ips: [198.51.100.0/24]\n",
-		"unrestricted.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      allow_from: '*'\n",
+		"restricted.json":   `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"stripe","source_ips":["198.51.100.0/24"]}}}}`,
+		"unrestricted.json": `{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"payments":{"service":"api","path":"/hooks/payments","provider":"custom"}}}}`,
+		"restricted.yml":    "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: stripe\n      source_ips: [198.51.100.0/24]\n",
+		"unrestricted.yml":  "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    payments:\n      service: api\n      path: /hooks/payments\n      provider: custom\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), name)
@@ -94,12 +94,12 @@ func TestWebhookAllowFromSupportsCustomIPsAndUnrestrictedSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			policy := document.TNL.Webhooks["payments"].AllowFrom
+			policy := document.TNL.Webhooks["payments"]
 			if strings.HasPrefix(name, "unrestricted") {
-				if !policy.Any() {
-					t.Fatal("the explicit wildcard was not accepted")
+				if policy.Provider != "custom" || policy.SourceIPs != nil {
+					t.Fatal("custom provider gained an unexpected override")
 				}
-			} else if len(policy.Providers) != 1 || policy.Providers[0] != "stripe" || len(policy.IPs) != 1 || policy.IPs[0] != "198.51.100.0/24" {
+			} else if policy.Provider != "stripe" || len(policy.SourceIPs) != 1 || policy.SourceIPs[0] != "198.51.100.0/24" {
 				t.Fatalf("restricted webhook sources = %#v", policy)
 			}
 		})
@@ -256,8 +256,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},
-		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_from":{"providers":["other"]}}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_from:\n        providers: [other]\n", "unknown or duplicate provider"},
-		"empty webhook sources":      {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_from":{}}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_from: {}\n", "allow_from requires"},
+		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: other\n", "provider must be"},
+		"missing webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n", "provider must be"},
+		"obsolete webhook source":    {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"stripe","allow_from":"*"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: stripe\n      allow_from: '*'\n", "allow_from"},
 		"obsolete webhook grant":     {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","allow_providers":["stripe"]}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      allow_providers: [stripe]\n", "allow_providers"},
 	} {
 		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {

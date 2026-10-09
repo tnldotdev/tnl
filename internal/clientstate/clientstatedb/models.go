@@ -195,6 +195,14 @@ type TelemetryOutbox struct {
 	EventJson string
 }
 
+type WebhookCatalog struct {
+	Provider   string
+	SourceJson string
+	Etag       string
+	CheckedAt  int64
+	ExpiresAt  int64
+}
+
 type WebhookEndpoint struct {
 	TunnelID    string
 	Name        string

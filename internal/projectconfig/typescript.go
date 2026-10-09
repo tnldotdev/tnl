@@ -250,7 +250,7 @@ type ProjectContext struct {
 
 var typeScriptKeyMappings = map[string]string{
 	"allow_ip":           "allowIP",
-	"allow_from":         "allowFrom",
+	"source_ips":         "sourceIPs",
 	"allow_all_ips":      "allowAllIPs",
 	"startup_timeout":    "startupTimeout",
 	"request_limit":      "requestLimit",

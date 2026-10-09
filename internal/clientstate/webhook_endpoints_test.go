@@ -25,7 +25,7 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 		tunnels = append(tunnels, tunnel)
 		t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
 	}
-	definition := config.Webhook{Service: "api", Path: "/hooks/stripe", AllowFrom: config.WebhookSources{Providers: []string{"stripe"}}}
+	definition := config.Webhook{Service: "api", Path: "/hooks/stripe", Provider: "stripe"}
 	encoded, err := json.Marshal(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 	if err != nil || len(definitions) != 1 {
 		t.Fatalf("merged definitions: %v", err)
 	}
-	definition.AllowFrom = config.AnyWebhookSources()
+	definition.Provider = "custom"
 	different, err := json.Marshal(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 	if err := tunnels[1].RegisterWebhookEndpoint(t.Context(), "stripe", different); !errors.Is(err, ErrWebhookPolicyConflict) {
 		t.Fatalf("another policy replaced the first: %v", err)
 	}
-	definition.AllowFrom = config.WebhookSources{Providers: []string{"github"}}
+	definition.Provider = "github"
 	duplicatePath, err := json.Marshal(definition)
 	if err != nil {
 		t.Fatal(err)

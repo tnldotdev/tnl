@@ -51,17 +51,18 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		t.Fatal("tunnel-wide provider grants must not be generated")
 	}
 	webhook := schemaForType(reflect.TypeOf(config.Webhook{}))
-	if sources, found := webhook.Properties.Get("allow_from"); !found || len(sources.OneOf) != 4 || sources.OneOf[0].Const != "*" {
-		t.Fatalf("webhook source policy schema = %#v", sources)
-	} else if providers, found := sources.OneOf[1].Properties.Get("providers"); !found || !reflect.DeepEqual(providers.Items.Enum, []any{"github", "stripe"}) {
-		t.Fatalf("webhook provider IP schema = %#v", providers)
+	if provider, found := webhook.Properties.Get("provider"); !found || len(provider.Enum) != 23 || provider.Enum[0] != "amazon-sns" {
+		t.Fatalf("webhook provider schema = %#v", provider)
+	}
+	if ips, found := webhook.Properties.Get("source_ips"); !found || ips.MinItems == nil || *ips.MinItems != 1 {
+		t.Fatalf("webhook source override schema = %#v", ips)
 	}
 	if ips, found := tunnel.Properties.Get("allow_ip"); !found || ips.MaxItems != nil {
 		t.Fatalf("tunnel IP limit = %#v", ips)
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "allowIP" || keys["allow_from"] != "allowFrom" || keys["startup_timeout"] != "startupTimeout" || keys["request_limit"] != "requestLimit" || keys["request_inspection"] != "requestInspection" || keys["strip_prefix"] != "stripPrefix" {
+	if keys["allow_ip"] != "allowIP" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "startupTimeout" || keys["request_limit"] != "requestLimit" || keys["request_inspection"] != "requestInspection" || keys["strip_prefix"] != "stripPrefix" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

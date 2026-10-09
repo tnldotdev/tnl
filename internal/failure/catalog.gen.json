@@ -524,7 +524,7 @@
       "code": "TNL_CLIENT_WEBHOOK_OWNER_MISSING",
       "slug": "webhook-owner-missing",
       "class": "unavailable",
-      "message": "this exclusive webhook has no selected receiver",
+      "message": "this webhook has no selected receiver",
       "action": "run tnl webhook use NAME from a worktree with a ready service"
     },
     {

@@ -313,7 +313,7 @@ var definitions = map[Reason]Definition{
 		Action: "start the configured service in a worktree and wait for its public URL", Retry: RetryLater,
 	},
 	WebhookOwnerMissing: {
-		Class: Unavailable, Message: "this exclusive webhook has no selected receiver",
+		Class: Unavailable, Message: "this webhook has no selected receiver",
 		Action: "run tnl webhook use NAME from a worktree with a ready service", Retry: RetryAfterChange,
 	},
 	WebhookOwnerUnready: {

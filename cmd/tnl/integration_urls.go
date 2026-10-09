@@ -148,6 +148,22 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 		cancel()
 		return func() {}
 	}
+	for _, name := range slices.Sorted(maps.Keys(registered)) {
+		definition := registered[name]
+		policy := "tnl.dev catalog (pending)"
+		if definition.SourceIPs != nil {
+			policy = "source_ips override"
+		} else if definition.Provider == "custom" {
+			policy = "all sources"
+		}
+		reportIntegrationURL(tunnel, output, "webhook configured", "", clioutput.Fields(
+			clioutput.Field{Label: "webhook", Value: name},
+			clioutput.Field{Label: "public URL", Value: hooks.URL + definition.Path},
+			clioutput.Field{Label: "delivery", Value: definition.DeliveryMode()},
+			clioutput.Field{Label: "source policy", Value: policy},
+			clioutput.Field{Label: "guide", Value: "https://tnl.dev/w/" + definition.Provider},
+		))
+	}
 	var workers sync.WaitGroup
 	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output, telemetry)
 	workers.Go(func() { worker.Maintain(ctx) })
@@ -186,10 +202,10 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 		if err != nil {
 			continue
 		}
-		if definition.Delivery == "exclusive" {
+		if definition.DeliveryMode() == "selected" {
 			receiver, err := state.ExclusiveWebhookReceiver(ctx, server, group, name, digest)
 			if err == nil && receiver.ID != "" {
-				return telemetryExclusive
+				return telemetrySelected
 			}
 			continue
 		}
@@ -238,6 +254,12 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 				func(endpoint, receiver, reason string) { failure(endpoint + " to " + receiver + ": " + reason) })
 			if err != nil {
 				return integrationurls.Snapshot{}, err
+			}
+			for _, name := range slices.Sorted(maps.Keys(definitions)) {
+				reportIntegrationURL(tunnel, output, "webhook policy", "", clioutput.Fields(
+					clioutput.Field{Label: "webhook", Value: name},
+					clioutput.Field{Label: "source policy", Value: handler.PolicyStatus(name)},
+				))
 			}
 			if telemetry != nil {
 				handler.OnReceiverResponse = func(mode string) {
