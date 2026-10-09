@@ -128,9 +128,12 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	} else if reserved {
 		return Team{}, ErrTeamNameUnavailable
 	}
-	managedLabel, err := availableManagedLabel(ctx, queries, now)
-	if err != nil {
-		return Team{}, err
+	managedLabel := request.DisplayName
+	if d.managedURLMode == naming.ManagedURLModeGenerated {
+		managedLabel, err = availableManagedLabel(ctx, queries, now)
+		if err != nil {
+			return Team{}, err
+		}
 	}
 	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
 	if err != nil {

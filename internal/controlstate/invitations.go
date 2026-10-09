@@ -367,7 +367,12 @@ func (d *Database) AcceptInvitation(
 	if exists {
 		return Membership{}, ErrAuthorityConflict
 	}
-	managedLabel, err := availableManagedLabel(ctx, queries, now)
+	managedLabel := ""
+	if d.managedURLMode == naming.ManagedURLModeSimple {
+		managedLabel, err = availablePersonalTeamName(ctx, queries, invitation.MemberSlug+"-"+invitation.TeamDisplayName, now)
+	} else {
+		managedLabel, err = availableManagedLabel(ctx, queries, now)
+	}
 	if err != nil {
 		return Membership{}, err
 	}
