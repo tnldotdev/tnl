@@ -261,11 +261,8 @@ func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (auth
 }
 
 func namespaceForMembership(membership authorityv1.Membership, domain authorityv1.Domain) string {
-	label := membership.MemberSlug
-	if domain.Kind == authorityv1.Managed {
-		label = membership.ManagedLabel
-	}
-	return label + "." + domain.CanonicalDomain
+	return naming.MemberNamespace(domain.CanonicalDomain, domain.Kind == authorityv1.Managed,
+		membership.ManagedLabel, membership.MemberSlug)
 }
 
 func (flags tunnelFlags) requestLimit() int {
