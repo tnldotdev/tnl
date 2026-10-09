@@ -492,6 +492,7 @@ type ControlPublicUrl struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Namespace                   string
 }
 
 type ControlPublicUrlRecoveryEpisode struct {

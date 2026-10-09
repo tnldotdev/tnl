@@ -109,6 +109,7 @@ func (w *Worker) publicURLRecord(
 ) (PublicURLRecord, []string, bool, error) {
 	record := PublicURLRecord{
 		PublicURLID: work.PublicURLID, DomainID: work.DomainID, CanonicalHostname: work.CanonicalHostname,
+		Namespace:            work.Namespace,
 		IngressIPv4Addresses: append([]string(nil), w.config.IngressIPv4Addresses...),
 		IngressIPv6Addresses: append([]string(nil), w.config.IngressIPv6Addresses...),
 	}
@@ -117,9 +118,7 @@ func (w *Worker) publicURLRecord(
 		if record.ZoneID == "" {
 			return PublicURLRecord{}, nil, false, terminalf("managed Route 53 zone is not configured")
 		}
-		if work.PublicURLScope == controlstate.PublicURLScopeMember {
-			record.WildcardHostname = naming.MemberWildcardHostname(work.CanonicalHostname, w.config.ManagedDomain)
-		}
+		record.WildcardHostname = naming.PublicURLWildcard(work.CanonicalHostname, work.Namespace)
 		return record, nil, true, nil
 	}
 	if work.DNSAuthorityReference == "" {
@@ -141,9 +140,7 @@ func (w *Worker) publicURLRecord(
 	}
 	record.ZoneID, record.ZoneDomain, record.CustomZone = authority.ProviderZoneID, authority.CanonicalDomain, true
 	record.AuthorityReference, record.TeamID = authority.Reference, authority.TeamID
-	if work.PublicURLScope == controlstate.PublicURLScopeMember {
-		record.WildcardHostname = naming.MemberWildcardHostname(work.CanonicalHostname, authority.CanonicalDomain)
-	}
+	record.WildcardHostname = naming.PublicURLWildcard(work.CanonicalHostname, work.Namespace)
 	return record, authority.Nameservers, true, nil
 }
 

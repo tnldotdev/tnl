@@ -138,6 +138,9 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		Builtin:  principal.Administrator && acting.TeamKind == controlstate.TeamKindPersonal,
 		TeamName: acting.TeamDisplayName, MemberSlug: acting.MemberSlug, ManagedLabel: acting.ManagedLabel,
 	})
+	if request.PublicURLScope == authorization.PublicURLScopeShared {
+		namespace = domain.CanonicalDomain
+	}
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
 		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
 		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
@@ -150,7 +153,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
 		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace,
-			request.PublicURLScope == authorization.PublicURLScopeMember, a.dnsAutomation)
+			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
 	}
 	return decision, nil
 }
