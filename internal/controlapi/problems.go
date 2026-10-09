@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
@@ -15,6 +17,10 @@ import (
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrFeedbackSignInRequired):
+		writeProblem(response, http.StatusUnauthorized, controlv1.FeedbackSignInRequired, "sign in to leave feedback")
+	case errors.Is(err, authorization.ErrUnavailable), errors.Is(err, authorityclient.ErrUnavailable):
+		writeUnavailableProblem(response, failure.Operation(operation), "browser sign-in is unavailable", failure.ServerAuthorityUnavailable, err)
 	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
 	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):

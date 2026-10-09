@@ -58,6 +58,7 @@ const (
 	InitFramework                     Reason = "TNL_CLIENT_INIT_FRAMEWORK"
 	InvalidSetupInput                 Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
 	FeedbackInputInvalid              Reason = "TNL_CLIENT_FEEDBACK_INPUT_INVALID"
+	FeedbackSignInRequired            Reason = "TNL_CLIENT_FEEDBACK_SIGN_IN_REQUIRED"
 	ShareInputInvalid                 Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
 	PreviewNotSaved                   Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
 	PreviewStateConflict              Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
@@ -335,6 +336,9 @@ var definitions = map[Reason]Definition{
 	InvalidSetupInput: {
 		Class: Invalid, Message: "the entered value is not valid for this prompt",
 		Action: "enter one of the shown values or press enter to skip", Retry: RetryAfterChange,
+	},
+	FeedbackSignInRequired: {
+		Class: Unauthenticated, Message: "feedback requires sign-in", Action: "sign in to this preview, then retry", Retry: RetryAfterChange,
 	},
 	FeedbackInputInvalid: {
 		Class: Invalid, Message: "feedback ID, cursor, or message is invalid",

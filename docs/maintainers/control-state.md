@@ -132,6 +132,38 @@ attribution. Identity alone never admits a reviewer. Report creation and event
 writes revalidate these boundaries under their write transaction; no caller
 membership flag participates in authorization.
 
+## enforce the team's live feedback policy
+
+`tnl team feedback show` reads the selected team's policy; owners and admins can
+set it with `tnl team feedback set --require-sign-in=true|false`. The authority
+API owns `GET` and `PUT /v1/teams/{team_id}/feedback-policy`, with the dedicated
+`require_sign_in` boolean. Current members may read; enabling requires configured
+browser OIDC. The default is optional sign-in.
+
+Guest trials retain optional sign-in under their saved guest ownership boundary;
+they do not have an editable local team policy. A missing or deleted local team
+does not receive that default.
+
+Policy changes take the same exclusive team advisory guard as other authority
+mutations. Reviewer writes share that guard before locking the public URL, run,
+or thread, normalize current reviewer access, then read the policy inside the
+write transaction. The requirement covers reports, replies, resolve, and reopen,
+including retries, and applies to already-running publish runs without changing
+publishing authorization revisions. CLI implementers remain authenticated through
+their existing authorization boundary.
+
+Sign-in supplies verified attribution, not visitor permission. Signed-in
+nonmembers admitted by IP policy or a share can write when sign-in is required;
+an anonymous admitted visitor receives `feedback_sign_in_required` (HTTP 401).
+Denied access remains HTTP 403; unavailable browser authentication remains HTTP 503. Reads retain their existing admission requirements independently of policy.
+
+Publishers read current policy with `POST
+/v1/publish-runs/{publish_run_id}/feedback/access` and a publish run token. The
+`FeedbackAccessRequest` includes the existing preview ID, publish run number,
+and reviewer access; `FeedbackAccess` returns `require_sign_in`. Control checks
+that preview's inclusion of the authenticated public URL and current reviewer
+access, without creating a preview or public URL.
+
 ## coordinate publisher connections
 
 Publisher-connection claim and readiness operations share a keyed advisory guard

@@ -376,6 +376,8 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 		message, status := "feedback request failed; retry", http.StatusServiceUnavailable
 		var problem *controlclient.ProblemError
 		switch {
+		case errors.Is(err, controlclient.ErrFeedbackSignInRequired):
+			message, status = "sign in to leave feedback", http.StatusUnauthorized
 		case errors.Is(err, controlclient.ErrNotFound):
 			message, status = "feedback thread not found", http.StatusNotFound
 		case errors.Is(err, controlclient.ErrStatusConflict):
@@ -383,7 +385,7 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 		case errors.Is(err, controlclient.ErrRateLimited):
 			message, status = "too many feedback requests; retry shortly", http.StatusTooManyRequests
 		case errors.As(err, &problem) && problem.Status == http.StatusForbidden:
-			message, status = "feedback requires a current share", http.StatusForbidden
+			message, status = "feedback requires current preview access", http.StatusForbidden
 		case errors.As(err, &problem) && problem.Status == http.StatusBadRequest:
 			message, status = "invalid feedback request; check the input", http.StatusBadRequest
 		}

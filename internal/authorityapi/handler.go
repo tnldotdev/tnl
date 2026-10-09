@@ -41,6 +41,8 @@ type Store interface {
 	ListTeams(context.Context, string) ([]controlstate.Team, error)
 	CreateTeam(context.Context, controlstate.CreateTeamRequest, time.Time) (controlstate.Team, error)
 	GetTeam(context.Context, string, string) (controlstate.Team, error)
+	GetTeamFeedbackPolicy(context.Context, string, string) (controlstate.TeamFeedbackPolicy, error)
+	SetTeamFeedbackPolicy(context.Context, string, string, bool, time.Time) (controlstate.TeamFeedbackPolicy, error)
 	ListTeamMemberships(context.Context, string, string) ([]controlstate.Membership, error)
 	SetMembershipRole(context.Context, string, string, string, controlstate.TeamRole, time.Time) (controlstate.Membership, error)
 	RemoveMembership(context.Context, string, string, string, time.Time) error

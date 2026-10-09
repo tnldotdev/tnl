@@ -20,6 +20,8 @@ type teamAPI interface {
 	IdentityContext(context.Context) (authorityv1.IdentityContext, error)
 	CreateTeam(context.Context, authorityv1.CreateTeamRequest, string) (authorityv1.Team, error)
 	GetTeam(context.Context, string) (authorityv1.Team, error)
+	GetTeamFeedbackPolicy(context.Context, string) (authorityv1.TeamFeedbackPolicy, error)
+	SetTeamFeedbackPolicy(context.Context, string, bool) (authorityv1.TeamFeedbackPolicy, error)
 	ListTeamMemberships(context.Context, string) (authorityv1.MembershipPage, error)
 	SetMembershipRole(context.Context, string, string, authorityv1.TeamRole) (authorityv1.Membership, error)
 	RemoveMembership(context.Context, string, string) error

@@ -156,6 +156,13 @@
       "action": "use an ID from tnl feedback list, a nonnegative cursor, and a message of at most 4000 bytes"
     },
     {
+      "code": "TNL_CLIENT_FEEDBACK_SIGN_IN_REQUIRED",
+      "slug": "feedback-sign-in-required",
+      "class": "unauthenticated",
+      "message": "feedback requires sign-in",
+      "action": "sign in to this preview, then retry"
+    },
+    {
       "code": "TNL_CLIENT_GUEST_DEMO_ONLY",
       "slug": "guest-demo-only",
       "class": "forbidden",

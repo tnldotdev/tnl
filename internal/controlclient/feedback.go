@@ -87,6 +87,21 @@ func (c *Client) ListPreviewPageFeedback(ctx context.Context, runID string, body
 	})
 }
 
+func (c *Client) GetFeedbackAccess(ctx context.Context, runID string, body controlv1.FeedbackAccessRequest, token credentials.PublishRunToken) (controlv1.FeedbackAccess, error) {
+	response, err := request[struct {
+		RequireSignIn *bool `json:"require_sign_in"`
+	}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetFeedbackAccess(ctx, runID, body, editors...)
+	})
+	if err != nil {
+		return controlv1.FeedbackAccess{}, err
+	}
+	if response.RequireSignIn == nil {
+		return controlv1.FeedbackAccess{}, failure.Wrap("read feedback access", failure.ServerResponseInvalid, errors.New("feedback access response is missing require_sign_in"))
+	}
+	return controlv1.FeedbackAccess{RequireSignIn: *response.RequireSignIn}, nil
+}
+
 func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, runID, id, key string, body controlv1.AppendReviewerFeedbackEventRequest, token credentials.PublishRunToken) (controlv1.FeedbackEvent, error) {
 	params := &controlv1.AppendReviewerFeedbackEventParams{IdempotencyKey: key}
 	return request[controlv1.FeedbackEvent](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

@@ -384,6 +384,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Team.Create.remoteFlags, true)
 	case "team members":
 		apply(&flags.Team.Members.remoteFlags, true)
+	case "team feedback show":
+		apply(&flags.Team.Feedback.Show.remoteFlags, true)
+	case "team feedback set":
+		apply(&flags.Team.Feedback.Set.remoteFlags, true)
 	case "team invite create":
 		apply(&flags.Team.Invite.Create.remoteFlags, true)
 	case "team invite list":

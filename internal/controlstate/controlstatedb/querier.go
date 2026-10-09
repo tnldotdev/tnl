@@ -141,6 +141,7 @@ type Querier interface {
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityPublicURL(ctx context.Context, arg GetIdentityPublicURLParams) (GetIdentityPublicURLRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
+	GetIdentityTeamFeedbackPolicy(ctx context.Context, arg GetIdentityTeamFeedbackPolicyParams) (bool, error)
 	GetIngressLease(ctx context.Context, arg GetIngressLeaseParams) (ControlIngressLease, error)
 	GetIngressUsageReport(ctx context.Context, arg GetIngressUsageReportParams) (ControlIngressUsageReport, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
@@ -169,6 +170,9 @@ type Querier interface {
 	// overlap; readiness checks its lease, and projection reads exclude drained leases.
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
+	// guest trials have a saved ownership boundary without a local team policy.
+	// only known guest teams default to optional sign-in; missing teams fail closed.
+	GetReviewerFeedbackPolicy(ctx context.Context, teamID string) (bool, error)
 	GetShare(ctx context.Context, id string) (ControlShare, error)
 	GetShareCapablePublishRun(ctx context.Context, arg GetShareCapablePublishRunParams) (string, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
@@ -390,6 +394,7 @@ type Querier interface {
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
+	SetTeamFeedbackPolicy(ctx context.Context, arg SetTeamFeedbackPolicyParams) (bool, error)
 	ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error)
 	ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error)
 	ShareBrowserPreviewPublicURL(ctx context.Context, arg ShareBrowserPreviewPublicURLParams) (string, error)
