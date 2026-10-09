@@ -205,7 +205,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			o.printed = true
 			footer := "ctrl+c to stop"
 			if o.guestDemo {
-				footer = "tnl login to publish your app; ctrl+c to stop"
+				footer = "tnl auth login to publish your app; ctrl+c to stop"
 			}
 			var openErr error
 			if o.openURL != nil && !o.opened && !o.demo {

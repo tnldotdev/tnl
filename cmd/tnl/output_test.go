@@ -204,7 +204,7 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stderr.String(), "15 min / about 5 MiB across runs") ||
-		!strings.Contains(stderr.String(), "tnl login to publish your app") ||
+		!strings.Contains(stderr.String(), "tnl auth login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
 	}

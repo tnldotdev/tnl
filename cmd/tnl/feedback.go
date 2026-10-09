@@ -134,7 +134,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; run tnl dev first"))
+		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; start an integrated app first"))
 	}
 	threads, cursor, err := session.authenticated.Control.ListFeedbackThreads(ctx, teamID)
 	if err != nil {
@@ -380,7 +380,7 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	}
 	defer session.Close()
 	if project.Found() && previewID == "" {
-		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; run tnl dev first"))
+		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; start an integrated app first"))
 	}
 	cursor := flags.After
 	for {

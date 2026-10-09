@@ -69,7 +69,7 @@ tasks:
       - |
         TNL_LOGIN_TOKEN="${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}" \
           TNL_SERVER=https://control.127.0.0.1.nip.io TNL_STATE_DIR=.local/client-state \
-          go run ./cmd/tnl login --token
+          go run ./cmd/tnl auth login --token
 
   local:tnl:
     desc: Run the isolated local client; pass arguments after --

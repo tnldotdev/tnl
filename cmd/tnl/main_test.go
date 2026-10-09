@@ -473,7 +473,7 @@ func TestGuestCommandExplainsSignInAndDemoWithoutPrompting(t *testing.T) {
 		t.Fatalf("guest sign-in reason = %q, typed = %t", reason, typed)
 	}
 	writeCommandError(&stderr, err)
-	if !strings.Contains(stderr.String(), "tnl login") || !strings.Contains(stderr.String(), "tnl publish --demo") ||
+	if !strings.Contains(stderr.String(), "tnl auth login") || !strings.Contains(stderr.String(), "tnl publish") || !strings.Contains(stderr.String(), "--demo") ||
 		strings.Contains(stderr.String(), "authentication required") || stdout.Len() != 0 {
 		t.Fatalf("guest command output = %q, stdout = %q", stderr.String(), stdout.String())
 	}

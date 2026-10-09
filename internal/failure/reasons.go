@@ -240,7 +240,7 @@ var definitions = map[Reason]Definition{
 	},
 	GuestSessionInvalid: {
 		Class: Invalid, Message: "the saved guest demo state is invalid",
-		Action: "run tnl login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
+		Action: "run tnl auth login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
 	},
 	CurrentDirectoryUnavailable: {
 		Class: Unavailable, Message: "tnl could not read the working directory",
@@ -280,7 +280,7 @@ var definitions = map[Reason]Definition{
 	},
 	LoginTerminalRequired: {
 		Class: Invalid, Message: "login-token authentication requires an interactive terminal",
-		Action: "run tnl login in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
+		Action: "run tnl auth login --token in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
@@ -316,7 +316,7 @@ var definitions = map[Reason]Definition{
 	},
 	IntegrationURLNotReady: {
 		Class: Unavailable, Message: "the integration URL publisher is not ready",
-		Action: "keep a participating tnl dev or tnl publish tunnel running and wait for its publisher", Retry: RetryLater,
+		Action: "keep a participating app or tnl publish tunnel running and wait for its publisher", Retry: RetryLater,
 	},
 	IntegrationURLLeaseExpired: {
 		Class: Stale, Message: "the integration URL publisher stopped renewing its readiness",
@@ -360,19 +360,19 @@ var definitions = map[Reason]Definition{
 	},
 	PreviewNotSaved: {
 		Class: NotFound, Message: "the project does not have a saved preview",
-		Action: "select the configured project and run tnl dev before sharing or reading its feedback", Retry: RetryAfterChange,
+		Action: "select the configured project and start an integrated app before sharing or reading its feedback", Retry: RetryAfterChange,
 	},
 	PreviewStateConflict: {
 		Class: Conflict, Message: "the saved preview does not match the current project",
-		Action: "check the selected server, team, and project, then run tnl dev again", Retry: RetryAfterChange,
+		Action: "check the selected server, team, and project, then restart its integrated app", Retry: RetryAfterChange,
 	},
 	DevProcessFailed: {
 		Class: Unavailable, Message: "the development server command could not start or stopped",
-		Action: "check the command and its child output, then restart tnl dev", Retry: RetryAfterChange,
+		Action: "check the app's development command and output, then restart it", Retry: RetryAfterChange,
 	},
 	DevSocketUnavailable: {
 		Class: Unavailable, Message: "tnl could not use its development session socket",
-		Action: "check the local runtime directory and permissions, then restart tnl dev", Retry: RetryAfterChange,
+		Action: "check the local runtime directory and permissions, then restart the app", Retry: RetryAfterChange,
 	},
 	BrowserOpenFailed: {
 		Class: Unavailable, Message: "tnl could not open the public URL in a browser",
@@ -450,23 +450,23 @@ var definitions = map[Reason]Definition{
 	},
 	GuestTrialExhausted: {
 		Class: Forbidden, Message: "this guest demo trial has ended",
-		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app", Retry: RetryAfterChange,
 	},
 	GuestDemoOnly: {
 		Class: Forbidden, Message: "guest access only publishes the built-in demo",
-		Action: "run tnl login to publish your own app or change settings", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app or change settings", Retry: RetryAfterChange,
 	},
 	GuestIssuanceLimited: {
 		Class: RateLimited, Message: "guest demo creation is limited on this network",
-		Action: "wait an hour or run tnl login to continue", Retry: RetryLater,
+		Action: "wait an hour or run tnl auth login to continue", Retry: RetryLater,
 	},
 	GuestSignInRequired: {
 		Class: Unauthenticated, Message: "this command needs sign-in",
-		Action: "run tnl login to manage this server, or tnl publish --demo to try the built-in demo", Retry: RetryAfterChange,
+		Action: "run tnl auth login to manage this server, or tnl publish --demo to try the built-in demo", Retry: RetryAfterChange,
 	},
 	GuestIPChanged: {
 		Class: Forbidden, Message: "your IP changed since this guest demo started",
-		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app", Retry: RetryAfterChange,
 	},
 	ServerResponseInvalid: {
 		Class: Internal, Message: "the server sent a response tnl could not use",
