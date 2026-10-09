@@ -124,10 +124,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		invalid := decodeErr != nil || !bytes.Equal(digest[:], row.Fingerprint) || definition.Path != row.Path || definition.Service != row.Service
 		endpointIndex, exists := endpointIndices[key]
 		if !exists {
-			delivery := definition.Delivery
-			if delivery == "" {
-				delivery = "fanout"
-			}
+			delivery := definition.DeliveryMode()
 			url.Endpoints = append(url.Endpoints, WebhookEndpointInfo{
 				Name: row.Name, Service: row.Service, Path: row.Path, URL: url.PublicURL + row.Path,
 				Delivery: delivery, State: "unavailable", ReadyReceivers: []WebhookReceiverInfo{},
@@ -177,9 +174,9 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 			endpoint.Reason, endpoint.Action = statusReason(failure.WebhookPolicyConflict)
 		case url.State != "ready":
 			endpoint.Reason, endpoint.Action = url.Reason, url.Action
-		case endpoint.Delivery == "exclusive" && endpoint.Owner == nil:
+		case endpoint.Delivery == "selected" && endpoint.Owner == nil:
 			endpoint.Reason, endpoint.Action = statusReason(failure.WebhookOwnerMissing)
-		case endpoint.Delivery == "exclusive" && !slices.ContainsFunc(endpoint.ReadyReceivers, func(receiver WebhookReceiverInfo) bool { return receiver.TunnelID == endpoint.Owner.TunnelID }):
+		case endpoint.Delivery == "selected" && !slices.ContainsFunc(endpoint.ReadyReceivers, func(receiver WebhookReceiverInfo) bool { return receiver.TunnelID == endpoint.Owner.TunnelID }):
 			endpoint.Reason, endpoint.Action = statusReason(failure.WebhookOwnerUnready)
 		case len(endpoint.ReadyReceivers) == 0:
 			endpoint.Reason, endpoint.Action = statusReason(failure.WebhookNoReadyReceivers)

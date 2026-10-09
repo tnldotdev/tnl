@@ -74,7 +74,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	definition := config.Webhook{Service: "api", Path: "/hooks/event", Delivery: "exclusive", AllowFrom: config.AnyWebhookSources()}
+	definition := config.Webhook{Service: "api", Path: "/hooks/event", Provider: "slack", Delivery: "selected"}
 	encoded, digest, err := integrationurls.DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "event", encoded); err != nil {
 		t.Fatal(err)
 	}
-	fanout := config.Webhook{Service: "api", Path: "/hooks/fanout", AllowFrom: config.AnyWebhookSources()}
+	fanout := config.Webhook{Service: "api", Path: "/hooks/fanout", Provider: "custom"}
 	fanoutBytes, _, err := integrationurls.DefinitionBytes(fanout)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if err := state.ClaimWebhookReceiver(t.Context(), server, group, "event", tunnel.ID(), digest, false); err != nil {
 		t.Fatal(err)
 	}
-	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != telemetryExclusive {
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != telemetrySelected {
 		t.Fatalf("ready exclusive endpoint = %q", mode)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 2); err != nil {

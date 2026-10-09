@@ -1,10 +1,10 @@
 {
   "allow_all_ips": "allowAllIPs",
-  "allow_from": "allowFrom",
   "allow_ip": "allowIP",
   "public_url": "publicURL",
   "request_inspection": "requestInspection",
   "request_limit": "requestLimit",
+  "source_ips": "sourceIPs",
   "startup_timeout": "startupTimeout",
   "strip_prefix": "stripPrefix"
 }

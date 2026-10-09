@@ -261,7 +261,7 @@ func TestIntegrationTelemetryIsTypedPrivateAndOncePerInvocation(t *testing.T) {
 			for _, event := range []telemetryPayload{
 				newIntegrationTelemetry(telemetryOAuthReady, ""),
 				newIntegrationTelemetry(telemetryOAuthRedirected, ""),
-				newIntegrationTelemetry(telemetryWebhookReady, telemetryExclusive),
+				newIntegrationTelemetry(telemetryWebhookReady, telemetrySelected),
 				newIntegrationTelemetry(telemetryWebhookReached, telemetryFanout),
 			} {
 				invocation.Report(event)

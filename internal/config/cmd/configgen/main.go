@@ -169,29 +169,15 @@ func webhookSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("service", &jsonschema.Schema{Type: "string"})
 	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
-	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "exclusive"}, Default: "fanout"})
+	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "selected"}})
 	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
 	providerValues := make([]any, 0, len(webhookips.Names()))
 	for _, name := range webhookips.Names() {
 		providerValues = append(providerValues, name)
 	}
-	providerField := &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: providerValues}, UniqueItems: true}
-	ipField := &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true}
-	sourceObject := func(required ...string) *jsonschema.Schema {
-		fields := jsonschema.NewProperties()
-		for _, name := range required {
-			if name == "providers" {
-				fields.Set(name, providerField)
-			} else {
-				fields.Set(name, ipField)
-			}
-		}
-		return &jsonschema.Schema{Type: "object", Properties: fields, Required: required, AdditionalProperties: jsonschema.FalseSchema}
-	}
-	properties.Set("allow_from", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		{Const: "*"}, sourceObject("providers"), sourceObject("ips"), sourceObject("providers", "ips"),
-	}})
-	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "allow_from"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
+	properties.Set("provider", &jsonschema.Schema{Type: "string", Enum: providerValues})
+	properties.Set("source_ips", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
+	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "provider"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 
 func aliasSchema() *jsonschema.Schema {

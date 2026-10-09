@@ -15,11 +15,11 @@ import (
 
 func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project projectConfiguration, use, force bool, stdout io.Writer) error {
 	if !project.Found() {
-		return failure.Wrap("select webhook", failure.ProjectConfigMissing, errors.New("project configuration with an exclusive webhook is required"))
+		return failure.Wrap("select webhook", failure.ProjectConfigMissing, errors.New("project configuration with a selected webhook is required"))
 	}
 	definition, found := project.Config.Webhooks[flags.Endpoint]
-	if !found || definition.Delivery != "exclusive" {
-		return failure.Wrap("select webhook", failure.ProjectConfigInvalid, fmt.Errorf("webhook %q must be configured with delivery: exclusive", flags.Endpoint))
+	if !found || definition.DeliveryMode() != "selected" {
+		return failure.Wrap("select webhook", failure.ProjectConfigInvalid, fmt.Errorf("webhook %q must use selected delivery", flags.Endpoint))
 	}
 	server, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
