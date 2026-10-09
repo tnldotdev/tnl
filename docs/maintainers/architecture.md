@@ -194,10 +194,10 @@ an explicit opt-in and DNS automation. disabling new claims does not affect
 existing custom domains or their release.
 
 new public URL creation records one immutable, client-declared purpose: `app`,
-`alias`, `demo`, `oauth`, or `webhooks`. existing URLs without this field remain
-`unknown` and are excluded from purpose counters. ingress can associate
-connection and byte usage with that saved URL, but cannot see which provider
-sent a webhook: paths remain inside visitor TLS until local tnl terminates it.
+`alias`, `demo`, `oauth`, or `webhooks`. migration labels earlier URLs as `app`.
+ingress can associate connection and byte usage with that saved URL, but cannot
+see which provider sent a webhook: paths remain inside visitor TLS until local
+tnl terminates it.
 
 projects with `oauth: true` publish one saved OAuth callback URL while app
 tunnels run. linked worktrees share that URL through the same client state,

@@ -57,7 +57,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		body := controlv1.CreatePublicURLRequest{
 			TeamId: guest.TeamId, DomainId: guest.DomainId, MembershipId: &guest.MembershipId,
 			CanonicalHostname: hostname, Target: "http://127.0.0.1:3000",
-			PublicUrlScope: controlv1.Member, Purpose: controlv1.PublicURLCreatePurposeDemo, Ephemeral: new(bool),
+			PublicUrlScope: controlv1.Member, Purpose: controlv1.Demo, Ephemeral: new(bool),
 		}
 		*body.Ephemeral = true
 		body.AllowedIpPrefixes = &[]string{ip}
@@ -209,7 +209,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	hostname := "demo-1." + issued.Namespace
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
 		Control: authenticated.Control, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
-		DomainID: issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.PublicURLCreatePurposeDemo,
+		DomainID: issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
 		AllowedIPPrefixes: []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()},
 		Ephemeral:         true, State: store,

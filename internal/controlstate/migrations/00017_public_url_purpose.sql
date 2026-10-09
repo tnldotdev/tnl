@@ -1,9 +1,9 @@
 -- +goose Up
--- save one immutable purpose on each public url, including historical unknowns.
-ALTER TABLE control.public_urls ADD COLUMN purpose text NOT NULL DEFAULT 'unknown'
-    CHECK (purpose IN ('unknown', 'app', 'alias', 'demo', 'oauth', 'webhooks'));
-CREATE INDEX public_urls_purpose_created ON control.public_urls (purpose, created_at DESC, id)
-    WHERE purpose <> 'unknown';
+-- label saved urls as apps, then require an explicit purpose for every new url.
+ALTER TABLE control.public_urls ADD COLUMN purpose text NOT NULL DEFAULT 'app'
+    CHECK (purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks'));
+ALTER TABLE control.public_urls ALTER COLUMN purpose DROP DEFAULT;
+CREATE INDEX public_urls_purpose_created ON control.public_urls (purpose, created_at DESC, id);
 
 -- +goose Down
 DROP INDEX control.public_urls_purpose_created;

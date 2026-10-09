@@ -49,7 +49,7 @@ type Config struct {
 	MembershipID             string
 	PolicyRevision           uint64
 	PublicURLScope           controlv1.PublicURLScope
-	Purpose                  controlv1.PublicURLCreatePurpose
+	Purpose                  controlv1.PublicURLPurpose
 	Hostname                 string
 	PreviewID                string
 	Feedback                 bool
@@ -258,7 +258,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 }
 
 func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
-	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope || route.Purpose != controlv1.PublicURLPurpose(config.Purpose) ||
+	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope || route.Purpose != config.Purpose ||
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}

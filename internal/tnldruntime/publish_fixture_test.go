@@ -207,7 +207,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
 	return publisher.Config{
 		Control: i.routes, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
-		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope, Purpose: controlv1.PublicURLCreatePurposeApp,
+		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope, Purpose: controlv1.App,
 		Hostname: i.hostname, Target: target, AllowedIPPrefixes: []string{"127.0.0.1/32"},
 		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,
 		FallbackDelay: 10 * time.Millisecond, DrainTime: time.Second,

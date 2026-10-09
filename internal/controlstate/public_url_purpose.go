@@ -9,7 +9,6 @@ const (
 	PublicURLPurposeDemo     PublicURLPurpose = "demo"
 	PublicURLPurposeOAuth    PublicURLPurpose = "oauth"
 	PublicURLPurposeWebhooks PublicURLPurpose = "webhooks"
-	PublicURLPurposeUnknown  PublicURLPurpose = "unknown" // only pre-migration URLs.
 )
 
 func (p PublicURLPurpose) ValidForCreation() bool {

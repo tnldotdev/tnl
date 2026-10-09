@@ -348,7 +348,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 						return &certificateTestTransport{done: make(chan struct{})}, nil
 					})
-					configs[slot] = Config{Control: control, State: store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member, Purpose: controlv1.PublicURLCreatePurposeApp,
+					configs[slot] = Config{Control: control, State: store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 						Hostname: control.setup.PublicUrl.CanonicalHostname, Target: "http://127.0.0.1:3000", QUICConnector: connector, TCPConnector: connector,
 						FallbackDelay: time.Millisecond, DrainTime: time.Millisecond, ProvisioningStalledDelay: time.Minute}
 					for connection := range 2 {

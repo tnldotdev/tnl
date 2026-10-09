@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -37,6 +39,19 @@ func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *test
 	var stored string
 	if err := database.pool.QueryRow(t.Context(), `SELECT purpose FROM control.public_urls WHERE id = $1`, created.ID).Scan(&stored); err != nil || stored != "webhooks" {
 		t.Fatalf("stored purpose = %q, error=%v", stored, err)
+	}
+	var defaultValue sql.NullString
+	if err := database.pool.QueryRow(t.Context(), `SELECT column_default FROM information_schema.columns
+		WHERE table_schema = 'control' AND table_name = 'public_urls' AND column_name = 'purpose'`).Scan(&defaultValue); err != nil || defaultValue.Valid {
+		t.Fatalf("new public URLs must declare a purpose, default = %v, error=%v", defaultValue, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET purpose = 'unknown' WHERE id = $1`, created.ID); err == nil {
+		t.Fatal("database accepted an unknown purpose")
+	} else {
+		var postgresError *pgconn.PgError
+		if !errors.As(err, &postgresError) || postgresError.Code != "23514" {
+			t.Fatalf("unknown purpose was rejected for the wrong reason: %v", err)
+		}
 	}
 	metric := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(metric, httptest.NewRequest(http.MethodGet, "/metrics", nil))
