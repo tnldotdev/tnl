@@ -17,16 +17,31 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/webhookprovider"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const maxCatalogBytes = 16384
 const staleLimit = 24 * time.Hour
 const maxFreshness = 15 * time.Minute
 
-func Names() []string { return webhookprovider.Names() }
+// Names lists generated provider values in the order used by the project schema.
+func Names() []string {
+	values := [...]controlv1.WebhookProvider{
+		controlv1.AmazonSns, controlv1.Auth0, controlv1.Clerk, controlv1.Custom,
+		controlv1.Discord, controlv1.Github, controlv1.Gitlab, controlv1.IncidentIo,
+		controlv1.LemonSqueezy, controlv1.Linear, controlv1.Loops, controlv1.Paddle,
+		controlv1.Postmark, controlv1.Resend, controlv1.Sendgrid, controlv1.Shopify,
+		controlv1.Slack, controlv1.Stripe, controlv1.Supabase, controlv1.Telegram,
+		controlv1.Twilio, controlv1.Vercel, controlv1.Workos,
+	}
+	names := make([]string, len(values))
+	for index, value := range values {
+		names[index] = string(value)
+	}
+	return names
+}
 
-func Valid(name string) bool { return webhookprovider.Valid(name) }
+func Valid(name string) bool { return controlv1.WebhookProvider(name).Valid() }
 
 type Source struct {
 	Name     string
