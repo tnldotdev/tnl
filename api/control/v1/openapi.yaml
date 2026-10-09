@@ -2018,7 +2018,7 @@ components:
     BrowserAccessResponse:
       type: object
       additionalProperties: false
-      required: [identity_id, display_name, team_member]
+      required: [identity_id, display_name, visit_allowed]
       properties:
         identity_id:
           $ref: "#/components/schemas/IdentityID"
@@ -2026,8 +2026,9 @@ components:
           type: string
           minLength: 1
           maxLength: 256
-        team_member:
+        visit_allowed:
           type: boolean
+          description: Whether the authenticated identity may visit through the preview's current team access grant. Identity alone does not allow a visit.
     Preview:
       type: object
       additionalProperties: false

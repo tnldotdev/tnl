@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -139,24 +138,11 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 	}
 	identityID := "00000000-0000-4000-8000-000000000002"
 	insertAuthorityIdentity(t, database, identityID, "", false, now)
-	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/",
-	}, BrowserAccessSession{
-		IdentityID: identityID, DisplayName: "Sam", AccessToken: "access-test", RefreshToken: "refresh-test",
-		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour),
-	}, now)
-	if err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.identities SET display_name = 'Sam' WHERE id = $1`, identityID); err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), f.setup.PublicURLID, handoff.Token, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(cookie)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actor := FeedbackActor{Kind: "reviewer", AllowedIP: true, IdentityID: identityID, DisplayName: "Sam", BrowserCookieSecret: raw}
+	actor, _, _ := newBrowserReviewer(t, database, preview.ID, f.setup.PublicURLID, identityID, now)
+	actor.AllowedIP = true
 	thread, err := database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
 		AuthorDisplayName: "not sam", Anchor: json.RawMessage(`null`),
@@ -199,9 +185,9 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 		t.Fatalf("signed-in nonmember with link = %q, %t, %v", sharedReport.AuthorIdentityID, sharedReport.AuthorVerified, err)
 	}
 	actor.ShareID, actor.CookieSecret = "", nil
-	actor.TeamMember = true
+	setBrowserTeamGrant(t, f, preview, true)
 	if _, _, err := database.ReviewerFeedbackScope(t.Context(), f.authentication(), preview.ID, actor, now); !errors.Is(err, ErrFeedbackAccess) {
-		t.Fatalf("nonmember used team access without a team grant: %v", err)
+		t.Fatalf("nonmember used another team's grant: %v", err)
 	}
 }
 

@@ -42,6 +42,27 @@ SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
        access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at
 FROM control.browser_access_sessions WHERE token_digest = $1 FOR UPDATE;
 
+-- name: ShareBrowserAccessSession :one
+SELECT session.*
+FROM control.browser_access_sessions AS session
+JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
+WHERE session.token_digest = sqlc.arg(token_digest)
+  AND included.public_url_id = sqlc.arg(public_url_id)
+FOR SHARE OF session, included;
+
+-- name: ShareBrowserControlIdentity :one
+SELECT session.identity_id, identity.display_name, session.access_token_digest,
+       session.access_expires_at, session.refresh_expires_at
+FROM control.control_sessions AS session
+JOIN control.identities AS identity ON identity.id = session.identity_id
+WHERE session.access_token_id = sqlc.arg(access_token_id)
+  AND session.authentication_method = 'oidc'
+  AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
+FOR SHARE OF session, identity;
+
+-- name: ShareBrowserPublicURL :one
+SELECT * FROM control.public_urls WHERE id = sqlc.arg(public_url_id) FOR SHARE;
+
 -- name: RotateBrowserAccessSession :exec
 UPDATE control.browser_access_sessions
 SET access_ciphertext = sqlc.arg(access_ciphertext), refresh_ciphertext = sqlc.arg(refresh_ciphertext),
