@@ -16,7 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/webhookprovider"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const maxFeedBytes = 8 << 20
@@ -49,7 +49,7 @@ type cached struct {
 type Catalog struct {
 	client      *http.Client
 	definitions map[string]definition
-	entries     map[string]*cached
+	entries     sync.Map
 	now         func() time.Time
 }
 
@@ -59,19 +59,16 @@ func newCatalog(client *http.Client, definitions map[string]definition) *Catalog
 	if client == nil {
 		client = http.DefaultClient
 	}
-	entries := make(map[string]*cached, len(webhookprovider.Names()))
-	for _, name := range webhookprovider.Names() {
-		entries[name] = &cached{}
-	}
-	return &Catalog{client: client, definitions: definitions, entries: entries, now: time.Now}
+	return &Catalog{client: client, definitions: definitions, now: time.Now}
 }
 
 // Read returns a validated policy or a bounded last-good copy; it never widens on failure.
 func (c *Catalog) Read(ctx context.Context, name string) (Result, error) {
-	if !webhookprovider.Valid(name) {
+	if !controlv1.WebhookProvider(name).Valid() {
 		return Result{}, ErrUnknown
 	}
-	entry := c.entries[name]
+	value, _ := c.entries.LoadOrStore(name, &cached{})
+	entry := value.(*cached)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	now := c.now()
