@@ -66,6 +66,26 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		_, _ = io.WriteString(response, "app-led visitor")
 	}))
 	defer app.Close()
+	runtimeProcess := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "serve", "--directory", project)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("local publisher output:\n%s", runtimeProcess.output.String())
+		}
+	})
+	socket := filepath.Join("/tmp", fmt.Sprintf("tnl-%d", os.Getuid()), "app-"+clientruntime.Identity(project, fixture.stateDirectory)+".sock")
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		connection, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		if err == nil {
+			_ = connection.Close()
+			return true, nil
+		}
+		select {
+		case <-runtimeProcess.done:
+			t.Fatalf("local publisher exited before registration: %v\n%s", runtimeProcess.result(), runtimeProcess.output.String())
+		default:
+		}
+		return false, err
+	})
 	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "start", "--directory", project)
 	if err := waitForDoneWithin(started.done, 30*time.Second); err != nil {
 		t.Fatal("local publisher did not start")
