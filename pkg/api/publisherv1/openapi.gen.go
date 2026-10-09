@@ -15,10 +15,47 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+// Defines values for BrowserAccessStatusAccessMethod.
+const (
+	Ip    BrowserAccessStatusAccessMethod = "ip"
+	Share BrowserAccessStatusAccessMethod = "share"
+	Team  BrowserAccessStatusAccessMethod = "team"
+)
+
+// Valid indicates whether the value is a known member of the BrowserAccessStatusAccessMethod enum.
+func (e BrowserAccessStatusAccessMethod) Valid() bool {
+	switch e {
+	case Ip:
+		return true
+	case Share:
+		return true
+	case Team:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrowserAccessStatusReason.
+const (
+	TNLIPPOLICYDENIED BrowserAccessStatusReason = "TNL_IP_POLICY_DENIED"
+)
+
+// Valid indicates whether the value is a known member of the BrowserAccessStatusReason enum.
+func (e BrowserAccessStatusReason) Valid() bool {
+	switch e {
+	case TNLIPPOLICYDENIED:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for BrowserFeedbackEventRequestType.
 const (
@@ -40,6 +77,26 @@ func (e BrowserFeedbackEventRequestType) Valid() bool {
 		return false
 	}
 }
+
+// BrowserAccessStatus defines model for BrowserAccessStatus.
+type BrowserAccessStatus struct {
+	AccessMethod     *BrowserAccessStatusAccessMethod `json:"access_method,omitempty"`
+	Allowed          bool                             `json:"allowed"`
+	ExpiresAt        *time.Time                       `json:"expires_at,omitempty"`
+	PreviewId        externalRef0.PreviewID           `json:"preview_id"`
+	PublicUrlId      externalRef0.PublicURLID         `json:"public_url_id"`
+	PublishRunNumber int64                            `json:"publish_run_number"`
+	Reason           *BrowserAccessStatusReason       `json:"reason,omitempty"`
+
+	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
+}
+
+// BrowserAccessStatusAccessMethod defines model for BrowserAccessStatus.AccessMethod.
+type BrowserAccessStatusAccessMethod string
+
+// BrowserAccessStatusReason defines model for BrowserAccessStatus.Reason.
+type BrowserAccessStatusReason string
 
 // BrowserFailedRequest defines model for BrowserFailedRequest.
 type BrowserFailedRequest struct {
@@ -193,6 +250,13 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+	//
+	// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+	//
+	// Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
+	GetBrowserAccessStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListBrowserFeedback List feedback on the current hostname
 	//
 	// Omitting path lists all pages on this hostname. Omitting state includes open and resolved threads. Results are ordered by feedback ID, with up to 100 threads per page. next_cursor is a feedback ID for the next list page; event_cursor is a separate numeric activity watermark.
@@ -256,6 +320,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /__tnl/feedback/{feedback_id}/events (the `AppendBrowserFeedbackEvent` operationId).
 	AppendBrowserFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+//
+// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+//
+// Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
+func (c *Client) GetBrowserAccessStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrowserAccessStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListBrowserFeedback List feedback on the current hostname
@@ -400,6 +481,33 @@ func (c *Client) AppendBrowserFeedbackEvent(ctx context.Context, feedbackId Feed
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewGetBrowserAccessStatusRequest constructs an http.Request for the GetBrowserAccessStatus method
+func NewGetBrowserAccessStatusRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/access")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewListBrowserFeedbackRequest constructs an http.Request for the ListBrowserFeedback method
@@ -759,6 +867,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current public URL
+	//
+	// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
+	GetBrowserAccessStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserAccessStatusResponse, error)
+
 	// ListBrowserFeedbackWithResponse List feedback on the current hostname
 	//
 	// Omitting path lists all pages on this hostname. Omitting state includes open and resolved threads. Results are ordered by feedback ID, with up to 100 threads per page. next_cursor is a feedback ID for the next list page; event_cursor is a separate numeric activity watermark.
@@ -830,6 +947,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /__tnl/feedback/{feedback_id}/events (the `AppendBrowserFeedbackEvent` operationId).
 	AppendBrowserFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendBrowserFeedbackEventResponse, error)
+}
+
+type GetBrowserAccessStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BrowserAccessStatus
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *BrowserAccessStatus
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBrowserAccessStatusResponse) GetJSON200() *BrowserAccessStatus {
+	return r.JSON200
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetBrowserAccessStatusResponse) GetJSON403() *BrowserAccessStatus {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBrowserAccessStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrowserAccessStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrowserAccessStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBrowserAccessStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListBrowserFeedbackResponse struct {
@@ -1078,6 +1243,21 @@ func (r AppendBrowserFeedbackEventResponse) ContentType() string {
 	return ""
 }
 
+// GetBrowserAccessStatusWithResponse Check whether this browser can visit the current public URL
+//
+// Uses the same IP, share cookie, and team session decision as forwarding on this hostname. The response contains no share or session secrets. Denied visitors have only the bounded denied-connection budget. This endpoint does not reach the local service.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /__tnl/access (the `GetBrowserAccessStatus` operationId).
+func (c *ClientWithResponses) GetBrowserAccessStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserAccessStatusResponse, error) {
+	rsp, err := c.GetBrowserAccessStatus(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrowserAccessStatusResponse(rsp)
+}
+
 // ListBrowserFeedbackWithResponse List feedback on the current hostname
 //
 // Omitting path lists all pages on this hostname. Omitting state includes open and resolved threads. Results are ordered by feedback ID, with up to 100 threads per page. next_cursor is a feedback ID for the next list page; event_cursor is a separate numeric activity watermark.
@@ -1196,6 +1376,39 @@ func (c *ClientWithResponses) AppendBrowserFeedbackEventWithResponse(ctx context
 		return nil, err
 	}
 	return ParseAppendBrowserFeedbackEventResponse(rsp)
+}
+
+// ParseGetBrowserAccessStatusResponse parses an HTTP response from a GetBrowserAccessStatusWithResponse call
+func ParseGetBrowserAccessStatusResponse(rsp *http.Response) (*GetBrowserAccessStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrowserAccessStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrowserAccessStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest BrowserAccessStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListBrowserFeedbackResponse parses an HTTP response from a ListBrowserFeedbackWithResponse call
@@ -1356,6 +1569,9 @@ func ParseAppendBrowserFeedbackEventResponse(rsp *http.Response) (*AppendBrowser
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetBrowserAccessStatus Check whether this browser can visit the current public URL
+	// (GET /__tnl/access)
+	GetBrowserAccessStatus(w http.ResponseWriter, r *http.Request)
 	// ListBrowserFeedback List feedback on the current hostname
 	// (GET /__tnl/feedback)
 	ListBrowserFeedback(w http.ResponseWriter, r *http.Request, params ListBrowserFeedbackParams)
@@ -1384,6 +1600,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetBrowserAccessStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetBrowserAccessStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrowserAccessStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListBrowserFeedback operation middleware
 func (siw *ServerInterfaceWrapper) ListBrowserFeedback(w http.ResponseWriter, r *http.Request) {
@@ -1745,6 +1975,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/access", wrapper.GetBrowserAccessStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/feedback", wrapper.ListBrowserFeedback)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/__tnl/feedback", wrapper.CreateBrowserFeedbackReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/feedback/{feedback_id}", wrapper.GetBrowserFeedbackThread)

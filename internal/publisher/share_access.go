@@ -95,30 +95,35 @@ func (a *shareAccess) permitsTeamLogin() bool {
 }
 
 func (a *shareAccess) permits(request *http.Request) bool {
+	_, allowed := a.permission(request)
+	return allowed
+}
+
+func (a *shareAccess) permission(request *http.Request) (time.Time, bool) {
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	shareID, raw, found := strings.Cut(cookie.Value, ".")
 	if !found || !opaqueid.Valid(shareID, opaqueid.SharePrefix) {
-		return false
+		return time.Time{}, false
 	}
 	secret, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil || len(secret) != 32 {
-		return false
+		return time.Time{}, false
 	}
 	digest := sha256.Sum256(secret)
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.confirmed.IsZero() || time.Since(a.confirmed) > shareStateFreshness {
-		return false
+		return time.Time{}, false
 	}
 	share, found := a.shares[shareID]
 	if !found || !share.expiresAt.After(time.Now()) {
-		return false
+		return time.Time{}, false
 	}
 	_, allowed := share.cookies[digest]
-	return allowed
+	return share.expiresAt, allowed
 }
 
 func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareRedemption, error) {

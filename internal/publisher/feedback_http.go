@@ -24,6 +24,15 @@ func feedbackHTTPAccess(response http.ResponseWriter, request *http.Request) (co
 	return access, ok
 }
 
+func (h *feedbackHTTP) GetBrowserAccessStatus(response http.ResponseWriter, request *http.Request) {
+	result, ok := request.Context().Value(accessStatusContextKey{}).(accessStatusResult)
+	if !ok {
+		http.NotFound(response, request)
+		return
+	}
+	writePreviewAccessStatus(response, result)
+}
+
 func (h *feedbackHTTP) ListBrowserFeedback(response http.ResponseWriter, request *http.Request, params publisherv1.ListBrowserFeedbackParams) {
 	if access, ok := feedbackHTTPAccess(response, request); ok {
 		h.runtime.list(response, request, access, params)

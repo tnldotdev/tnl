@@ -166,7 +166,8 @@ func runSession(
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
-		Hostname:      setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
+		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
+		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
 		Mounts:            config.Mounts,
 		ShareAccess:       shareRuntime,
 		Feedback:          feedback,

@@ -185,6 +185,18 @@ export const FeedbackEventPage = z.strictObject({
   event_cursor: z.number().int().min(0),
 });
 
+export type BrowserAccessStatus = z.infer<typeof BrowserAccessStatus>;
+export const BrowserAccessStatus = z.strictObject({
+  schema_version: ReviewSchemaVersion,
+  allowed: z.boolean(),
+  preview_id: ResourceID,
+  public_url_id: ResourceID,
+  publish_run_number: z.number().int().min(1),
+  access_method: z.enum(["ip", "share", "team"]).optional(),
+  expires_at: z.iso.datetime().optional(),
+  reason: z.literal("TNL_IP_POLICY_DENIED").optional(),
+});
+
 export type BrowserFeedbackReportRequest = z.infer<typeof BrowserFeedbackReportRequest>;
 export const BrowserFeedbackReportRequest = z.strictObject({
   schema_version: ReviewSchemaVersion,

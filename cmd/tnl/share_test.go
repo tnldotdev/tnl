@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -54,6 +56,23 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--state-dir", filepath.Join(t.TempDir(), "state"), "--expires-in", "0d"}, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
 		t.Fatalf("share create dispatch error = %v", err)
+	}
+}
+
+func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
+	project := projectConfiguration{}
+	project.Config.Services = config.Services{"web": {}, "api": {}}
+	routes := []controlv1.PublicURL{
+		{Id: "url_api", CanonicalHostname: "api.example.test"},
+		{Id: "url_web", CanonicalHostname: "web.example.test"},
+	}
+	services := shareServiceURLs(project, routes)
+	if services["api"].PublicURL != "https://api.example.test" || services["web"].PublicURLID != "url_web" {
+		t.Fatalf("unexpected share service mapping: %+v", services)
+	}
+	encoded, err := json.Marshal(services)
+	if err != nil || strings.Contains(string(encoded), "__tnl/share") {
+		t.Fatalf("unexpected share URL in ordinary service mapping: %s, %v", encoded, err)
 	}
 }
 

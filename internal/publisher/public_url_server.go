@@ -33,6 +33,9 @@ import (
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
 	Hostname          string
+	PreviewID         string
+	PublicURLID       string
+	PublishRunNumber  uint64
 	Target            string
 	Handler           http.Handler
 	AdmitRequest      func(*http.Request) error
@@ -246,7 +249,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 				}
 				denied := request.Context().Value(denialContextKey{}) == true
-				sharePermitted := config.ShareAccess != nil && config.ShareAccess.permits(request)
+				var shareExpiry time.Time
+				sharePermitted := false
+				if config.ShareAccess != nil {
+					shareExpiry, sharePermitted = config.ShareAccess.permission(request)
+				}
 				if sharePath(request.URL.EscapedPath()) {
 					response.Header().Set("Cache-Control", "no-store")
 					response.Header().Set("Referrer-Policy", "no-referrer")
@@ -303,7 +310,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if browserPermitted {
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
-				if denied && !sharePermitted && (!browserPermitted || !browser.TeamMember) {
+				allowed := !denied || sharePermitted || browserPermitted && browser.TeamMember
+				if request.URL.Path == "/__tnl/access" {
+					if request.Method != http.MethodGet || config.PreviewID == "" {
+						http.NotFound(response, request)
+						return
+					}
+					result := previewAccessStatus(config, denied, sharePermitted, browserPermitted && browser.TeamMember, shareExpiry)
+					request = request.WithContext(context.WithValue(request.Context(), accessStatusContextKey{}, result))
+					(&feedbackHTTP{}).GetBrowserAccessStatus(response, request)
+					return
+				}
+				if !allowed {
 					if !browserPermitted && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
 						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
 						response.Header().Set("Cache-Control", "no-store")
