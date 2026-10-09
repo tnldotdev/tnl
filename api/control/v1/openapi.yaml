@@ -1449,13 +1449,9 @@ components:
     PublicURLScope:
       type: string
       enum: [member, shared]
-    PublicURLCreatePurpose:
-      type: string
-      enum: [app, alias, demo, oauth, webhooks]
     PublicURLPurpose:
       type: string
-      description: existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
-      enum: [unknown, app, alias, demo, oauth, webhooks]
+      enum: [app, alias, demo, oauth, webhooks]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -1559,7 +1555,7 @@ components:
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
-          $ref: "#/components/schemas/PublicURLCreatePurpose"
+          $ref: "#/components/schemas/PublicURLPurpose"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

@@ -75,7 +75,8 @@ endpoints or deliveries. The provider label accepts only the fixed enum or
 The `purpose` label is a fixed, client-declared public URL use such as `app`,
 `webhooks`, or `oauth`. These process-local counters show activity, not distinct
 identities. Query control's saved URLs and publish runs for distinct identities;
-older URLs with `unknown` purpose are excluded from these purpose counters.
+URLs saved before purpose tracking are labeled `app` by migration but do not
+retroactively increment the creation counter.
 
 For distinct identities rather than process-local counter rates, query control's
 committed ready runs. Each identity appears once per purpose in the window:
@@ -85,7 +86,6 @@ SELECT u.purpose, count(DISTINCT r.acting_identity_id) AS identities
 FROM control.publish_runs AS r
 JOIN control.public_urls AS u ON u.id = r.public_url_id
 WHERE r.ready_at >= now() - interval '30 days'
-  AND u.purpose <> 'unknown'
 GROUP BY u.purpose
 ORDER BY u.purpose;
 ```

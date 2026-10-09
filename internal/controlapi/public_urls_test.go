@@ -505,7 +505,7 @@ func TestCreateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
 	}
 	body, err := json.Marshal(controlv1.CreatePublicURLRequest{
 		TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
-		PublicUrlScope: controlv1.Member, Purpose: controlv1.PublicURLCreatePurposeApp, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes,
+		PublicUrlScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes,
 	})
 	if err != nil || len(body) <= 64<<10 {
 		t.Fatalf("large create request body = %d bytes, %v", len(body), err)
