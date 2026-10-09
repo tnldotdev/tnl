@@ -104,6 +104,43 @@ func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	}
 }
 
+func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
+	started := make(chan struct{})
+	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	id, err := manager.Reserve("web", "owner", 1, "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Register(id, "owner", "http://127.0.0.1:1234", "node"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	manager.RecordWarning("web", id, "runtime.provisioning_stalled")
+	first := manager.Snapshot()
+	if first.Services[0].Failure != "runtime.provisioning_stalled" {
+		t.Fatalf("warning was not recorded: %+v", first.Services[0])
+	}
+	manager.RecordWarning("web", id, "runtime.provisioning_stalled")
+	manager.RecordWarning("web", "reg_outdated", "runtime.unrelated")
+	if manager.Snapshot().Cursor != first.Cursor {
+		t.Fatal("repeated or stale warning advanced the event cursor")
+	}
+	if err := manager.Published(id, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.Snapshot().Services[0]; got.Failure != "" || !got.Routable {
+		t.Fatalf("warning remained after publication became routable: %+v", got)
+	}
+}
+
 func TestJournalResumeAndManagerRestartWatermark(t *testing.T) {
 	project, state := t.TempDir(), t.TempDir()
 	manager, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
