@@ -1,10 +1,16 @@
 -- name: SaveIntegrationURLHostname :exec
-INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname)
-VALUES (sqlc.arg(server_origin), sqlc.arg(project_key), sqlc.arg(namespace), sqlc.arg(purpose), sqlc.arg(hostname))
+INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname, label_version)
+VALUES (sqlc.arg(server_origin), sqlc.arg(project_key), sqlc.arg(namespace), sqlc.arg(purpose), sqlc.arg(hostname), 2)
 ON CONFLICT DO NOTHING;
 
+-- name: ReplaceLegacyIntegrationURLHostname :exec
+UPDATE integration_url_hostnames SET hostname = sqlc.arg(hostname), label_version = 2
+WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
+  AND namespace = sqlc.arg(namespace) AND purpose = sqlc.arg(purpose)
+  AND purpose IN ('oauth', 'hooks') AND label_version = 1;
+
 -- name: GetIntegrationURLHostname :one
-SELECT hostname FROM integration_url_hostnames
+SELECT hostname, label_version FROM integration_url_hostnames
 WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
   AND namespace = sqlc.arg(namespace) AND purpose = sqlc.arg(purpose);
 

@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// IntegrationURLHostname preserves each registered origin across label changes.
+// IntegrationURLHostname preserves each selected origin after one legacy label replacement.
 func (d *Database) IntegrationURLHostname(ctx context.Context, server, projectKey, namespace, purpose, proposed string) (string, error) {
 	if projectKey == "" || namespace == "" || !naming.ValidServiceName(purpose) {
 		return "", errors.New("integration URL project, namespace, and purpose are required")
@@ -26,16 +26,21 @@ func (d *Database) IntegrationURLHostname(ctx context.Context, server, projectKe
 	}); err != nil {
 		return "", fmt.Errorf("save integration URL hostname: %w", err)
 	}
-	hostname, err := d.queries.GetIntegrationURLHostname(ctx, clientstatedb.GetIntegrationURLHostnameParams{
+	if err := d.queries.ReplaceLegacyIntegrationURLHostname(ctx, clientstatedb.ReplaceLegacyIntegrationURLHostnameParams{
+		ServerOrigin: store.controlEndpoint, ProjectKey: projectKey, Namespace: namespace, Purpose: purpose, Hostname: proposed,
+	}); err != nil {
+		return "", fmt.Errorf("replace old integration URL hostname: %w", err)
+	}
+	row, err := d.queries.GetIntegrationURLHostname(ctx, clientstatedb.GetIntegrationURLHostnameParams{
 		ServerOrigin: store.controlEndpoint, ProjectKey: projectKey, Namespace: namespace, Purpose: purpose,
 	})
 	if err != nil {
 		return "", fmt.Errorf("read integration URL hostname: %w", err)
 	}
-	if !validIntegrationURLHostname(hostname, namespace) {
+	if !validIntegrationURLHostname(row.Hostname, namespace) {
 		return "", errors.New("saved integration URL hostname is invalid")
 	}
-	return hostname, nil
+	return row.Hostname, nil
 }
 
 func validIntegrationURLHostname(hostname, namespace string) bool {
