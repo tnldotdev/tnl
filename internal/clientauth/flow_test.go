@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/zalando/go-keyring"
@@ -47,6 +48,7 @@ func (r *recordingTransport) RoundTrip(request *http.Request) (*http.Response, e
 		if err != nil {
 			return nil, err
 		}
+		request.Body = io.NopCloser(strings.NewReader(string(payload)))
 	}
 	r.mu.Lock()
 	r.requests = append(r.requests, recordedRequest{request.Method, request.URL.String(), string(payload), request.Header.Clone()})
@@ -226,12 +228,13 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 			client, err := Authenticate(t.Context(), f.config)
 			requests := f.transport.snapshot()
 			if test.login {
-				if err != nil || client == nil || logins != 1 || len(requests) != 4 {
+				if err == nil || client != nil || logins != 0 || len(requests) != 2 {
 					t.Fatalf("login=%d requests=%d error=%v", logins, len(requests), err)
 				}
-				f.assertSession(t, storedSession(issued))
-				assertAuthRequest(t, requests[2], http.MethodPost, testControlOrigin+"/v1/auth/token", "", authorityv1.LoginTokenExchangeRequest{LoginToken: "login-input"})
-				assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
+				if reason, _ := failure.ReasonOf(err); reason != failure.Authentication {
+					t.Fatalf("reason = %q", reason)
+				}
+				f.assertSession(t, old)
 			} else {
 				if err == nil || client != nil || logins != 0 || len(requests) != 2 {
 					t.Fatalf("login=%d requests=%d error=%v", logins, len(requests), err)
@@ -239,19 +242,22 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 				if test.failure != nil && !errors.Is(err, test.failure) {
 					t.Fatalf("lost transport cause: %v", err)
 				}
+				if test.failure != nil {
+					old.RefreshPending = true
+				}
 				f.assertSession(t, old)
 			}
 			assertAuthRequest(t, requests[0], http.MethodGet, testControlOrigin+"/v1/discovery", "", nil)
 			assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
 			selected, found, selectErr := f.config.State.SavedServer(t.Context())
-			if selectErr != nil || found != test.login || found && selected != testControlOrigin {
+			if selectErr != nil || found {
 				t.Fatalf("selected server=%q found=%v error=%v", selected, found, selectErr)
 			}
 		})
 	}
 }
 
-func TestAuthenticateRejectedRefreshDoesNotRetryItDuringOldSessionRevocation(t *testing.T) {
+func TestAuthenticateRejectedRefreshDoesNotExchangeOrRevoke(t *testing.T) {
 	old := storedSession(issuedSession(t))
 	old.AccessExpiresAt = time.Now().UTC().Add(-time.Hour)
 	issued := issuedSession(t)
@@ -277,10 +283,10 @@ func TestAuthenticateRejectedRefreshDoesNotRetryItDuringOldSessionRevocation(t *
 	f.save(t, old)
 	f.config.LoginToken = func() (credentials.LoginToken, error) { return "login-input", nil }
 	client, err := Authenticate(t.Context(), f.config)
-	if err != nil || client == nil || refreshes != 1 || issuedLogouts != 0 {
+	if err == nil || client != nil || refreshes != 1 || issuedLogouts != 0 {
 		t.Fatalf("replacement login = %v, refreshes = %d, issued logouts = %d", err, refreshes, issuedLogouts)
 	}
-	f.assertSession(t, storedSession(issued))
+	f.assertSession(t, old)
 }
 
 func TestSavedSessionForAnotherServerDoesNotSendCredentials(t *testing.T) {
@@ -300,7 +306,7 @@ func TestSavedSessionForAnotherServerDoesNotSendCredentials(t *testing.T) {
 			} else {
 				_, err = Authenticate(t.Context(), f.config)
 			}
-			if err == nil || len(f.transport.snapshot()) != 1 {
+			if !logout && (err == nil || len(f.transport.snapshot()) != 1) || logout && (err != nil || len(f.transport.snapshot()) != 0) {
 				t.Fatalf("mismatch: requests=%d error=%v", len(f.transport.snapshot()), err)
 			}
 			got, found, err := other.ControlSession(t.Context())
@@ -311,18 +317,18 @@ func TestSavedSessionForAnotherServerDoesNotSendCredentials(t *testing.T) {
 	}
 }
 
-func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
+func TestLogoutRefreshRecoveryAlwaysRemovesLocalSession(t *testing.T) {
 	for _, test := range []struct {
-		name                     string
-		first, refresh, last     int
-		wantError, keep, rotated bool
+		name                 string
+		first, refresh, last int
+		wantError            bool
 	}{
-		{"revoked", 204, 0, 0, false, false, false},
-		{"transient revocation", 503, 0, 0, true, true, false},
-		{"refresh and revoke", 401, 200, 204, false, false, true},
-		{"already revoked", 401, 401, 0, false, false, false},
-		{"transient refresh", 401, 503, 0, true, true, false},
-		{"retry revocation later", 401, 200, 503, true, true, true},
+		{"revoked", 204, 0, 0, false},
+		{"transient revocation", 503, 0, 0, true},
+		{"refresh and revoke", 401, 200, 204, false},
+		{"already revoked", 401, 401, 0, false},
+		{"transient refresh", 401, 503, 0, true},
+		{"transient rotated revocation", 401, 200, 503, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			old := storedSession(issuedSession(t))
@@ -356,13 +362,7 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 			if (err != nil) != test.wantError {
 				t.Fatalf("Logout error=%v", err)
 			}
-			if test.keep {
-				want := old
-				if test.rotated {
-					want = storedSession(rotated)
-				}
-				f.assertSession(t, want)
-			} else if _, found, err := f.store.ControlSession(t.Context()); found || err != nil {
+			if _, found, err := f.store.ControlSession(t.Context()); found || err != nil {
 				t.Fatalf("session retained: found=%v error=%v", found, err)
 			}
 			requests := f.transport.snapshot()
@@ -384,17 +384,16 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 				assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
 			}
 			if test.last == http.StatusServiceUnavailable {
-				// a later invocation must revoke using the saved rotated access
-				// token, without trying the obsolete refresh credential again.
+				// local logout is final even if server revocation failed; a later
+				// invocation does not replay the discarded refresh credential.
 				recovered = true
 				if err := Logout(t.Context(), f.config); err != nil {
 					t.Fatalf("retry logout: %v", err)
 				}
 				requests = f.transport.snapshot()
-				if len(requests) != 6 {
+				if len(requests) != 4 {
 					t.Fatalf("recovery requests=%d", len(requests))
 				}
-				assertAuthRequest(t, requests[5], http.MethodPost, testControlOrigin+"/v1/auth/logout", rotated.AccessToken, nil)
 				if _, found, err := f.store.ControlSession(t.Context()); found || err != nil {
 					t.Fatalf("recovery retained session: found=%v error=%v", found, err)
 				}
@@ -403,7 +402,7 @@ func TestLogoutRefreshRecoveryAndFailurePersistence(t *testing.T) {
 	}
 }
 
-func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
+func TestExplicitLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	old := storedSession(issuedSession(t))
 	issued := issuedSession(t)
 	issued.SessionId = "cs_abcdefghijkl0123456789"
@@ -420,9 +419,8 @@ func TestForceLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})
 	f.save(t, old)
-	f.config.ForceLogin = true
 	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
-	client, err := Authenticate(t.Context(), f.config)
+	client, err := Login(t.Context(), f.config)
 	if client != nil || !errors.Is(err, authorityclient.ErrUnavailable) {
 		t.Fatalf("Authenticate error=%v", err)
 	}
@@ -466,9 +464,8 @@ func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})
 	f.save(t, old)
-	f.config.ForceLogin = true
 	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
-	client, err := Authenticate(ctx, f.config)
+	client, err := Login(ctx, f.config)
 	if client != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("Authenticate error = %v", err)
 	}
@@ -498,9 +495,8 @@ func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
 		}
 	})
 	f.save(t, old)
-	f.config.ForceLogin = true
 	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
-	client, err := Authenticate(t.Context(), f.config)
+	client, err := Login(t.Context(), f.config)
 	if client != nil || !errors.Is(err, primaryFailure) || !errors.Is(err, cleanupFailure) {
 		t.Fatalf("Authenticate error = %v", err)
 	}
@@ -608,14 +604,13 @@ func TestLoginFailurePreservesSavedSessionAndServerSelection(t *testing.T) {
 			if err := f.config.State.SaveServer(t.Context(), selected); err != nil {
 				t.Fatal(err)
 			}
-			f.config.ForceLogin = true
 			f.config.LoginToken = func() (credentials.LoginToken, error) {
 				if name == "prompt" {
 					return "", promptFailure
 				}
 				return "login-input", nil
 			}
-			client, err := Authenticate(t.Context(), f.config)
+			client, err := Login(t.Context(), f.config)
 			if err == nil || client != nil || name == "prompt" && !errors.Is(err, promptFailure) {
 				t.Fatalf("failed login: %v", err)
 			}

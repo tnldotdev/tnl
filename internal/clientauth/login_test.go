@@ -18,7 +18,7 @@ import (
 
 func TestInteractiveLoginHasBoundedTimeout(t *testing.T) {
 	source := testOIDCTokenSource(t)
-	source.config.loginTimeout = 25 * time.Millisecond
+	source.config.LoginTimeout = 25 * time.Millisecond
 	_, err := source.login(context.Background())
 	if !errors.Is(err, ErrAuthenticationTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("login error = %v, want authentication timeout", err)

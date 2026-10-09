@@ -25,6 +25,16 @@ type AliasPublishRun struct {
 	TargetPublishRunNumber int64
 }
 
+type AuthOperation struct {
+	ServerOrigin  string
+	OperationID   string
+	Phase         string
+	Revision      int64
+	PublicJson    string
+	StoredPrivate []byte
+	UpdatedAt     int64
+}
+
 type CertificateMaterial struct {
 	ID             int64
 	ServerOrigin   string
@@ -57,6 +67,7 @@ type ControlSession struct {
 	StoredRefreshToken []byte
 	RefreshExpiresAt   int64
 	UpdatedAt          int64
+	RefreshPending     int64
 }
 
 type GuestSession struct {

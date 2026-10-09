@@ -67,6 +67,14 @@ const (
 	TransportUnavailable              Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
 	TransportFallback                 Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
 	Authentication                    Reason = "TNL_CLIENT_AUTHENTICATION_REQUIRED"
+	AuthRecoveryRequired              Reason = "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
+	AuthWaitTimeout                   Reason = "TNL_CLIENT_AUTH_WAIT_TIMEOUT"
+	AuthOperationNotFound             Reason = "TNL_CLIENT_AUTH_OPERATION_NOT_FOUND"
+	AuthCancelled                     Reason = "TNL_CLIENT_AUTH_CANCELLED"
+	AuthDenied                        Reason = "TNL_CLIENT_AUTH_DENIED"
+	AuthExpired                       Reason = "TNL_CLIENT_AUTH_EXPIRED"
+	AuthMethodUnavailable             Reason = "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE"
+	AuthProviderUnavailable           Reason = "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE"
 	ServerResourceNotFound            Reason = "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND"
 	ServerConflict                    Reason = "TNL_CLIENT_SERVER_CONFLICT"
 	ServerDenied                      Reason = "TNL_CLIENT_SERVER_DENIED"
@@ -375,6 +383,38 @@ var definitions = map[Reason]Definition{
 	Authentication: {
 		Class: Unauthenticated, Message: "tnl could not authenticate this request",
 		Action: "log in again or check the supplied access token", Retry: RetryAfterChange,
+	},
+	AuthRecoveryRequired: {
+		Class: Conflict, Message: "login credential redemption has an uncertain outcome",
+		Action: "start a new login with tnl auth login; this operation cannot be replayed", Retry: RetryAfterChange,
+	},
+	AuthWaitTimeout: {
+		Class: Unavailable, Message: "login is still waiting for approval",
+		Action: "resume with tnl auth login wait <operation-id>", Retry: RetryLater,
+	},
+	AuthOperationNotFound: {
+		Class: NotFound, Message: "the login operation was not found for the selected server",
+		Action: "check the operation ID, server, and state directory", Retry: RetryAfterChange,
+	},
+	AuthCancelled: {
+		Class: Conflict, Message: "the login operation was cancelled",
+		Action: "start a new login with tnl auth login", Retry: RetryAfterChange,
+	},
+	AuthDenied: {
+		Class: Forbidden, Message: "login approval was denied",
+		Action: "start a new login with tnl auth login", Retry: RetryAfterChange,
+	},
+	AuthExpired: {
+		Class: Unauthenticated, Message: "the login approval code expired",
+		Action: "start a new login with tnl auth login", Retry: RetryAfterChange,
+	},
+	AuthMethodUnavailable: {
+		Class: Invalid, Message: "the selected server does not support this login method",
+		Action: "use tnl auth login with a method supported by this server", Retry: RetryAfterChange,
+	},
+	AuthProviderUnavailable: {
+		Class: Unavailable, Message: "the sign-in provider could not be reached or its signing keys are unavailable",
+		Action: "check provider connectivity and resume with tnl auth login wait <operation-id>", Retry: RetryLater,
 	},
 	ServerResourceNotFound: {
 		Class: NotFound, Message: "the requested resource was not found on the selected server",

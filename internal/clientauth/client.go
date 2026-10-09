@@ -1,4 +1,3 @@
-// Package clientauth handles CLI login and coordinates control-session refresh.
 package clientauth
 
 import (
@@ -16,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -39,9 +39,10 @@ type Config struct {
 	OpenURL              func(string) error
 	LoginToken           func() (credentials.LoginToken, error)
 	AuthenticationPrompt func(oidcauth.Prompt) error
-	ForceLogin           bool
+	ObserveLogin         func(clientstate.AuthOperation) error
 	ForceLoginToken      bool
-	loginTimeout         time.Duration
+	LoginFlow            string
+	LoginTimeout         time.Duration
 }
 
 type Client struct {
@@ -59,9 +60,6 @@ type control struct {
 }
 
 func Authenticate(ctx context.Context, config Config) (*Client, error) {
-	if config.Diagnostics == nil {
-		return nil, errors.New("clientauth: diagnostics output is required")
-	}
 	resolved, err := resolveControl(ctx, config.ServerEndpoint, config.HTTPClient)
 	if err != nil {
 		return nil, err
@@ -80,18 +78,17 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := source.accessToken(ctx, config.ForceLogin, ""); err != nil {
+		if _, err := source.accessToken(ctx, false, ""); err != nil {
 			return nil, err
 		}
-		if source.loggedIn {
-			if err := config.State.SaveServer(ctx, resolved.serverEndpoint); err != nil {
-				return nil, err
-			}
-		}
 	}
+	return authenticatedResult(resolved, source)
+}
 
+func authenticatedResult(resolved control, source *tokenSource) (*Client, error) {
 	authenticatedHTTP := authenticatedClient(resolved.rawHTTP, source)
 	result := &Client{ServerEndpoint: resolved.serverEndpoint, Discovery: resolved.discovery}
+	var err error
 	result.Control, err = controlclient.NewExternallyAuthenticated(resolved.serverEndpoint, authenticatedHTTP)
 	if err != nil {
 		return nil, err
@@ -104,14 +101,14 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 }
 
 func Logout(ctx context.Context, config Config) error {
-	resolved, err := resolveControl(ctx, config.ServerEndpoint, config.HTTPClient)
+	server, err := clientstate.CanonicalServer(config.ServerEndpoint)
 	if err != nil {
 		return err
 	}
 	if config.State == nil {
 		return errors.New("clientauth: client state is required")
 	}
-	store, err := config.State.Server(ctx, resolved.serverEndpoint)
+	store, err := config.State.Server(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -120,18 +117,28 @@ func Logout(ctx context.Context, config Config) error {
 		return err
 	}
 	defer lock.Close()
-	stored, found, err := store.ControlSession(ctx)
-	if err != nil {
+	if err := store.FenceAuthOperations(ctx); err != nil {
 		return err
+	}
+	stored, found, err := store.ControlSession(ctx)
+	removeErr := store.RemoveControlSession(ctx)
+	_ = lock.Close()
+	cleanupErr := cleanupCancelledOperations(ctx, config, store)
+	if err != nil || removeErr != nil {
+		return errors.Join(err, removeErr, cleanupErr)
 	}
 	if !found {
-		return errors.New("no saved login")
+		return cleanupErr
 	}
-	if err := revokeSession(ctx, resolved, stored, store); err != nil &&
+	resolved, err := resolveControl(ctx, server, config.HTTPClient)
+	if err != nil {
+		return errors.Join(err, cleanupErr)
+	}
+	if err := revokeSession(ctx, resolved, stored, nil); err != nil &&
 		!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
-		return err
+		return errors.Join(err, cleanupErr)
 	}
-	return store.RemoveControlSession(ctx)
+	return cleanupErr
 }
 
 func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http.Client) (control, error) {
@@ -140,7 +147,7 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 		return control{}, err
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{}
+		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
 	controlClient, err := controlclient.New(serverEndpoint, httpClient, "")
 	if err != nil {
@@ -172,7 +179,6 @@ type tokenSource struct {
 	config        Config
 	store         *clientstate.Store
 	explicit      string
-	loggedIn      bool
 }
 
 func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken string) (string, error) {
@@ -193,51 +199,54 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", err
 	}
 	now := time.Now()
-	if found && !s.config.ForceLogin && (!force || usedToken != stored.AccessToken) &&
+	if found && stored.RefreshPending {
+		return "", failure.Wrap("recover control session refresh", failure.AuthRecoveryRequired, errors.New("a previous refresh has an uncertain outcome"))
+	}
+	if found && (!force || usedToken != stored.AccessToken) &&
 		stored.AccessExpiresAt.After(now.Add(refreshSafetyMargin)) {
 		return stored.AccessToken, nil
 	}
-	rejectedOldRefresh := false
-	if found && !s.config.ForceLogin && refreshUsable(stored, now) {
-		refreshed, refreshErr := refreshSession(ctx, s.control, stored)
+	if found && refreshUsable(stored, now) {
+		refreshed, refreshErr := protectedRefresh(ctx, s.control, stored, s.store)
 		if refreshErr == nil {
 			if err := s.store.SaveControlSession(ctx, refreshed); err != nil {
-				return "", err
+				return "", failure.Wrap("save refreshed control session", failure.AuthRecoveryRequired, err)
 			}
 			return refreshed.AccessToken, nil
-		}
-		if force {
-			return "", refreshErr
 		}
 		if !refreshRejected(refreshErr) {
 			return "", refreshErr
 		}
-		rejectedOldRefresh = true
+		return "", failure.Wrap("refresh control session", failure.Authentication, refreshErr)
 	}
-	issued, err := s.login(ctx)
-	if err != nil {
-		return "", err
+	return "", failure.Wrap("read control session", failure.Authentication, authorityclient.ErrUnauthenticated)
+}
+
+// protectedRefresh checkpoints the single-use refresh credential before sending
+// it. a lost response must never cause a later command to replay that credential.
+func protectedRefresh(ctx context.Context, resolved control, stored clientstate.ControlSession, store *clientstate.Store) (clientstate.ControlSession, error) {
+	if stored.RefreshPending {
+		return clientstate.ControlSession{}, failure.Wrap("recover control session refresh", failure.AuthRecoveryRequired, errors.New("refresh outcome is uncertain"))
 	}
-	if found {
-		var revokeErr error
-		if rejectedOldRefresh {
-			// do not retry a refresh token already rejected by the authority.
-			revokeErr = s.control.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
-		} else {
-			revokeErr = revokeSession(ctx, s.control, stored, s.store)
-		}
-		if err := revokeErr; err != nil &&
-			!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
-			primary := fmt.Errorf("revoke previous control session: %w", err)
-			return "", errors.Join(primary, cleanupIssuedSession(ctx, s.control, issued))
-		}
+	if err := store.SetControlSessionRefreshPending(ctx, true); err != nil {
+		return clientstate.ControlSession{}, err
 	}
-	if err := s.store.SaveControlSession(ctx, issued); err != nil {
-		return "", errors.Join(err, cleanupIssuedSession(ctx, s.control, issued))
+	refreshed, err := refreshSession(ctx, resolved, stored)
+	if err == nil {
+		return refreshed, nil
 	}
-	s.config.ForceLogin = false
-	s.loggedIn = true
-	return issued.AccessToken, nil
+	if definiteRefreshFailure(err) {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
+		defer cancel()
+		return clientstate.ControlSession{}, errors.Join(err, store.SetControlSessionRefreshPending(cleanupCtx, false))
+	}
+	return clientstate.ControlSession{}, failure.Wrap("refresh control session", failure.AuthRecoveryRequired, err)
+}
+
+func definiteRefreshFailure(err error) bool {
+	var problem *authorityclient.ProblemError
+	var limited *authorityclient.RateLimitError
+	return errors.As(err, &problem) || err == authorityclient.ErrUnauthenticated || err == authorityclient.ErrUnavailable || errors.As(err, &limited)
 }
 
 func (s *tokenSource) lock(ctx context.Context) error {
@@ -261,7 +270,11 @@ func (s *tokenSource) unlock() {
 	<-s.serialize
 }
 
-func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, error) {
+func (s *tokenSource) login(ctx context.Context, beforeRedeem ...func() error) (clientstate.ControlSession, error) {
+	var before func() error
+	if len(beforeRedeem) != 0 {
+		before = beforeRedeem[0]
+	}
 	discovery := s.control.discovery
 	useOIDC := authenticationMethodAvailable(discovery, controlv1.Oidc) && !s.config.ForceLoginToken
 	if useOIDC {
@@ -269,15 +282,20 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 			return clientstate.ControlSession{}, errors.New("clientauth: control returned inconsistent OIDC authentication facts")
 		}
 		oidc := discovery.Authentication.Oidc
-		timeout := s.config.loginTimeout
+		flow := string(oidc.LoginFlow)
+		if s.config.LoginFlow != "" {
+			flow = s.config.LoginFlow
+		}
+		timeout := s.config.LoginTimeout
 		if timeout == 0 {
 			timeout = defaultInteractiveLoginTimeout
 		}
 		loginCtx, cancel := context.WithTimeout(ctx, timeout)
 		result, err := oidcauth.Login(loginCtx, oidcauth.Config{
 			Issuer: oidc.Issuer, ClientID: oidc.ClientId,
-			LoginFlow: string(oidc.LoginFlow), Scopes: slices.Clone(oidc.Scopes),
+			LoginFlow: flow, Scopes: slices.Clone(oidc.Scopes),
 			HTTPClient: s.control.rawHTTP, OpenURL: s.config.OpenURL, Prompt: s.config.AuthenticationPrompt,
+			BeforeRedeem: before,
 		}, s.config.Diagnostics)
 		cancel()
 		if err != nil {
@@ -285,6 +303,11 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 				return clientstate.ControlSession{}, fmt.Errorf("%w: %w", ErrAuthenticationTimeout, err)
 			}
 			return clientstate.ControlSession{}, err
+		}
+		if before != nil {
+			if err := before(); err != nil {
+				return clientstate.ControlSession{}, err
+			}
 		}
 		issued, err := s.control.rawAuthority.ExchangeOIDC(ctx, result.IDToken)
 		if err != nil {
@@ -300,11 +323,16 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 		return clientstate.ControlSession{}, errors.New("clientauth: authority does not support an available interactive authentication method")
 	}
 	if s.config.LoginToken == nil {
-		return clientstate.ControlSession{}, errors.New("login-token authentication requires an interactive terminal")
+		return clientstate.ControlSession{}, failure.Wrap("read login token", failure.LoginTerminalRequired, errors.New("login-token authentication requires an interactive terminal"))
 	}
 	loginToken, err := s.config.LoginToken()
 	if err != nil {
 		return clientstate.ControlSession{}, err
+	}
+	if before != nil {
+		if err := before(); err != nil {
+			return clientstate.ControlSession{}, err
+		}
 	}
 	issued, err := s.control.rawAuthority.Exchange(ctx, loginToken)
 	if err != nil {
@@ -351,10 +379,16 @@ func revokeSession(
 	store *clientstate.Store,
 ) error {
 	err := resolved.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
-	if !errors.Is(err, authorityclient.ErrUnauthenticated) || !refreshUsable(stored, time.Now()) {
+	if !errors.Is(err, authorityclient.ErrUnauthenticated) || stored.RefreshPending || !refreshUsable(stored, time.Now()) {
 		return err
 	}
-	refreshed, refreshErr := refreshSession(ctx, resolved, stored)
+	var refreshed clientstate.ControlSession
+	var refreshErr error
+	if store == nil {
+		refreshed, refreshErr = refreshSession(ctx, resolved, stored)
+	} else {
+		refreshed, refreshErr = protectedRefresh(ctx, resolved, stored, store)
+	}
 	if refreshErr != nil {
 		return refreshErr
 	}

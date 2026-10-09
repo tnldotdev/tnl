@@ -33,7 +33,7 @@ type cli struct {
 	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
 	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
-	Login       loginCommand     `cmd:"" help:"Authenticate to a tnl server." group:"start"`
+	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
@@ -42,7 +42,6 @@ type cli struct {
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
-	Logout      logoutCommand    `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
 }
@@ -104,19 +103,6 @@ type configCheckCommand struct {
 
 type configGenerateCommand struct {
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-}
-
-type loginCommand struct {
-	Server     string `arg:"" name:"server" optional:"" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
-	ServerURL  string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
-	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	Token      bool   `name:"token" help:"Use a login token even when OIDC is available."`
-	LoginToken string `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
-}
-
-type logoutCommand struct {
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 type webhookCommand struct {
@@ -456,10 +442,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTelemetryPreference(ctx, flags.Telemetry.Off, "off", stdout)
 	case "telemetry status":
 		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
-	case "login":
-		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
-	case "logout":
-		return runLogout(ctx, flags.Logout, stdout, stderr)
+	case "auth status":
+		return runAuthStatus(ctx, flags.Auth.Status, stdout, stderr)
+	case "auth login", "auth login run":
+		return runLogin(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
+	case "auth login start":
+		return runAuthLoginStart(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
+	case "auth login wait <operation-id>":
+		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Wait.ID, "wait", stdout, stderr)
+	case "auth login inspect <operation-id>":
+		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Inspect.ID, "inspect", stdout, stderr)
+	case "auth login cancel <operation-id>":
+		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
+	case "auth logout":
+		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
@@ -587,7 +583,7 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.ProjectConfigInvalid
 	case strings.HasPrefix(command, "tnl telemetry "), command == "tnl status":
 		return failure.ClientStateUnavailable
-	case command == "tnl login", command == "tnl logout":
+	case strings.HasPrefix(command, "tnl auth "):
 		return failure.Authentication
 	case strings.HasPrefix(command, "tnl publish"), strings.HasPrefix(command, "tnl dev"):
 		return failure.TunnelUnavailable
@@ -612,6 +608,8 @@ func commandFailureReason(command string) failure.Reason {
 
 func canonicalParsedCommand(command string) string {
 	switch command {
+	case "auth login run":
+		return "auth login"
 	case "dev":
 		return "dev <service>"
 	case "publish":
