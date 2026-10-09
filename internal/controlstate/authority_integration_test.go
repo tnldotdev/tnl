@@ -189,10 +189,10 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key,
 		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target,
-		public_url_scope, policy_revision, ip_policy,
+		public_url_scope, purpose, policy_revision, ip_policy,
 		lifecycle_state, dns_state, created_at, updated_at
 	) VALUES ('public_url_member', $1, $2, $3, $4, 'member-route', $5, $6,
-		'second.example.test', 'http://127.0.0.1:3000', 'member', $7, 'allow_all', 'enabled', 'unmanaged', $8, $8)`,
+		'second.example.test', 'http://127.0.0.1:3000', 'member', 'app', $7, 'allow_all', 'enabled', 'unmanaged', $8, $8)`,
 		team.ID, team.DefaultDomainID, member.ID, member.IdentityID,
 		sealedDigest, database.storageKey.CurrentID(), member.PolicyRevision, now); err != nil {
 		t.Fatal(err)

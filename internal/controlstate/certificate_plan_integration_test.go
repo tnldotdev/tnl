@@ -270,8 +270,8 @@ func newExternalPlanSession(t *testing.T, database *Database, now time.Time, tea
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = database.pool.Exec(t.Context(), `INSERT INTO control.public_urls(id,team_id,domain_id,membership_id,created_by_identity_id,idempotency_key,request_digest_ciphertext,request_digest_storage_key_id,canonical_hostname,target,public_url_scope,policy_revision,ip_policy,lifecycle_state,dns_state,dns_authority_reference,created_at,updated_at,dns_available_at)
-	 VALUES($1,$2,$3,$4,$5,$1,$6,$7,$8,'http://127.0.0.1:3000','member',1,'allow_all','enabled','pending',$9,$10,$10,$10)`, id, team, "domain_"+suffix, "membership_"+suffix, identity, digest, database.storageKey.CurrentID(), hostname, reference, now)
+	_, err = database.pool.Exec(t.Context(), `INSERT INTO control.public_urls(id,team_id,domain_id,membership_id,created_by_identity_id,idempotency_key,request_digest_ciphertext,request_digest_storage_key_id,canonical_hostname,target,public_url_scope,purpose,policy_revision,ip_policy,lifecycle_state,dns_state,dns_authority_reference,created_at,updated_at,dns_available_at)
+	 VALUES($1,$2,$3,$4,$5,$1,$6,$7,$8,'http://127.0.0.1:3000','member','app',1,'allow_all','enabled','pending',$9,$10,$10,$10)`, id, team, "domain_"+suffix, "membership_"+suffix, identity, digest, database.storageKey.CurrentID(), hostname, reference, now)
 	if err != nil {
 		t.Fatal(err)
 	}
