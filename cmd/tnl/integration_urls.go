@@ -20,7 +20,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 // control records a loopback target; integration URL requests are handled directly
@@ -61,7 +60,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 
 func integrationURLConfig(services publisherServices, hostname string) publisher.Config {
 	config := services.config(integrationURLTarget, []string{}, 32)
-	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, controlv1.Member, false
+	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
 	return config
 }
 

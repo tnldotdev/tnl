@@ -238,7 +238,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			}
 		}
 		if creation.DomainKind == "managed" && request.PublicURLScope == PublicURLScopeShared {
-			label := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			label := relative[strings.LastIndex(relative, ".")+1:]
 			if _, err := queries.ReserveManagedDirectName(ctx, controlstatedb.ReserveManagedDirectNameParams{
 				Label: label, TeamID: text(request.TeamID), CreatedAt: timestamp(now),
 			}); errors.Is(err, pgx.ErrNoRows) {
@@ -989,7 +990,7 @@ func authorizeRouteCreation(
 	if context.DomainKind == "managed" {
 		if request.ManagedURLMode != naming.ManagedURLModeSimple || context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
 			context.TeamCreatorIdentityID != request.ActingIdentityID ||
-			!oneLabelBeneath(request.CanonicalHostname, context.CanonicalDomain) {
+			request.CanonicalHostname == context.CanonicalDomain {
 			return ErrPublicURLAccess
 		}
 		return nil
@@ -1005,15 +1006,6 @@ func authorizeRouteCreation(
 
 func hostnameWithin(hostname, domain string) bool {
 	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
-}
-
-func oneLabelBeneath(hostname, domain string) bool {
-	suffix := "." + domain
-	if !strings.HasSuffix(hostname, suffix) {
-		return false
-	}
-	label := strings.TrimSuffix(hostname, suffix)
-	return label != "" && !strings.Contains(label, ".")
 }
 
 func routeIPPolicy(prefixes []netip.Prefix) IPPolicy {

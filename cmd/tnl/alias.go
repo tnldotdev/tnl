@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func prepareAliasServices(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, alias config.Alias, server, team string, authenticated *clientauth.Client) (publisherServices, error) {
@@ -65,7 +66,7 @@ func checkAliasHostnamePolicy(services publisherServices) error {
 		return failure.Wrap("read alias hostname policy", failure.ServerResponseInvalid, errors.New("negative member hostname depth limit"))
 	}
 	depth, member := naming.ChildDepth(services.hostname, services.namespace)
-	if !member || services.domainKind != authorityv1.Managed || limit == 0 || depth <= limit {
+	if !member || services.publicURLScope != controlv1.Member || services.domainKind != authorityv1.Managed || limit == 0 || depth <= limit {
 		return nil
 	}
 	name := strings.TrimSuffix(services.hostname, "."+services.namespace)
