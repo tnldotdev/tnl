@@ -13,7 +13,7 @@ const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
 // distinct invocations from one checkout must not remove each other's database.
 const container = `tnl-test-postgres-${identity}-${randomUUID()}`;
 const image =
-  "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
+  "public.ecr.aws/docker/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
 const command = process.argv[separator + 1];
 if (command === undefined) throw new Error("test command is required");
 const arguments_ = process.argv.slice(separator + 2);
