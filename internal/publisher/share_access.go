@@ -94,11 +94,6 @@ func (a *shareAccess) permitsTeamLogin() bool {
 	return a.teamAccessEnabled && !a.confirmed.IsZero() && time.Since(a.confirmed) <= shareStateFreshness
 }
 
-func (a *shareAccess) permits(request *http.Request) bool {
-	_, allowed := a.permission(request)
-	return allowed
-}
-
 func (a *shareAccess) permission(request *http.Request) (time.Time, bool) {
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {
