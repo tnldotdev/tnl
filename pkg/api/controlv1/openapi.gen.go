@@ -110,6 +110,24 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for ControlDiscoveryManagedUrlMode.
+const (
+	Generated ControlDiscoveryManagedUrlMode = "generated"
+	Simple    ControlDiscoveryManagedUrlMode = "simple"
+)
+
+// Valid indicates whether the value is a known member of the ControlDiscoveryManagedUrlMode enum.
+func (e ControlDiscoveryManagedUrlMode) Valid() bool {
+	switch e {
+	case Generated:
+		return true
+	case Simple:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -902,7 +920,13 @@ type ControlDiscovery struct {
 
 	// ManagedDomainMaxMemberChildLabels Maximum labels beneath a member namespace on the managed domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
 	ManagedDomainMaxMemberChildLabels int `json:"managed_domain_max_member_child_labels"`
+
+	// ManagedUrlMode Default public URL naming on the server's managed domain.
+	ManagedUrlMode ControlDiscoveryManagedUrlMode `json:"managed_url_mode"`
 }
+
+// ControlDiscoveryManagedUrlMode Default public URL naming on the server's managed domain.
+type ControlDiscoveryManagedUrlMode string
 
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
 type CreateCertificateIssuanceRequest struct {

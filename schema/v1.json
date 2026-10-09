@@ -504,6 +504,12 @@
           "type": "string",
           "description": "Server-controlled domain used for namespaces."
         },
+        "managed_url_mode": {
+          "type": "string",
+          "enum": ["simple", "generated"],
+          "description": "Managed-domain public URL names: ${enum}.",
+          "default": "simple"
+        },
         "managed_domain_max_member_child_labels": {
           "type": "integer",
           "description": "Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only.",

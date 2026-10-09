@@ -184,7 +184,7 @@ func TestIntegrationOIDCAuthentication(t *testing.T) {
 		t.Context(), "managed.example.test", identity, time.Hour, 24*time.Hour, now.Add(3*time.Minute),
 	)
 	if err != nil || len(created.Identity.Memberships) != 1 ||
-		created.Identity.Memberships[0].MemberSlug != created.Identity.Memberships[0].ManagedLabel {
+		created.Identity.Memberships[0].MemberSlug != created.Identity.Memberships[0].TeamDisplayName {
 		t.Fatalf("unicode identity fallback = %#v, %v", created.Identity, err)
 	}
 }

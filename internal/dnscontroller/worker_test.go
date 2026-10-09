@@ -162,11 +162,11 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	}
 }
 
-func TestNestedMemberURLUsesExactDNSRecord(t *testing.T) {
+func TestNestedMemberURLUsesItsImmediateParentWildcard(t *testing.T) {
 	now := time.Now()
 	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
 		PublicURLID: "url_nested", DomainID: "domain_1", CanonicalHostname: "api.shop.member.tunnels.example.test",
-		PublicURLScope: controlstate.PublicURLScopeMember, State: controlstate.PublicURLDNSPending,
+		Namespace: "member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember, State: controlstate.PublicURLDNSPending,
 		DNSRevision: 1, AvailableAt: now, WorkerID: "dns_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
 	}}
 	provider := &providerStub{zone: Zone{ID: "ZMANAGED"}}
@@ -176,8 +176,41 @@ func TestNestedMemberURLUsesExactDNSRecord(t *testing.T) {
 	if found, err := worker.processOne(t.Context()); !found || err != nil {
 		t.Fatalf("nested URL DNS work = %t, %v", found, err)
 	}
-	if provider.publishCalls != 1 || provider.record.WildcardHostname != "" || provider.record.CanonicalHostname != "api.shop.member.tunnels.example.test" {
-		t.Fatal("nested URL used wildcard DNS instead of its exact hostname")
+	if provider.publishCalls != 1 || provider.record.WildcardHostname != "*.shop.member.tunnels.example.test" ||
+		provider.record.CanonicalHostname != "api.shop.member.tunnels.example.test" {
+		t.Fatal("nested URL did not use its immediate parent wildcard")
+	}
+}
+
+func TestWorkerUsesAuthorizedManagedWildcardRoots(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	worker := testDNSWorker(t, &dnsStoreStub{}, &providerStub{}, &verifierStub{}, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "routes.example.test", "ZMANAGED"
+	for _, test := range []struct{ hostname, namespace, wildcard string }{
+		{"app.routes.example.test", "routes.example.test", "*.routes.example.test"},
+		{"app.alex.studio.routes.example.test", "alex.studio.routes.example.test", "*.alex.studio.routes.example.test"},
+		{"api.preview.alex.studio.routes.example.test", "alex.studio.routes.example.test", "*.preview.alex.studio.routes.example.test"},
+	} {
+		record, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
+			PublicURLID: "url_test", DomainID: "managed", CanonicalHostname: test.hostname, Namespace: test.namespace,
+		})
+		if err != nil || !ready || record.WildcardHostname != test.wildcard || record.Namespace != test.namespace {
+			t.Errorf("record for %s = %#v, ready %t, error %v", test.hostname, record, ready, err)
+		}
+	}
+}
+
+func TestWorkerUsesOrganizationNamespaceOnCustomDomain(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	authority := testDNSWork(now).DNSAuthority
+	authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"
+	worker := testDNSWorker(t, &dnsStoreStub{authority: authority}, &providerStub{}, &verifierStub{}, now)
+	work := claimedRouteWork(now)
+	work.Namespace = "alex.studio.claimed.example.test"
+	work.CanonicalHostname = "app." + work.Namespace
+	record, _, ready, err := worker.publicURLRecord(t.Context(), work)
+	if err != nil || !ready || record.WildcardHostname != "*."+work.Namespace || !record.CustomZone {
+		t.Fatalf("custom organization wildcard = %#v, ready %t, error %v", record, ready, err)
 	}
 }
 
@@ -185,7 +218,7 @@ func TestWorkerManagedMemberWildcardPersistsAcrossPublicURLRemoval(t *testing.T)
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := controlstate.DNSPublicURLWork{
 		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
-		CanonicalHostname: "api.member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
+		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
 		State: controlstate.PublicURLDNSPending, DNSRevision: 1, Attempts: 1, AvailableAt: now,
 		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
 	}
@@ -219,6 +252,7 @@ func TestWorkerCustomMemberWildcardUsesCustomZone(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := claimedRouteWork(now)
 	work.CanonicalHostname = "api.member.claimed.example.test"
+	work.Namespace = "member.claimed.example.test"
 	work.PublicURLScope = controlstate.PublicURLScopeMember
 	authority := testDNSWork(now).DNSAuthority
 	authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"

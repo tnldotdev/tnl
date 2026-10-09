@@ -410,9 +410,10 @@ type ControlMaintenanceControl struct {
 }
 
 type ControlManagedLabelReservation struct {
-	ID        int64
-	Label     string
-	CreatedAt pgtype.Timestamptz
+	ID           int64
+	Label        string
+	CreatedAt    pgtype.Timestamptz
+	DirectTeamID pgtype.Text
 }
 
 type ControlMemberSlugReservation struct {
@@ -491,6 +492,7 @@ type ControlPublicUrl struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Namespace                   string
 	Purpose                     string
 }
 

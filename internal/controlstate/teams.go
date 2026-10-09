@@ -115,11 +115,12 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	if err != nil {
 		return Team{}, fmt.Errorf("controlstate: create team: read managed domain: %w", err)
 	}
-	// reserve the team name in the generated-label pool so a future personal
-	// team cannot receive the same name.
+	// reserve the team name against personal teams and managed-domain names.
 	if _, err := queries.ReserveManagedLabel(ctx, controlstatedb.ReserveManagedLabelParams{
 		Label: request.DisplayName, CreatedAt: timestamp(now),
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, ErrTeamNameUnavailable
+	} else if err != nil {
 		return Team{}, fmt.Errorf("controlstate: create team: reserve name label: %w", err)
 	}
 	if reserved, err := queries.GuestNamespaceReserved(ctx, request.DisplayName); err != nil {
@@ -127,9 +128,12 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	} else if reserved {
 		return Team{}, ErrTeamNameUnavailable
 	}
-	managedLabel, err := availableManagedLabel(ctx, queries, now)
-	if err != nil {
-		return Team{}, err
+	managedLabel := request.DisplayName
+	if d.managedURLMode == naming.ManagedURLModeGenerated {
+		managedLabel, err = availableManagedLabel(ctx, queries, now)
+		if err != nil {
+			return Team{}, err
+		}
 	}
 	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
 	if err != nil {

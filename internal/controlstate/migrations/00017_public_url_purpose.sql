@@ -1,5 +1,5 @@
 -- +goose Up
--- apply after older control and standalone processes have stopped serving.
+-- save one immutable purpose on each public url, including historical unknowns.
 ALTER TABLE control.public_urls ADD COLUMN purpose text NOT NULL DEFAULT 'unknown'
     CHECK (purpose IN ('unknown', 'app', 'alias', 'demo', 'oauth', 'webhooks'));
 CREATE INDEX public_urls_purpose_created ON control.public_urls (purpose, created_at DESC, id)

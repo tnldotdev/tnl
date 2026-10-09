@@ -113,7 +113,7 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		return projectmeta.Metadata{}, err
 	}
 	metadata := projectmeta.Metadata{
-		Version: projectmeta.Version, Namespace: namespaceForMembership(current.membership, domain),
+		Version: projectmeta.Version, Namespace: namespaceForMembership(current, domain),
 		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
 	}
@@ -209,7 +209,7 @@ func projectAliasMetadata(ctx context.Context, resolver *projectMetadataResolver
 			return nil, err
 		}
 		if definition.PublicURL == nil {
-			hostname = definition.RelativeName(name) + "." + namespaceForMembership(current.membership, domain)
+			hostname = definition.RelativeName(name) + "." + namespaceForMembership(current, domain)
 		}
 		aliases[name] = projectmeta.Alias{Hostname: hostname, URL: "https://" + hostname, Service: definition.Service}
 	}
@@ -268,7 +268,7 @@ func configuredProjectService(
 		return projectmeta.Service{}, err
 	}
 	return projectmeta.Service{
-		Namespace: namespaceForMembership(current.membership, domain),
+		Namespace: namespaceForMembership(current, domain),
 		Hostname:  hostname,
 		URL:       "https://" + hostname,
 	}, nil

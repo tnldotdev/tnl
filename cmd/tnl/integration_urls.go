@@ -61,7 +61,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLCreatePurpose) publisher.Config {
 	config := services.config(integrationURLTarget, []string{}, 32)
-	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, controlv1.Member, false
+	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
 	config.Purpose = purpose
 	return config
 }

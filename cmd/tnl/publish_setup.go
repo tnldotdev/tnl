@@ -145,7 +145,7 @@ func preparePublisherServices(
 		authenticated:  authenticated,
 		state:          publisherState,
 		hostname:       hostname,
-		namespace:      namespaceForMembership(current.membership, domain),
+		namespace:      namespaceForMembership(current, domain),
 		teamID:         current.team.Id,
 		membershipID:   current.membership.Id,
 		domainID:       domain.Id,
@@ -179,7 +179,7 @@ func resolvePublishHostname(
 	if err != nil {
 		return "", authorityv1.Domain{}, "", err
 	}
-	namespace := namespaceForMembership(current.membership, domain)
+	namespace, direct := current.namespace(domain)
 	if name != "" {
 		canonical, err := naming.CanonicalizeHostname(name)
 		if err != nil || canonical != name || strings.Contains(name, ".") {
@@ -199,7 +199,14 @@ func resolvePublishHostname(
 		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.Join(err, errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")))
 	}
 	publicURLScope := controlv1.Shared
-	if _, within := naming.ChildDepth(hostname, namespace); within {
+	depth, within := naming.ChildDepth(hostname, namespace)
+	if !direct && within && depth == 0 {
+		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.New("a member namespace cannot be published as a public URL"))
+	}
+	if direct && hostname == namespace && domain.Kind == authorityv1.Managed {
+		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.New("the managed domain itself cannot be published"))
+	}
+	if !direct && within && depth > 0 {
 		publicURLScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
 		return "", authorityv1.Domain{}, "", failure.Wrap("authorize shared public URL", failure.ServerDenied, errors.New("shared public URLs require a team administrator or owner"))
@@ -260,12 +267,18 @@ func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (auth
 	return selected, nil
 }
 
-func namespaceForMembership(membership authorityv1.Membership, domain authorityv1.Domain) string {
-	label := membership.MemberSlug
-	if domain.Kind == authorityv1.Managed {
-		label = membership.ManagedLabel
-	}
-	return label + "." + domain.CanonicalDomain
+func (current teamContext) namespace(domain authorityv1.Domain) (string, bool) {
+	return naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: domain.CanonicalDomain, Managed: domain.Kind == authorityv1.Managed,
+		Mode: current.mode, Personal: current.team.Kind == authorityv1.Personal, Builtin: current.builtin,
+		TeamName: current.team.DisplayName, MemberSlug: current.membership.MemberSlug,
+		ManagedLabel: current.membership.ManagedLabel,
+	})
+}
+
+func namespaceForMembership(current teamContext, domain authorityv1.Domain) string {
+	namespace, _ := current.namespace(domain)
+	return namespace
 }
 
 func (flags tunnelFlags) requestLimit() int {

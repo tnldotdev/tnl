@@ -148,7 +148,7 @@ func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T)
 	client, provider := route53TestProvider(t, "tunnels.example.test")
 	record := PublicURLRecord{
 		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", PublicURLID: "public_url_one",
-		CanonicalHostname: "api.member.tunnels.example.test", WildcardHostname: "*.member.tunnels.example.test",
+		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test", WildcardHostname: "*.member.tunnels.example.test",
 		IngressIPv4Addresses: []string{"192.0.2.10"},
 	}
 	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
@@ -179,6 +179,22 @@ func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T)
 	}
 	if _, err := provider.PublishPublicURL(t.Context(), record); err == nil || len(client.changes) != 0 {
 		t.Fatalf("overwrote conflicting wildcard: %#v, %v", client.changes, err)
+	}
+}
+
+func TestRoute53ProviderChecksFullWildcardNamespace(t *testing.T) {
+	_, provider := route53TestProvider(t, "routes.example.test")
+	record := PublicURLRecord{
+		ZoneID: "Z123", ZoneDomain: "routes.example.test", PublicURLID: "public_url_one",
+		CanonicalHostname: "app.alex.studio.routes.example.test", Namespace: "alex.studio.routes.example.test",
+		WildcardHostname: "*.alex.studio.routes.example.test", IngressIPv4Addresses: []string{"192.0.2.10"},
+	}
+	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	record.Namespace = "bob.studio.routes.example.test"
+	if _, err := provider.PublishPublicURL(t.Context(), record); err == nil {
+		t.Fatal("accepted a wildcard outside the authorized member namespace")
 	}
 }
 

@@ -19,15 +19,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
 const (
 	// schemaVersion is the newest embedded migration; update it when adding a migration.
-	schemaVersion int64 = 15
+	schemaVersion int64 = 17
 	// minimumSchemaVersion is the oldest schema this runtime can serve safely.
 	// advance it only when runtime reads or writes require a newer migration.
-	minimumSchemaVersion int64 = 15
+	minimumSchemaVersion int64 = 17
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )
@@ -38,11 +39,12 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
-	pool          *pgxpool.Pool
-	storageKey    *storagekey.Keyring
-	diagnosticsMu sync.Mutex
-	activity      *queryActivity
-	connections   *connectionActivity
+	pool           *pgxpool.Pool
+	storageKey     *storagekey.Keyring
+	managedURLMode naming.ManagedURLMode
+	diagnosticsMu  sync.Mutex
+	activity       *queryActivity
+	connections    *connectionActivity
 }
 
 // Migrate applies every embedded control-state migration through a direct
@@ -130,7 +132,17 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 
 // Open connects to already-migrated control state using a pooled PostgreSQL
 // URL. Open never creates or migrates schema objects.
-func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string) (*Database, error) {
+func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string, modes ...naming.ManagedURLMode) (*Database, error) {
+	mode := naming.ManagedURLModeGenerated
+	if len(modes) > 1 {
+		return nil, errors.New("controlstate: specify one managed URL mode")
+	}
+	if len(modes) == 1 && modes[0] != "" {
+		mode = modes[0]
+	}
+	if mode != naming.ManagedURLModeSimple && mode != naming.ManagedURLModeGenerated {
+		return nil, errors.New("controlstate: invalid managed URL mode")
+	}
 	keyring, err := storagekey.New(currentStorageKey, previousStorageKey)
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open: %w", err)
@@ -155,7 +167,7 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 		pool.Close()
 		return nil, err
 	}
-	database := &Database{pool: pool, storageKey: keyring, activity: activity, connections: connections}
+	database := &Database{pool: pool, storageKey: keyring, managedURLMode: mode, activity: activity, connections: connections}
 	var missingGuestKey bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.guest_trials
 		WHERE expires_at > now() AND source_ip_key_id <> $1 AND source_ip_key_id <> $2)`,

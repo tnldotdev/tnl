@@ -1,5 +1,6 @@
 {
   "managed_domain": "example",
+  "managed_url_mode": "generated",
   "managed_domain_max_member_child_labels": 0,
   "custom_domains_enabled": false,
   "dns_automation": true,
