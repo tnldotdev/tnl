@@ -24,7 +24,12 @@ func awaitDevStartup(
 	ctx context.Context, timeout time.Duration, forcedTarget string,
 	bootstrap *devBootstrap, child *devProcess, tunnel *clientstate.Tunnel,
 	assignment devConfigurationResponse,
+	targetOptions ...localproxy.TargetOptions,
 ) (devStartupResult, error) {
+	options := localproxy.TargetOptions{}
+	if len(targetOptions) != 0 {
+		options = targetOptions[0]
+	}
 	// child exit, framework registration, and target readiness compete during
 	// startup. if a forced target becomes ready first, keep the registration
 	// result pending; if registration wins, cancel the target wait.
@@ -66,7 +71,7 @@ func awaitDevStartup(
 		defer cancelTargetReady()
 		ready := make(chan error, 1)
 		targetReady = ready
-		go func() { ready <- localproxy.WaitForTarget(startupCtx, target) }()
+		go func() { ready <- localproxy.WaitForTargetWithOptions(startupCtx, target, options) }()
 		select {
 		case <-child.Done():
 			return devStartupResult{}, childResult(child.Err())
@@ -144,7 +149,7 @@ func awaitDevStartup(
 			defer cancelStartup()
 			ready := make(chan error, 1)
 			targetReady = ready
-			go func() { ready <- localproxy.WaitForTarget(startupCtx, target) }()
+			go func() { ready <- localproxy.WaitForTargetWithOptions(startupCtx, target, options) }()
 		}
 		select {
 		case <-child.Done():

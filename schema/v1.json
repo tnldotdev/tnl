@@ -17,6 +17,10 @@
             }
           ],
           "description": "HTTP or HTTPS origin reachable by the publisher, or a local port."
+        },
+        "ca_file": {
+          "type": "string",
+          "description": "Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."
         }
       },
       "additionalProperties": false,

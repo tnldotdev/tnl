@@ -37,6 +37,7 @@ type PublicURLServerConfig struct {
 	PublicURLID       string
 	PublishRunNumber  uint64
 	Target            string
+	TargetOptions     localproxy.TargetOptions
 	Handler           http.Handler
 	AdmitRequest      func(*http.Request) error
 	ObserveResponse   func(*http.Response) error
@@ -161,14 +162,14 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			}
 		})
 	} else {
-		handler, err = localproxy.NewWithMountsHooks(config.Target, hostname, config.RequestLimit, config.Mounts,
+		handler, err = localproxy.NewWithMountsHooksOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
 			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
 				if request != nil {
 					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
 						forwarded.Store(true)
 					}
 				}
-			}}, config.OnTargetFailure)
+			}}, config.TargetOptions, config.OnTargetFailure)
 		if err != nil {
 			return nil, err
 		}

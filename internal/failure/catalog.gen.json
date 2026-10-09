@@ -436,6 +436,20 @@
       "action": "run tnl init or select a config file with --config"
     },
     {
+      "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_MISMATCH",
+      "slug": "publish-credential-mismatch",
+      "class": "invalid",
+      "message": "the saved public URL does not match this publication",
+      "action": "match TNL_PUBLIC_URL and TNL_TARGET to the saved URL, or update it with tnl url update"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_REJECTED",
+      "slug": "publish-credential-rejected",
+      "class": "unauthenticated",
+      "message": "the public URL publish credential was rejected",
+      "action": "check TNL_PUBLISH_CREDENTIAL or issue a replacement with tnl url credential create"
+    },
+    {
       "code": "TNL_CLIENT_SERVER_CONFLICT",
       "slug": "server-conflict",
       "class": "conflict",

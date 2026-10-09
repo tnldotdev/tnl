@@ -197,6 +197,12 @@ func mergePublish(base, override *config.Publish) *config.Publish {
 	}
 	if override.Target != nil {
 		result.Target = override.Target
+		if override.CAFile == nil {
+			result.CAFile = nil
+		}
+	}
+	if override.CAFile != nil {
+		result.CAFile = override.CAFile
 	}
 	return result
 }

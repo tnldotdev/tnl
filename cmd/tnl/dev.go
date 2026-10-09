@@ -91,6 +91,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
+	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
+	if err != nil {
+		return err
+	}
 	if err := rejectNestedDevSession(flags.projectRoot, flags.Service, configuredCommand); err != nil {
 		return err
 	}
@@ -267,7 +271,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer func() { result = errors.Join(result, child.Stop(devShutdownWait)) }()
 
-	started, err := awaitDevStartup(ctx, flags.StartupTimeout, forcedTarget, bootstrap, child, tunnel, assignment)
+	started, err := awaitDevStartup(ctx, flags.StartupTimeout, forcedTarget, bootstrap, child, tunnel, assignment, targetOptions)
 	if err != nil {
 		return err
 	}
@@ -325,6 +329,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	defer recorder.Close()
 	go func() {
 		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig.TargetOptions = targetOptions
 		publisherConfig.ObserveRequest = requestObservation(recorder)
 		publisherConfig.RequestInspection = flags.RequestInspection
 		if oauth != nil {

@@ -129,6 +129,7 @@ type Tunnel struct {
 
 type Publish struct {
 	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
+	CAFile *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."`
 }
 
 // Dev remains an internal compile shape for the retired launcher; configuration

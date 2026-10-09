@@ -4,13 +4,16 @@ package localproxy
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +38,34 @@ const DefaultRequestLimit = 500
 
 // Preflight validates the target and verifies that it accepts a connection.
 func Preflight(ctx context.Context, target string) error {
+	return PreflightWithOptions(ctx, target, TargetOptions{})
+}
+
+// TargetOptions configures trust for one target, independently of control and relays.
+type TargetOptions struct {
+	RootCAs *x509.CertPool
+}
+
+// LoadTargetRootCAs adds a PEM file to the system roots used for one HTTPS target.
+func LoadTargetRootCAs(path string) (*x509.CertPool, error) {
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, fmt.Errorf("read system certificate roots: %w", err))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, fmt.Errorf("open target CA file: %w", err))
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil || len(data) > 1<<20 || !roots.AppendCertsFromPEM(data) {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target CA file must contain PEM certificates and be at most 1 MiB"))
+	}
+	return roots, nil
+}
+
+// PreflightWithOptions checks target reachability and HTTPS certificate trust.
+func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) error {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return err
@@ -46,7 +77,7 @@ func Preflight(ctx context.Context, target string) error {
 	dialer := &net.Dialer{Timeout: 3 * time.Second}
 	var connection net.Conn
 	if parsed.Scheme == "https" {
-		connection, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{MinVersion: tls.VersionTLS12}}).DialContext(ctx, "tcp", parsed.Host)
+		connection, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs}}).DialContext(ctx, "tcp", parsed.Host)
 	} else {
 		connection, err = dialer.DialContext(ctx, "tcp", parsed.Host)
 	}
@@ -62,6 +93,12 @@ func Preflight(ctx context.Context, target string) error {
 // WaitForTarget waits until a valid target accepts a connection.
 func WaitForTarget(ctx context.Context, target string) error {
 	return waitForTarget(ctx, target, Preflight)
+}
+
+func WaitForTargetWithOptions(ctx context.Context, target string, options TargetOptions) error {
+	return waitForTarget(ctx, target, func(ctx context.Context, target string) error {
+		return PreflightWithOptions(ctx, target, options)
+	})
 }
 
 func waitForTarget(ctx context.Context, target string, preflight func(context.Context, string) error) error {
@@ -101,6 +138,10 @@ type ResponseHooks struct {
 }
 
 func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, onTargetFailure ...func()) (http.Handler, error) {
+	return NewWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, TargetOptions{}, onTargetFailure...)
+}
+
+func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -111,7 +152,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 	if err != nil || canonical != hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(target, requestLimit, hooks, onTargetFailure)
+	base, err := newReverseProxy(target, requestLimit, hooks, options, onTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +186,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 						}
 					}
 					var err error
-					upstream, err = newReverseProxy(target, requestLimit, hooks, onTargetFailure)
+					upstream, err = newReverseProxy(target, requestLimit, hooks, mount.Options, onTargetFailure)
 					if err != nil {
 						mu.Unlock()
 						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
@@ -158,7 +199,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 				selected.ServeHTTP(w, r)
 			})
 		} else {
-			proxy, err = newReverseProxy(mount.Target, requestLimit, hooks, onTargetFailure)
+			proxy, err = newReverseProxy(mount.Target, requestLimit, hooks, mount.Options, onTargetFailure)
 			if err != nil {
 				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 			}
@@ -219,7 +260,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 	}), nil
 }
 
-func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
+func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, options TargetOptions, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -235,7 +276,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 		Proxy:               nil,
 		DisableCompression:  true,
 		ForceAttemptHTTP2:   false,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs},
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
 		MaxConnsPerHost:     requestLimit,

@@ -10,6 +10,7 @@ type Mount struct {
 	// resolveTarget returns the currently registered app target at admission.
 	// an empty value rejects new requests while the mounted app is stopped.
 	ResolveTarget func() string
+	Options       TargetOptions
 }
 
 // ValidMountPrefix accepts unescaped absolute paths made of whole, clean segments.

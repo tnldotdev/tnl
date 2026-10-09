@@ -199,6 +199,45 @@ func TestPublishHostnameOptions(t *testing.T) {
 	}
 }
 
+func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
+	t.Setenv("TNL_TARGET", "http://app:3000")
+	t.Setenv("TNL_PUBLIC_URL", "https://app.example.test")
+	t.Setenv("TNL_PUBLISH_CREDENTIAL", "tnl_publish_example")
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"publish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "http://app:3000" ||
+		flags.Publish.PublicURL != "https://app.example.test" || flags.Publish.PublishCredential != "tnl_publish_example" {
+		t.Fatalf("environment publish command %q = %#v", parsed.Command(), flags.Publish)
+	}
+	if err := (projectConfiguration{}).applyPublish(&flags.Publish); err != nil || flags.Publish.Name != "" {
+		t.Fatalf("publish without project configuration = %#v, %v", flags.Publish, err)
+	}
+}
+
+func TestCredentialProvisioningSelectsOptionalPublicURLID(t *testing.T) {
+	for _, args := range [][]string{
+		{"url", "credential", "create", "--public-url", "https://app.example.test", "--target", "http://app:3000"},
+		{"url", "credential", "create", "url_0123456789abcdefghijkl"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parser.Parse(args)
+		if err != nil || canonicalParsedCommand(parsed.Command()) != "url credential create <public-url-id>" {
+			t.Fatalf("credential create %v: %v, command = %q", args, err, parsed.Command())
+		}
+	}
+}
+
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
 	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
