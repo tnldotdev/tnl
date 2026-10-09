@@ -149,6 +149,10 @@ type FeedbackStore interface {
 	ReviewerFeedbackScope(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (string, string, error)
 }
 
+type FeedbackAccessStore interface {
+	ReviewerFeedbackAccess(context.Context, controlstate.PublishRunAuthentication, string, controlstate.FeedbackActor, time.Time) (controlstate.FeedbackAccess, error)
+}
+
 // AuthorizationStore provides the identity state needed for public URL authorization.
 type AuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
@@ -169,6 +173,7 @@ type handler struct {
 	shares            ShareStore
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
+	feedbackAccess    FeedbackAccessStore
 	guests            interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
@@ -213,6 +218,9 @@ func NewHandler(
 	}
 	if feedback, ok := store.(FeedbackStore); ok {
 		h.feedback = feedback
+	}
+	if access, ok := store.(FeedbackAccessStore); ok {
+		h.feedbackAccess = access
 	}
 	if guestStore, ok := store.(interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)

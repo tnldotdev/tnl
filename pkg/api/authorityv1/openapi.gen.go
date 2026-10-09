@@ -503,6 +503,11 @@ type Team struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+// TeamFeedbackPolicy defines model for TeamFeedbackPolicy.
+type TeamFeedbackPolicy struct {
+	RequireSignIn bool `json:"require_sign_in"`
+}
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
@@ -575,6 +580,9 @@ type CreateTeamJSONRequestBody = CreateTeamRequest
 
 // ClaimTeamDomainJSONRequestBody defines body for ClaimTeamDomain for application/json ContentType.
 type ClaimTeamDomainJSONRequestBody = ClaimDomainRequest
+
+// SetTeamFeedbackPolicyJSONRequestBody defines body for SetTeamFeedbackPolicy for application/json ContentType.
+type SetTeamFeedbackPolicyJSONRequestBody = TeamFeedbackPolicy
 
 // CreateTeamInvitationJSONRequestBody defines body for CreateTeamInvitation for application/json ContentType.
 type CreateTeamInvitationJSONRequestBody = CreateInvitationRequest
@@ -830,6 +838,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTeamFeedbackPolicy Read the team's live feedback sign-in policy
+	//
+	// Current team members may read this policy. Sign-in is optional by default; visitor access remains required independently.
+	//
+	// Corresponds with GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId).
+	GetTeamFeedbackPolicy(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetTeamFeedbackPolicyWithBody Set the team's live feedback sign-in policy
+	//
+	// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+	SetTeamFeedbackPolicyWithBody(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetTeamFeedbackPolicy Set the team's live feedback sign-in policy
+	//
+	// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+	SetTeamFeedbackPolicy(ctx context.Context, teamId TeamID, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamInvitations List team invitations
 	//
@@ -1315,6 +1348,61 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId 
 // Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetTeamDefaultDomainRequest(c.Server, teamId, domainId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTeamFeedbackPolicy Read the team's live feedback sign-in policy
+//
+// Current team members may read this policy. Sign-in is optional by default; visitor access remains required independently.
+//
+// Corresponds with GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId).
+func (c *Client) GetTeamFeedbackPolicy(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamFeedbackPolicyRequest(c.Server, teamId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetTeamFeedbackPolicyWithBody Set the team's live feedback sign-in policy
+//
+// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+func (c *Client) SetTeamFeedbackPolicyWithBody(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetTeamFeedbackPolicyRequestWithBody(c.Server, teamId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetTeamFeedbackPolicy Set the team's live feedback sign-in policy
+//
+// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+func (c *Client) SetTeamFeedbackPolicy(ctx context.Context, teamId TeamID, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetTeamFeedbackPolicyRequest(c.Server, teamId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2117,6 +2205,87 @@ func NewSetTeamDefaultDomainRequest(server string, teamId TeamID, domainId Domai
 	return req, nil
 }
 
+// NewGetTeamFeedbackPolicyRequest constructs an http.Request for the GetTeamFeedbackPolicy method
+func NewGetTeamFeedbackPolicyRequest(server string, teamId TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/feedback-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetTeamFeedbackPolicyRequest calls the generic SetTeamFeedbackPolicy builder with application/json body
+func NewSetTeamFeedbackPolicyRequest(server string, teamId TeamID, body SetTeamFeedbackPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetTeamFeedbackPolicyRequestWithBody(server, teamId, "application/json", bodyReader)
+}
+
+// NewSetTeamFeedbackPolicyRequestWithBody constructs an http.Request for the SetTeamFeedbackPolicy method, with any body, and a specified content type
+func NewSetTeamFeedbackPolicyRequestWithBody(server string, teamId TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/feedback-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListTeamInvitationsRequest constructs an http.Request for the ListTeamInvitations method
 func NewListTeamInvitationsRequest(server string, teamId TeamID) (*http.Request, error) {
 	var err error
@@ -2613,6 +2782,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*SetTeamDefaultDomainResponse, error)
+
+	// GetTeamFeedbackPolicyWithResponse Read the team's live feedback sign-in policy
+	//
+	// Current team members may read this policy. Sign-in is optional by default; visitor access remains required independently.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId).
+	GetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*GetTeamFeedbackPolicyResponse, error)
+
+	// SetTeamFeedbackPolicyWithBodyWithResponse Set the team's live feedback sign-in policy
+	//
+	// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+	SetTeamFeedbackPolicyWithBodyWithResponse(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error)
+
+	// SetTeamFeedbackPolicyWithResponse Set the team's live feedback sign-in policy
+	//
+	// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+	SetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId TeamID, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error)
 
 	// ListTeamInvitationsWithResponse List team invitations
 	//
@@ -3494,6 +3690,102 @@ func (r SetTeamDefaultDomainResponse) ContentType() string {
 	return ""
 }
 
+type GetTeamFeedbackPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamFeedbackPolicy
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamFeedbackPolicyResponse) GetJSON200() *TeamFeedbackPolicy {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetTeamFeedbackPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamFeedbackPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamFeedbackPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamFeedbackPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamFeedbackPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetTeamFeedbackPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamFeedbackPolicy
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetTeamFeedbackPolicyResponse) GetJSON200() *TeamFeedbackPolicy {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetTeamFeedbackPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetTeamFeedbackPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetTeamFeedbackPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetTeamFeedbackPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetTeamFeedbackPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTeamInvitationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4117,6 +4409,51 @@ func (c *ClientWithResponses) SetTeamDefaultDomainWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseSetTeamDefaultDomainResponse(rsp)
+}
+
+// GetTeamFeedbackPolicyWithResponse Read the team's live feedback sign-in policy
+//
+// Current team members may read this policy. Sign-in is optional by default; visitor access remains required independently.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId).
+func (c *ClientWithResponses) GetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*GetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.GetTeamFeedbackPolicy(ctx, teamId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamFeedbackPolicyResponse(rsp)
+}
+
+// SetTeamFeedbackPolicyWithBodyWithResponse Set the team's live feedback sign-in policy
+//
+// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+func (c *ClientWithResponses) SetTeamFeedbackPolicyWithBodyWithResponse(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.SetTeamFeedbackPolicyWithBody(ctx, teamId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetTeamFeedbackPolicyResponse(rsp)
+}
+
+// SetTeamFeedbackPolicyWithResponse Set the team's live feedback sign-in policy
+//
+// Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId).
+func (c *ClientWithResponses) SetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId TeamID, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.SetTeamFeedbackPolicy(ctx, teamId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetTeamFeedbackPolicyResponse(rsp)
 }
 
 // ListTeamInvitationsWithResponse List team invitations
@@ -4815,6 +5152,72 @@ func ParseSetTeamDefaultDomainResponse(rsp *http.Response) (*SetTeamDefaultDomai
 	return response, nil
 }
 
+// ParseGetTeamFeedbackPolicyResponse parses an HTTP response from a GetTeamFeedbackPolicyWithResponse call
+func ParseGetTeamFeedbackPolicyResponse(rsp *http.Response) (*GetTeamFeedbackPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamFeedbackPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamFeedbackPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetTeamFeedbackPolicyResponse parses an HTTP response from a SetTeamFeedbackPolicyWithResponse call
+func ParseSetTeamFeedbackPolicyResponse(rsp *http.Response) (*SetTeamFeedbackPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetTeamFeedbackPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamFeedbackPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamInvitationsResponse parses an HTTP response from a ListTeamInvitationsWithResponse call
 func ParseListTeamInvitationsResponse(rsp *http.Response) (*ListTeamInvitationsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5058,6 +5461,12 @@ type ServerInterface interface {
 	// SetTeamDefaultDomain Select a ready default domain
 	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
 	SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
+	// GetTeamFeedbackPolicy Read the team's live feedback sign-in policy
+	// (GET /v1/teams/{team_id}/feedback-policy)
+	GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamId TeamID)
+	// SetTeamFeedbackPolicy Set the team's live feedback sign-in policy
+	// (PUT /v1/teams/{team_id}/feedback-policy)
+	SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamId TeamID)
 	// ListTeamInvitations List team invitations
 	// (GET /v1/teams/{team_id}/invitations)
 	ListTeamInvitations(w http.ResponseWriter, r *http.Request, teamId TeamID)
@@ -5462,6 +5871,58 @@ func (siw *ServerInterfaceWrapper) SetTeamDefaultDomain(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// GetTeamFeedbackPolicy operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamFeedbackPolicy(w, r, teamId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetTeamFeedbackPolicy operation middleware
+func (siw *ServerInterfaceWrapper) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetTeamFeedbackPolicy(w, r, teamId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTeamInvitations operation middleware
 func (siw *ServerInterfaceWrapper) ListTeamInvitations(w http.ResponseWriter, r *http.Request) {
 
@@ -5805,6 +6266,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams", wrapper.ListTeams)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams", wrapper.CreateTeam)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}", wrapper.GetTeam)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.GetTeamFeedbackPolicy)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.SetTeamFeedbackPolicy)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/memberships", wrapper.ListTeamMemberships)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/memberships/{membership_id}", wrapper.RemoveMembership)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/teams/{team_id}/memberships/{membership_id}", wrapper.SetMembershipRole)

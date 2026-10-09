@@ -487,6 +487,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTeamCreate(ctx, flags.Team.Create, stdout, stderr)
 	case "team members":
 		return runTeamMembers(ctx, flags.Team.Members, stdout, stderr)
+	case "team feedback show":
+		return runTeamFeedbackShow(ctx, flags.Team.Feedback.Show, stdout, stderr)
+	case "team feedback set":
+		return runTeamFeedbackSet(ctx, flags.Team.Feedback.Set, stdout, stderr)
 	case "team invite create":
 		return runTeamInviteCreate(ctx, flags.Team.Invite.Create, stdout, stderr)
 	case "team invite list":

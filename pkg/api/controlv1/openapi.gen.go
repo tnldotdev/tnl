@@ -270,6 +270,7 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 const (
 	Conflict                    ProblemCode = "conflict"
 	DnsSetupPending             ProblemCode = "dns_setup_pending"
+	FeedbackSignInRequired      ProblemCode = "feedback_sign_in_required"
 	Forbidden                   ProblemCode = "forbidden"
 	GuestDemoOnly               ProblemCode = "guest_demo_only"
 	GuestIpChanged              ProblemCode = "guest_ip_changed"
@@ -295,6 +296,8 @@ func (e ProblemCode) Valid() bool {
 	case Conflict:
 		return true
 	case DnsSetupPending:
+		return true
+	case FeedbackSignInRequired:
 		return true
 	case Forbidden:
 		return true
@@ -972,6 +975,18 @@ type DomainID = ResourceID
 type EnableShareAccessRequest struct {
 	PreviewId        PreviewID `json:"preview_id"`
 	PublishRunNumber int64     `json:"publish_run_number"`
+}
+
+// FeedbackAccess defines model for FeedbackAccess.
+type FeedbackAccess struct {
+	RequireSignIn bool `json:"require_sign_in"`
+}
+
+// FeedbackAccessRequest defines model for FeedbackAccessRequest.
+type FeedbackAccessRequest struct {
+	Access           FeedbackReviewerAccess `json:"access"`
+	PreviewId        PreviewID              `json:"preview_id"`
+	PublishRunNumber int64                  `json:"publish_run_number"`
 }
 
 // FeedbackAnchor defines model for FeedbackAnchor.
@@ -1705,6 +1720,9 @@ type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
 // CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
 type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
 
+// GetFeedbackAccessJSONRequestBody defines body for GetFeedbackAccess for application/json ContentType.
+type GetFeedbackAccessJSONRequestBody = FeedbackAccessRequest
+
 // ListPreviewPageFeedbackJSONRequestBody defines body for ListPreviewPageFeedback for application/json ContentType.
 type ListPreviewPageFeedbackJSONRequestBody = PreviewPageFeedbackRequest
 
@@ -2214,6 +2232,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
 	CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetFeedbackAccessWithBody Read live feedback policy through current preview access
+	//
+	// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+	GetFeedbackAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetFeedbackAccess Read live feedback policy through current preview access
+	//
+	// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+	GetFeedbackAccess(ctx context.Context, publishRunId PublishRunID, body GetFeedbackAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
 	//
@@ -3275,6 +3311,44 @@ func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, publishRunId 
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
 func (c *Client) CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateFeedbackReportRequest(c.Server, publishRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetFeedbackAccessWithBody Read live feedback policy through current preview access
+//
+// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+func (c *Client) GetFeedbackAccessWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetFeedbackAccessRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetFeedbackAccess Read live feedback policy through current preview access
+//
+// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+func (c *Client) GetFeedbackAccess(ctx context.Context, publishRunId PublishRunID, body GetFeedbackAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetFeedbackAccessRequest(c.Server, publishRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5538,6 +5612,53 @@ func NewCreateFeedbackReportRequestWithBody(server string, publishRunId PublishR
 	return req, nil
 }
 
+// NewGetFeedbackAccessRequest calls the generic GetFeedbackAccess builder with application/json body
+func NewGetFeedbackAccessRequest(server string, publishRunId PublishRunID, body GetFeedbackAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetFeedbackAccessRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewGetFeedbackAccessRequestWithBody constructs an http.Request for the GetFeedbackAccess method, with any body, and a specified content type
+func NewGetFeedbackAccessRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/feedback/access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPreviewPageFeedbackRequest calls the generic ListPreviewPageFeedback builder with application/json body
 func NewListPreviewPageFeedbackRequest(server string, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6668,6 +6789,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
 	CreateFeedbackReportWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
+
+	// GetFeedbackAccessWithBodyWithResponse Read live feedback policy through current preview access
+	//
+	// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+	GetFeedbackAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetFeedbackAccessResponse, error)
+
+	// GetFeedbackAccessWithResponse Read live feedback policy through current preview access
+	//
+	// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+	GetFeedbackAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body GetFeedbackAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*GetFeedbackAccessResponse, error)
 
 	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
 	//
@@ -8723,6 +8862,54 @@ func (r CreateFeedbackReportResponse) ContentType() string {
 	return ""
 }
 
+type GetFeedbackAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *FeedbackAccess
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetFeedbackAccessResponse) GetJSON200() *FeedbackAccess {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetFeedbackAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetFeedbackAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetFeedbackAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetFeedbackAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetFeedbackAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPreviewPageFeedbackResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10177,6 +10364,36 @@ func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCreateFeedbackReportResponse(rsp)
+}
+
+// GetFeedbackAccessWithBodyWithResponse Read live feedback policy through current preview access
+//
+// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+func (c *ClientWithResponses) GetFeedbackAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetFeedbackAccessResponse, error) {
+	rsp, err := c.GetFeedbackAccessWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetFeedbackAccessResponse(rsp)
+}
+
+// GetFeedbackAccessWithResponse Read live feedback policy through current preview access
+//
+// Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/access (the `GetFeedbackAccess` operationId).
+func (c *ClientWithResponses) GetFeedbackAccessWithResponse(ctx context.Context, publishRunId PublishRunID, body GetFeedbackAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*GetFeedbackAccessResponse, error) {
+	rsp, err := c.GetFeedbackAccess(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetFeedbackAccessResponse(rsp)
 }
 
 // ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
@@ -11800,6 +12017,39 @@ func ParseCreateFeedbackReportResponse(rsp *http.Response) (*CreateFeedbackRepor
 	return response, nil
 }
 
+// ParseGetFeedbackAccessResponse parses an HTTP response from a GetFeedbackAccessWithResponse call
+func ParseGetFeedbackAccessResponse(rsp *http.Response) (*GetFeedbackAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetFeedbackAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FeedbackAccess
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPreviewPageFeedbackResponse parses an HTTP response from a ListPreviewPageFeedbackWithResponse call
 func ParseListPreviewPageFeedbackResponse(rsp *http.Response) (*ListPreviewPageFeedbackResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12443,6 +12693,9 @@ type ServerInterface interface {
 	// CreateFeedbackReport Store a reviewer's first report for a preview page
 	// (POST /v1/publish-runs/{publish_run_id}/feedback)
 	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateFeedbackReportParams)
+	// GetFeedbackAccess Read live feedback policy through current preview access
+	// (POST /v1/publish-runs/{publish_run_id}/feedback/access)
+	GetFeedbackAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// ListPreviewPageFeedback List feedback on one page for a reviewer
 	// (POST /v1/publish-runs/{publish_run_id}/feedback/query)
 	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -13811,6 +14064,32 @@ func (siw *ServerInterfaceWrapper) CreateFeedbackReport(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// GetFeedbackAccess operation middleware
+func (siw *ServerInterfaceWrapper) GetFeedbackAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetFeedbackAccess(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListPreviewPageFeedback operation middleware
 func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request) {
 
@@ -14423,6 +14702,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-state", wrapper.GetPublishRunShareState)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-redemptions", wrapper.RedeemPublishRunShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback", wrapper.CreateFeedbackReport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/access", wrapper.GetFeedbackAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/query", wrapper.ListPreviewPageFeedback)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events", wrapper.AppendReviewerFeedbackEvent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query", wrapper.GetReviewerFeedbackThread)

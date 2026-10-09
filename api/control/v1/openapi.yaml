@@ -788,6 +788,30 @@ paths:
                 $ref: "#/components/schemas/FeedbackThread"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback/access:
+    post:
+      operationId: getFeedbackAccess
+      summary: Read live feedback policy through current preview access
+      description: Reads policy for an existing preview and public URL without creating either. Sign-in policy does not restrict reads; current visitor access is required.
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackAccessRequest"
+      responses:
+        "200":
+          description: Current feedback write policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackAccess"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/feedback/query:
     post:
       operationId: listPreviewPageFeedback
@@ -2206,6 +2230,26 @@ components:
           $ref: "#/components/schemas/SourceState"
         access:
           $ref: "#/components/schemas/FeedbackReviewerAccess"
+    FeedbackAccess:
+      type: object
+      additionalProperties: false
+      required: [require_sign_in]
+      properties:
+        require_sign_in:
+          type: boolean
+    FeedbackAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [preview_id, publish_run_number, access]
+      properties:
+        preview_id:
+          $ref: "#/components/schemas/PreviewID"
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        access:
+          $ref: "#/components/schemas/FeedbackReviewerAccess"
     PreviewPageFeedbackRequest:
       type: object
       additionalProperties: false
@@ -2831,6 +2875,7 @@ components:
         [
           invalid_request,
           unauthenticated,
+          feedback_sign_in_required,
           forbidden,
           guest_demo_only,
           guest_ip_changed,
