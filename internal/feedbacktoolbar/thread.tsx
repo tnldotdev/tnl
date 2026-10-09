@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { FeedbackAPI } from "./api.ts";
 import { mutationKey } from "./async.ts";
 import type { BrowserEvent } from "./model.ts";
@@ -6,7 +6,6 @@ import { supportedAnchor } from "./anchors.ts";
 import { useConversation } from "./queries.ts";
 import { EvidenceView } from "./evidence-view.tsx";
 import { authorKey, canPost, PostingIdentity, type Posting } from "./access.tsx";
-import type { Recovery, ThreadDraft } from "./drafts.ts";
 import { FeedbackError } from "./errors.ts";
 
 const eventLabels = {
@@ -21,17 +20,12 @@ export function ThreadView({
   api,
   id,
   posting,
-  recovered,
-  changed,
 }: {
   api: FeedbackAPI;
   id: string;
   posting: Posting;
-  recovered?: ThreadDraft | undefined;
-  changed: (draft: Recovery) => void;
 }) {
-  const [text, setText] = useState(recovered?.text ?? "");
-  const [review, setReview] = useState(recovered?.uncertain ?? false);
+  const [text, setText] = useState("");
   const [attempt, setAttempt] = useState<{
     type: BrowserEvent;
     text: string;
@@ -41,7 +35,7 @@ export function ThreadView({
   const keys = useRef(mutationKey());
   const uncertain = useRef(false);
   const { query, append, history } = useConversation(api, id, async (author) => {
-    if (!canPost(posting.access) || review) throw new FeedbackError("sign_in_required");
+    if (!canPost(posting.access)) throw new FeedbackError("sign_in_required");
     await posting.authorize(author);
   });
   const data = query.data;
@@ -50,7 +44,7 @@ export function ThreadView({
   const authorChanged =
     !!posting.access && !!attempt && attempt.author !== authorKey(posting.access);
   function send(type: BrowserEvent): void {
-    if (!canPost(posting.access) || review || (attempt && attempt.type !== type)) return;
+    if (!canPost(posting.access) || (attempt && attempt.type !== type)) return;
     const current = attempt ?? {
       type,
       text: text.trim(),
@@ -77,9 +71,6 @@ export function ThreadView({
       },
     });
   }
-  useEffect(() => {
-    changed({ mode: "thread", id, text, uncertain: review || !!attempt });
-  }, [id, text, review, attempt]);
   return (
     <section aria-label="Feedback thread">
       {error && <p role="status">{safeFeedbackMessage(error)}</p>}
@@ -147,15 +138,8 @@ export function ThreadView({
                 the draft.
               </p>
             )}
-            {recovered && <small>draft restored; review before sending.</small>}
-            {review && (
-              <p role="status">
-                a previous submission may have reached control. check the history before posting
-                again.{" "}
-                <button type="button" onClick={() => setReview(false)}>
-                  I checked; keep editing
-                </button>
-              </p>
+            {attempt && append.error && uncertain.current && (
+              <p role="status">this may have been sent; check the history before editing.</p>
             )}
             <label>
               {data.thread.state === "open" ? "Reply" : "Note (optional)"}
@@ -173,7 +157,6 @@ export function ThreadView({
                 disabled={
                   !canPost(posting.access) ||
                   authorChanged ||
-                  review ||
                   append.isPending ||
                   !text.trim() ||
                   (!!attempt && attempt.type !== "reply")
@@ -187,7 +170,6 @@ export function ThreadView({
               disabled={
                 !canPost(posting.access) ||
                 authorChanged ||
-                review ||
                 append.isPending ||
                 (!!attempt &&
                   attempt.type !==
@@ -206,7 +188,6 @@ export function ThreadView({
                   setAttempt(undefined);
                   uncertain.current = false;
                   keys.current = mutationKey();
-                  setReview(true);
                 }}
               >
                 edit draft

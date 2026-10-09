@@ -18,24 +18,11 @@ import { Popover } from "./popover.tsx";
 import { Placement, SelectionHint } from "./placement.tsx";
 import { FeedbackList, type ListFilters } from "./list.tsx";
 import type { FeedbackAPI } from "./api.ts";
-import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+import { safeFeedbackMessage } from "./errors.ts";
 import { checkPosting, SignInLink, type Posting } from "./access.tsx";
-import {
-  recoverTarget,
-  restoreDraft,
-  saveDraft,
-  type Recovery,
-  type ReportDraft,
-  type ThreadDraft,
-} from "./drafts.ts";
 
-type Draft = {
-  path: string;
-  target?: AnchorTarget | undefined;
-  key: string;
-  recovered?: ReportDraft | undefined;
-};
-type Selected = { thread: Summary; threads: Summary[]; recovered?: ThreadDraft | undefined };
+type Draft = { path: string; target?: AnchorTarget | undefined; key: string };
+type Selected = { thread: Summary; threads: Summary[] };
 
 function FeedbackLayer({
   api,
@@ -47,27 +34,14 @@ function FeedbackLayer({
   host: Element;
 }) {
   const [path, setPath] = useState(document.location.pathname + document.location.search);
-  const [recovered] = useState(() => restoreDraft(document));
   const [placing, setPlacing] = useState(false);
-  const [draft, setDraft] = useState<Draft | undefined>(() =>
-    recovered?.mode === "report"
-      ? {
-          path,
-          key: crypto.randomUUID(),
-          target: recoverTarget(document, recovered.anchor),
-          recovered,
-        }
-      : undefined,
-  );
+  const [draft, setDraft] = useState<Draft>();
   const [selected, setSelected] = useState<Selected>();
   const [listOpen, setListOpen] = useState(false);
   const [filters, setFilters] = useState<ListFilters>({ pages: "current", state: "open" });
   const actions = useRef<Action[]>([{ type: "navigation", path: document.location.pathname }]);
   const toolbar = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
-  const unsent = useRef<Recovery | undefined>(recovered);
-  const restoredOnce = useRef(false);
-  const [recoveryError, setRecoveryError] = useState(false);
   const access = useQuery({
     queryKey: ["feedback-access"],
     queryFn: ({ signal }) => api.access(signal),
@@ -78,21 +52,6 @@ function FeedbackLayer({
     mutationFn: () => api.signOut(new AbortController().signal),
     onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-access"] }),
   });
-  const restoredThread = useQuery({
-    queryKey: ["feedback-restore-thread", recovered?.mode === "thread" ? recovered.id : ""],
-    queryFn: ({ signal }) =>
-      recovered?.mode === "thread"
-        ? api.inspect(recovered.id, signal)
-        : Promise.reject(new FeedbackError("not_found")),
-    enabled: recovered?.mode === "thread" && !restoredOnce.current,
-    retry: false,
-  });
-  useEffect(() => {
-    if (!restoredOnce.current && restoredThread.data && recovered?.mode === "thread") {
-      restoredOnce.current = true;
-      setSelected({ thread: restoredThread.data, threads: [restoredThread.data], recovered });
-    }
-  }, [restoredThread.data, recovered]);
   const posting: Posting = {
     access: access.isError || signOut.isPending ? undefined : access.data,
     error: access.error,
@@ -108,17 +67,7 @@ function FeedbackLayer({
       });
       checkPosting(current, author);
     },
-    signIn: (event) => {
-      if (unsent.current && !saveDraft(document, unsent.current)) {
-        event.preventDefault();
-        setRecoveryError(true);
-      }
-    },
   };
-  function remember(value: Recovery | undefined): void {
-    unsent.current = value;
-    saveDraft(document, value);
-  }
   const query = usePageFeedback(api, path);
   const threads = [
     ...new Map(
@@ -145,11 +94,9 @@ function FeedbackLayer({
       const next = document.location.pathname + document.location.search;
       if (next !== path) {
         setPath(next);
-        restoredOnce.current = true;
         setDraft(undefined);
         setSelected(undefined);
         setPlacing(false);
-        remember(undefined);
         actions.current = [
           ...actions.current.slice(-19),
           { type: "navigation", path: document.location.pathname },
@@ -159,20 +106,16 @@ function FeedbackLayer({
     return () => window.clearInterval(timer);
   }, [document, path]);
   function newDraft(target?: AnchorTarget): void {
-    restoredOnce.current = true;
     setPlacing(false);
     setListOpen(false);
     setSelected(undefined);
-    remember(undefined);
     setDraft({ path, target, key: crypto.randomUUID() });
   }
   function select(thread: Summary, choices: Summary[]): void {
-    restoredOnce.current = true;
     setSelected({ thread, threads: choices });
     setDraft(undefined);
     setListOpen(false);
     setPlacing(false);
-    remember(undefined);
     if (thread.scope.page_path === path) {
       const anchor = supportedAnchor(thread.anchor);
       const element = anchor ? restoreAnchor(document, anchor)?.element : undefined;
@@ -199,12 +142,6 @@ function FeedbackLayer({
           <small>sign-in expired; your draft is still here</small>
         )}
         {access.error && <small role="status">{safeFeedbackMessage(access.error)}</small>}
-        {recoveryError && (
-          <small role="alert">could not preserve the draft; copy your text before signing in</small>
-        )}
-        {restoredThread.error && (
-          <small role="status">{safeFeedbackMessage(restoredThread.error)}</small>
-        )}
         {signOut.error && <small role="status">{safeFeedbackMessage(signOut.error)}</small>}
         <button
           type="button"
@@ -258,10 +195,7 @@ function FeedbackLayer({
           anchor={draft.target?.anchor}
           fallback={fallback}
           title="new feedback"
-          close={() => {
-            setDraft(undefined);
-            remember(undefined);
-          }}
+          close={() => setDraft(undefined)}
         >
           <ReportForm
             key={draft.key}
@@ -271,15 +205,9 @@ function FeedbackLayer({
             actions={() => actions.current}
             target={draft.target}
             posting={posting}
-            recovered={draft.recovered}
-            changed={remember}
-            cancel={() => {
-              setDraft(undefined);
-              remember(undefined);
-            }}
+            cancel={() => setDraft(undefined)}
             saved={(thread) => {
               setDraft(undefined);
-              remember(undefined);
               void client.invalidateQueries({ queryKey: ["feedback-page"] });
               select(thread, [thread]);
             }}
@@ -292,10 +220,7 @@ function FeedbackLayer({
           anchor={anchor}
           fallback={fallback}
           title="feedback"
-          close={() => {
-            setSelected(undefined);
-            remember(undefined);
-          }}
+          close={() => setSelected(undefined)}
         >
           <div class="thread-navigation">
             <button
@@ -354,14 +279,7 @@ function FeedbackLayer({
               the element is no longer on this page; the conversation is still here
             </p>
           )}
-          <ThreadView
-            key={current.id}
-            api={api}
-            id={current.id}
-            posting={posting}
-            recovered={selected?.recovered}
-            changed={remember}
-          />
+          <ThreadView key={current.id} api={api} id={current.id} posting={posting} />
         </Popover>
       )}
       {listOpen && (

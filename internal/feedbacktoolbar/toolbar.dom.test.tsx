@@ -85,7 +85,6 @@ afterEach(() => {
   document.body.replaceChildren();
   document.getSelection()?.removeAllRanges();
   window.history.replaceState(null, "", "/");
-  window.sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -189,7 +188,7 @@ test("unknown identity and policy never claim anonymous or verified posting whil
   ).toBe(true);
 });
 
-test("expired sign-in preserves an unsent report across a full-page return and refreshes its evidence without submitting", async () => {
+test("toolbar sign-in opens another tab without replacing the report draft", async () => {
   window.history.replaceState(null, "", "/review?tab=one");
   const api = fixture();
   vi.mocked(api.access).mockResolvedValue({
@@ -197,36 +196,32 @@ test("expired sign-in preserves an unsent report across a full-page return and r
     sign_in_available: true,
     identity_state: "expired",
   });
-  const first = mount(api);
-  const element = appButton();
-  await openDraft(first.user, element);
-  await first.user.type(
+  const { user } = mount(api);
+  await openDraft(user, appButton());
+  await user.type(
     screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Draft survives sign-in",
+    "Draft stays on this page",
   );
   const link = within(screen.getByRole("region", { name: "New feedback" })).getByRole("link", {
     name: /sign in/,
   });
   expect(link.getAttribute("href")).toBe("/__tnl/team/login?return=%2Freview%3Ftab%3Done");
-  act(() => {
-    first.unmount();
-  });
-  element.textContent = "Fresh label";
+  expect(link.getAttribute("target")).toBe("_blank");
+  expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   vi.mocked(api.access).mockResolvedValue({
     require_sign_in: true,
     sign_in_available: true,
     identity_state: "signed_in",
     identity: { identity_id: "sam", display_name: "Sam" },
   });
-  const second = mount(api);
-  await screen.findByText("signed in as Sam");
+  await screen.findByText("signed in as Sam", {}, { timeout: 4000 });
   expect(
     (screen.getByRole("textbox", { name: "Feedback", exact: true }) as HTMLTextAreaElement).value,
-  ).toBe("Draft survives sign-in");
+  ).toBe("Draft stays on this page");
   expect(api.report).not.toHaveBeenCalled();
-  await second.user.click(screen.getByRole("button", { name: "send feedback" }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(api.report).mock.calls[0]?.[0].evidence.element?.label).toBe("Fresh label");
+  expect(vi.mocked(api.report).mock.calls[0]?.[0].evidence.element?.label).toBe("Save");
 });
 
 test("an uncertain retry cannot silently switch posting identity", async () => {
@@ -250,32 +245,25 @@ test("an uncertain retry cannot silently switch posting identity", async () => {
   expect(api.report).toHaveBeenCalledTimes(1);
 });
 
-test("an uncertain submission restored after sign-in requires deliberate review and a new submission", async () => {
-  const api = fixture();
+test("editing after an uncertain submission keeps the draft but uses a new retry key", async () => {
+  const { api, user } = mount();
   vi.mocked(api.report).mockRejectedValueOnce(new FeedbackError("unavailable"));
-  const first = mount(api);
-  await openDraft(first.user, appButton());
-  await first.user.type(
+  await openDraft(user, appButton());
+  await user.type(
     screen.getByRole("textbox", { name: "Feedback", exact: true }),
     "Possibly submitted",
   );
-  await first.user.click(screen.getByRole("button", { name: "send feedback" }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await screen.findByRole("alert");
-  act(() => {
-    first.unmount();
-  });
-  vi.mocked(api.access).mockResolvedValue({
-    require_sign_in: false,
-    sign_in_available: true,
-    identity_state: "signed_in",
-    identity: { identity_id: "sam", display_name: "Sam" },
-  });
-  const second = mount(api);
-  await screen.findByText("signed in as Sam");
-  expect(screen.getByRole("button", { name: "send feedback" }).hasAttribute("disabled")).toBe(true);
+  expect(
+    screen.getByText("this may have been sent; check the feedback list before editing."),
+  ).toBeTruthy();
+  expect((screen.getByRole("textbox", { name: "Feedback" }) as HTMLTextAreaElement).value).toBe(
+    "Possibly submitted",
+  );
   expect(api.report).toHaveBeenCalledTimes(1);
-  await second.user.click(screen.getByRole("button", { name: "I checked; keep editing" }));
-  await second.user.click(screen.getByRole("button", { name: "send feedback" }));
+  await user.click(screen.getByRole("button", { name: "edit draft" }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   expect(vi.mocked(api.report).mock.calls[0]?.[1]).not.toBe(
     vi.mocked(api.report).mock.calls[1]?.[1],

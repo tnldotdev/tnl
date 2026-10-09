@@ -8,7 +8,6 @@ export type Posting = {
   error: unknown;
   authorize: (author: string) => Promise<void>;
   refresh: () => void;
-  signIn: (event: MouseEvent) => void;
   path: string;
 };
 
@@ -38,7 +37,9 @@ export function SignInLink({ posting }: { posting: Posting }) {
     <a
       class="account-link"
       href={"/__tnl/team/login?return=" + encodeURIComponent(posting.path)}
-      onClick={posting.signIn}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="opens in a new tab; return here after signing in"
     >
       [ sign in ]
     </a>

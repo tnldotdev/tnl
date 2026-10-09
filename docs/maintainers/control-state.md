@@ -178,10 +178,10 @@ Toolbar writes carry a frozen `posting_identity` expectation. The publisher
 checks it against the current browser credential before forwarding, so a cookie
 change between preflight and the write cannot change the author. The expectation
 does not grant access or supply verified attribution.
-Full-page sign-in keeps a validated, page-and-query-scoped draft in sessionStorage
-for at most 15 minutes and 16 KiB. Text is bounded to 4000 bytes and optional names
-to 64 bytes. Restoration rechecks anchors and captures evidence again, never
-submits automatically, and requires explicit review after an uncertain write.
+Toolbar sign-in opens in a new tab. The original tab keeps its draft and selected
+thread in memory while metadata polling detects the new host-bound cookie. It
+does not submit the draft automatically; uncertain writes retain their body and
+idempotency key until the reviewer deliberately edits the draft or retries.
 The publisher OpenAPI source owns the browser session, login, and logout shapes,
 including `visit_allowed`; browser validators are generated from that source.
 

@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import { BrowserFeedbackEventRequest } from "../publisherapi/model.gen.ts";
 import { reportInputSchema, type ReportInput } from "./model.ts";
 
-test("full-page sign-in restores report and reply drafts under CSP without automatic writes", async () => {
+test("sign-in opens a new tab while report and reply drafts remain under CSP", async () => {
   const script = await readFile(new URL("./toolbar.js", import.meta.url));
   const font = await readFile(
     new URL("../browserfonts/fira-code-latin-wght-normal.woff2", import.meta.url),
@@ -184,8 +184,13 @@ test("full-page sign-in restores report and reply drafts under CSP without autom
       .getByRole("textbox", { name: "Feedback", exact: true })
       .fill("Keep this report draft");
     expect(await draft.getByRole("button", { name: "send feedback" }).isDisabled()).toBe(true);
+    const firstTab = page.context().waitForEvent("page");
     await draft.getByRole("link", { name: /sign in/ }).click();
-    await page.waitForURL(origin + "/preview?tab=review");
+    const loginTab = await firstTab;
+    await loginTab.waitForURL(origin + "/preview?tab=review");
+    expect(await loginTab.evaluate(() => window.opener === null)).toBe(true);
+    expect(page.url()).toBe(origin + "/preview?tab=review");
+    await loginTab.close();
     await page.getByText("signed in as Sam", { exact: true }).waitFor();
     expect(await draft.getByRole("textbox", { name: "Feedback", exact: true }).inputValue()).toBe(
       "Keep this report draft",
@@ -193,7 +198,7 @@ test("full-page sign-in restores report and reply drafts under CSP without autom
     expect(reports).toHaveLength(0);
     await draft.getByRole("button", { name: "send feedback" }).click();
     await expect.poll(() => reports.length).toBe(1);
-    expect(reports[0]?.evidence.element?.label).toBe("Fresh label");
+    expect(reports[0]?.evidence.element?.label).toBe("Save");
     expect(reports[0]?.display_name).toBe("");
     await page.getByRole("heading", { name: "Keep this report draft" }).waitFor();
     await page.getByRole("textbox", { name: "Reply", exact: true }).fill("Keep this reply draft");
@@ -209,7 +214,13 @@ test("full-page sign-in restores report and reply drafts under CSP without autom
     );
     expect(await page.getByRole("heading", { name: "Keep this report draft" }).count()).toBe(1);
     const conversation = page.getByRole("region", { name: "Feedback thread" });
+    const secondTab = page.context().waitForEvent("page");
     await conversation.getByRole("link", { name: /sign in/ }).click();
+    const renewedTab = await secondTab;
+    await renewedTab.waitForURL(origin + "/preview?tab=review");
+    expect(await renewedTab.evaluate(() => window.opener === null)).toBe(true);
+    expect(page.url()).toBe(origin + "/preview?tab=review");
+    await renewedTab.close();
     await page.getByText("signed in as Sam", { exact: true }).waitFor();
     await expect
       .poll(() => page.getByRole("textbox", { name: "Reply", exact: true }).inputValue())
