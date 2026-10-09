@@ -151,12 +151,12 @@ var definitions = map[Reason]Definition{
 		Action: "check the authority URL configured on the selected server", Retry: RetryAfterChange,
 	},
 	InvalidTarget: {
-		Class: Invalid, Message: "the local service target is invalid",
-		Action: "use an HTTP loopback address or a local port", Retry: RetryAfterChange,
+		Class: Invalid, Message: "the service target is invalid",
+		Action: "use an HTTP or HTTPS origin reachable by tnl, or a local port", Retry: RetryAfterChange,
 	},
 	MissingTarget: {
-		Class: Invalid, Message: "a local target is required",
-		Action: "pass a local port or set publish.target in the project configuration", Retry: RetryAfterChange,
+		Class: Invalid, Message: "a target is required",
+		Action: "pass an HTTP or HTTPS origin or local port, or set publish.target in the project configuration", Retry: RetryAfterChange,
 	},
 	InvalidCommand: {
 		Class: Invalid, Message: "tnl could not use this command or its options",

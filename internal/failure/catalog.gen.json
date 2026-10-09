@@ -341,8 +341,8 @@
       "code": "TNL_CLIENT_INVALID_TARGET",
       "slug": "invalid-target",
       "class": "invalid",
-      "message": "the local service target is invalid",
-      "action": "use an HTTP loopback address or a local port"
+      "message": "the service target is invalid",
+      "action": "use an HTTP or HTTPS origin reachable by tnl, or a local port"
     },
     {
       "code": "TNL_CLIENT_INVALID_TUNNEL_FLAGS",
@@ -376,8 +376,8 @@
       "code": "TNL_CLIENT_MISSING_TARGET",
       "slug": "missing-target",
       "class": "invalid",
-      "message": "a local target is required",
-      "action": "pass a local port or set publish.target in the project configuration"
+      "message": "a target is required",
+      "action": "pass an HTTP or HTTPS origin or local port, or set publish.target in the project configuration"
     },
     {
       "code": "TNL_CLIENT_OUTPUT_UNAVAILABLE",

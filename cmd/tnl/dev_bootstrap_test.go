@@ -82,7 +82,7 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		t.Fatalf("conflicting target result = %#v", result)
 	}
 	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{Protocol: 1, Framework: "vite", Target: "http://192.0.2.1:5173"})
-	if result.err != nil || result.status != http.StatusBadRequest {
+	if result.err != nil || result.status != http.StatusConflict {
 		t.Fatalf("remote target result = %#v", result)
 	}
 }

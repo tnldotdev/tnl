@@ -1,7 +1,7 @@
 import { Server as HTTPSServer } from "node:https";
 import { TnlError, TnlCleanupError, classifyTnlError } from "../errors.js";
 import {
-  canonicalLoopbackTarget,
+  canonicalListenerTarget,
   readDevelopmentContext,
   registerLocalTarget,
   registrationTimeoutMilliseconds,
@@ -31,12 +31,20 @@ export interface NodeHTTPServer {
 
 export type LocalHTTPServer = NodeHTTPServer | BunHTTPServer;
 
+export interface RegistrationOptions {
+  /** hostname used to reach the listener, including for HTTPS certificate verification. */
+  readonly targetHostname?: string;
+}
+
 /** Registers a bound Node or Bun HTTP listener with this tnl dev invocation. */
-export async function registerServer(server: LocalHTTPServer): Promise<void> {
+export async function registerServer(
+  server: LocalHTTPServer,
+  options: RegistrationOptions = {},
+): Promise<void> {
   const { bootstrap } = readDevelopmentContext();
   if (bootstrap === null) return;
   try {
-    const target = await listeningTarget(server);
+    const target = await listeningTarget(server, options);
     const framework = isBunServer(server) ? "bun" : "node";
     const assignment = await requestTunnelAssignment(framework, bootstrap);
     await registerLocalTarget(assignment, target);
@@ -50,21 +58,25 @@ export async function registerServer(server: LocalHTTPServer): Promise<void> {
   }
 }
 
-async function listeningTarget(server: LocalHTTPServer): Promise<`http://${string}`> {
+async function listeningTarget(
+  server: LocalHTTPServer,
+  options: RegistrationOptions,
+): Promise<`http://${string}` | `https://${string}`> {
   if (isBunServer(server)) {
     const hostname = server.hostname ?? server.url.hostname;
     if (
-      server.url.protocol !== "http:" ||
+      (server.url.protocol !== "http:" && server.url.protocol !== "https:") ||
       typeof server.port !== "number" ||
       !Number.isInteger(server.port) ||
       typeof hostname !== "string"
     ) {
       throw new TnlError("sdk.target_invalid");
     }
-    return canonicalLoopbackTarget(hostname, server.port);
-  }
-  if (server instanceof HTTPSServer) {
-    throw new TnlError("sdk.target_invalid");
+    return canonicalListenerTarget(
+      options.targetHostname ?? hostname,
+      server.port,
+      server.url.protocol === "https:" ? "https" : "http",
+    );
   }
   if (server.address() === null) {
     await new Promise<void>((resolve, reject) => {
@@ -107,7 +119,11 @@ async function listeningTarget(server: LocalHTTPServer): Promise<`http://${strin
   ) {
     throw new TnlError("sdk.target_invalid");
   }
-  return canonicalLoopbackTarget(address.address, address.port);
+  return canonicalListenerTarget(
+    options.targetHostname ?? address.address,
+    address.port,
+    server instanceof HTTPSServer ? "https" : "http",
+  );
 }
 
 async function closeServer(server: LocalHTTPServer): Promise<void> {

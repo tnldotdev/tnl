@@ -195,6 +195,11 @@ describe("withTnl", () => {
       origin: "http://[::]:3500",
       source: "IPv6 wildcard hostname",
     },
+    {
+      expected: "http://192.0.2.1:3000",
+      origin: "http://192.0.2.1:3000",
+      source: "non-loopback hostname",
+    },
   ])("registers the post-bind $source target", async ({ origin, expected }) => {
     const bootstrap = await startTestBootstrap();
     const port = new URL(origin).port;
@@ -219,11 +224,6 @@ describe("withTnl", () => {
       environment: { __NEXT_PRIVATE_ORIGIN: undefined, PORT: undefined },
       expected: /did not report its bound development listener/,
       name: "missing post-bind origin",
-    },
-    {
-      environment: { __NEXT_PRIVATE_ORIGIN: "http://192.0.2.1:3000", PORT: "3000" },
-      expected: /localhost or all interfaces/,
-      name: "remote target",
     },
     {
       environment: { __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3000", PORT: "3001" },
