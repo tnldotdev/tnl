@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -132,11 +131,8 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		CanonicalHostname: request.CanonicalHostname, PublicURLScope: request.PublicURLScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
-	label := acting.MemberSlug
-	if domain.Kind == controlstate.DomainKindManaged {
-		label = acting.ManagedLabel
-	}
-	namespace := label + "." + domain.CanonicalDomain
+	namespace := naming.MemberNamespace(domain.CanonicalDomain, domain.Kind == controlstate.DomainKindManaged,
+		acting.ManagedLabel, acting.MemberSlug)
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
 		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
 		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
@@ -148,20 +144,8 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		}
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
-		decision.CertificatePlan = &authorization.CertificatePlan{
-			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
-			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
-		}
-		if a.dnsAutomation {
-			plan := decision.CertificatePlan
-			plan.ChallengeMethod = certificateidentity.ChallengeDNS01
-			if request.PublicURLScope == authorization.PublicURLScopeMember {
-				if depth, within := naming.ChildDepth(request.CanonicalHostname, namespace); within && depth <= 1 {
-					plan.CacheKey, plan.Scope = namespace, namespace
-					plan.Identifiers = []string{"*." + namespace, namespace}
-				}
-			}
-		}
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace,
+			request.PublicURLScope == authorization.PublicURLScopeMember, a.dnsAutomation)
 	}
 	return decision, nil
 }

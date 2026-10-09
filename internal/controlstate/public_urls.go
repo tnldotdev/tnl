@@ -932,11 +932,8 @@ func authorizeRouteCreation(
 	if request.DNSState == PublicURLDNSPending && request.DNSAuthorityReference != context.DnsAuthorityReference.String {
 		return ErrPublicURLAccess
 	}
-	actorLabel := context.ActorMemberSlug
-	if context.DomainKind == "managed" {
-		actorLabel = context.ActorManagedLabel
-	}
-	actorNamespace := actorLabel + "." + context.CanonicalDomain
+	actorNamespace := naming.MemberNamespace(context.CanonicalDomain, context.DomainKind == "managed",
+		context.ActorManagedLabel, context.ActorMemberSlug)
 	if request.PublicURLScope == "member" {
 		if request.MembershipID != context.ActorMembershipID ||
 			!hostnameWithin(request.CanonicalHostname, actorNamespace) {
