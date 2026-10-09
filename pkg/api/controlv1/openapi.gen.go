@@ -1271,10 +1271,12 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
-	Purpose              PublicURLPurpose        `json:"purpose"`
-	Target               string                  `json:"target"`
-	TeamId               TeamID                  `json:"team_id"`
-	UpdatedAt            time.Time               `json:"updated_at"`
+
+	// Purpose Existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
+	Purpose   PublicURLPurpose `json:"purpose"`
+	Target    string           `json:"target"`
+	TeamId    TeamID           `json:"team_id"`
+	UpdatedAt time.Time        `json:"updated_at"`
 }
 
 // PublicURLCreatePurpose defines model for PublicURLCreatePurpose.
@@ -1292,7 +1294,7 @@ type PublicURLPage struct {
 	PublicUrls []PublicURL  `json:"public_urls"`
 }
 
-// PublicURLPurpose defines model for PublicURLPurpose.
+// PublicURLPurpose Existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
 type PublicURLPurpose string
 
 // PublicURLScope defines model for PublicURLScope.
