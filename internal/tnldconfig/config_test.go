@@ -39,8 +39,8 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	if config.ManagedDomainMaxMemberChildLabels != 0 || config.CustomDomainsEnabled {
 		t.Fatal("standalone should allow nested managed-domain URLs and require custom-domain opt-in")
 	}
-	if config.ManagedURLMode != naming.ManagedURLModeGenerated {
-		t.Fatalf("interim managed URL mode = %q", config.ManagedURLMode)
+	if config.ManagedURLMode != naming.ManagedURLModeSimple {
+		t.Fatalf("managed URL mode = %q", config.ManagedURLMode)
 	}
 	if config.PublisherConnectionLimit < 1 {
 		t.Fatalf("publisher connection limit = %d", config.PublisherConnectionLimit)

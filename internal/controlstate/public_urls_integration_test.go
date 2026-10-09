@@ -87,6 +87,18 @@ func TestIntegrationSimpleManagedDirectNameReservation(t *testing.T) {
 	if replay, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second)); err != nil || replay.ID != first.ID {
 		t.Fatalf("direct public URL retry = %#v, %v", replay, err)
 	}
+	nested := request
+	nested.IdempotencyKey = "nested-direct"
+	nested.RequestDigest = sha256.Sum256([]byte(nested.IdempotencyKey))
+	nested.CanonicalHostname = "api.preview.tunnels.example.test"
+	if _, err := database.CreatePublicURL(t.Context(), nested, now); err != nil {
+		t.Fatalf("nested direct alias: %v", err)
+	}
+	previewTeam := authorityTeamRequest(request.ActingIdentityID)
+	previewTeam.DisplayName, previewTeam.IdempotencyKey = "preview", "preview-name"
+	if _, err := database.CreateTeam(t.Context(), previewTeam, now); !errors.Is(err, ErrTeamNameUnavailable) {
+		t.Fatalf("nested direct URL root was assigned to a team: %v", err)
+	}
 	teamRequest := authorityTeamRequest(request.ActingIdentityID)
 	teamRequest.DisplayName = "app"
 	if _, err := database.CreateTeam(t.Context(), teamRequest, now); !errors.Is(err, ErrTeamNameUnavailable) {

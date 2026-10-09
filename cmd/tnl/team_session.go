@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -36,6 +37,8 @@ type teamContext struct {
 	team       authorityv1.Team
 	membership authorityv1.Membership
 	domains    []authorityv1.Domain
+	mode       naming.ManagedURLMode
+	builtin    bool
 }
 
 type teamSession struct {
@@ -95,7 +98,12 @@ func (s *teamSession) current(ctx context.Context) (teamContext, error) {
 	if err != nil {
 		return teamContext{}, err
 	}
-	return teamContext{team: team, membership: membership}, nil
+	current := teamContext{team: team, membership: membership,
+		builtin: s.identity.Identity.Administrator && team.Kind == authorityv1.Personal && team.Id == s.identity.PersonalTeamId}
+	if s.authenticated != nil {
+		current.mode = naming.ManagedURLMode(s.authenticated.Discovery.ManagedUrlMode)
+	}
+	return current, nil
 }
 
 func (s *teamSession) currentWithDomains(ctx context.Context) (teamContext, error) {

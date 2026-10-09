@@ -66,7 +66,7 @@ type Config struct {
 	ControlHostname                   string                `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
 	PrivateControlAddress             string                `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
 	ManagedDomain                     string                `name:"managed-domain" env:"TNLD_MANAGED_DOMAIN" help:"Server-controlled domain used for namespaces."`
-	ManagedURLMode                    naming.ManagedURLMode `name:"managed-url-mode" env:"TNLD_MANAGED_URL_MODE" default:"generated" enum:"simple,generated" help:"Managed-domain public URL names: ${enum}."`
+	ManagedURLMode                    naming.ManagedURLMode `name:"managed-url-mode" env:"TNLD_MANAGED_URL_MODE" default:"simple" enum:"simple,generated" help:"Managed-domain public URL names: ${enum}."`
 	ManagedDomainMaxMemberChildLabels int                   `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
 	CustomDomainsEnabled              bool                  `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
@@ -148,7 +148,7 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	} else {
-		if c.CustomDomainsEnabled || c.ManagedDomainMaxMemberChildLabels != 0 || c.ManagedURLMode == naming.ManagedURLModeSimple {
+		if c.CustomDomainsEnabled || c.ManagedDomainMaxMemberChildLabels != 0 {
 			return errors.New("domain policy settings are valid only for control and standalone")
 		}
 		if c.DatabaseURL != "" {

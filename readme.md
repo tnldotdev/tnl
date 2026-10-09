@@ -217,6 +217,23 @@ https://web-example-k7n2p9.chase.dev.example.com
 
 ## self-host
 
+Set `TNLD_MANAGED_DOMAIN=routes.example.com` on your server. After signing in
+with the built-in administrator's login token, publish directly beneath it:
+
+```bash
+tnl login https://control.example.com --token
+tnl publish 3000 --server https://control.example.com --name app
+# https://app.routes.example.com
+```
+
+Without `--name`, `tnl` uses a stable project-and-worktree name. Other personal
+teams use a readable label, such as `app.alex.routes.example.com`; members of
+the `studio` team use `app.alex.studio.routes.example.com`. A shared hosted
+server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
+`ecstatic-penguin` instead. With managed DNS automation, sibling public URLs
+reuse namespace wildcard DNS and certificates; without it, point their DNS at
+ingress and `tnl` obtains exact-hostname certificates.
+
 After deploying the `tnl` server, update your config with it:
 
 ```ts

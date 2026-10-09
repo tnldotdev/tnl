@@ -104,6 +104,27 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	}
 }
 
+func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	previous := ""
+	for range 2 {
+		project, err := loadProjectConfiguration(t.Context(), cli{}, stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		flags := publishCommand{Target: "3000"}
+		if err := project.applyPublish(&flags); err != nil {
+			t.Fatal(err)
+		}
+		if flags.Name != project.Worktree.Label.FullLabel || flags.Name == "" || previous != "" && flags.Name != previous {
+			t.Fatalf("bare publish name = %q, worktree name = %q", flags.Name, project.Worktree.Label.FullLabel)
+		}
+		previous = flags.Name
+	}
+}
+
 func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://environment.example")
 	t.Setenv("TNL_NAME", "environment-name")
