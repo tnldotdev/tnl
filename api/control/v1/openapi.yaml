@@ -637,6 +637,7 @@ paths:
       summary: Create a publish run and allocate its publish run number
       security:
         - bearerAuth: []
+        - publicURLPublishAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -647,6 +648,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublishRunSetup"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/publish-credentials:
+    post:
+      operationId: createPublicURLPublishCredential
+      summary: Issue one public URL-scoped publish credential
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      responses:
+        "201":
+          description: One-time credential and its public metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedPublicURLPublishCredential"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listPublicURLPublishCredentials
+      summary: List credentials issued for a public URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      responses:
+        "200":
+          description: Public credential metadata, without secrets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentials]
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicURLPublishCredential"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/publish-credentials/{credential_id}:
+    delete:
+      operationId: revokePublicURLPublishCredential
+      summary: Revoke one public URL publish credential
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+      responses:
+        "204":
+          description: Credential revoked; active run will close on heartbeat
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-credentials/current:
+    get:
+      operationId: getPublicURLForPublishCredential
+      summary: Read the one public URL bound to this publish credential
+      security:
+        - publicURLPublishAuth: []
+      responses:
+        "200":
+          description: Bound public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/heartbeat:
@@ -1096,6 +1169,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl publish-run token
+    publicURLPublishAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl public URL publish credential
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -1524,6 +1601,42 @@ components:
         updated_at:
           type: string
           format: date-time
+    PublicURLPublishCredential:
+      type: object
+      additionalProperties: false
+      required: [id, public_url_id, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    IssuedPublicURLPublishCredential:
+      type: object
+      additionalProperties: false
+      required: [id, public_url_id, created_at, expires_at, credential]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        credential:
+          type: string
+          minLength: 1
     PublicURLPage:
       type: object
       additionalProperties: false

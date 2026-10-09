@@ -50,7 +50,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate issuance state conflict")
 	case errors.Is(err, controlstate.ErrCertificateChallengeNotReady):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate challenge state conflict")
-	case errors.Is(err, controlstate.ErrPublicURLCredential), errors.Is(err, controlstate.ErrPublishRunCredential):
+	case errors.Is(err, controlstate.ErrPublicURLCredential), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, controlstate.ErrPublicURLPublishCredential):
 		writeBearerProblem(response)
 	case errors.Is(err, controlstate.ErrPublicURLCreationGated), errors.Is(err, controlstate.ErrPublishRunCreationGated),
 		errors.Is(err, controlstate.ErrCertificateIssuanceGated):

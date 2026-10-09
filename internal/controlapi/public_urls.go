@@ -246,13 +246,32 @@ func (h *handler) CreatePublishRun(
 	publicURLID controlv1.PublicURLID,
 	_ controlv1.CreatePublishRunParams,
 ) {
-	if _, ok := requestBearerToken(request); !ok {
+	token, bearerOK := requestBearerToken(request)
+	if !bearerOK {
 		writeBearerProblem(response)
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
-	if !ok {
-		return
+	var credential controlstate.PublicURLPublishCredential
+	var retrySecret []byte
+	if strings.HasPrefix(token, "tnl_publish_") {
+		var bound controlstate.PublicURL
+		var ok bool
+		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)
+		if !ok {
+			return
+		}
+		if bound.ID != string(publicURLID) {
+			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+			return
+		}
+	}
+	var principal publicURLReadPrincipal
+	if credential.ID == "" {
+		var ok bool
+		principal, ok = h.authorizeRouteReads(response, request)
+		if !ok {
+			return
+		}
 	}
 	idempotencyKey := request.Header.Get("Idempotency-Key")
 	route, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
@@ -264,16 +283,32 @@ func (h *handler) CreatePublishRun(
 	for index, prefix := range route.AllowedIPPrefixes {
 		allowedIPPrefixes[index] = prefix.String()
 	}
-	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-		Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
-		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-		Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral,
-		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
-		PublicURLMutationRevision: route.MutationRevision,
-	})
-	if !ok {
-		return
+	var decision authorization.Decision
+	if credential.ID != "" {
+		if err := h.publishCredentials.ValidatePublicURLPublishCredential(request.Context(), credential, route); err != nil {
+			writeBearerProblem(response)
+			return
+		}
+		decision = authorization.Decision{
+			IdentityID: credential.IdentityID, TeamID: route.TeamID, ActingMembershipID: credential.MembershipID,
+			PublicURLMembershipID: route.MembershipID, PolicyRevision: credential.PolicyRevision,
+			DomainID: route.DomainID, CanonicalHostname: route.CanonicalHostname,
+			PublicURLScope: authorization.PublicURLScope(route.PublicURLScope), CertificatePlan: &credential.CertificatePlan,
+		}
+		copy(decision.RetrySecret[:], retrySecret)
+	} else {
+		var ok bool
+		decision, ok = h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
+			Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
+			PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
+			CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
+			Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral,
+			PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
+			PublicURLMutationRevision: route.MutationRevision,
+		})
+		if !ok {
+			return
+		}
 	}
 	if decision.CertificatePlan == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
@@ -303,6 +338,7 @@ func (h *handler) CreatePublishRun(
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
 		CertificateChallenge:     plan.ChallengeMethod,
 		ExpectedMutationRevision: route.MutationRevision,
+		PublishCredentialID:      credential.ID,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
 		writeControlStateProblem(response, "create publish run", err)

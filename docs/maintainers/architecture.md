@@ -220,6 +220,14 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
+control can issue a public URL publish credential to a signed-in member who may
+publish one enabled, saved app URL. it records only a digest. the credential
+authenticates reads for that URL and publish run creation, never team management
+or public URL mutations. the saved target and current membership must still
+match; the publish run token handles later run operations. control records the
+credential used to start a run and closes that run on heartbeat if the
+credential expires, is revoked, or its issuer loses publish authority.
+
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
 the member namespace apex is reserved. by default, a self-hosted built-in
