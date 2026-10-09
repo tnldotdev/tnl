@@ -3,6 +3,7 @@ package tnldruntime
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,31 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
 	t.Cleanup(func() {
 		if t.Failed() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			rows, err := inspectStandaloneTestDatabase(t, fixture.databaseURL).QueryContext(ctx, `
+				SELECT run.state, run.certificate_installed_at IS NOT NULL, slot.connection_slot, slot.state
+				FROM control.publish_runs AS run
+				JOIN control.public_urls AS public_url ON public_url.id = run.public_url_id
+				LEFT JOIN control.publish_run_connection_slots AS slot ON slot.publish_run_id = run.id
+				WHERE public_url.canonical_hostname = $1 ORDER BY run.publish_run_number, slot.connection_slot`,
+				"app-led-binary.routes.127.0.0.1.nip.io")
+			if err == nil {
+				for rows.Next() {
+					var runState string
+					var certificateInstalled bool
+					var slotNumber sql.NullInt64
+					var slotState sql.NullString
+					if err := rows.Scan(&runState, &certificateInstalled, &slotNumber, &slotState); err != nil {
+						t.Logf("read publish run diagnostic: %v", err)
+						break
+					}
+					t.Logf("publish run state=%s certificate_installed=%t slot=%d slot_state=%s", runState, certificateInstalled, slotNumber.Int64, slotState.String)
+				}
+				_ = rows.Close()
+			} else {
+				t.Logf("read publisher diagnostic: %v", err)
+			}
 			t.Logf("tnld output:\n%s", fixture.server.output.String())
 		}
 	})
