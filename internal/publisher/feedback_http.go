@@ -16,6 +16,34 @@ type feedbackHTTP struct{ runtime *feedbackRuntime }
 
 var _ publisherv1.ServerInterface = (*feedbackHTTP)(nil)
 
+func (h *feedbackHTTP) GetBrowserFeedbackAccess(response http.ResponseWriter, request *http.Request) {
+	if access, ok := feedbackHTTPAccess(response, request); ok {
+		h.runtime.access(response, request, access)
+	}
+}
+
+// browser routes keep their admission and login implementation in browserAccess.
+func (h *feedbackHTTP) browserEndpoint(response http.ResponseWriter, request *http.Request) {
+	if h.runtime.browser == nil {
+		http.NotFound(response, request)
+		return
+	}
+	h.runtime.browser.handle(response, request)
+}
+
+func (h *feedbackHTTP) GetBrowserSession(response http.ResponseWriter, request *http.Request) {
+	h.browserEndpoint(response, request)
+}
+func (h *feedbackHTTP) BeginBrowserSignIn(response http.ResponseWriter, request *http.Request, _ publisherv1.BeginBrowserSignInParams) {
+	h.browserEndpoint(response, request)
+}
+func (h *feedbackHTTP) EndBrowserSignIn(response http.ResponseWriter, request *http.Request) {
+	h.browserEndpoint(response, request)
+}
+func (h *feedbackHTTP) SwitchBrowserAccount(response http.ResponseWriter, request *http.Request, _ publisherv1.SwitchBrowserAccountParams) {
+	h.browserEndpoint(response, request)
+}
+
 func feedbackHTTPAccess(response http.ResponseWriter, request *http.Request) (controlv1.FeedbackReviewerAccess, bool) {
 	access, ok := request.Context().Value(feedbackAccessContextKey{}).(controlv1.FeedbackReviewerAccess)
 	if !ok {

@@ -55,19 +55,23 @@ type browserTrail struct {
 }
 
 type feedbackRuntime struct {
-	client      feedbackClient
-	previewID   string
-	publicURLID string
-	service     string
-	projectRoot string
-	runID       string
-	version     uint64
-	token       credentials.PublishRunToken
-	mu          sync.Mutex
-	browsers    map[[32]byte]*browserTrail
-	asset       []byte
-	assetPath   string
-	demo        bool
+	client         feedbackClient
+	previewID      string
+	publicURLID    string
+	service        string
+	projectRoot    string
+	runID          string
+	version        uint64
+	token          credentials.PublishRunToken
+	mu             sync.Mutex
+	browsers       map[[32]byte]*browserTrail
+	asset          []byte
+	assetPath      string
+	demo           bool
+	browser        *browserAccess
+	identityClient interface {
+		CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error)
+	}
 	handlerOnce sync.Once
 	handler     http.Handler
 }
@@ -81,13 +85,19 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 		return nil, errors.New("publisher: feedback requires a configured preview, project service, and control client")
 	}
 	asset, assetPath := feedbacktoolbar.Script()
-	return &feedbackRuntime{
+	runtime := &feedbackRuntime{
 		demo:   config.Demo,
 		client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		service: config.Service, projectRoot: config.ProjectRoot,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
-	}, nil
+	}
+	if identityClient, ok := config.Control.(interface {
+		CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error)
+	}); ok {
+		runtime.identityClient = identityClient
+	}
+	return runtime, nil
 }
 
 func (f *feedbackRuntime) modifyResponse(response *http.Response) error {
@@ -173,11 +183,11 @@ func (f *feedbackRuntime) evidenceForBrowser(request *http.Request) []failedRequ
 
 func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (controlv1.FeedbackReviewerAccess, bool) {
 	result := controlv1.FeedbackReviewerAccess{AllowedIp: !denied}
-	if _, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse); verified {
-		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
-			secret := cookie.Value
-			result.BrowserCookieSecret = &secret
-		}
+	_, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse)
+	if secret, present, valid := feedbackBrowserCredential(request); present && valid && (verified || request.Method == http.MethodPost) {
+		// writes retain a present credential even when the earlier admission check
+		// rejected it. control must reject stale identity, never post anonymously.
+		result.BrowserCookieSecret = &secret
 	}
 	if !denied {
 		return result, true
@@ -219,6 +229,12 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 	if request.URL.Path == "/__tnl/feedback/evidence" && request.Method == http.MethodGet {
 		httpjson.Write(response, http.StatusOK, publisherv1.BrowserFeedbackEvidence{SchemaVersion: 1, FailedRequests: f.evidenceForBrowser(request)})
 		return true
+	}
+	if request.Method == http.MethodPost {
+		if _, present, valid := feedbackBrowserCredential(request); present && !valid {
+			http.Error(response, "browser sign-in expired; sign in again", http.StatusUnauthorized)
+			return true
+		}
 	}
 	access, ok := f.reviewerAccess(request, denied)
 	if !ok {
@@ -281,6 +297,9 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		http.Error(response, "provide feedback text and a page path", http.StatusBadRequest)
 		return
 	}
+	if !f.postingIdentity(response, request, input.PostingIdentity) {
+		return
+	}
 	key := request.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 128 {
 		http.Error(response, "provide an idempotency key", http.StatusBadRequest)
@@ -331,6 +350,9 @@ func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Requ
 	var input publisherv1.BrowserFeedbackEventRequest
 	if !readFeedbackInput(response, request, &input) || input.SchemaVersion != 1 {
 		http.Error(response, "invalid feedback event", http.StatusBadRequest)
+		return
+	}
+	if !f.postingIdentity(response, request, input.PostingIdentity) {
 		return
 	}
 	key := request.Header.Get("Idempotency-Key")

@@ -7,14 +7,87 @@ info:
     Same-origin browser feedback endpoints served by the local publisher on a
     public URL. The publisher supplies the preview, service, public URL, publish
     run, and current source state. Visitors cannot select that scope or supply
-    control credentials. IP policy or a current share cookie grants preview
-    access; the browser tracking cookie only selects a short failed-request
+    control credentials. IP policy, a current share cookie, or authorized browser
+    sign-in grants preview access; team policy may require sign-in for feedback
+    writes. The browser tracking cookie only selects a short failed-request
     trail. Requests and responses use Cache-Control no-store. Errors are plain
     text diagnostics and never include upstream response bodies or credentials.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers: [{ url: / }]
 security: [{}, { shareCookie: [] }]
 paths:
+  /__tnl/feedback/access:
+    get:
+      operationId: getBrowserFeedbackAccess
+      summary: Read the current feedback policy and browser identity
+      description: >-
+        The publisher supplies the existing preview, public URL, and publish run.
+        Current visitor read access is required independently of sign-in policy.
+        An expired browser cookie does not remove IP or share read access. Identity
+        and policy lookup failures return an error rather than anonymous status.
+      responses:
+        "200":
+          description: Live feedback write policy and current identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserFeedbackAccess"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/team/session:
+    get:
+      operationId: getBrowserSession
+      summary: Read the current browser sign-in session
+      responses:
+        "200":
+          description: Browser session; visit permission is separate from identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSession"
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/team/login:
+    get:
+      operationId: beginBrowserSignIn
+      summary: Deliberately start browser sign-in and return to this page
+      parameters:
+        - name: return
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+        - name: prompt
+          in: query
+          schema: { type: string, enum: [select_account] }
+      responses:
+        "303":
+          description: Redirect to control's browser sign-in with publisher-owned scope
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/team/switch-account:
+    post:
+      operationId: switchBrowserAccount
+      summary: Revoke this browser session and deliberately select another account
+      description: Requires the public URL's exact Origin header.
+      parameters:
+        - name: return
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+      responses:
+        "303":
+          description: Redirect to browser sign-in with account selection
+        default:
+          $ref: "#/components/responses/FeedbackError"
+  /__tnl/team/logout:
+    post:
+      operationId: endBrowserSignIn
+      summary: Revoke the host-bound browser session and clear its cookie
+      description: Requires the public URL's exact Origin header.
+      responses:
+        "204":
+          description: Signed out
+        default:
+          $ref: "#/components/responses/FeedbackError"
   /__tnl/feedback:
     get:
       operationId: listBrowserFeedback
@@ -186,7 +259,7 @@ components:
   responses:
     FeedbackError:
       description: >-
-        400 for invalid input, 403 for expired or missing preview access, 404 for
+        400 for invalid input, 401 for required or expired sign-in, 403 for denied preview access, 404 for
         an unavailable thread or path, 405 for an unsupported method, 409 for a
         state or idempotency conflict, 429 for rate limiting, or 503 when control
         is unavailable. The browser displays its own diagnostic rather than the
@@ -196,11 +269,39 @@ components:
           schema: { type: string }
           example: feedback changed; reload and retry
   schemas:
+    BrowserIdentity:
+      type: object
+      additionalProperties: false
+      required: [identity_id, display_name]
+      properties:
+        identity_id:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/IdentityID"
+        display_name: { type: string, minLength: 1, maxLength: 256 }
+    BrowserFeedbackAccess:
+      type: object
+      additionalProperties: false
+      required: [require_sign_in, sign_in_available, identity_state]
+      properties:
+        require_sign_in: { type: boolean }
+        sign_in_available: { type: boolean }
+        identity_state: { type: string, enum: [anonymous, signed_in, expired] }
+        identity:
+          $ref: "#/components/schemas/BrowserIdentity"
+    BrowserSession:
+      type: object
+      additionalProperties: false
+      required: [signed_in]
+      properties:
+        signed_in: { type: boolean }
+        display_name: { type: string, minLength: 1, maxLength: 256 }
+        visit_allowed: { type: boolean }
     BrowserFeedbackReportRequest:
       type: object
       additionalProperties: false
       required: [schema_version, text, page_path, evidence]
       properties:
+        posting_identity:
+          $ref: "#/components/schemas/PostingIdentity"
         schema_version:
           $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
         text: { type: string, minLength: 1, maxLength: 4000 }
@@ -216,10 +317,20 @@ components:
       additionalProperties: false
       required: [schema_version, type]
       properties:
+        posting_identity:
+          $ref: "#/components/schemas/PostingIdentity"
         schema_version:
           $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
         type: { type: string, enum: [reply, thread.resolved, thread.reopened] }
         text: { type: string, minLength: 1, maxLength: 4000 }
+    PostingIdentity:
+      type: string
+      minLength: 1
+      maxLength: 300
+      description: >-
+        Frozen author expectation, anonymous or identity:<identity_id>, obtained
+        from feedback access metadata. This does not grant access or choose an
+        author. The publisher rejects a changed identity before forwarding a write.
     BrowserFailedRequest:
       type: object
       additionalProperties: false

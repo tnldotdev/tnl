@@ -23,6 +23,9 @@ func TestReadyAccessSummaryUsesEffectivePolicyAndSharedRenderer(t *testing.T) {
 		{name: "disabled team grant", info: publisher.AccessInfo{BrowserSignInAvailable: true, PublicURLScope: controlv1.Member, PreviewID: "pv_private", TeamAccessEnabled: new(false)}, want: []string{"owning member", "disabled"}},
 		{name: "stale grant", info: publisher.AccessInfo{BrowserSignInAvailable: true, PublicURLScope: controlv1.Member, PreviewID: "pv_private"}, want: []string{"owning member", "unavailable"}},
 		{name: "no browser login", info: publisher.AccessInfo{PublicURLScope: controlv1.Shared, TeamAccessEnabled: new(true)}, want: []string{"all IPs", "unavailable"}},
+		{name: "required feedback", info: publisher.AccessInfo{BrowserSignInAvailable: true, PublicURLScope: controlv1.Member, FeedbackEnabled: true, FeedbackRequireSignIn: new(true)}, want: []string{"feedback sign-in", "required"}},
+		{name: "optional feedback", info: publisher.AccessInfo{PublicURLScope: controlv1.Member, FeedbackEnabled: true, FeedbackRequireSignIn: new(false)}, want: []string{"feedback sign-in", "optional"}},
+		{name: "unknown feedback policy", info: publisher.AccessInfo{PublicURLScope: controlv1.Member, FeedbackEnabled: true}, want: []string{"feedback sign-in", "unavailable"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
@@ -66,7 +69,7 @@ func TestReadyAccessSummaryDoesNotChangeNDJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := publisher.AccessInfo{AllowedIPPrefixes: []string{"192.0.2.1/32"}, BrowserSignInAvailable: true, PublicURLScope: controlv1.Member, PreviewID: "pv_private", TeamAccessEnabled: new(true)}
+	info := publisher.AccessInfo{AllowedIPPrefixes: []string{"192.0.2.1/32"}, BrowserSignInAvailable: true, PublicURLScope: controlv1.Member, PreviewID: "pv_private", TeamAccessEnabled: new(true), FeedbackEnabled: true, FeedbackRequireSignIn: new(true)}
 	if err := output.ready("https://app.example", 7, &info); err != nil {
 		t.Fatal(err)
 	}

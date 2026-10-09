@@ -164,6 +164,27 @@ and reviewer access; `FeedbackAccess` returns `require_sign_in`. Control checks
 that preview's inclusion of the authenticated public URL and current reviewer
 access, without creating a preview or public URL.
 
+The publisher exposes that policy at `GET /__tnl/feedback/access`, together with
+`sign_in_available` and `identity_state` (`anonymous`, `signed_in`, or `expired`).
+Signed-in metadata includes the current identity ID and display name. Identity
+or policy lookup failures remain errors. A present browser credential is always
+retained on a feedback write, even if admission rejected it; IP/share reads can
+omit expired identity and remain available.
+
+The toolbar polls metadata and checks it again before every report, reply,
+resolve, or reopen. Unknown policy or identity disables writes. Uncertain retries
+retain their body, key, and author; another author cannot reuse that attempt.
+Toolbar writes carry a frozen `posting_identity` expectation. The publisher
+checks it against the current browser credential before forwarding, so a cookie
+change between preflight and the write cannot change the author. The expectation
+does not grant access or supply verified attribution.
+Toolbar sign-in opens in a new tab. The original tab keeps its draft and selected
+thread in memory while metadata polling detects the new host-bound cookie. It
+does not submit the draft automatically; uncertain writes retain their body and
+idempotency key until the reviewer deliberately edits the draft or retries.
+The publisher OpenAPI source owns the browser session, login, and logout shapes,
+including `visit_allowed`; browser validators are generated from that source.
+
 ## coordinate publisher connections
 
 Publisher-connection claim and readiness operations share a keyed advisory guard

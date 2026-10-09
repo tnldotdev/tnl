@@ -185,8 +185,33 @@ export const FeedbackEventPage = z.strictObject({
   event_cursor: z.number().int().min(0),
 });
 
+export type BrowserIdentity = z.infer<typeof BrowserIdentity>;
+export const BrowserIdentity = z.strictObject({
+  identity_id: ResourceID,
+  display_name: z.string().min(1).max(256),
+});
+
+export type BrowserFeedbackAccess = z.infer<typeof BrowserFeedbackAccess>;
+export const BrowserFeedbackAccess = z.strictObject({
+  require_sign_in: z.boolean(),
+  sign_in_available: z.boolean(),
+  identity_state: z.enum(["anonymous", "signed_in", "expired"]),
+  identity: BrowserIdentity.optional(),
+});
+
+export type BrowserSession = z.infer<typeof BrowserSession>;
+export const BrowserSession = z.strictObject({
+  signed_in: z.boolean(),
+  display_name: z.string().min(1).max(256).optional(),
+  visit_allowed: z.boolean().optional(),
+});
+
+export type PostingIdentity = z.infer<typeof PostingIdentity>;
+export const PostingIdentity = z.string().min(1).max(300);
+
 export type BrowserFeedbackReportRequest = z.infer<typeof BrowserFeedbackReportRequest>;
 export const BrowserFeedbackReportRequest = z.strictObject({
+  posting_identity: PostingIdentity.optional(),
   schema_version: ReviewSchemaVersion,
   text: z.string().min(1).max(4000),
   display_name: z.string().max(64).optional(),
@@ -198,6 +223,7 @@ export const BrowserFeedbackReportRequest = z.strictObject({
 
 export type BrowserFeedbackEventRequest = z.infer<typeof BrowserFeedbackEventRequest>;
 export const BrowserFeedbackEventRequest = z.strictObject({
+  posting_identity: PostingIdentity.optional(),
   schema_version: ReviewSchemaVersion,
   type: z.enum(["reply", "thread.resolved", "thread.reopened"]),
   text: z.string().min(1).max(4000).optional(),

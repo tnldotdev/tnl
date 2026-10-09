@@ -170,6 +170,9 @@ func runSession(
 			return fmt.Errorf("publisher: register browser capability: %w", err)
 		}
 	}
+	if feedback != nil {
+		feedback.browser = browserRuntime
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		BrowserAccess: browserRuntime,
 		Hostname:      setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
@@ -299,8 +302,15 @@ func runSession(
 		}
 	default:
 	}
+	var feedbackPolicy *bool
+	if feedback != nil {
+		feedbackPolicy = feedback.readyPolicy(ctx)
+	}
 	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, func() error {
-		return ready(readyAccessInfo(setup, browserRuntime, shareRuntime))
+		access := readyAccessInfo(setup, browserRuntime, shareRuntime)
+		access.FeedbackEnabled = feedback != nil
+		access.FeedbackRequireSignIn = feedbackPolicy
+		return ready(access)
 	}); err != nil {
 		return err
 	}

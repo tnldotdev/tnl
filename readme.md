@@ -78,8 +78,9 @@ npx tnl login
 npx tnl dev
 ```
 
-Sign in to GitHub when `tnl login` prompts you. Your app will start on the next available port,
-and `tnl` publishes to its unique URL, with only your current IP whitelisted:
+Sign in to GitHub when `tnl login` prompts you. Your app starts on the next
+available port and gets its own public URL. By default, your current IP is on
+the allowlist; you can also sign in as the owner from another IP:
 
 ```text
 +--[ tnl dev ]-- ready ----------------------------------------+
@@ -92,15 +93,18 @@ and `tnl` publishes to its unique URL, with only your current IP whitelisted:
 |     v                                                        |
 |  http://127.0.0.1:5173                                       |
 |                                                              |
-|  framework                 vite                              |
-|  automatically allowed IP  122.151.3.101                     |
+|  framework        vite                                       |
+|  IP access        122.151.3.101/32                            |
+|  browser sign-in  owning member                               |
+|  team access      disabled                                    |
 |                                                              |
 +-- ctrl+c to stop --------------------------------------------+
 ```
 
 Hot reloading works automatically, as well as SSE/websockets/streaming responses.
 
-You can [allow reviewers](https://tnl.dev/docs/publish#who-can-visit) or
+You can [share a preview](https://tnl.dev/docs/development#share-a-preview)
+with reviewers or your team, or
 declare a stable webhook endpoint when you need one. Provider IPs are only
 allowed on the declared webhook path and method.
 

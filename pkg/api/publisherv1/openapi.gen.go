@@ -20,6 +20,27 @@ import (
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+// Defines values for BrowserFeedbackAccessIdentityState.
+const (
+	Anonymous BrowserFeedbackAccessIdentityState = "anonymous"
+	Expired   BrowserFeedbackAccessIdentityState = "expired"
+	SignedIn  BrowserFeedbackAccessIdentityState = "signed_in"
+)
+
+// Valid indicates whether the value is a known member of the BrowserFeedbackAccessIdentityState enum.
+func (e BrowserFeedbackAccessIdentityState) Valid() bool {
+	switch e {
+	case Anonymous:
+		return true
+	case Expired:
+		return true
+	case SignedIn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BrowserFeedbackEventRequestType.
 const (
 	Reply          BrowserFeedbackEventRequestType = "reply"
@@ -41,6 +62,21 @@ func (e BrowserFeedbackEventRequestType) Valid() bool {
 	}
 }
 
+// Defines values for BeginBrowserSignInParamsPrompt.
+const (
+	SelectAccount BeginBrowserSignInParamsPrompt = "select_account"
+)
+
+// Valid indicates whether the value is a known member of the BeginBrowserSignInParamsPrompt enum.
+func (e BeginBrowserSignInParamsPrompt) Valid() bool {
+	switch e {
+	case SelectAccount:
+		return true
+	default:
+		return false
+	}
+}
+
 // BrowserFailedRequest defines model for BrowserFailedRequest.
 type BrowserFailedRequest struct {
 	DurationMs int    `json:"duration_ms"`
@@ -51,8 +87,22 @@ type BrowserFailedRequest struct {
 	Status int `json:"status"`
 }
 
+// BrowserFeedbackAccess defines model for BrowserFeedbackAccess.
+type BrowserFeedbackAccess struct {
+	Identity        *BrowserIdentity                   `json:"identity,omitempty"`
+	IdentityState   BrowserFeedbackAccessIdentityState `json:"identity_state"`
+	RequireSignIn   bool                               `json:"require_sign_in"`
+	SignInAvailable bool                               `json:"sign_in_available"`
+}
+
+// BrowserFeedbackAccessIdentityState defines model for BrowserFeedbackAccess.IdentityState.
+type BrowserFeedbackAccessIdentityState string
+
 // BrowserFeedbackEventRequest defines model for BrowserFeedbackEventRequest.
 type BrowserFeedbackEventRequest struct {
+	// PostingIdentity Frozen author expectation, anonymous or identity:<identity_id>, obtained from feedback access metadata. This does not grant access or choose an author. The publisher rejects a changed identity before forwarding a write.
+	PostingIdentity *PostingIdentity `json:"posting_identity,omitempty"`
+
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 	Text          *string                          `json:"text,omitempty"`
@@ -78,10 +128,29 @@ type BrowserFeedbackReportRequest struct {
 	PagePath    string                        `json:"page_path"`
 	PageTitle   *string                       `json:"page_title,omitempty"`
 
+	// PostingIdentity Frozen author expectation, anonymous or identity:<identity_id>, obtained from feedback access metadata. This does not grant access or choose an author. The publisher rejects a changed identity before forwarding a write.
+	PostingIdentity *PostingIdentity `json:"posting_identity,omitempty"`
+
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion externalRef0.ReviewSchemaVersion `json:"schema_version"`
 	Text          string                           `json:"text"`
 }
+
+// BrowserIdentity defines model for BrowserIdentity.
+type BrowserIdentity struct {
+	DisplayName string                  `json:"display_name"`
+	IdentityId  externalRef0.IdentityID `json:"identity_id"`
+}
+
+// BrowserSession defines model for BrowserSession.
+type BrowserSession struct {
+	DisplayName  *string `json:"display_name,omitempty"`
+	SignedIn     bool    `json:"signed_in"`
+	VisitAllowed *bool   `json:"visit_allowed,omitempty"`
+}
+
+// PostingIdentity Frozen author expectation, anonymous or identity:<identity_id>, obtained from feedback access metadata. This does not grant access or choose an author. The publisher rejects a changed identity before forwarding a write.
+type PostingIdentity = string
 
 // FeedbackID defines model for FeedbackID.
 type FeedbackID = externalRef0.FeedbackID
@@ -111,6 +180,20 @@ type ListBrowserFeedbackEventsParams struct {
 type AppendBrowserFeedbackEventParams struct {
 	// IdempotencyKey Reuse for retries of one mutation; at most 128 bytes
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// BeginBrowserSignInParams defines parameters for BeginBrowserSignIn.
+type BeginBrowserSignInParams struct {
+	Return *string                         `form:"return,omitempty" json:"return,omitempty"`
+	Prompt *BeginBrowserSignInParamsPrompt `form:"prompt,omitempty" json:"prompt,omitempty"`
+}
+
+// BeginBrowserSignInParamsPrompt defines parameters for BeginBrowserSignIn.
+type BeginBrowserSignInParamsPrompt string
+
+// SwitchBrowserAccountParams defines parameters for SwitchBrowserAccount.
+type SwitchBrowserAccountParams struct {
+	Return string `form:"return" json:"return"`
 }
 
 // CreateBrowserFeedbackReportJSONRequestBody defines body for CreateBrowserFeedbackReport for application/json ContentType.
@@ -218,6 +301,13 @@ type ClientInterface interface {
 	// Corresponds with POST /__tnl/feedback (the `CreateBrowserFeedbackReport` operationId).
 	CreateBrowserFeedbackReport(ctx context.Context, params *CreateBrowserFeedbackReportParams, body CreateBrowserFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetBrowserFeedbackAccess Read the current feedback policy and browser identity
+	//
+	// The publisher supplies the existing preview, public URL, and publish run. Current visitor read access is required independently of sign-in policy. An expired browser cookie does not remove IP or share read access. Identity and policy lookup failures return an error rather than anonymous status.
+	//
+	// Corresponds with GET /__tnl/feedback/access (the `GetBrowserFeedbackAccess` operationId).
+	GetBrowserFeedbackAccess(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetBrowserFeedbackEvidence Read this browser's recent failed-request trail
 	//
 	// Return at most 20 failures from the last 15 minutes, selected by the publisher's HttpOnly __Host-tnl-feedback-browser cookie. Missing or expired browser state returns an empty trail. Only methods, paths, statuses, and bounded durations are included; query strings, headers, and bodies are omitted. This cookie does not grant preview access.
@@ -256,6 +346,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /__tnl/feedback/{feedback_id}/events (the `AppendBrowserFeedbackEvent` operationId).
 	AppendBrowserFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginBrowserSignIn Deliberately start browser sign-in and return to this page
+	//
+	// Corresponds with GET /__tnl/team/login (the `BeginBrowserSignIn` operationId).
+	BeginBrowserSignIn(ctx context.Context, params *BeginBrowserSignInParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EndBrowserSignIn Revoke the host-bound browser session and clear its cookie
+	//
+	// Requires the public URL's exact Origin header.
+	//
+	// Corresponds with POST /__tnl/team/logout (the `EndBrowserSignIn` operationId).
+	EndBrowserSignIn(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBrowserSession Read the current browser sign-in session
+	//
+	// Corresponds with GET /__tnl/team/session (the `GetBrowserSession` operationId).
+	GetBrowserSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SwitchBrowserAccount Revoke this browser session and deliberately select another account
+	//
+	// Requires the public URL's exact Origin header.
+	//
+	// Corresponds with POST /__tnl/team/switch-account (the `SwitchBrowserAccount` operationId).
+	SwitchBrowserAccount(ctx context.Context, params *SwitchBrowserAccountParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListBrowserFeedback List feedback on the current hostname
@@ -303,6 +417,23 @@ func (c *Client) CreateBrowserFeedbackReportWithBody(ctx context.Context, params
 // Corresponds with POST /__tnl/feedback (the `CreateBrowserFeedbackReport` operationId).
 func (c *Client) CreateBrowserFeedbackReport(ctx context.Context, params *CreateBrowserFeedbackReportParams, body CreateBrowserFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateBrowserFeedbackReportRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBrowserFeedbackAccess Read the current feedback policy and browser identity
+//
+// The publisher supplies the existing preview, public URL, and publish run. Current visitor read access is required independently of sign-in policy. An expired browser cookie does not remove IP or share read access. Identity and policy lookup failures return an error rather than anonymous status.
+//
+// Corresponds with GET /__tnl/feedback/access (the `GetBrowserFeedbackAccess` operationId).
+func (c *Client) GetBrowserFeedbackAccess(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrowserFeedbackAccessRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +523,70 @@ func (c *Client) AppendBrowserFeedbackEventWithBody(ctx context.Context, feedbac
 // Corresponds with POST /__tnl/feedback/{feedback_id}/events (the `AppendBrowserFeedbackEvent` operationId).
 func (c *Client) AppendBrowserFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAppendBrowserFeedbackEventRequest(c.Server, feedbackId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginBrowserSignIn Deliberately start browser sign-in and return to this page
+//
+// Corresponds with GET /__tnl/team/login (the `BeginBrowserSignIn` operationId).
+func (c *Client) BeginBrowserSignIn(ctx context.Context, params *BeginBrowserSignInParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginBrowserSignInRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EndBrowserSignIn Revoke the host-bound browser session and clear its cookie
+//
+// Requires the public URL's exact Origin header.
+//
+// Corresponds with POST /__tnl/team/logout (the `EndBrowserSignIn` operationId).
+func (c *Client) EndBrowserSignIn(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEndBrowserSignInRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBrowserSession Read the current browser sign-in session
+//
+// Corresponds with GET /__tnl/team/session (the `GetBrowserSession` operationId).
+func (c *Client) GetBrowserSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrowserSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SwitchBrowserAccount Revoke this browser session and deliberately select another account
+//
+// Requires the public URL's exact Origin header.
+//
+// Corresponds with POST /__tnl/team/switch-account (the `SwitchBrowserAccount` operationId).
+func (c *Client) SwitchBrowserAccount(ctx context.Context, params *SwitchBrowserAccountParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSwitchBrowserAccountRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +723,33 @@ func NewCreateBrowserFeedbackReportRequestWithBody(server string, params *Create
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
+	}
+
+	return req, nil
+}
+
+// NewGetBrowserFeedbackAccessRequest constructs an http.Request for the GetBrowserFeedbackAccess method
+func NewGetBrowserFeedbackAccessRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/feedback/access")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -715,6 +937,176 @@ func NewAppendBrowserFeedbackEventRequestWithBody(server string, feedbackId Feed
 	return req, nil
 }
 
+// NewBeginBrowserSignInRequest constructs an http.Request for the BeginBrowserSignIn method
+func NewBeginBrowserSignInRequest(server string, params *BeginBrowserSignInParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/team/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Return != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "return", *params.Return, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Prompt != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prompt", *params.Prompt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewEndBrowserSignInRequest constructs an http.Request for the EndBrowserSignIn method
+func NewEndBrowserSignInRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/team/logout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBrowserSessionRequest constructs an http.Request for the GetBrowserSession method
+func NewGetBrowserSessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/team/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSwitchBrowserAccountRequest constructs an http.Request for the SwitchBrowserAccount method
+func NewSwitchBrowserAccountRequest(server string, params *SwitchBrowserAccountParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/__tnl/team/switch-account")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "return", params.Return, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -786,6 +1178,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /__tnl/feedback (the `CreateBrowserFeedbackReport` operationId).
 	CreateBrowserFeedbackReportWithResponse(ctx context.Context, params *CreateBrowserFeedbackReportParams, body CreateBrowserFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBrowserFeedbackReportResponse, error)
 
+	// GetBrowserFeedbackAccessWithResponse Read the current feedback policy and browser identity
+	//
+	// The publisher supplies the existing preview, public URL, and publish run. Current visitor read access is required independently of sign-in policy. An expired browser cookie does not remove IP or share read access. Identity and policy lookup failures return an error rather than anonymous status.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /__tnl/feedback/access (the `GetBrowserFeedbackAccess` operationId).
+	GetBrowserFeedbackAccessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserFeedbackAccessResponse, error)
+
 	// GetBrowserFeedbackEvidenceWithResponse Read this browser's recent failed-request trail
 	//
 	// Return at most 20 failures from the last 15 minutes, selected by the publisher's HttpOnly __Host-tnl-feedback-browser cookie. Missing or expired browser state returns an empty trail. Only methods, paths, statuses, and bounded durations are included; query strings, headers, and bodies are omitted. This cookie does not grant preview access.
@@ -830,6 +1231,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /__tnl/feedback/{feedback_id}/events (the `AppendBrowserFeedbackEvent` operationId).
 	AppendBrowserFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendBrowserFeedbackEventParams, body AppendBrowserFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendBrowserFeedbackEventResponse, error)
+
+	// BeginBrowserSignInWithResponse Deliberately start browser sign-in and return to this page
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /__tnl/team/login (the `BeginBrowserSignIn` operationId).
+	BeginBrowserSignInWithResponse(ctx context.Context, params *BeginBrowserSignInParams, reqEditors ...RequestEditorFn) (*BeginBrowserSignInResponse, error)
+
+	// EndBrowserSignInWithResponse Revoke the host-bound browser session and clear its cookie
+	//
+	// Requires the public URL's exact Origin header.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /__tnl/team/logout (the `EndBrowserSignIn` operationId).
+	EndBrowserSignInWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EndBrowserSignInResponse, error)
+
+	// GetBrowserSessionWithResponse Read the current browser sign-in session
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /__tnl/team/session (the `GetBrowserSession` operationId).
+	GetBrowserSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserSessionResponse, error)
+
+	// SwitchBrowserAccountWithResponse Revoke this browser session and deliberately select another account
+	//
+	// Requires the public URL's exact Origin header.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /__tnl/team/switch-account (the `SwitchBrowserAccount` operationId).
+	SwitchBrowserAccountWithResponse(ctx context.Context, params *SwitchBrowserAccountParams, reqEditors ...RequestEditorFn) (*SwitchBrowserAccountResponse, error)
 }
 
 type ListBrowserFeedbackResponse struct {
@@ -908,6 +1341,47 @@ func (r CreateBrowserFeedbackReportResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateBrowserFeedbackReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBrowserFeedbackAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BrowserFeedbackAccess
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBrowserFeedbackAccessResponse) GetJSON200() *BrowserFeedbackAccess {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBrowserFeedbackAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrowserFeedbackAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrowserFeedbackAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBrowserFeedbackAccessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1078,6 +1552,149 @@ func (r AppendBrowserFeedbackEventResponse) ContentType() string {
 	return ""
 }
 
+type BeginBrowserSignInResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginBrowserSignInResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginBrowserSignInResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginBrowserSignInResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginBrowserSignInResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type EndBrowserSignInResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r EndBrowserSignInResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EndBrowserSignInResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EndBrowserSignInResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EndBrowserSignInResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBrowserSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BrowserSession
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBrowserSessionResponse) GetJSON200() *BrowserSession {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBrowserSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrowserSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrowserSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBrowserSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SwitchBrowserAccountResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r SwitchBrowserAccountResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SwitchBrowserAccountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SwitchBrowserAccountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SwitchBrowserAccountResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListBrowserFeedbackWithResponse List feedback on the current hostname
 //
 // Omitting path lists all pages on this hostname. Omitting state includes open and resolved threads. Results are ordered by feedback ID, with up to 100 threads per page. next_cursor is a feedback ID for the next list page; event_cursor is a separate numeric activity watermark.
@@ -1121,6 +1738,21 @@ func (c *ClientWithResponses) CreateBrowserFeedbackReportWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseCreateBrowserFeedbackReportResponse(rsp)
+}
+
+// GetBrowserFeedbackAccessWithResponse Read the current feedback policy and browser identity
+//
+// The publisher supplies the existing preview, public URL, and publish run. Current visitor read access is required independently of sign-in policy. An expired browser cookie does not remove IP or share read access. Identity and policy lookup failures return an error rather than anonymous status.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /__tnl/feedback/access (the `GetBrowserFeedbackAccess` operationId).
+func (c *ClientWithResponses) GetBrowserFeedbackAccessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserFeedbackAccessResponse, error) {
+	rsp, err := c.GetBrowserFeedbackAccess(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrowserFeedbackAccessResponse(rsp)
 }
 
 // GetBrowserFeedbackEvidenceWithResponse Read this browser's recent failed-request trail
@@ -1198,6 +1830,62 @@ func (c *ClientWithResponses) AppendBrowserFeedbackEventWithResponse(ctx context
 	return ParseAppendBrowserFeedbackEventResponse(rsp)
 }
 
+// BeginBrowserSignInWithResponse Deliberately start browser sign-in and return to this page
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /__tnl/team/login (the `BeginBrowserSignIn` operationId).
+func (c *ClientWithResponses) BeginBrowserSignInWithResponse(ctx context.Context, params *BeginBrowserSignInParams, reqEditors ...RequestEditorFn) (*BeginBrowserSignInResponse, error) {
+	rsp, err := c.BeginBrowserSignIn(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginBrowserSignInResponse(rsp)
+}
+
+// EndBrowserSignInWithResponse Revoke the host-bound browser session and clear its cookie
+//
+// Requires the public URL's exact Origin header.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /__tnl/team/logout (the `EndBrowserSignIn` operationId).
+func (c *ClientWithResponses) EndBrowserSignInWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EndBrowserSignInResponse, error) {
+	rsp, err := c.EndBrowserSignIn(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEndBrowserSignInResponse(rsp)
+}
+
+// GetBrowserSessionWithResponse Read the current browser sign-in session
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /__tnl/team/session (the `GetBrowserSession` operationId).
+func (c *ClientWithResponses) GetBrowserSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBrowserSessionResponse, error) {
+	rsp, err := c.GetBrowserSession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrowserSessionResponse(rsp)
+}
+
+// SwitchBrowserAccountWithResponse Revoke this browser session and deliberately select another account
+//
+// Requires the public URL's exact Origin header.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /__tnl/team/switch-account (the `SwitchBrowserAccount` operationId).
+func (c *ClientWithResponses) SwitchBrowserAccountWithResponse(ctx context.Context, params *SwitchBrowserAccountParams, reqEditors ...RequestEditorFn) (*SwitchBrowserAccountResponse, error) {
+	rsp, err := c.SwitchBrowserAccount(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSwitchBrowserAccountResponse(rsp)
+}
+
 // ParseListBrowserFeedbackResponse parses an HTTP response from a ListBrowserFeedbackWithResponse call
 func ParseListBrowserFeedbackResponse(rsp *http.Response) (*ListBrowserFeedbackResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1240,6 +1928,32 @@ func ParseCreateBrowserFeedbackReportResponse(rsp *http.Response) (*CreateBrowse
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest externalRef0.FeedbackThread
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrowserFeedbackAccessResponse parses an HTTP response from a GetBrowserFeedbackAccessWithResponse call
+func ParseGetBrowserFeedbackAccessResponse(rsp *http.Response) (*GetBrowserFeedbackAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrowserFeedbackAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrowserFeedbackAccess
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1354,6 +2068,80 @@ func ParseAppendBrowserFeedbackEventResponse(rsp *http.Response) (*AppendBrowser
 	return response, nil
 }
 
+// ParseBeginBrowserSignInResponse parses an HTTP response from a BeginBrowserSignInWithResponse call
+func ParseBeginBrowserSignInResponse(rsp *http.Response) (*BeginBrowserSignInResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginBrowserSignInResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseEndBrowserSignInResponse parses an HTTP response from a EndBrowserSignInWithResponse call
+func ParseEndBrowserSignInResponse(rsp *http.Response) (*EndBrowserSignInResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EndBrowserSignInResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetBrowserSessionResponse parses an HTTP response from a GetBrowserSessionWithResponse call
+func ParseGetBrowserSessionResponse(rsp *http.Response) (*GetBrowserSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrowserSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrowserSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSwitchBrowserAccountResponse parses an HTTP response from a SwitchBrowserAccountWithResponse call
+func ParseSwitchBrowserAccountResponse(rsp *http.Response) (*SwitchBrowserAccountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SwitchBrowserAccountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListBrowserFeedback List feedback on the current hostname
@@ -1362,6 +2150,9 @@ type ServerInterface interface {
 	// CreateBrowserFeedbackReport Create a report and its first history event
 	// (POST /__tnl/feedback)
 	CreateBrowserFeedbackReport(w http.ResponseWriter, r *http.Request, params CreateBrowserFeedbackReportParams)
+	// GetBrowserFeedbackAccess Read the current feedback policy and browser identity
+	// (GET /__tnl/feedback/access)
+	GetBrowserFeedbackAccess(w http.ResponseWriter, r *http.Request)
 	// GetBrowserFeedbackEvidence Read this browser's recent failed-request trail
 	// (GET /__tnl/feedback/evidence)
 	GetBrowserFeedbackEvidence(w http.ResponseWriter, r *http.Request)
@@ -1374,6 +2165,18 @@ type ServerInterface interface {
 	// AppendBrowserFeedbackEvent Reply, resolve, or reopen a thread through current preview access
 	// (POST /__tnl/feedback/{feedback_id}/events)
 	AppendBrowserFeedbackEvent(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params AppendBrowserFeedbackEventParams)
+	// BeginBrowserSignIn Deliberately start browser sign-in and return to this page
+	// (GET /__tnl/team/login)
+	BeginBrowserSignIn(w http.ResponseWriter, r *http.Request, params BeginBrowserSignInParams)
+	// EndBrowserSignIn Revoke the host-bound browser session and clear its cookie
+	// (POST /__tnl/team/logout)
+	EndBrowserSignIn(w http.ResponseWriter, r *http.Request)
+	// GetBrowserSession Read the current browser sign-in session
+	// (GET /__tnl/team/session)
+	GetBrowserSession(w http.ResponseWriter, r *http.Request)
+	// SwitchBrowserAccount Revoke this browser session and deliberately select another account
+	// (POST /__tnl/team/switch-account)
+	SwitchBrowserAccount(w http.ResponseWriter, r *http.Request, params SwitchBrowserAccountParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -1480,6 +2283,20 @@ func (siw *ServerInterfaceWrapper) CreateBrowserFeedbackReport(w http.ResponseWr
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateBrowserFeedbackReport(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrowserFeedbackAccess operation middleware
+func (siw *ServerInterfaceWrapper) GetBrowserFeedbackAccess(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrowserFeedbackAccess(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1625,6 +2442,113 @@ func (siw *ServerInterfaceWrapper) AppendBrowserFeedbackEvent(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// BeginBrowserSignIn operation middleware
+func (siw *ServerInterfaceWrapper) BeginBrowserSignIn(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BeginBrowserSignInParams
+
+	// ------------- Optional query parameter "return" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "return", r.URL.Query(), &params.Return, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "prompt" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "prompt", r.URL.Query(), &params.Prompt, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "prompt"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "prompt", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginBrowserSignIn(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EndBrowserSignIn operation middleware
+func (siw *ServerInterfaceWrapper) EndBrowserSignIn(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EndBrowserSignIn(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrowserSession operation middleware
+func (siw *ServerInterfaceWrapper) GetBrowserSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrowserSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SwitchBrowserAccount operation middleware
+func (siw *ServerInterfaceWrapper) SwitchBrowserAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SwitchBrowserAccountParams
+
+	// ------------- Required query parameter "return" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "return", r.URL.Query(), &params.Return, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SwitchBrowserAccount(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -1745,6 +2669,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/feedback/access", wrapper.GetBrowserFeedbackAccess)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/team/session", wrapper.GetBrowserSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/team/login", wrapper.BeginBrowserSignIn)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/__tnl/team/switch-account", wrapper.SwitchBrowserAccount)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/__tnl/team/logout", wrapper.EndBrowserSignIn)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/feedback", wrapper.ListBrowserFeedback)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/__tnl/feedback", wrapper.CreateBrowserFeedbackReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/__tnl/feedback/{feedback_id}", wrapper.GetBrowserFeedbackThread)

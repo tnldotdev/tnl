@@ -6,7 +6,6 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import * as z from "zod/mini";
 import { usePageFeedback } from "./queries.ts";
 import { observeActions } from "./evidence.ts";
 import type { Action, Summary } from "./model.ts";
@@ -19,28 +18,11 @@ import { Popover } from "./popover.tsx";
 import { Placement, SelectionHint } from "./placement.tsx";
 import { FeedbackList, type ListFilters } from "./list.tsx";
 import type { FeedbackAPI } from "./api.ts";
-import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
-
-async function fetchAccount(
-  document: Document,
-  path: string,
-  options: RequestInit,
-): Promise<Response | undefined> {
-  try {
-    return await document.defaultView?.fetch(path, options);
-  } catch (cause) {
-    if (options.signal?.aborted) throw cause;
-    throw new FeedbackError("unavailable", { cause });
-  }
-}
+import { safeFeedbackMessage } from "./errors.ts";
+import { checkPosting, SignInLink, type Posting } from "./access.tsx";
 
 type Draft = { path: string; target?: AnchorTarget | undefined; key: string };
 type Selected = { thread: Summary; threads: Summary[] };
-const browserStatusSchema = z.object({
-  signed_in: z.boolean(),
-  display_name: z.optional(z.string()),
-  team_member: z.optional(z.boolean()),
-});
 
 function FeedbackLayer({
   api,
@@ -60,33 +42,32 @@ function FeedbackLayer({
   const actions = useRef<Action[]>([{ type: "navigation", path: document.location.pathname }]);
   const toolbar = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
-  const browserStatus = useQuery({
-    queryKey: ["feedback-browser-status"],
-    queryFn: async ({ signal }) => {
-      const response = await fetchAccount(document, "/__tnl/team/session", {
-        credentials: "same-origin",
-        signal,
-      });
-      if (!response?.ok) throw new FeedbackError("unavailable");
-      try {
-        return browserStatusSchema.parse((await response.json()) as unknown);
-      } catch (cause) {
-        throw new FeedbackError("response_invalid", { cause });
-      }
-    },
+  const access = useQuery({
+    queryKey: ["feedback-access"],
+    queryFn: ({ signal }) => api.access(signal),
     retry: false,
-    refetchInterval: 30_000,
+    refetchInterval: 2000,
   });
   const signOut = useMutation({
-    mutationFn: async () => {
-      const response = await fetchAccount(document, "/__tnl/team/logout", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      if (!response?.ok) throw new FeedbackError("unavailable");
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-browser-status"] }),
+    mutationFn: () => api.signOut(new AbortController().signal),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["feedback-access"] }),
   });
+  const posting: Posting = {
+    access: access.isError || signOut.isPending ? undefined : access.data,
+    error: access.error,
+    path,
+    refresh: () => {
+      void client.invalidateQueries({ queryKey: ["feedback-access"] });
+    },
+    authorize: async (author) => {
+      const current = await client.fetchQuery({
+        queryKey: ["feedback-access"],
+        queryFn: ({ signal }) => api.access(signal),
+        staleTime: 0,
+      });
+      checkPosting(current, author);
+    },
+  };
   const query = usePageFeedback(api, path);
   const threads = [
     ...new Map(
@@ -147,18 +128,20 @@ function FeedbackLayer({
   return (
     <>
       <div ref={toolbar} class="toolbar" role="toolbar" aria-label="Feedback controls">
-        {browserStatus.data?.signed_in ? (
+        {posting.access?.identity_state === "signed_in" && posting.access.identity ? (
           <>
-            <span class="muted">signed in as {browserStatus.data.display_name}</span>
-            <button type="button" onClick={() => signOut.mutate()}>
+            <span class="muted">signed in as {posting.access.identity.display_name}</span>
+            <button type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
               [ sign out ]
             </button>
           </>
-        ) : browserStatus.data ? (
-          <a class="account-link" href={"/__tnl/team/login?return=" + encodeURIComponent(path)}>
-            [ sign in ]
-          </a>
+        ) : posting.access?.sign_in_available ? (
+          <SignInLink posting={posting} />
         ) : null}
+        {posting.access?.identity_state === "expired" && (
+          <small>sign-in expired; your draft is still here</small>
+        )}
+        {access.error && <small role="status">{safeFeedbackMessage(access.error)}</small>}
         {signOut.error && <small role="status">{safeFeedbackMessage(signOut.error)}</small>}
         <button
           type="button"
@@ -182,7 +165,6 @@ function FeedbackLayer({
           type="button"
           aria-label="Feedback"
           aria-expanded={listOpen}
-          disabled={!!draft}
           onClick={() => {
             setListOpen(!listOpen);
             setSelected(undefined);
@@ -222,9 +204,7 @@ function FeedbackLayer({
             document={document}
             actions={() => actions.current}
             target={draft.target}
-            browserName={
-              browserStatus.data?.signed_in ? browserStatus.data.display_name : undefined
-            }
+            posting={posting}
             cancel={() => setDraft(undefined)}
             saved={(thread) => {
               setDraft(undefined);
@@ -299,7 +279,7 @@ function FeedbackLayer({
               the element is no longer on this page; the conversation is still here
             </p>
           )}
-          <ThreadView key={current.id} api={api} id={current.id} />
+          <ThreadView key={current.id} api={api} id={current.id} posting={posting} />
         </Popover>
       )}
       {listOpen && (

@@ -14,6 +14,8 @@ type AccessInfo struct {
 	PublicURLScope         controlv1.PublicURLScope
 	PreviewID              string
 	TeamAccessEnabled      *bool
+	FeedbackEnabled        bool
+	FeedbackRequireSignIn  *bool
 }
 
 func readyAccessInfo(setup controlv1.PublishRunSetup, browser *browserAccess, shares *shareAccess) AccessInfo {
