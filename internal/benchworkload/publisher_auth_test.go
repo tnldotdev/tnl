@@ -16,7 +16,7 @@ func TestSavedSessionRequiredBeforePublisherNetworkAccess(t *testing.T) {
 		Server: "https://control.example.test", StateRoot: stateRoot,
 		Transport: "mixed", Parallel: 1, ReadyTimeout: time.Second, StopTimeout: time.Second,
 	})
-	if err == nil || !strings.Contains(err.Error(), "tnl login --server=https://control.example.test") {
+	if err == nil || !strings.Contains(err.Error(), "tnl auth login --server=https://control.example.test") {
 		t.Fatalf("missing saved login should fail before network access: %v", err)
 	}
 }
