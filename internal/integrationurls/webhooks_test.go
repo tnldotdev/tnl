@@ -1,17 +1,21 @@
 package integrationurls
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing.T) {
@@ -137,6 +141,55 @@ func TestWebhookWildcardSourceDoesNotBroadenAnotherEndpoint(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden || body.reads.Load() != 0 {
 		t.Fatal("wildcard endpoint admitted a visitor to the restricted endpoint")
+	}
+}
+
+func TestUnavailableCatalogPolicyDoesNotBlockOtherWebhookOrReadFailedBody(t *testing.T) {
+	state, _ := callbackState(t)
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(target.Close)
+	stripe := config.Webhook{Service: "api", Path: "/hooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}}
+	encoded, _, err := DefinitionBytes(stripe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel, _ := readyTunnel(t, state, target.URL, "main.example.test")
+	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "stripe", encoded); err != nil {
+		t.Fatal(err)
+	}
+	handler, ingressIPs, err := newWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
+		"stripe": stripe,
+		"github": {Service: "api", Path: "/hooks/github", Provider: "github"},
+	}, nil, func(_ context.Context, _ webhookips.Cache, name string) (webhookips.Source, error) {
+		if name != "github" {
+			t.Errorf("unexpected catalog lookup for overridden policy: %s", name)
+		}
+		return webhookips.Source{}, errors.New("catalog unavailable")
+	})
+	if err != nil || handler == nil {
+		t.Fatalf("prepare webhook policies: %v", err)
+	}
+	if !slices.Equal(ingressIPs, []string{"192.0.2.0/24"}) ||
+		handler.PolicyStatus("github") != "unavailable" || handler.PolicyStatus("stripe") != "1 IP ranges" {
+		t.Fatalf("partial policy = %v, github=%q, stripe=%q, error=%v", ingressIPs, handler.PolicyStatus("github"), handler.PolicyStatus("stripe"), err)
+	}
+	stripeRequest := httptest.NewRequest(http.MethodPost, "https://hooks.project.example.test/hooks/stripe", nil)
+	stripeRequest.RemoteAddr = "192.0.2.1:1234"
+	stripeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(stripeResponse, stripeRequest)
+	if stripeResponse.Code != http.StatusOK {
+		t.Fatalf("ready Stripe endpoint = %d", stripeResponse.Code)
+	}
+	body := &untrustedBody{}
+	githubRequest := httptest.NewRequest(http.MethodPost, "https://hooks.project.example.test/hooks/github", nil)
+	githubRequest.RemoteAddr = "192.0.2.1:1234"
+	githubRequest.Body = body
+	githubResponse := httptest.NewRecorder()
+	handler.ServeHTTP(githubResponse, githubRequest)
+	if githubResponse.Code != http.StatusServiceUnavailable || body.reads.Load() != 0 {
+		t.Fatalf("unavailable provider read request body or admitted visitor: %d, reads=%d", githubResponse.Code, body.reads.Load())
 	}
 }
 
