@@ -332,6 +332,50 @@
       }
     },
     {
+      "code": "TNL_REQUEST_RATE_LIMITED",
+      "slug": "request-rate",
+      "category": "visitor request",
+      "title": "request rate reached",
+      "summary": "this public url has reached its request rate. wait for the retry interval before trying again.",
+      "description": "tnl did not send this request to the local service because the public url has no available rate tokens.",
+      "diagram_label": "the request rate stopped this request before the local service",
+      "surfaces": ["browser"],
+      "http_status": 429,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "request rate reached", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": ["the configured request rate has been reached"],
+      "actions": {
+        "visitor": ["honor the `Retry-After` response header"],
+        "publisher": ["check the tunnel request rate if visitors are rejected unexpectedly"]
+      }
+    },
+    {
+      "code": "TNL_REQUEST_BUDGET_EXHAUSTED",
+      "slug": "request-budget",
+      "category": "visitor request",
+      "title": "request budget exhausted",
+      "summary": "this tunnel has used its total request budget. its remaining requests are finishing.",
+      "description": "tnl did not send this request to the local service because the tunnel has admitted its last allowed request.",
+      "diagram_label": "the request budget stopped this request before the local service",
+      "surfaces": ["browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl server" },
+        { "label": "tnl", "detail": "request budget exhausted", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": ["the tunnel has admitted its configured number of requests"],
+      "actions": {
+        "visitor": ["ask the publisher to start another tunnel if more requests are needed"],
+        "publisher": ["check the configured total request budget before starting another tunnel"]
+      }
+    },
+    {
       "code": "TNL_IP_POLICY_DENIED",
       "slug": "ip-policy-denied",
       "category": "visitor access",

@@ -19,6 +19,70 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 )
 
+func newInlineTestRequest() *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "route.example"
+	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+	return request
+}
+
+func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		limits     ApplicationLimits
+		status     int
+		code       string
+		retryAfter string
+		completed  bool
+	}{
+		{"total", ApplicationLimits{Requests: 1}, http.StatusServiceUnavailable, "TNL_REQUEST_BUDGET_EXHAUSTED", "", true},
+		{"rate", ApplicationLimits{RateRequests: 1, RatePer: time.Minute}, http.StatusTooManyRequests, "TNL_REQUEST_RATE_LIMITED", "60", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var served atomic.Int32
+			server, err := NewPublicURLServer(PublicURLServerConfig{
+				Hostname: "route.example", Limits: test.limits,
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					served.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = server.Close() })
+			first := httptest.NewRecorder()
+			server.http.Handler.ServeHTTP(first, newInlineTestRequest())
+			if first.Code != http.StatusNoContent {
+				t.Fatalf("first request = %d", first.Code)
+			}
+			denied := newInlineTestRequest()
+			denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
+			policy := httptest.NewRecorder()
+			server.http.Handler.ServeHTTP(policy, denied)
+			if policy.Code != http.StatusForbidden {
+				t.Fatalf("policy rejection = %d", policy.Code)
+			}
+			second := httptest.NewRecorder()
+			server.http.Handler.ServeHTTP(second, newInlineTestRequest())
+			if second.Code != test.status || second.Header().Get("Tnl-Error-Code") != test.code ||
+				second.Header().Get("Retry-After") != test.retryAfter || served.Load() != 1 {
+				t.Fatalf("rejected request = %d, headers = %v, served = %d", second.Code, second.Header(), served.Load())
+			}
+			select {
+			case <-server.admission.completed:
+				if !test.completed {
+					t.Fatal("rate rejection ended the publish run")
+				}
+			default:
+				if test.completed {
+					t.Fatal("total budget did not complete the publish run")
+				}
+			}
+		})
+	}
+}
+
 func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -34,16 +98,10 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = server.Close() })
-	newRequest := func() *http.Request {
-		request := httptest.NewRequest(http.MethodGet, "/", nil)
-		request.Host = "route.example"
-		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
-		return request
-	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		server.http.Handler.ServeHTTP(httptest.NewRecorder(), newRequest())
+		server.http.Handler.ServeHTTP(httptest.NewRecorder(), newInlineTestRequest())
 	}()
 	defer func() { close(release); <-done }()
 	select {
@@ -52,7 +110,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 		t.Fatal("inline handler did not start")
 	}
 
-	denied := newRequest()
+	denied := newInlineTestRequest()
 	denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 	response := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(response, denied)
@@ -61,7 +119,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, newRequest())
+	server.http.Handler.ServeHTTP(response, newInlineTestRequest())
 	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "1" ||
 		response.Header().Get("Connection") != "close" {
 		t.Fatalf("application overload = %d, headers = %v", response.Code, response.Header())

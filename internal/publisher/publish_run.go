@@ -182,6 +182,7 @@ func runSession(
 		ShareAccess:       shareRuntime,
 		Feedback:          feedback,
 		RequestLimit:      config.RequestLimit,
+		Limits:            config.Limits,
 		ObserveRequest:    config.ObserveRequest,
 		RequestInspection: config.RequestInspection,
 		Handler:           config.Handler,
@@ -377,7 +378,15 @@ func (s *publishRunCleanup) finish(result error) error {
 	}
 	s.cancelTransports()
 	if s.heartbeatStarted {
-		result = errors.Join(result, <-s.heartbeatDone)
+		heartbeatErr := <-s.heartbeatDone
+		select {
+		case <-s.route.admission.completed:
+			if errors.Is(heartbeatErr, context.Canceled) {
+				heartbeatErr = nil
+			}
+		default:
+		}
+		result = errors.Join(result, heartbeatErr)
 		if s.parentCtx.Err() == nil {
 			cause := context.Cause(s.sessionCtx)
 			if cause != nil && !errors.Is(cause, context.Canceled) {
@@ -439,6 +448,11 @@ func runCertificateRenewals(
 	defer renewalTimer.Stop()
 	for {
 		select {
+		case <-route.admission.completed:
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			return nil
 		case <-ctx.Done():
 			_ = renewalLock.Close()
 			return context.Cause(ctx)
