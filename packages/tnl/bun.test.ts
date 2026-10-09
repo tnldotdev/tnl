@@ -5,6 +5,7 @@ import { expect, onTestFinished, test } from "vitest";
 import { startTestBootstrap, waitForBootstrapRequest } from "./test-helper/bootstrap.js";
 import { startTestProcess } from "./test-helper/process.js";
 import { temporaryDirectory } from "./test-helper/project.js";
+import { installRuntimeFixture } from "./test-helper/framework.js";
 
 const entrypoint = fileURLToPath(new URL("./fixtures/bun/server.ts", import.meta.url));
 
@@ -12,8 +13,6 @@ test(
   "two Bun Hono servers register different ports and read project URLs during import",
   { timeout: 30_000 },
   async () => {
-    const a = await startTestBootstrap();
-    const b = await startTestBootstrap();
     const project = (label: string) =>
       JSON.stringify({
         namespace: `${label}.example`,
@@ -26,9 +25,20 @@ test(
           },
         },
       });
+    const response = (label: string) =>
+      JSON.stringify({
+        hostname: `web.${label}.example`,
+        publicURL: `https://web.${label}.example`,
+        service: "web",
+        project: JSON.parse(project(label)),
+      });
+    const a = await startTestBootstrap({ responseBody: response("first") });
+    const b = await startTestBootstrap({ responseBody: response("second") });
+    const firstEntry = await runtimeEntrypoint(a);
+    const secondEntry = await runtimeEntrypoint(b);
     const first = startTestProcess(
       "bun",
-      [entrypoint],
+      [firstEntry],
       {
         cwd: await temporaryDirectory("tnl-bun-first-"),
         env: { ...a.environment, NODE_ENV: "development" },
@@ -37,7 +47,7 @@ test(
     );
     const second = startTestProcess(
       "bun",
-      [entrypoint],
+      [secondEntry],
       {
         cwd: await temporaryDirectory("tnl-bun-second-"),
         env: { ...b.environment, NODE_ENV: "development" },
@@ -49,8 +59,8 @@ test(
       waitForBootstrapRequest(a, 1, 20_000, first.assertRunning),
       waitForBootstrapRequest(b, 1, 20_000, second.assertRunning),
     ]);
-    expect(a.requests[0]?.body).toEqual({ protocol: 1, framework: "bun" });
-    expect(firstTarget.body).toMatchObject({ protocol: 1, framework: "bun" });
+    expect(a.requests[0]?.body).toMatchObject({ protocol: 1, framework: "bun" });
+    expect(firstTarget.path).toBe("/v1/register");
     const firstURL = (firstTarget.body as { target: string }).target;
     const secondURL = (secondTarget.body as { target: string }).target;
     expect(firstURL).toMatch(/^http:\/\/127\.0\.0\.1:[1-9][0-9]*$/);
@@ -72,6 +82,7 @@ test("Bun hot reload keeps the registered listener available", { timeout: 30_000
   const hotEntrypoint = join(directory, "server.ts");
   await writeFile(hotEntrypoint, source);
   const bootstrap = await startTestBootstrap();
+  await installRuntimeFixture(directory, bootstrap);
   const process_ = startTestProcess("bun", ["--hot", hotEntrypoint], {
     env: { ...bootstrap.environment, NODE_ENV: "development" },
   });
@@ -92,10 +103,21 @@ test("Bun hot reload keeps the registered listener available", { timeout: 30_000
       },
       { timeout: 15_000, interval: 100 },
     )
-    .toEqual({ updated: true });
+    .toEqual({ siblingURL: "https://web.member.example", updated: true });
   expect(
     bootstrap.requests
-      .filter((request) => request.path === "/v1/target")
+      .filter((request) => request.path === "/v1/register")
       .every((request) => (request.body as { target: string }).target === target),
   ).toBe(true);
 });
+
+async function runtimeEntrypoint(
+  bootstrap: import("./test-helper/bootstrap.js").TestBootstrap,
+): Promise<string> {
+  const directory = await mkdtemp(join(dirname(entrypoint), ".tnl-bun-app-"));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  await installRuntimeFixture(directory, bootstrap);
+  const file = join(directory, "server.ts");
+  await writeFile(file, await readFile(entrypoint, "utf8"));
+  return file;
+}

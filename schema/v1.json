@@ -2,31 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schema/v1.json",
   "$defs": {
-    "Dev": {
-      "properties": {
-        "command": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "minItems": 1,
-          "description": "Child command and arguments run by tnl dev."
-        },
-        "port": {
-          "type": "integer",
-          "maximum": 65535,
-          "minimum": 1,
-          "description": "Required local service port for tnl dev."
-        },
-        "startup_timeout": {
-          "type": "string",
-          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
-          "description": "Maximum time to wait for the local service to start."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "Publish": {
       "properties": {
         "target": {
@@ -46,6 +21,21 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "Readiness": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer",
+          "maximum": 499,
+          "minimum": 200
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["path"]
     },
     "TNL": {
       "properties": {
@@ -144,8 +134,8 @@
         "publish": {
           "$ref": "#/$defs/Publish"
         },
-        "dev": {
-          "$ref": "#/$defs/Dev"
+        "readiness": {
+          "$ref": "#/$defs/Readiness"
         },
         "services": {
           "additionalProperties": {
@@ -234,8 +224,8 @@
               "publish": {
                 "$ref": "#/$defs/Publish"
               },
-              "dev": {
-                "$ref": "#/$defs/Dev"
+              "readiness": {
+                "$ref": "#/$defs/Readiness"
               },
               "paths": {
                 "additionalProperties": {
@@ -273,7 +263,7 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named local services with optional tunnel, publish, and dev overrides and path mounts."
+          "description": "Named local services with optional tunnel, publish, readiness overrides, and path mounts."
         },
         "webhooks": {
           "additionalProperties": {

@@ -54,6 +54,11 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 			config := base
 			config.PreviewID, config.Feedback = "", false
 			config.AdmitRequest = func(request *http.Request, run publisher.PublishRunIdentity) error {
+				if base.AdmitRequest != nil {
+					if err := base.AdmitRequest(request, publisher.PublishRunIdentity{Hostname: receiver.Hostname, PublicURLID: receiver.PublicURLID, Number: receiver.PublishRunNumber}); err != nil {
+						return err
+					}
+				}
 				latest, target, err := candidate(request.Context())
 				if err == nil && revision(latest, target) != revision(current, receiver) {
 					err = clientstate.ErrAliasSelectionStale

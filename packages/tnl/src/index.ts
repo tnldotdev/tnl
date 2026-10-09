@@ -2,6 +2,8 @@ import { developmentPort } from "./internal/port.js";
 import { parseRuntimePayload, type ProjectMetadata } from "./internal/runtime.js";
 import type { LocalHTTPServer } from "./internal/register.js";
 import { TnlError } from "./errors.js";
+import type { PrepareOptions, PreparedService } from "./internal/app.js";
+export type { PrepareOptions, PreparedService } from "./internal/app.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
 /** Extended with service types from the generated `.tnl/project.d.ts` file. */
@@ -16,6 +18,7 @@ export type TnlRuntime = Readonly<
     readonly port: number;
     readonly dev: boolean;
     register(server: LocalHTTPServer): Promise<void>;
+    prepare(options?: PrepareOptions): Promise<PreparedService>;
   }
 >;
 
@@ -46,6 +49,11 @@ export const tnl: TnlRuntime = Object.freeze({
     "Bun" in globalThis,
   ),
   dev: runtime?.dev ?? false,
+  async prepare(options: PrepareOptions = {}): Promise<PreparedService> {
+    if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
+    const { prepareService } = await import("./internal/app.js");
+    return prepareService(options, "Bun" in globalThis ? "bun" : "node");
+  },
   async register(server: LocalHTTPServer): Promise<void> {
     if (typeof process === "undefined") {
       throw new TnlError("sdk.configuration_invalid");

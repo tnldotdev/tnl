@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { onTestFinished } from "vitest";
+import * as z from "zod";
 import { testPublicProject } from "./project.js";
 
 export interface BootstrapRequest {
@@ -15,6 +16,7 @@ export interface BootstrapRequest {
 }
 
 export interface TestBootstrap {
+  readonly socket: string;
   readonly environment: Record<string, string>;
   readonly requests: BootstrapRequest[];
   assertHealthy(): void;
@@ -33,6 +35,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
+  let appOwner: string | undefined;
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("error", (error) => {
@@ -52,8 +55,44 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         response.statusCode = options.status ?? 200;
         if (response.statusCode !== 200) {
           response.end(options.responseBody ?? "registration failed");
-        } else if (request.url === "/v1/target") {
+        } else if (
+          ["/v1/target", "/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")
+        ) {
+          if (request.url === "/v1/unregister") appOwner = undefined;
           response.writeHead(204).end();
+        } else if (request.url === "/v1/prepare") {
+          const preparation = z.object({ owner: z.string() }).parse(JSON.parse(body));
+          if (appOwner !== undefined && appOwner !== preparation.owner) {
+            response.setHeader("Content-Type", "application/json");
+            response.writeHead(409).end(
+              JSON.stringify({
+                code: "runtime.owner_conflict",
+                message: "another live app owns this service",
+              }),
+            );
+            return;
+          }
+          appOwner = preparation.owner;
+          const assignment =
+            options.responseBody === undefined
+              ? {
+                  hostname: "api.member.example",
+                  project: testPublicProject(true),
+                  publicURL: "https://api.member.example",
+                  service: "api",
+                }
+              : JSON.parse(options.responseBody);
+          response.setHeader("Content-Type", "application/json");
+          response.end(
+            JSON.stringify({
+              protocol: 1,
+              registration_id: `reg_${"b".repeat(32)}`,
+              service: assignment.service,
+              hostname: assignment.hostname,
+              public_url: assignment.publicURL,
+              project: assignment.project,
+            }),
+          );
         } else {
           response.setHeader("Content-Type", "application/json");
           response.end(
@@ -120,6 +159,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     throw error;
   }
   return {
+    socket,
     environment: { TNL_DEV_PROTOCOL: "1", TNL_DEV_SOCKET: socket },
     requests,
     assertHealthy,

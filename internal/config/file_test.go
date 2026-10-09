@@ -56,10 +56,9 @@ tnl:
     request_limit: 750
   publish:
     target: 3000
-  dev:
-    command: [pnpm, dev]
-    port: 4000
-    startup_timeout: 90s
+  readiness:
+    path: /health
+    status: 204
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -71,7 +70,7 @@ tnl:
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
-		document.TNL.Dev == nil || document.TNL.Dev.StartupTimeout == nil || document.TNL.Dev.StartupTimeout.Value() != 90*time.Second ||
+		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" || document.TNL.Readiness.Status == nil || *document.TNL.Readiness.Status != 204 ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
 		document.TNL.Tunnel.RequestLimit == nil || *document.TNL.Tunnel.RequestLimit != 750 {
 		t.Fatalf("document = %#v", document)
@@ -224,8 +223,8 @@ func TestRequestInspectionModeValid(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
-		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
+		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health","status":204}}}`,
+		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n    status: 204\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -242,7 +241,7 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"negative request limit":     {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
 		"invalid request inspection": {`{"version":1,"tnl":{"request_inspection":"all"}}`, "version: 1\ntnl:\n  request_inspection: all\n", "request_inspection"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"request_inspection":"all"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      request_inspection: all\n", "request_inspection"},
-		"duration":                   {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
+		"retired dev":                {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "dev"},
 		"server URL":                 {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
 		"uppercase domain":           {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},
 		"multi-label name":           {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},

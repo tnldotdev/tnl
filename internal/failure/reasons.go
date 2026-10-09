@@ -12,6 +12,9 @@ const (
 	InvalidTarget                     Reason = "TNL_CLIENT_INVALID_TARGET"
 	MissingTarget                     Reason = "TNL_CLIENT_MISSING_TARGET"
 	InvalidCommand                    Reason = "TNL_CLIENT_INVALID_COMMAND"
+	AppReadinessTimeout               Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
+	AppCursorExpired                  Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
+	AppStartCommandRetired            Reason = "TNL_CLIENT_APP_START_COMMAND_RETIRED"
 	OutputUnavailable                 Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
 	InitFailed                        Reason = "TNL_CLIENT_INIT_FAILED"
 	TunnelUnavailable                 Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
@@ -138,6 +141,9 @@ const (
 )
 
 var definitions = map[Reason]Definition{
+	AppStartCommandRetired: {Class: Invalid, Message: "tnl dev no longer starts applications", Action: "start the app with its normal development command and tnl integration, then run tnl wait", Retry: RetryAfterChange},
+	AppReadinessTimeout:    {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
+	AppCursorExpired:       {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl status or tnl watch without --after to read a new snapshot watermark", Retry: RetryAfterChange},
 	InvalidControlURL: {
 		Class: Invalid, Message: "server must be an HTTPS origin",
 		Action: "use an HTTPS control URL with --server or TNL_SERVER", Retry: RetryAfterChange,

@@ -133,6 +133,9 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if err := validateReadiness(config.Readiness); err != nil {
+		return err
+	}
 	if err := validateRequestInspection(config.RequestInspection); err != nil {
 		return fmt.Errorf("request_inspection: %w", err)
 	}
@@ -163,6 +166,9 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		if err := validateReadiness(service.Readiness); err != nil {
+			return fmt.Errorf("services.%s: %w", name, err)
+		}
 		if err := validateRequestInspection(service.RequestInspection); err != nil {
 			return fmt.Errorf("services.%s.request_inspection: %w", name, err)
 		}
@@ -192,6 +198,19 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
 			}
 		}
+	}
+	return nil
+}
+
+func validateReadiness(value *Readiness) error {
+	if value == nil {
+		return nil
+	}
+	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
+		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
+	}
+	if value.Status != nil && (*value.Status < 200 || *value.Status > 499 || *value.Status == 408 || *value.Status == 429) {
+		return errors.New("readiness.status must be between 200 and 499 except 408 and 429")
 	}
 	return nil
 }

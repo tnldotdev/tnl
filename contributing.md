@@ -143,7 +143,7 @@ export TNL_SERVER=https://control.127.0.0.1.nip.io
 export TNL_STATE_DIR="$(pwd)/.local/client-state"
 ```
 
-Then run `tnl dev` from that project's directory. `task local:down` preserves
+Then start the app normally from that project's directory. `task local:down` preserves
 PostgreSQL state; `task local:reset` removes trust, containers, volumes, and
 `.local`. Run both through `mise exec --` from this repo.
 

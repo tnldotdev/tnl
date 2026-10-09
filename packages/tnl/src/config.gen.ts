@@ -57,9 +57,9 @@ export interface TnlConfig {
     requestLimit?: number;
   };
   publish?: Publish;
-  dev?: Dev;
+  readiness?: Readiness;
   /**
-   * Named local services with optional tunnel, publish, and dev overrides and path mounts.
+   * Named local services with optional tunnel, publish, readiness overrides, and path mounts.
    */
   services?: {
     [k: string]:
@@ -106,7 +106,7 @@ export interface TnlConfig {
             requestLimit?: number;
           };
           publish?: Publish;
-          dev?: Dev;
+          readiness?: Readiness;
           /**
            * Mount another configured service at a path on this service's public URL.
            */
@@ -217,21 +217,9 @@ export interface Publish {
    */
   target?: string | number;
 }
-export interface Dev {
-  /**
-   * Child command and arguments run by tnl dev.
-   *
-   * @minItems 1
-   */
-  command?: [string, ...string[]];
-  /**
-   * Required local service port for tnl dev.
-   */
-  port?: number;
-  /**
-   * Maximum time to wait for the local service to start.
-   */
-  startupTimeout?: string;
+export interface Readiness {
+  path: string;
+  status?: number;
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

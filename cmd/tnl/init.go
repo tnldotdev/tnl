@@ -74,11 +74,6 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err != nil {
 		return err
 	}
-	if interactive && plan.genericDev && plan.devAction != "" {
-		if err := promptInitDev(&plan, input, stderr); err != nil {
-			return err
-		}
-	}
 	installed := false
 	if len(plan.packages) != 0 && !plan.installBlocked {
 		command := packageInstallCommand(plan.manager, plan.packages)
@@ -174,9 +169,9 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if plan.scriptHint != "" {
 		blocks = append(blocks, clioutput.Section("hint", clioutput.Text(plan.scriptHint)))
 	}
-	footer := "run tnl dev"
+	footer := "start your app normally, then run tnl wait"
 	if len(plan.actions) != 0 {
-		footer = "complete the actions above, then run tnl dev"
+		footer = "complete the actions above, then start your app normally"
 	}
 	return writeHumanFrame(stdout, "tnl init", state, footer, blocks...)
 }
@@ -241,19 +236,11 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	}
 	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
 	plan.apiDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind != "" && plan.generatedService
-	if plan.generatedService && len(plan.devCommand) != 0 && !slices.Equal(plan.devCommand, initDevScriptCommand(plan.manager)) &&
-		!scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
-		plan.scriptHint = "To use your package.json dev script, set scripts.dev to \"tnl dev\" after tnl.config.ts starts the app directly."
-	}
-	if plan.generatedService && plan.framework != "" && packageConfig.Scripts["dev"] != "" &&
-		!scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
-		parsed, simple := simpleInitScript(packageConfig.Scripts["dev"])
-		if !simple || !slices.Equal(parsed, plan.devCommand) {
-			plan.actions = append(plan.actions, "Review package.json scripts.dev and keep any required startup options in services.app.dev.command before changing scripts.dev to tnl dev.")
-		}
+	if scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
+		plan.actions = append(plan.actions, "restore package.json scripts.dev to the command that starts your app; tnl integrations publish its bound listener.")
 	}
 	if plan.genericDev {
-		updateInitDevAction(&plan)
+		plan.actions = append(plan.actions, "prepare the app before startup with await tnl.prepare({ service: \"app\" }), then await the returned handle's register(server) after the HTTP listener binds.")
 	} else if plan.apiDev {
 		plan.devPort = 0
 	}
@@ -413,6 +400,20 @@ func initConfigSource(service string, command []string) []byte {
 }
 
 func initConfigSourceWithPort(service string, command []string, port int) []byte {
+	return []byte(fmt.Sprintf(`import { defineConfig } from "@tnldotdev/tnl/config";
+
+export default defineConfig({
+  feedback: true,
+  services: {
+    %s: {
+      directory: ".",
+    },
+  },
+});
+`, service))
+}
+
+func legacyInitConfigSource(service string, command []string, port int) []byte {
 	var fields []string
 	if len(command) != 0 {
 		encoded, _ := json.Marshal(command)
@@ -471,7 +472,7 @@ func generatedInitDev(data []byte) (initDevSettings, bool) {
 		}
 		settings.port = port
 	}
-	return settings, bytes.Equal(data, initConfigSourceWithPort("app", settings.command, settings.port))
+	return settings, bytes.Equal(data, legacyInitConfigSource("app", settings.command, settings.port))
 }
 
 func frameworkConfigPaths(root, framework string) []string {

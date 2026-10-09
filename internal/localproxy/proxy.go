@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -23,6 +24,9 @@ import (
 )
 
 const maxHeaderFields = 100
+
+// readiness probes keep HTML responses streaming and observe headers only.
+const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
 
 // DefaultRequestLimit bounds active requests to one public URL's local service,
 // across all visitor connections and HTTP/2 streams.
@@ -103,7 +107,7 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 	}
 	type mountedProxy struct {
 		Mount
-		proxy *httputil.ReverseProxy
+		proxy http.Handler
 	}
 	routes := make([]mountedProxy, 0, len(mounts))
 	seen := make(map[string]bool, len(mounts))
@@ -112,9 +116,42 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
 		}
 		seen[mount.Prefix] = true
-		proxy, err := newReverseProxy(mount.Target, requestLimit, hooks, onTargetFailure)
-		if err != nil {
-			return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
+		var proxy http.Handler
+		if mount.ResolveTarget != nil {
+			var mu sync.Mutex
+			var current string
+			var upstream *httputil.ReverseProxy
+			proxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				target := mount.ResolveTarget()
+				if target == "" {
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					return
+				}
+				mu.Lock()
+				if current != target {
+					if upstream != nil {
+						if transport, ok := upstream.Transport.(*http.Transport); ok {
+							transport.CloseIdleConnections()
+						}
+					}
+					var err error
+					upstream, err = newReverseProxy(target, requestLimit, hooks, onTargetFailure)
+					if err != nil {
+						mu.Unlock()
+						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+						return
+					}
+					current = target
+				}
+				selected := upstream
+				mu.Unlock()
+				selected.ServeHTTP(w, r)
+			})
+		} else {
+			proxy, err = newReverseProxy(mount.Target, requestLimit, hooks, onTargetFailure)
+			if err != nil {
+				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
+			}
 		}
 		routes = append(routes, mountedProxy{Mount: mount, proxy: proxy})
 	}
@@ -201,7 +238,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			host := request.In.Host
-			if hooks.ModifyHTML != nil {
+			if hooks.ModifyHTML != nil && request.In.Header.Get(ReadinessProbeHeader) != "1" {
 				request.Out.Header.Del("Accept-Encoding")
 			}
 			// remove client forwarding identity before deriving trusted headers.
@@ -239,7 +276,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 					return err
 				}
 			}
-			if hooks.ModifyHTML != nil {
+			if hooks.ModifyHTML != nil && (response.Request == nil || response.Request.Header.Get(ReadinessProbeHeader) != "1") {
 				if err := hooks.ModifyHTML(response); err != nil {
 					return err
 				}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -21,10 +22,11 @@ const (
 )
 
 type statusCommand struct {
-	Output   statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	StateDir string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All      bool             `name:"all" help:"Show tunnels from every local project."`
-	Project  string           `kong:"-"`
+	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All           bool                 `name:"all" help:"Show tunnels from every local project."`
+	Project       string               `kong:"-"`
+	Configuration projectConfiguration `kong:"-"`
 }
 
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
@@ -37,6 +39,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		return err
 	}
 	defer state.Close()
+	root = state.Root()
 	var snapshot clientstate.TunnelSnapshot
 	if flags.All {
 		snapshot, err = state.Snapshot(ctx)
@@ -52,18 +55,59 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if flags.Output == statusOutputJSON {
-		return json.NewEncoder(output).Encode(snapshot)
+	appSnapshot := clientruntime.Snapshot{Cursor: "0", Services: []clientruntime.Service{}}
+	projects := []clientruntime.Snapshot{}
+	if !flags.All {
+		project, resolveErr := flags.Configuration, error(nil)
+		if project.Root == "" {
+			project, _, resolveErr = runtimeProject(ctx, runtimeOptions{Directory: flags.Project, StateDir: root})
+		}
+		if resolveErr == nil {
+			appSnapshot, err = readAppSnapshot(ctx, project, root)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		projects, err = clientruntime.ListSnapshots(root)
+		if err != nil {
+			return err
+		}
+		for _, project := range projects {
+			socket, err := runtimeSocket(project.Project, root)
+			if err != nil {
+				return err
+			}
+			available := runtimeAvailable(ctx, socket)
+			for _, service := range project.Services {
+				service.Project = project.Project
+				if !available {
+					if service.Registered {
+						service.Failure = "runtime.manager_unavailable"
+					}
+					service.Registered, service.Routable, service.Ready = false, false, false
+					service.Observation = nil
+				}
+				appSnapshot.Services = append(appSnapshot.Services, service)
+			}
+		}
 	}
-	if len(snapshot.Tunnels) == 0 && len(snapshot.Aliases) == 0 {
+	if flags.Output == statusOutputJSON {
+		return json.NewEncoder(output).Encode(struct {
+			clientstate.TunnelSnapshot
+			Cursor   string                  `json:"cursor"`
+			Services []clientruntime.Service `json:"services"`
+		}{snapshot, appSnapshot.Cursor, appSnapshot.Services})
+	}
+	if len(snapshot.Tunnels) == 0 && len(snapshot.Aliases) == 0 && len(appSnapshot.Services) == 0 {
 		return writeHumanFrame(output, "tnl status", "no local tunnels", "",
 			clioutput.Tree(clioutput.TreeNode{Label: "start one with", Children: []clioutput.TreeNode{
 				{Label: "tnl publish 3000"},
-				{Label: "tnl dev -- pnpm dev"},
+				{Label: "pnpm dev with a tnl integration"},
 			}}),
 		)
 	}
-	blocks := make([]clioutput.Block, 0, len(snapshot.Tunnels))
+	blocks := appServiceBlocks(appSnapshot)
 	for _, tunnel := range snapshot.Tunnels {
 		fields := make([]clioutput.Field, 0, 8)
 		if tunnel.PublicURL != "" {
@@ -136,6 +180,9 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			fields = append(fields, clioutput.Field{Label: "reason", Value: string(alias.Reason)}, clioutput.Field{Label: "action", Value: alias.Action})
 		}
 		blocks = append(blocks, clioutput.Section("alias "+alias.State, clioutput.Fields(fields...)))
+	}
+	if len(appSnapshot.Services) != 0 {
+		return writeHumanFrame(output, "tnl status", countState(len(appSnapshot.Services), "configured service", "configured services"), "cursor "+appSnapshot.Cursor, blocks...)
 	}
 	return writeHumanFrame(output, "tnl status", countState(len(snapshot.Tunnels), "local tunnel", "local tunnels"),
 		statusSummary(snapshot.Summary), blocks...)

@@ -1,67 +1,40 @@
-import {
-  canonicalLoopbackTarget,
-  readDevelopmentContext,
-  registerLocalTarget,
-  requestTunnelAssignment,
-  runtimePayload,
-  serviceHostnames,
-  type TnlTunnelAssignment,
-} from "./internal/dev.js";
+import { canonicalLoopbackTarget, runtimePayload, serviceHostnames } from "./internal/dev.js";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
+import { prepareService, type PrepareOptions, type PreparedService } from "./internal/app.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
 /** Configures a Vite development server for `tnl dev` and adds project metadata. */
-export default function tnl(...arguments_: never[]): Plugin {
-  if (arguments_.length !== 0) {
-    throw new TnlError("sdk.configuration_invalid");
-  }
-  let assignment: TnlTunnelAssignment | null = null;
-  let registeredTarget: string | null = null;
+export default function tnl(options: PrepareOptions = {}): Plugin {
+  let assignment: PreparedService | null = null;
   return {
     name: "tnl",
     enforce: "post",
     apply: "serve",
     async config(userConfig = {}, configEnvironment) {
       assignment = null;
-      registeredTarget = null;
       if (configEnvironment.command !== "serve" || configEnvironment.isPreview === true) {
         return undefined;
       }
 
-      const development = readDevelopmentContext();
-      if (development.bootstrap === null) {
-        if (development.localProject === null) {
-          return undefined;
-        }
-        return runtimeDefine(runtimePayload(development.localProject, false));
-      }
-
       const server = userConfig.server ?? {};
       validateAllowedHosts(server.allowedHosts);
-      assignment = await requestTunnelAssignment("vite", development.bootstrap);
+      assignment = await prepareService(options, "vite");
       const result = {
-        ...runtimeDefine(runtimePayload(assignment.project, true)),
+        ...runtimeDefine(runtimePayload(assignment, true)),
         server: {
-          allowedHosts: serviceHostnames(assignment).reduce<string[] | true>(
+          allowedHosts: serviceHostnames({
+            hostname: assignment.hostname,
+            project: assignment,
+            service: assignment.service,
+          }).reduce<string[] | true>(
             (hosts, hostname) => addAllowedHost(hosts, hostname),
             server.allowedHosts ?? [],
           ),
         },
       };
-      if (development.bootstrap.port === undefined) {
-        return result;
-      }
-      return {
-        ...result,
-        server: {
-          ...result.server,
-          port: development.bootstrap.port,
-          // let Vite report a fallback listener so tnl can reject it with the target diagnostic.
-          strictPort: false,
-        },
-      };
+      return result;
     },
     configureServer(server) {
       const configured = assignment;
@@ -71,6 +44,7 @@ export default function tnl(...arguments_: never[]): Plugin {
       if (server.httpServer === null) {
         throw new TnlError("sdk.target_invalid");
       }
+      const listener = server.httpServer;
       const originalListen = server.listen.bind(server);
       server.listen = async (port, isRestart) => {
         let listening;
@@ -84,15 +58,8 @@ export default function tnl(...arguments_: never[]): Plugin {
           if (address === null || address === undefined || typeof address === "string") {
             throw new TnlError("sdk.listener_failed");
           }
-          const target = canonicalLoopbackTarget(address.address, address.port);
-          if (registeredTarget !== null) {
-            if (registeredTarget !== target) {
-              throw new TnlError("sdk.listener_failed");
-            }
-            return listening;
-          }
-          await registerLocalTarget(configured, target);
-          registeredTarget = target;
+          canonicalLoopbackTarget(address.address, address.port);
+          await configured.register(listener);
         } catch (error) {
           return await closeAfterFailure(server.close.bind(server), error);
         }

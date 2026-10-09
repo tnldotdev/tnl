@@ -38,7 +38,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		commands[command.Path()] = true
 	}
 	for _, command := range []string{
-		"init", "dev", "publish", "status", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
+		"init", "publish", "status", "wait", "watch", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
 		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
@@ -324,7 +324,7 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 		wantErr    string
 		wantReason failure.Reason
 	}{
-		{command: "dev", wantErr: "validate control URL", wantReason: failure.InvalidControlURL},
+		{command: "dev", wantErr: "start the app with its normal development command", wantReason: failure.AppStartCommandRetired},
 		{command: "publish", wantErr: "local target is required as an argument or publish.target in project configuration", wantReason: failure.MissingTarget},
 	} {
 		t.Run(test.command, func(t *testing.T) {
@@ -351,7 +351,7 @@ func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
 				t.Fatalf("error output = %q", got)
 			}
 			if strings.Contains(stderr.String(), "clientstate: ") ||
-				(test.command == "dev" && !strings.Contains(stderr.String(), "server must be an HTTPS origin")) {
+				(test.command == "dev" && !strings.Contains(stderr.String(), "tnl dev no longer starts applications")) {
 				t.Fatalf("CLI exposed an internal error prefix: %q", stderr.String())
 			}
 		})
@@ -484,7 +484,7 @@ func TestGuestCommandExplainsSignInAndDemoWithoutPrompting(t *testing.T) {
 		t.Fatal("guest dev without a configured child attempted to prompt for sign-in")
 	}
 	writeCommandError(&stderr, err)
-	if !strings.Contains(stderr.String(), "tnl publish --demo") || !strings.Contains(stderr.String(), "tnl login") || stdout.Len() != 0 {
+	if !strings.Contains(stderr.String(), "tnl dev no longer starts applications") || stdout.Len() != 0 {
 		t.Fatalf("guest dev output = %q, stdout = %q", stderr.String(), stdout.String())
 	}
 }

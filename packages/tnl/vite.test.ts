@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createProjectFixture,
@@ -23,6 +23,24 @@ import { startFrameworkFixture } from "./test-helper/framework.js";
 import { viteClientConnection } from "./test-helper/vite-client.js";
 import tnl from "@tnldotdev/tnl/vite";
 import { testAliasAssignment } from "./test-helper/project.js";
+
+vi.mock("./dist/internal/app.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./dist/internal/app.js")>();
+  return {
+    ...actual,
+    prepareService: async (
+      options: import("./dist/internal/app.js").PrepareOptions,
+      framework: string,
+    ) => {
+      const prepared = await actual.createPreparedService(options, framework, {
+        start: async () => process.env.TNL_DEV_SOCKET ?? "",
+        request: actual.runtimeRequest,
+      });
+      onTestFinished(() => prepared.close());
+      return prepared;
+    },
+  };
+});
 
 const serveEnvironment: ConfigEnv = {
   command: "serve",
@@ -56,13 +74,14 @@ describe("tnl", () => {
       });
     });
   });
-  test("takes no arguments and is inert without generated metadata", async () => {
+  test("accepts explicit service selection and requires a local manager", async () => {
     expect(tnl).toHaveLength(0);
     expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
-    expect(() => tnl({} as never)).toThrow(/framework configuration is invalid/);
     const directory = await temporaryDirectory("tnl-vite-empty-");
     await withCurrentDirectory(directory, async () => {
-      await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toBeUndefined();
+      await expect(runConfigHook(tnl(), { server: { port: 4173 } })).rejects.toMatchObject({
+        code: "sdk.dev_unavailable",
+      });
     });
   });
 
@@ -77,12 +96,18 @@ describe("tnl", () => {
     expect(bootstrap.requests).toHaveLength(0);
   });
 
-  test("injects generated metadata without networking during plain development", async () => {
+  test("prepares public metadata before normal framework startup", async () => {
     const project = await createProjectFixture("tnl-vite-project-");
-    await withCurrentDirectory(project.serviceDirectory, async () => {
-      const result = await runConfigHook(tnl(), { server: { host: "0.0.0.0", port: 5200 } });
-      expect(result).toEqual(runtimeDefine(false));
-    });
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(bootstrap.environment, async () =>
+      withCurrentDirectory(project.serviceDirectory, async () => {
+        const result = await runConfigHook(tnl(), { server: { host: "0.0.0.0", port: 5200 } });
+        expect(result).toEqual({
+          ...runtimeDefine(true),
+          server: { allowedHosts: ["api.member.example"] },
+        });
+      }),
+    );
   });
 
   test("uses an invocation hostname override for Vite coordination only", async () => {
@@ -125,15 +150,19 @@ describe("tnl", () => {
         },
       });
     });
-    expect(bootstrap.requests[0]?.body).toEqual({ protocol: 1, framework: "vite" });
+    expect(bootstrap.requests[0]?.body).toMatchObject({
+      protocol: 1,
+      framework: "vite",
+      pid: process.pid,
+    });
   });
 
-  test("uses a port forced by tnl dev", async () => {
+  test("keeps the application responsible for its port", async () => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "5300" }, async () => {
       await expect(runConfigHook(tnl(), { server: { port: 5200 } })).resolves.toMatchObject({
         define: runtimeDefine(true).define,
-        server: { port: 5300, strictPort: false },
+        server: { allowedHosts: ["api.member.example"] },
       });
     });
   });
@@ -182,7 +211,7 @@ describe("tnl", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  test("rejects a restart that moves the registered development target", async () => {
+  test("registers a restarted framework's replacement listener", async () => {
     const bootstrap = await startTestBootstrap();
     const plugin = tnl();
     await withProcessEnvironment(bootstrap.environment, async () => {
@@ -192,7 +221,13 @@ describe("tnl", () => {
     const close = vi.fn(async () => {});
     const server = {
       close,
-      httpServer: { address: () => ({ address: "127.0.0.1", port }) },
+      httpServer: {
+        listening: true,
+        address: () => ({ address: "127.0.0.1", port }),
+        once: () => {},
+        off: () => {},
+        close: () => {},
+      },
       listen: vi.fn(async () => undefined),
     };
     const configureServer = plugin.configureServer;
@@ -201,8 +236,9 @@ describe("tnl", () => {
     await server.listen();
     expect(bootstrap.requests[1]?.body).toMatchObject({ target: "http://127.0.0.1:5200" });
     port = 5201;
-    await expect(server.listen()).rejects.toMatchObject({ code: "sdk.listener_failed" });
-    expect(close).toHaveBeenCalledOnce();
+    await server.listen();
+    expect(bootstrap.requests[2]?.body).toMatchObject({ target: "http://127.0.0.1:5201" });
+    expect(close).not.toHaveBeenCalled();
   });
 });
 
@@ -218,11 +254,11 @@ test(
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
         body: { protocol: 1, framework: "vite" },
-        path: "/v1/configure",
+        path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { protocol: 1, framework: "vite", target: `http://127.0.0.1:${port}` },
-        path: "/v1/target",
+        body: { protocol: 1, target: `http://127.0.0.1:${port}` },
+        path: "/v1/register",
       });
 
       const page = await requestTestServer(port);
@@ -281,10 +317,10 @@ test("registers the actual next port selected by Vite", async () => {
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
       body: { protocol: 1, framework: "vite" },
-      path: "/v1/configure",
+      path: "/v1/prepare",
     });
     const target = await fixture.request(1);
-    expect(target.path).toBe("/v1/target");
+    expect(target.path).toBe("/v1/register");
     const selectedTarget = z.object({ target: z.string() }).parse(target.body).target;
     expect(selectedTarget).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(selectedTarget).port);
@@ -307,10 +343,10 @@ test("reports a fallback listener for server-side forced-port validation", async
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
       body: { protocol: 1, framework: "vite" },
-      path: "/v1/configure",
+      path: "/v1/prepare",
     });
     const registration = await fixture.request(1);
-    expect(registration.path).toBe("/v1/target");
+    expect(registration.path).toBe("/v1/register");
     const selectedPort = Number(new URL((registration.body as { target: string }).target).port);
     expect(selectedPort).toBeGreaterThan(port);
     expect(fixture.output()).toContain(`Port ${port} is in use, trying another one`);
@@ -323,8 +359,8 @@ test("registers and serves an IPv6 localhost target", async () => {
 
   await fixture.diagnose(async () => {
     expect(await fixture.request(1)).toMatchObject({
-      body: { protocol: 1, framework: "vite", target: `http://[::1]:${port}` },
-      path: "/v1/target",
+      body: { protocol: 1, target: `http://[::1]:${port}` },
+      path: "/v1/register",
     });
     await expect(requestTestServer(port, { address: "::1" })).resolves.toMatchObject({
       status: 200,

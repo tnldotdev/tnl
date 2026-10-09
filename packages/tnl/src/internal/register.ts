@@ -50,7 +50,7 @@ export async function registerServer(server: LocalHTTPServer): Promise<void> {
   }
 }
 
-async function listeningTarget(server: LocalHTTPServer): Promise<`http://${string}`> {
+export async function listeningTarget(server: LocalHTTPServer): Promise<`http://${string}`> {
   if (isBunServer(server)) {
     const hostname = server.hostname ?? server.url.hostname;
     if (
@@ -123,6 +123,6 @@ async function closeServer(server: LocalHTTPServer): Promise<void> {
   }
 }
 
-function isBunServer(server: LocalHTTPServer): server is BunHTTPServer {
+export function isBunServer(server: LocalHTTPServer): server is BunHTTPServer {
   return "stop" in server && typeof server.stop === "function";
 }

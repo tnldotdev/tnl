@@ -145,7 +145,7 @@ describe("development context", () => {
 
   test("accepts only the complete final protocol environment", () => {
     expect(() => readDevelopmentContext({ TNL_DEV_PROTOCOL: "2" })).toThrow(
-      /unsupported tnl dev protocol/,
+      /unsupported local publisher protocol/,
     );
     expect(() => readDevelopmentContext({ TNL_DEV_SOCKET: "/tmp/tnl.sock" })).toThrow(
       new TnlError("sdk.configuration_invalid"),

@@ -198,6 +198,10 @@ func devRuntimeDirectory() (string, error) {
 	if base == "" {
 		base = os.TempDir()
 	}
+	return privateRuntimeDirectoryAt(base)
+}
+
+func privateRuntimeDirectoryAt(base string) (string, error) {
 	dir := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", failure.Wrap("create development runtime directory", failure.DevSocketUnavailable, err)

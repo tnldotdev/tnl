@@ -8,12 +8,20 @@ it does not install the `tnld` server.
 ```console
 npm install -D @tnldotdev/tnl@next
 npx tnl init
-npx tnl dev
+npx tnl login
+pnpm dev
+npx tnl wait
 ```
 
 `tnl init` sets up missing project and framework configuration and lists any
-actions required for existing files. Sign in when prompted; hosted tnl.dev is
-the default server. Each Git worktree gets its own HTTPS URL.
+actions required for existing files. Start the app with its normal development
+script. Its integration prepares metadata and reports the bound listener to a
+local tnl publisher process. Hosted tnl.dev is the default server. Each Git
+worktree gets its own HTTPS URL; restarting an app reuses that URL.
+
+Node and Bun applications use `await tnl.prepare({ service: "api" })`, then
+`await publication.register(server)` on the returned handle. Registering a
+listener acknowledges local ownership; `tnl wait` checks public readiness.
 
 Read the [quickstart](https://tnl.dev/docs),
 [Next.js and Vite setup](https://tnl.dev/docs/frameworks),

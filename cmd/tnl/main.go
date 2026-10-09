@@ -28,9 +28,12 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Dev         devCommand       `cmd:"" help:"Start and publish a development service; override its child command after --." group:"start"`
+	Dev         devCommand       `cmd:"" hidden:""`
+	Runtime     runtimeCommand   `cmd:"" hidden:""`
+	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
+	Watch       watchCommand     `cmd:"" help:"Follow ordered local app lifecycle events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local HTTP service or try the built-in demo." group:"start"`
-	Status      statusCommand    `cmd:"" help:"Show locally recorded tunnels for this project; --all includes other projects." group:"start"`
+	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
 	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
@@ -318,7 +321,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parser, err := kong.New(
 		&flags,
 		kong.Name("tnl"),
-		kong.Description("Publish local services at stable public URLs. Try tnl publish --demo, run tnl dev to start an app, or tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
+		kong.Description("Publish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "start", Title: "Start here:"},
 			{Key: "manage", Title: "Manage:"},
@@ -382,6 +385,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
+	case "runtime start":
+		return runRuntimeStart(ctx, flags.Runtime.Start, stdout)
+	case "runtime serve":
+		return runRuntimeServe(ctx, flags.Runtime.Serve)
+	case "wait", "watch":
+		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "dev <service>", "config check", "config generate":
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 			break
@@ -462,13 +471,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "dev <service>":
-		if flags.Dev.Service == "" && len(project.Config.Services) > 0 {
-			return runCoordinatedDev(ctx, project, flags.Dev, os.Stdin, stdout, stderr, telemetry)
-		}
-		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr, telemetry)
+		return failure.Wrap("start app", failure.AppStartCommandRetired, errors.New("start the app with its normal development command and tnl integration"))
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
+			if err != nil {
+				return err
+			}
+			stateRoot, err := clientStateRoot(flags.Status.StateDir)
+			if err != nil {
+				return err
+			}
+			flags.Status.Configuration, err = loadProjectConfiguration(ctx, flags, stateRoot)
 			if err != nil {
 				return err
 			}

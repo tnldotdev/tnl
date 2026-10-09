@@ -8,7 +8,7 @@ Use everyday words unless a technical term makes an important distinction;
 explain the term when the reader needs it. Name the component doing the work and
 qualify claims:
 
-- Write “Run `tnl dev` to give your local app an HTTPS URL,” not “Leverage tnl’s
+- Write “Start your app normally to give it an HTTPS URL,” not “Leverage tnl’s
   seamless workflow to expose your application.”
 - Write “Ingress may try another connected relay before sending the first visitor
   byte,” not “Traffic is intelligently rerouted.”
@@ -61,29 +61,31 @@ mutation counters; public URL counters are publish run numbers.
 
 ## people and local processes
 
-| Term              | Definition                                                                        |
-| ----------------- | --------------------------------------------------------------------------------- |
-| **identity**      | A person or administrator known to one tnl server.                                |
-| **implementer**   | The person or AI coding agent working in the project directory.                   |
-| **reviewer**      | A person using a share to visit a preview and optionally leave feedback.          |
-| **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
-| **visitor**       | A browser or other client connecting to a public URL.                             |
-| **local service** | The project's local HTTP application.                                             |
-| **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
-| **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
+| Term              | Definition                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| **identity**      | A person or administrator known to one tnl server.                                                  |
+| **implementer**   | The person or AI coding agent working in the project directory.                                     |
+| **reviewer**      | A person using a share to visit a preview and optionally leave feedback.                            |
+| **publisher**     | The native local `tnl` process, or a `tnl publish` invocation, when its architectural role matters. |
+| **visitor**       | A browser or other client connecting to a public URL.                                               |
+| **local service** | The project's local HTTP application.                                                               |
+| **target**        | The local HTTP URL the publisher uses to reach the local service.                                   |
+| **tunnel**        | One registered app service's publication, or a `tnl publish` invocation, and its lifecycle.         |
 
 ## projects and client state
 
-| Term                      | Definition                                                                                                                  |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| **project**               | The directory selected from where the command runs, project configuration, and Git worktree.                                |
-| **preview**               | Control's saved group of public URLs for one project directory, reused across `tnl dev` runs.                               |
-| **project service**       | A named local service in project configuration, with optional settings that override project defaults.                      |
-| **project configuration** | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                         |
-| **project metadata**      | Generated, browser-safe hostname and project-service information used by framework integrations during development.         |
-| **client state**          | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                    |
-| **worktree label**        | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames.    |
-| **path mount**            | Serving one configured local service beneath a path on another service's public URL; the hostname's visitor policy applies. |
+| Term                        | Definition                                                                                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **project**                 | The directory selected from where the command runs, project configuration, and Git worktree.                                |
+| **preview**                 | Control's saved group of public URLs for one project directory, reused across app restarts.                                 |
+| **app registration**        | A bound listener reported by an SDK and fenced to its live application owner.                                               |
+| **local publisher process** | The native `tnl` process that owns publications for one canonical project, worktree, and client state directory.            |
+| **project service**         | A named local service in project configuration, with optional settings that override project defaults.                      |
+| **project configuration**   | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                         |
+| **project metadata**        | Generated, browser-safe hostname and project-service information used by framework integrations during development.         |
+| **client state**            | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                    |
+| **worktree label**          | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames.    |
+| **path mount**              | Serving one configured local service beneath a path on another service's public URL; the hostname's visitor policy applies. |
 
 ## addresses and dns
 
@@ -293,9 +295,9 @@ Frames follow this general form:
 - Use short, lowercase, concrete states and ASCII-only frame syntax. Use `v` for healthy flow and `x` for the exact failure boundary.
 - Keep human output deterministic and at most 72 columns. Do not truncate meaningful values or emit ANSI control sequences.
 - Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values; generated help remains unframed.
-- Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Preserve `tnl dev` child output unchanged.
+- Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Applications own their terminal output.
 - Render errors once at the top level through the same renderer. Preserve stable diagnostic codes, help URLs, HTTP behavior, and HTML negotiation.
-- `tnl publish` and `tnl dev` share one tunnel presentation.
+- `tnl publish` uses the tunnel presentation; app-led observations use `tnl status`, `tnl wait`, and `tnl watch`.
 - Do not use the diagram renderer for `tnld`. Its commands retain exact raw values, silent successes, and compact one-line operational logs and errors.
 - Never include secrets in diagrams or logs.
 

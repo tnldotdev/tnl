@@ -33,18 +33,15 @@ func startsAPIServer(script string) bool {
 
 func planAPIServer(plan *initPlan, root, kind string, config packageDocument) error {
 	if kind == "ambiguous" {
-		plan.actions = append(plan.actions, "Multiple API servers were detected; configure tnl.port and tnl.register on the HTTP listener used by your dev command.")
+		plan.actions = append(plan.actions, "multiple API servers were detected; prepare the selected service with tnl.prepare and register its bound HTTP listener.")
 		return nil
-	}
-	if len(plan.devCommand) == 0 {
-		plan.actions = append(plan.actions, "set services.app.dev.command in tnl.config.ts to start your API server.")
 	}
 	entry, err := apiServerEntry(root, config.Scripts["dev"])
 	if err != nil {
 		return err
 	}
 	if entry == "" {
-		plan.actions = append(plan.actions, fmt.Sprintf("Find your %s server entrypoint: use tnl.port for the HTTP listener and await tnl.register(server) after it listens.", kind))
+		plan.actions = append(plan.actions, fmt.Sprintf("find your %s server entrypoint: await tnl.prepare({ service: \"app\" }) before startup and register the bound listener with that handle.", kind))
 		return nil
 	}
 	plan.serverPath = entry
@@ -52,7 +49,7 @@ func planAPIServer(plan *initPlan, root, kind string, config packageDocument) er
 	if err != nil {
 		return err
 	}
-	if bytes.Contains(source, []byte("tnl.register(")) && bytes.Contains(source, []byte("tnl.port")) {
+	if bytes.Contains(source, []byte("tnl.prepare(")) {
 		return nil
 	}
 	if isModuleEntrypoint(entry, config.Type, config.Scripts["dev"]) {
@@ -61,7 +58,7 @@ func planAPIServer(plan *initPlan, root, kind string, config packageDocument) er
 			return nil
 		}
 	}
-	plan.actions = append(plan.actions, fmt.Sprintf("Update %s: use tnl.port for the HTTP listener and await tnl.register(server) after it listens.", entry))
+	plan.actions = append(plan.actions, fmt.Sprintf("update %s: await tnl.prepare({ service: \"app\" }) before startup and register the bound listener with that handle.", entry))
 	return nil
 }
 
@@ -122,33 +119,33 @@ func recognizedAPIServerSource(source []byte, kind, script string) ([]byte, bool
 		}
 		if strings.Contains(text, "from "+quote+"@hono/node-server"+quote) {
 			before = "serve(app)" + semicolon
-			after = "const server = serve({ fetch: app.fetch, port: tnl.port })" + semicolon + "\nawait tnl.register(server)" + semicolon
+			after = "const server = serve({ fetch: app.fetch, port: 3000 })" + semicolon + "\nawait publication?.register(server)" + semicolon
 		} else {
 			if !strings.HasPrefix(script, "bun ") {
 				return nil, false
 			}
 			before = "export default app" + semicolon
-			after = "const server = Bun.serve({ fetch: app.fetch, port: tnl.port })" + semicolon + "\nawait tnl.register(server)" + semicolon
+			after = "const server = Bun.serve({ fetch: app.fetch, port: 3000 })" + semicolon + "\nawait publication?.register(server)" + semicolon
 		}
 	case "express":
 		if !strings.Contains(text, "from "+quote+"express"+quote) || !strings.Contains(text, "const app = express(") {
 			return nil, false
 		}
 		before = "app.listen(3000)" + semicolon
-		after = "const server = app.listen(tnl.port)" + semicolon + "\nawait tnl.register(server)" + semicolon
+		after = "const server = app.listen(3000)" + semicolon + "\nawait publication?.register(server)" + semicolon
 	case "fastify":
 		if !strings.Contains(text, "from "+quote+"fastify"+quote) || !strings.Contains(text, "const app = fastify(") {
 			return nil, false
 		}
 		before = "app.listen({ port: 3000 })" + semicolon
-		after = "await app.listen({ port: tnl.port })" + semicolon + "\nawait tnl.register(app.server)" + semicolon
+		after = "await app.listen({ port: 3000 })" + semicolon + "\nawait publication?.register(app.server)" + semicolon
 	default:
 		return nil, false
 	}
 	if strings.Count(text, before) != 1 || !strings.HasSuffix(trimmed, before) {
 		return nil, false
 	}
-	updated := importLine + semicolon + "\n" + strings.TrimSuffix(trimmed, before) + after
+	updated := importLine + semicolon + "\nconst publication = process.env.NODE_ENV === \"production\" ? null : await tnl.prepare({ service: \"app\" })" + semicolon + "\n" + strings.TrimSuffix(trimmed, before) + after
 	if strings.HasSuffix(text, "\n") {
 		updated += "\n"
 	}

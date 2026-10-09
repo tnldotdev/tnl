@@ -392,7 +392,9 @@ function projectMetadata(document: ProjectDocument): ProjectMetadata {
 }
 
 /** returns only the public hostnames that can reach this service in development. */
-export function serviceHostnames(assignment: TnlTunnelAssignment): string[] {
+export function serviceHostnames(
+  assignment: Pick<TnlTunnelAssignment, "hostname" | "service" | "project">,
+): string[] {
   const hostnames = new Set([assignment.hostname]);
   for (const alias of Object.values(assignment.project.aliases ?? {})) {
     if (

@@ -1,7 +1,8 @@
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { onTestFinished } from "vitest";
-import { startTestBootstrap, waitForBootstrapRequest } from "./bootstrap.js";
+import { startTestBootstrap, waitForBootstrapRequest, type TestBootstrap } from "./bootstrap.js";
 import { errorMessage, startTestProcess, type TestProcess } from "./process.js";
 
 export async function startFrameworkFixture(
@@ -30,6 +31,7 @@ export async function startFrameworkFixture(
         ),
     });
     const bootstrap = await startTestBootstrap();
+    await installRuntimeFixture(directory, bootstrap);
     const cli = fileURLToPath(
       new URL(
         framework === "next"
@@ -62,4 +64,32 @@ export async function startFrameworkFixture(
     await close();
     throw error;
   }
+}
+
+export async function installRuntimeFixture(
+  directory: string,
+  bootstrap: TestBootstrap,
+): Promise<void> {
+  await writeFile(
+    join(directory, "package.json"),
+    JSON.stringify({ name: "tnl-framework-fixture", type: "module" }),
+  );
+  // mock only native process discovery in this isolated package copy. framework
+  // startup, bound listener reporting, metadata, HTTP, and HMR remain real.
+  const packageDirectory = join(directory, "node_modules", "@tnldotdev", "tnl");
+  await mkdir(packageDirectory, { recursive: true });
+  await cp(new URL("../dist/", import.meta.url), join(packageDirectory, "dist"), {
+    recursive: true,
+  });
+  await cp(new URL("../package.json", import.meta.url), join(packageDirectory, "package.json"));
+  const binary = join(directory, "native-publisher");
+  await writeFile(
+    binary,
+    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, socket: bootstrap.socket }))});\n`,
+  );
+  await chmod(binary, 0o700);
+  await writeFile(
+    join(packageDirectory, "dist", "internal", "launcher.js"),
+    `export function resolveNativeBinary() { return ${JSON.stringify(binary)}; }\n`,
+  );
 }

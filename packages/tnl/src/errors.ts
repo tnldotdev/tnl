@@ -1,4 +1,7 @@
 export type TnlErrorCode =
+  | "sdk.owner_conflict"
+  | "sdk.registration_stale"
+  | "sdk.authentication_required"
   | "sdk.configuration_invalid"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
@@ -18,6 +21,21 @@ export type TnlErrorCode =
 type FailureClass = "invalid" | "internal" | "unavailable" | "conflict";
 type Retry = "never" | "later" | "after_change";
 const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; message: string }> = {
+  "sdk.owner_conflict": {
+    class: "conflict",
+    retry: "after_change",
+    message: "another live app owns this service; stop it before starting another",
+  },
+  "sdk.registration_stale": {
+    class: "conflict",
+    retry: "later",
+    message: "app registration expired; prepare and register its listener again",
+  },
+  "sdk.authentication_required": {
+    class: "unavailable",
+    retry: "after_change",
+    message: "tnl needs a saved login; run tnl login, then start the app again",
+  },
   "sdk.configuration_invalid": {
     class: "invalid",
     retry: "after_change",
@@ -27,17 +45,17 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.runtime_invalid": {
     class: "invalid",
     retry: "after_change",
-    message: "tnl project metadata is invalid; run tnl dev to regenerate it",
+    message: "tnl project metadata is invalid; restart the app to prepare it again",
   },
   "sdk.protocol_unsupported": {
     class: "invalid",
     retry: "after_change",
-    message: "unsupported tnl dev protocol; upgrade tnl and its framework integrations",
+    message: "unsupported local publisher protocol; upgrade tnl and its framework integrations",
   },
   "sdk.project_unavailable": {
     class: "unavailable",
     retry: "after_change",
-    message: "tnl project metadata is unavailable; check file access and run tnl dev again",
+    message: "tnl project metadata is unavailable; check file access and restart the app",
   },
   "sdk.target_invalid": {
     class: "invalid",
@@ -47,24 +65,23 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.dev_unavailable": {
     class: "unavailable",
     retry: "later",
-    message: "tnl dev is unavailable; check that the tunnel is still running",
+    message: "the local tnl publisher is unavailable; restart the app to reconnect",
   },
   "sdk.response_invalid": {
     class: "internal",
     retry: "after_change",
     message:
-      "tnl dev returned an invalid response; upgrade tnl and its integrations and restart the tunnel",
+      "the local publisher returned an invalid response; upgrade tnl and its integrations and restart the app",
   },
   "sdk.request_rejected": {
     class: "conflict",
     retry: "after_change",
-    message: "tnl dev rejected the framework request; check the tunnel diagnostics",
+    message: "the local publisher rejected the framework request; check tnl status",
   },
   "sdk.listener_failed": {
     class: "unavailable",
     retry: "after_change",
-    message:
-      "the development listener could not start or changed after registration; check the listener and restart tnl dev",
+    message: "the development listener could not start; check the listener and restart the app",
   },
   "sdk.cleanup_failed": {
     class: "internal",

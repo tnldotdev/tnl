@@ -27,7 +27,7 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &stderr); err != nil {
 					t.Fatal(err)
 				}
-				for _, fragment := range []string{"needs action", test.action, "complete the actions above, then run tnl dev"} {
+				for _, fragment := range []string{"needs action", test.action, "complete the actions above, then start your app normally"} {
 					if !strings.Contains(stdout.String(), fragment) {
 						t.Fatalf("run %d missing %q: %q", run, fragment, stdout.String())
 					}
@@ -97,7 +97,7 @@ func TestInitAmbiguousFrameworkOutputNeedsAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after, source) || !strings.Contains(stdout.String(), "needs action") || strings.Contains(stdout.String(), "already configured") || !strings.Contains(stdout.String(), "complete the actions above, then run tnl dev") || stderr.Len() != 0 {
+	if !bytes.Equal(after, source) || !strings.Contains(stdout.String(), "needs action") || strings.Contains(stdout.String(), "already configured") || !strings.Contains(stdout.String(), "complete the actions above, then start your app normally") || stderr.Len() != 0 {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q", after, stdout.String(), stderr.String())
 	}
 }
@@ -118,7 +118,7 @@ func TestInitGenericMissingSettingsRepeatUntilAnswered(t *testing.T) {
 				if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("7777\n"), false, &stdout, &stderr); err != nil {
 					t.Fatal(err)
 				}
-				for _, text := range []string{"[ tnl init ]-- needs action", test.action, "complete the actions above, then run tnl dev"} {
+				for _, text := range []string{"[ tnl init ]-- needs action", "tnl.prepare", "complete the actions above, then start your app normally"} {
 					if !strings.Contains(stdout.String(), text) {
 						t.Fatalf("run %d missing %q: %s", run, text, stdout.String())
 					}
@@ -127,7 +127,7 @@ func TestInitGenericMissingSettingsRepeatUntilAnswered(t *testing.T) {
 					t.Fatalf("run %d stderr = %q", run, stderr.String())
 				}
 				config, err := os.ReadFile(path)
-				if err != nil || strings.Contains(string(config), "port:") || strings.Contains(string(config), "7777") || (test.command != "" && !strings.Contains(string(config), test.command)) || (test.command == "" && strings.Contains(string(config), "dev:")) {
+				if err != nil || strings.Contains(string(config), "port:") || strings.Contains(string(config), "7777") || strings.Contains(string(config), "dev:") {
 					t.Fatalf("run %d config = %s, %v", run, config, err)
 				}
 			}
@@ -152,7 +152,7 @@ func TestInitFrameworkIntegrationDoesNotPromptForPort(t *testing.T) {
 	}
 }
 
-func TestInitGenericPromptsSaveAnswers(t *testing.T) {
+func TestInitPreservesAppScriptsAndDoesNotPromptForLifecycleSettings(t *testing.T) {
 	for _, test := range []struct {
 		name, script, answers, command string
 	}{
@@ -161,16 +161,20 @@ func TestInitGenericPromptsSaveAnswers(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := genericInitFixture(t, test.script, "yarn")
+			before, err := os.ReadFile(filepath.Join(root, "package.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
 			t.Chdir(root)
 			var stdout, stderr bytes.Buffer
 			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(test.answers), true, &stdout, &stderr); err != nil {
 				t.Fatal(err)
 			}
 			config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
-			if err != nil || !strings.Contains(string(config), test.command) || !strings.Contains(string(config), "port: 4321") {
+			if err != nil || strings.Contains(string(config), "command:") || strings.Contains(string(config), "port:") {
 				t.Fatalf("config = %s, %v", config, err)
 			}
-			if !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "+-- run tnl dev") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "[ tnl init ]-- needs input") || !strings.Contains(stderr.String(), "dev port") {
+			if !strings.Contains(stdout.String(), "tnl.prepare") || stderr.Len() != 0 {
 				t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 			}
 			stderr.Reset()
@@ -178,14 +182,18 @@ func TestInitGenericPromptsSaveAnswers(t *testing.T) {
 			if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader(""), true, &stdout, &stderr); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(stdout.String(), "[ tnl init ]-- already configured") || strings.Contains(stdout.String(), "needs action") || stderr.Len() != 0 {
+			if !strings.Contains(stdout.String(), "tnl.prepare") || stderr.Len() != 0 {
 				t.Fatalf("rerun stdout = %q, stderr = %q", stdout.String(), stderr.String())
+			}
+			after, err := os.ReadFile(filepath.Join(root, "package.json"))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("app script changed: %s, %v", after, err)
 			}
 		})
 	}
 }
 
-func TestInitGenericPartialAnswersAreRetained(t *testing.T) {
+func TestInitIgnoresObsoleteCommandAndPortPromptAnswers(t *testing.T) {
 	root := genericInitFixture(t, "", "npm")
 	t.Chdir(root)
 	path := filepath.Join(root, "tnl.config.ts")
@@ -194,10 +202,10 @@ func TestInitGenericPartialAnswersAreRetained(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(config), "dev: { port: 8123 }") {
+	if err != nil || strings.Contains(string(config), "dev:") {
 		t.Fatalf("config = %q, %v", config, err)
 	}
-	if !strings.Contains(stdout.String(), "set services.app.dev.command") || !strings.Contains(stdout.String(), "needs action") || strings.Count(stderr.String(), "invalid input") != 3 {
+	if !strings.Contains(stdout.String(), "tnl.prepare") || !strings.Contains(stdout.String(), "needs action") || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	stdout.Reset()
@@ -206,7 +214,7 @@ func TestInitGenericPartialAnswersAreRetained(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err = os.ReadFile(path)
-	if err != nil || !strings.Contains(string(config), `dev: { command: ["node","server.js"], port: 8123 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || strings.Contains(stdout.String(), "needs action") || strings.Contains(stderr.String(), "dev port") {
+	if err != nil || strings.Contains(string(config), "dev:") || !strings.Contains(stdout.String(), "tnl.prepare") || stderr.Len() != 0 {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
 	}
 }
@@ -223,7 +231,7 @@ func TestInitGenericRerunUpdatesUntouchedConfigWithPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(config), `dev: { command: ["node","server.js"], port: 5174 }`) || !strings.Contains(stdout.String(), "[ tnl init ]-- configured") || !strings.Contains(stdout.String(), "updated") || strings.Contains(stdout.String(), "needs action") || !strings.Contains(stderr.String(), "dev port") {
+	if err != nil || strings.Contains(string(config), "dev:") || !strings.Contains(stdout.String(), "tnl.prepare") || stderr.Len() != 0 {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
 	}
 }
@@ -256,7 +264,7 @@ func TestInitPreservesCustomizedGenericService(t *testing.T) {
 func TestInitMigratesGeneratedFrameworkCommandBeforeChangingDevScript(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, initConfigSource("app", []string{"pnpm", "dev"}), 0o600); err != nil {
+	if err := os.WriteFile(path, legacyInitConfigSource("app", []string{"pnpm", "dev"}, 0), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
@@ -265,7 +273,7 @@ func TestInitMigratesGeneratedFrameworkCommandBeforeChangingDevScript(t *testing
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSource("app", []string{"next", "dev"})) || !strings.Contains(output.String(), "scripts.dev to") || !strings.Contains(output.String(), `"tnl dev"`) {
+	if err != nil || !bytes.Equal(data, initConfigSource("app", nil)) || strings.Contains(output.String(), `"tnl dev"`) {
 		t.Fatalf("migrated config = %s, output = %s, err = %v", data, output.String(), err)
 	}
 	packagePath := filepath.Join(root, "package.json")
@@ -281,7 +289,7 @@ func TestInitMigratesGeneratedFrameworkCommandBeforeChangingDevScript(t *testing
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSource("app", []string{"next", "dev"})) || strings.Contains(output.String(), "scripts.dev to") {
+	if err != nil || !bytes.Equal(data, initConfigSource("app", nil)) || !strings.Contains(output.String(), "restore package.json scripts.dev") {
 		t.Fatalf("repeat config = %s, output = %s, err = %v", data, output.String(), err)
 	}
 }
@@ -298,7 +306,7 @@ func TestInitCannotReuseGenericScriptOnceItStartsTnl(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSourceWithPort("app", nil, 4242)) || !strings.Contains(output.String(), "set services.app.dev.command") {
+	if err != nil || !bytes.Equal(data, initConfigSourceWithPort("app", nil, 4242)) || !strings.Contains(output.String(), "restore package.json scripts.dev") {
 		t.Fatalf("generic config = %s, output = %s, err = %v", data, output.String(), err)
 	}
 }

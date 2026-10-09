@@ -68,6 +68,7 @@ type projectMetadataResolver struct {
 	clients           map[string]*clientauth.Client
 	identities        map[string]authorityv1.IdentityContext
 	contexts          map[string]teamContext
+	silent            bool
 }
 
 func newProjectMetadataResolver(
@@ -347,7 +348,13 @@ func (r *projectMetadataResolver) client(ctx context.Context, server string) (*c
 	if input == nil {
 		input = os.Stdin
 	}
-	client, err := authenticatePublisher(ctx, r.state, server, "", r.command, input, diagnostics)
+	var client *clientauth.Client
+	var err error
+	if r.silent {
+		client, err = authenticateRuntime(ctx, r.state, server)
+	} else {
+		client, err = authenticatePublisher(ctx, r.state, server, "", r.command, input, diagnostics)
+	}
 	if err != nil {
 		return nil, err
 	}
