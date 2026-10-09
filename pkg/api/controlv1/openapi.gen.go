@@ -1272,7 +1272,7 @@ type PublicURL struct {
 	PolicyRevision       int64                   `json:"policy_revision"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
 
-	// Purpose Existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
+	// Purpose existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
 	Purpose   PublicURLPurpose `json:"purpose"`
 	Target    string           `json:"target"`
 	TeamId    TeamID           `json:"team_id"`
@@ -1294,7 +1294,7 @@ type PublicURLPage struct {
 	PublicUrls []PublicURL  `json:"public_urls"`
 }
 
-// PublicURLPurpose Existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
+// PublicURLPurpose existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
 type PublicURLPurpose string
 
 // PublicURLScope defines model for PublicURLScope.

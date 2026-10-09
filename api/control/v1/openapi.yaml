@@ -1454,7 +1454,7 @@ components:
       enum: [app, alias, demo, oauth, webhooks]
     PublicURLPurpose:
       type: string
-      description: Existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
+      description: existing public URLs created before purpose tracking have unknown; new public URLs must declare a purpose other than unknown.
       enum: [unknown, app, alias, demo, oauth, webhooks]
     PublicURLLifecycleState:
       type: string
