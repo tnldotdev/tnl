@@ -25,6 +25,11 @@ import (
 // after a fenced registration and stops publishing when that registration ends.
 func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("tnld output:\n%s", fixture.server.output.String())
+		}
+	})
 	project := t.TempDir()
 	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{"directory":".","tunnel":{"name":"app-led-binary","allow_all_ips":true}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
