@@ -201,6 +201,9 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		return FeedbackThread{}, err
 	}
 	request.Actor = actor
+	if err := requireFeedbackIdentity(ctx, queries, scope.TeamID, actor); err != nil {
+		return FeedbackThread{}, err
+	}
 	if actor.IdentityID != "" {
 		request.AuthorDisplayName = actor.DisplayName
 	}
@@ -307,6 +310,11 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		return FeedbackEvent{}, err
 	}
 	request.Actor = actor
+	if actor.Kind == "reviewer" {
+		if err := requireFeedbackIdentity(ctx, queries, candidate.TeamID, actor); err != nil {
+			return FeedbackEvent{}, err
+		}
+	}
 	thread, err := queries.LockFeedbackThread(ctx, request.FeedbackID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FeedbackEvent{}, ErrFeedbackNotFound

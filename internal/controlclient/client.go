@@ -35,6 +35,7 @@ const (
 )
 
 var (
+	ErrFeedbackSignInRequired = failure.Wrap("write feedback", failure.FeedbackSignInRequired, errors.New("feedback requires sign-in"))
 	ErrUnauthenticated      = failure.Wrap("authenticate control request", failure.Authentication, errors.New("controlclient: unauthenticated"))
 	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
 	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
@@ -587,6 +588,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case controlv1.FeedbackSignInRequired:
+		return errors.Join(ErrFeedbackSignInRequired, &ProblemError{Status: status, Problem: problem})
 	case controlv1.MemberHostnameDepthExceeded:
 		return ErrMemberHostnameDepth
 	case controlv1.Unauthenticated:

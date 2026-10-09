@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -41,10 +43,16 @@ func (h *handler) feedbackBrowserActor(request *http.Request, auth controlstate.
 	if len(actor.BrowserCookieSecret) == 0 {
 		return actor, nil
 	}
+	if h.browserAccess == nil || h.authorizer == nil {
+		return actor, authorization.ErrUnavailable
+	}
 	token := base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
 	session, principal, err := h.browserSessionIdentity(request, auth, token)
 	if err != nil {
-		return actor, errors.Join(controlstate.ErrFeedbackAccess, err)
+		if errors.Is(err, controlstate.ErrPreviewAccess) || errors.Is(err, authorization.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+			return actor, errors.Join(controlstate.ErrFeedbackAccess, err)
+		}
+		return actor, err
 	}
 	actor.IdentityID, actor.DisplayName = session.IdentityID, principal.displayName
 	return actor, nil

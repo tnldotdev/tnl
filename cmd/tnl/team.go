@@ -15,14 +15,15 @@ import (
 )
 
 type teamCommand struct {
-	Current teamCurrentCommand `cmd:"" help:"Show the selected team."`
-	List    teamListCommand    `cmd:"" help:"List current memberships."`
-	Use     teamUseCommand     `cmd:"" help:"Save a team for commands without a project team."`
-	Create  teamCreateCommand  `cmd:"" help:"Create an organization team."`
-	Members teamMembersCommand `cmd:"" help:"List team memberships."`
-	Invite  teamInviteCommand  `cmd:"" help:"Manage team invitations."`
-	Join    teamJoinCommand    `cmd:"" help:"Accept a team invitation."`
-	Member  teamMemberCommand  `cmd:"" help:"Manage one team membership."`
+	Current  teamCurrentCommand  `cmd:"" help:"Show the selected team."`
+	List     teamListCommand     `cmd:"" help:"List current memberships."`
+	Use      teamUseCommand      `cmd:"" help:"Save a team for commands without a project team."`
+	Create   teamCreateCommand   `cmd:"" help:"Create an organization team."`
+	Members  teamMembersCommand  `cmd:"" help:"List team memberships."`
+	Invite   teamInviteCommand   `cmd:"" help:"Manage team invitations."`
+	Join     teamJoinCommand     `cmd:"" help:"Accept a team invitation."`
+	Member   teamMemberCommand   `cmd:"" help:"Manage one team membership."`
+	Feedback teamFeedbackCommand `cmd:"" help:"Manage the team's feedback sign-in policy."`
 }
 
 type teamCurrentCommand struct {
