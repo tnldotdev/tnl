@@ -70,6 +70,7 @@ type CreatePublicURLRequest struct {
 	CanonicalHostname     string
 	Target                string
 	PublicURLScope        PublicURLScope
+	ManagedURLMode        naming.ManagedURLMode
 	AllowedIPPrefixes     []string
 	DNSState              PublicURLDNSState
 	DNSAuthorityReference string
@@ -208,6 +209,27 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
+		}
+		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
+			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			label := relative[strings.LastIndex(relative, ".")+1:]
+			if reserved, err := queries.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{
+				TeamID: request.TeamID, Label: label,
+			}); err != nil {
+				return PublicURL{}, fmt.Errorf("controlstate: check reserved member slug: %w", err)
+			} else if reserved {
+				return PublicURL{}, ErrPublicURLConflict
+			}
+		}
+		if creation.DomainKind == "managed" && request.PublicURLScope == PublicURLScopeShared {
+			label := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
+			if _, err := queries.ReserveManagedDirectName(ctx, controlstatedb.ReserveManagedDirectNameParams{
+				Label: label, TeamID: text(request.TeamID), CreatedAt: timestamp(now),
+			}); errors.Is(err, pgx.ErrNoRows) {
+				return PublicURL{}, ErrPublicURLConflict
+			} else if err != nil {
+				return PublicURL{}, fmt.Errorf("controlstate: reserve managed direct name: %w", err)
+			}
 		}
 		policyRevision = creation.PolicyRevision
 	}
@@ -932,11 +954,15 @@ func authorizeRouteCreation(
 	if request.DNSState == PublicURLDNSPending && request.DNSAuthorityReference != context.DnsAuthorityReference.String {
 		return ErrPublicURLAccess
 	}
-	actorNamespace := naming.MemberNamespace(context.CanonicalDomain, context.DomainKind == "managed",
-		context.ActorManagedLabel, context.ActorMemberSlug)
+	actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: context.CanonicalDomain, Managed: context.DomainKind == "managed",
+		Mode: request.ManagedURLMode, Personal: context.TeamKind == "personal",
+		Builtin:  context.IdentityKind == "builtin" && context.TeamCreatorIdentityID == request.ActingIdentityID,
+		TeamName: context.TeamDisplayName, MemberSlug: context.ActorMemberSlug, ManagedLabel: context.ActorManagedLabel,
+	})
 	if request.PublicURLScope == "member" {
-		if request.MembershipID != context.ActorMembershipID ||
-			!hostnameWithin(request.CanonicalHostname, actorNamespace) {
+		if direct || request.MembershipID != context.ActorMembershipID ||
+			request.CanonicalHostname == actorNamespace || !hostnameWithin(request.CanonicalHostname, actorNamespace) {
 			return ErrPublicURLAccess
 		}
 		return nil
@@ -945,7 +971,7 @@ func authorizeRouteCreation(
 		return ErrPublicURLAccess
 	}
 	if context.DomainKind == "managed" {
-		if context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
+		if request.ManagedURLMode != naming.ManagedURLModeSimple || context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
 			context.TeamCreatorIdentityID != request.ActingIdentityID ||
 			!oneLabelBeneath(request.CanonicalHostname, context.CanonicalDomain) {
 			return ErrPublicURLAccess

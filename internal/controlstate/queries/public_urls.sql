@@ -27,6 +27,7 @@ FOR SHARE;
 -- name: GetPublicURLCreationContext :one
 SELECT
     t.kind AS team_kind,
+    t.display_name AS team_display_name,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
     i.kind AS identity_kind,

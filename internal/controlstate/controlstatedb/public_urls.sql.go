@@ -357,6 +357,7 @@ func (q *Queries) GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetP
 const getPublicURLCreationContext = `-- name: GetPublicURLCreationContext :one
 SELECT
     t.kind AS team_kind,
+    t.display_name AS team_display_name,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
     i.kind AS identity_kind,
@@ -395,6 +396,7 @@ type GetPublicURLCreationContextParams struct {
 
 type GetPublicURLCreationContextRow struct {
 	TeamKind              string
+	TeamDisplayName       string
 	TeamCreatorIdentityID string
 	PolicyRevision        int64
 	IdentityKind          string
@@ -414,6 +416,7 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 	var i GetPublicURLCreationContextRow
 	err := row.Scan(
 		&i.TeamKind,
+		&i.TeamDisplayName,
 		&i.TeamCreatorIdentityID,
 		&i.PolicyRevision,
 		&i.IdentityKind,

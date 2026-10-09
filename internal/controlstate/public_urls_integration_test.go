@@ -11,6 +11,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
@@ -65,6 +67,59 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	}
 	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLIdempotency) {
 		t.Fatalf("deleted route retry: %v", err)
+	}
+}
+
+func TestIntegrationSimpleManagedDirectNameReservation(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "simple_managed_direct")
+	request := builtinRouteRequest(t, database, now)
+	request.ManagedURLMode = naming.ManagedURLModeSimple
+	request.MembershipID, request.PublicURLScope = "", PublicURLScopeShared
+	request.CanonicalHostname = "app.tunnels.example.test"
+	first, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil || first.PublicURLScope != PublicURLScopeShared || first.MembershipID != "" {
+		t.Fatalf("simple direct public URL = %#v, %v", first, err)
+	}
+	if replay, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second)); err != nil || replay.ID != first.ID {
+		t.Fatalf("direct public URL retry = %#v, %v", replay, err)
+	}
+	teamRequest := authorityTeamRequest(request.ActingIdentityID)
+	teamRequest.DisplayName = "app"
+	if _, err := database.CreateTeam(t.Context(), teamRequest, now); !errors.Is(err, ErrTeamNameUnavailable) {
+		t.Fatalf("direct URL name was assigned to a team: %v", err)
+	}
+	request.IdempotencyKey = "reserved-label"
+	request.RequestDigest = sha256.Sum256([]byte(request.IdempotencyKey))
+	request.CanonicalHostname = "local-administrator.tunnels.example.test"
+	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLConflict) {
+		t.Fatalf("personal team name was claimed as a direct URL: %v", err)
+	}
+}
+
+func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
+	database, now, owner, team := newAuthorityTeam(t)
+	members, err := database.ListTeamMemberships(t.Context(), owner, team.ID)
+	if err != nil || len(members) != 1 {
+		t.Fatalf("owner membership = %#v, %v", members, err)
+	}
+	domains, err := database.ListTeamDomains(t.Context(), owner, team.ID)
+	if err != nil || len(domains) == 0 {
+		t.Fatalf("team domains = %#v, %v", domains, err)
+	}
+	request := CreatePublicURLRequest{
+		ManagedURLMode: naming.ManagedURLModeSimple, TeamID: team.ID, DomainID: domains[0].ID,
+		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember,
+		IdempotencyKey: "simple-organization", RequestDigest: sha256.Sum256([]byte("simple-organization")),
+		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
+	}
+	request.CanonicalHostname = "app." + members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
+	if _, err := database.CreatePublicURL(t.Context(), request, now); err != nil {
+		t.Fatalf("organization public URL: %v", err)
+	}
+	request.IdempotencyKey, request.RequestDigest = "managed-label", sha256.Sum256([]byte("managed-label"))
+	request.CanonicalHostname = "app." + members[0].ManagedLabel + "." + domains[0].CanonicalDomain
+	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLAccess) {
+		t.Fatalf("generated label bypassed simple namespace: %v", err)
 	}
 }
 

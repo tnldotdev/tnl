@@ -16,8 +16,8 @@ func TestIntegrationTeamCreation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creation")
 	session := newBuiltinSession(t, database, now)
 	personal, err := database.GetTeam(t.Context(), session.Identity.Identity.ID, session.Identity.PersonalTeamID)
-	if err != nil || personal.DisplayName == "" || personal.DisplayName != personal.ManagedLabel {
-		t.Fatalf("personal team generated name = %#v, %v", personal, err)
+	if err != nil || personal.DisplayName != "local-administrator" || personal.ManagedLabel == "" {
+		t.Fatalf("personal team name = %#v, %v", personal, err)
 	}
 	request := authorityTeamRequest(session.Identity.Identity.ID)
 	request.DisplayName, request.MemberSlug = "studio", ""
