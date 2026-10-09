@@ -3,7 +3,7 @@ package observability
 import (
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/webhookprovider"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 // ObserveWebhookProviderSource counts catalog lookups without URL or identity labels.
@@ -11,7 +11,7 @@ func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
 	if m == nil {
 		return
 	}
-	if !webhookprovider.Valid(provider) {
+	if !controlv1.WebhookProvider(provider).Valid() {
 		provider = "unknown"
 	}
 	switch outcome {

@@ -5,13 +5,12 @@ import (
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
-	"github.com/tnldotdev/tnl/internal/webhookprovider"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func (h *handler) GetWebhookProviderSource(response http.ResponseWriter, request *http.Request, provider controlv1.WebhookProvider) {
 	name := string(provider)
-	if !webhookprovider.Valid(name) {
+	if !provider.Valid() {
 		h.config.Metrics.ObserveWebhookProviderSource(name, "unknown")
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "webhook provider not found")
 		return
