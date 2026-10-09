@@ -334,6 +334,9 @@ func (m *Manager) Published(id string, run uint64, routable bool) error {
 			service.Ready, service.Observation = false, nil
 		}
 		service.PublishRunNumber, service.Routable = run, routable
+		if routable {
+			service.Failure = ""
+		}
 		m.emitLocked("service.publication", service)
 		return m.writeErr
 	}
@@ -354,6 +357,17 @@ func (m *Manager) RecordFailure(name, reason string) {
 	if service := m.serviceLocked(name); service != nil && !service.Registered {
 		service.Failure = reason
 		m.emitLocked("service.failed", service)
+	}
+}
+
+// RecordWarning retains an authored reason while a registered publisher retries.
+// repeated transport errors do not advance the event cursor without a change.
+func (m *Manager) RecordWarning(name, registrationID, reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if service := m.serviceLocked(name); service != nil && service.Registered && service.RegistrationID == registrationID && service.Failure != reason {
+		service.Failure = reason
+		m.emitLocked("service.warning", service)
 	}
 }
 

@@ -549,6 +549,11 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	}
 	defer recorder.Close()
 	configuration.ObserveRequest = requestObservation(recorder)
+	configuration.Logf = func(_ string, _ ...any) {
+		if ctx.Err() == nil {
+			a.manager.RecordWarning(service.Name, service.RegistrationID, string(failure.TransportUnavailable))
+		}
+	}
 	if project.Config.OAuth {
 		origin, oauthServices, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)
 		if err != nil {
@@ -591,6 +596,8 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		switch event.Type {
 		case publisher.EventProvisioning, publisher.EventDraining:
 			return observe(event.PublishRunNumber, false)
+		case publisher.EventProvisioningStalled:
+			a.manager.RecordWarning(service.Name, service.RegistrationID, string(diagnostic.ProvisioningStalled))
 		case publisher.EventReady:
 			if err := observe(event.PublishRunNumber, true); err != nil {
 				return err
