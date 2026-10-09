@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,12 +21,31 @@ func (c feedbackIdentityFailure) CheckBrowserAccess(context.Context, string, uin
 
 type feedbackPolicyReader struct {
 	feedbackClient
-	calls int
+	calls    int
+	required bool
+	err      error
+	body     controlv1.FeedbackAccessRequest
 }
 
-func (c *feedbackPolicyReader) GetFeedbackAccess(context.Context, string, controlv1.FeedbackAccessRequest, credentials.PublishRunToken) (controlv1.FeedbackAccess, error) {
+func (c *feedbackPolicyReader) GetFeedbackAccess(_ context.Context, _ string, body controlv1.FeedbackAccessRequest, _ credentials.PublishRunToken) (controlv1.FeedbackAccess, error) {
 	c.calls++
-	return controlv1.FeedbackAccess{}, nil
+	c.body = body
+	return controlv1.FeedbackAccess{RequireSignIn: c.required}, c.err
+}
+
+func TestReadyFeedbackPolicyDistinguishesOptionalRequiredAndUnavailable(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		client := &feedbackPolicyReader{required: required}
+		runtime := &feedbackRuntime{client: client, previewID: "preview", runID: "run", version: 7}
+		policy := runtime.readyPolicy(t.Context())
+		if policy == nil || *policy != required || client.calls != 1 || client.body.PreviewId != "preview" || client.body.PublishRunNumber != 7 || !client.body.Access.AllowedIp || client.body.Access.BrowserCookieSecret != nil {
+			t.Fatalf("ready policy = %v, request %+v", policy, client.body)
+		}
+		client.err = errors.New("policy unavailable")
+		if runtime.readyPolicy(t.Context()) != nil {
+			t.Fatal("failed policy lookup was presented as optional sign-in")
+		}
+	}
 }
 
 func TestFeedbackMetadataPreservesUnexpectedIdentityRejections(t *testing.T) {

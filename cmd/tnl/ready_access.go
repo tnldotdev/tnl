@@ -33,9 +33,20 @@ func readyAccessFields(info publisher.AccessInfo) []clioutput.Field {
 			}
 		}
 	}
-	return []clioutput.Field{
+	fields := []clioutput.Field{
 		{Label: "IP access", Value: ip},
 		{Label: "browser sign-in", Value: browser},
 		{Label: "team access", Value: team},
 	}
+	if info.FeedbackEnabled {
+		policy := "unavailable"
+		if info.FeedbackRequireSignIn != nil {
+			policy = "optional"
+			if *info.FeedbackRequireSignIn {
+				policy = "required"
+			}
+		}
+		fields = append(fields, clioutput.Field{Label: "feedback sign-in", Value: policy})
+	}
+	return fields
 }

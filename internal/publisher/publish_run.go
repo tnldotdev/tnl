@@ -302,8 +302,15 @@ func runSession(
 		}
 	default:
 	}
+	var feedbackPolicy *bool
+	if feedback != nil {
+		feedbackPolicy = feedback.readyPolicy(ctx)
+	}
 	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, func() error {
-		return ready(readyAccessInfo(setup, browserRuntime, shareRuntime))
+		access := readyAccessInfo(setup, browserRuntime, shareRuntime)
+		access.FeedbackEnabled = feedback != nil
+		access.FeedbackRequireSignIn = feedbackPolicy
+		return ready(access)
 	}); err != nil {
 		return err
 	}

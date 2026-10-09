@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -16,6 +17,25 @@ import (
 
 type feedbackAccessClient interface {
 	GetFeedbackAccess(context.Context, string, controlv1.FeedbackAccessRequest, credentials.PublishRunToken) (controlv1.FeedbackAccess, error)
+}
+
+// readiness displays a bounded policy snapshot. visitor writes still use
+// control's live policy; unavailable metadata does not stop the local app.
+func (f *feedbackRuntime) readyPolicy(ctx context.Context) *bool {
+	client, ok := f.client.(feedbackAccessClient)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	policy, err := client.GetFeedbackAccess(ctx, f.runID, controlv1.FeedbackAccessRequest{
+		PreviewId: f.previewID, PublishRunNumber: int64(f.version),
+		Access: controlv1.FeedbackReviewerAccess{AllowedIp: true},
+	}, f.token)
+	if err != nil {
+		return nil
+	}
+	return new(policy.RequireSignIn)
 }
 
 func feedbackBrowserCredential(request *http.Request) (string, bool, bool) {
