@@ -124,7 +124,7 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 	}
 	request := CreatePublicURLRequest{
 		ManagedURLMode: naming.ManagedURLModeSimple, TeamID: team.ID, DomainID: domains[0].ID,
-		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember,
+		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
 		IdempotencyKey: "simple-organization", RequestDigest: sha256.Sum256([]byte("simple-organization")),
 		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
 	}
@@ -363,7 +363,7 @@ func builtinRouteRequest(t *testing.T, database *Database, now time.Time) Create
 	}
 	return CreatePublicURLRequest{TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 		ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
-		CanonicalHostname: "demo." + membership.ManagedLabel + ".tunnels.example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSUnmanaged}
+		CanonicalHostname: "demo." + membership.ManagedLabel + ".tunnels.example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged}
 }
 
 func createTestPublicURL(t *testing.T, database *Database, request CreatePublicURLRequest, now time.Time) PublicURL {

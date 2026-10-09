@@ -493,6 +493,7 @@ type ControlPublicUrl struct {
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
 	Namespace                   string
+	Purpose                     string
 }
 
 type ControlPublicUrlRecoveryEpisode struct {

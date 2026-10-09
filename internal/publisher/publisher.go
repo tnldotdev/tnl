@@ -49,6 +49,7 @@ type Config struct {
 	MembershipID             string
 	PolicyRevision           uint64
 	PublicURLScope           controlv1.PublicURLScope
+	Purpose                  controlv1.PublicURLPurpose
 	Hostname                 string
 	PreviewID                string
 	Feedback                 bool
@@ -213,6 +214,9 @@ func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRu
 }
 
 func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
+	if !config.Purpose.Valid() {
+		return controlv1.PublicURL{}, false, errors.New("publisher: public URL purpose is required")
+	}
 	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(config.AllowedIPPrefixes)
 	if err != nil {
 		return controlv1.PublicURL{}, false, fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
@@ -237,7 +241,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	}
 	body := controlv1.CreatePublicURLRequest{
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
-		Target: config.Target, PublicUrlScope: config.PublicURLScope,
+		Target: config.Target, PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
 	}
 	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
@@ -254,7 +258,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 }
 
 func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
-	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope ||
+	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope || route.Purpose != config.Purpose ||
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}

@@ -297,6 +297,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, req
 		DomainID:          p.domainID,
 		Hostname:          p.hostname,
 		PublicURLScope:    p.publicURLScope,
+		Purpose:           controlv1.App,
 		PolicyRevision:    p.policyRevision,
 		Target:            target,
 		RequestLimit:      requestLimit,

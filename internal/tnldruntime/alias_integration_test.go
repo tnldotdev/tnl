@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func startIntegrationURLWorker(t *testing.T, worker integrationurls.Publisher) <-chan publisher.Event {
@@ -69,6 +70,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	}
 	quic, tcp := fixture.connectors()
 	oauthConfig := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
+	oauthConfig.Purpose = controlv1.Oauth
 	oauthConfig.Handler = integrationurls.OAuthHandler(state, server, oauthHost)
 	oauthReady := startIntegrationURLWorker(t, integrationurls.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,
 		Prepare: func(context.Context) (integrationurls.Snapshot, error) {
@@ -131,6 +133,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 			t.Fatal(err)
 		}
 		aliasConfig := fixture.identity.publisherConfig(target.URL, quic, tcp)
+		aliasConfig.Purpose = controlv1.Alias
 		aliasConfig.Hostname, aliasConfig.ObserveResponse = aliasHost, config.ObserveResponse
 		worker := integrationurls.AliasPublisher(state, store, selection, tunnel.ID(), aliasConfig, nil)
 		apps = append(apps, app{name: name, project: project, callbacks: callbacks, ready: startIntegrationURLWorker(t, worker)})

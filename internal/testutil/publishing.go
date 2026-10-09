@@ -163,7 +163,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		mu.Lock()
 		id := fmt.Sprintf("%s%022x", opaqueid.PublicURLPrefix, len(routes)+1)
 		membership := membershipID
-		route := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
+		route := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(request.Purpose), LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
 		routes[id] = route
 		mu.Unlock()
 		writeJSON(w, route)

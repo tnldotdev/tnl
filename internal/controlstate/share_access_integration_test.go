@@ -92,7 +92,7 @@ func TestIntegrationShareHandoffIsShortLivedAndBoundToTheTargetPublicURL(t *test
 		TeamID: f.request.TeamID, DomainID: "domain_session", ActingIdentityID: f.request.ActingIdentityID,
 		IdempotencyKey: "api", RequestDigest: sha256.Sum256([]byte("api")),
 		CanonicalHostname: "api.session.example.test", Target: "http://127.0.0.1:4000",
-		PublicURLScope: PublicURLScopeShared, DNSState: PublicURLDNSUnmanaged, PolicyRevision: 1,
+		PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged, PolicyRevision: 1,
 	}, now)
 	_, err = database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
 		PreviewID: preview.ID, PublicURLID: apiRoute.ID, TeamID: f.request.TeamID,

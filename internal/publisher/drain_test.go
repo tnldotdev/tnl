@@ -157,7 +157,7 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 	h.control = control
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
 	connector, relays, publishers := drainTestConnections(t, ctx, control, transport)
-	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member,
+	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 		Hostname: "route.example", Target: upstream.URL, State: control.store, QUICConnector: connector, TCPConnector: connector,
 		FallbackDelay: time.Hour, DrainTime: 5 * time.Second, ProvisioningStalledDelay: time.Hour, heartbeatInterval: 20 * time.Millisecond,
 		Observe: func(event Event) error {

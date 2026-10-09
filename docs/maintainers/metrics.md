@@ -44,6 +44,8 @@ publisher connections are not the same as database claims.
 | `tnl_control_api_request_duration_seconds{surface,operation,outcome}`  | Completed API requests.                                               |
 | `tnl_control_api_requests_in_flight{surface}`                          | Requests still running.                                               |
 | `tnl_control_webhook_provider_source_requests_total{provider,outcome}` | Sender-policy lookups by fixed provider and bounded result.           |
+| `tnl_control_public_urls_created_total{purpose}`                       | New saved public URLs, excluding idempotent retries.                  |
+| `tnl_control_publish_runs_ready_total{purpose}`                        | Publish runs first made ready by public URL purpose.                  |
 | `tnl_control_placement_decisions_total{action,outcome}`                | Publish run placement results.                                        |
 | `tnl_control_certificate_work_duration_seconds{kind,stage,outcome}`    | Certificate worker attempts.                                          |
 | `tnl_control_public_url_certificate_orders_total{domain_kind,plan}`    | New public URL certificate orders committed by this control process.  |
@@ -70,6 +72,27 @@ hour for issuance and after trial expiry plus public URL deletion for access.
 Provider source requests are approximate interest, not configured webhook
 endpoints or deliveries. The provider label accepts only the fixed enum or
 `unknown`; it never contains a public URL, project, or identity.
+The `purpose` label is a fixed, client-declared public URL use such as `app`,
+`webhooks`, or `oauth`. These process-local counters show activity, not distinct
+identities. Query control's saved URLs and publish runs for distinct identities;
+URLs saved before purpose tracking are labeled `app` by migration but do not
+retroactively increment the creation counter.
+
+For distinct identities rather than process-local counter rates, query control's
+committed ready runs. Each identity appears once per purpose in the window:
+
+```sql
+SELECT u.purpose, count(DISTINCT r.acting_identity_id) AS identities
+FROM control.publish_runs AS r
+JOIN control.public_urls AS u ON u.id = r.public_url_id
+WHERE r.ready_at >= now() - interval '30 days'
+GROUP BY u.purpose
+ORDER BY u.purpose;
+```
+
+The same purpose can be joined to `control.public_url_usage_buckets` for
+connection and byte totals. Ingress cannot see the HTTP path or whether a
+provider's webhook reached and succeeded at a local handler.
 
 ## database
 

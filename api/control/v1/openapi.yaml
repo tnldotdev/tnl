@@ -1449,6 +1449,9 @@ components:
     PublicURLScope:
       type: string
       enum: [member, shared]
+    PublicURLPurpose:
+      type: string
+      enum: [app, alias, demo, oauth, webhooks]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -1463,6 +1466,7 @@ components:
           canonical_hostname,
           target,
           public_url_scope,
+          purpose,
           policy_revision,
           lifecycle_state,
           next_publish_run_number,
@@ -1487,6 +1491,8 @@ components:
           pattern: "^http://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
+        purpose:
+          $ref: "#/components/schemas/PublicURLPurpose"
         policy_revision:
           type: integer
           format: int64
@@ -1532,7 +1538,7 @@ components:
     CreatePublicURLRequest:
       type: object
       additionalProperties: false
-      required: [team_id, domain_id, canonical_hostname, target, public_url_scope]
+      required: [team_id, domain_id, canonical_hostname, target, public_url_scope, purpose]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
@@ -1548,6 +1554,8 @@ components:
           pattern: "^http://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
+        purpose:
+          $ref: "#/components/schemas/PublicURLPurpose"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

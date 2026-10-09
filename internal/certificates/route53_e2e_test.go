@@ -96,7 +96,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	publicURL, err := database.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
 		TeamID: member.TeamID, DomainID: domains[0].ID, ActingIdentityID: session.Identity.Identity.ID,
 		IdempotencyKey: "ci", RequestDigest: sha256.Sum256([]byte(hostname)), CanonicalHostname: hostname,
-		Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, MembershipID: member.ID,
+		Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, MembershipID: member.ID,
 		DNSState: controlstate.PublicURLDNSPending, PolicyRevision: 1,
 	}, now)
 	if err != nil {

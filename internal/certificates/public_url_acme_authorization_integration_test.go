@@ -79,7 +79,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 			route, err := database.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{
 				TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID, ActingIdentityID: session.Identity.Identity.ID,
 				IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api." + identifiers[1],
-				Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, DNSState: controlstate.PublicURLDNSPending,
+				Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSPending,
 				PolicyRevision: 1,
 			}, now)
 			if err != nil {

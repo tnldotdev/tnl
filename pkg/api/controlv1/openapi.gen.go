@@ -353,6 +353,33 @@ func (e PublicURLLifecycleState) Valid() bool {
 	}
 }
 
+// Defines values for PublicURLPurpose.
+const (
+	Alias    PublicURLPurpose = "alias"
+	App      PublicURLPurpose = "app"
+	Demo     PublicURLPurpose = "demo"
+	Oauth    PublicURLPurpose = "oauth"
+	Webhooks PublicURLPurpose = "webhooks"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLPurpose enum.
+func (e PublicURLPurpose) Valid() bool {
+	switch e {
+	case Alias:
+		return true
+	case App:
+		return true
+	case Demo:
+		return true
+	case Oauth:
+		return true
+	case Webhooks:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublicURLScope.
 const (
 	Member PublicURLScope = "member"
@@ -909,6 +936,7 @@ type CreatePublicURLRequest struct {
 	Ephemeral         *bool             `json:"ephemeral,omitempty"`
 	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
 	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
+	Purpose           PublicURLPurpose  `json:"purpose"`
 	Target            string            `json:"target"`
 	TeamId            TeamID            `json:"team_id"`
 }
@@ -1213,6 +1241,7 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
+	Purpose              PublicURLPurpose        `json:"purpose"`
 	Target               string                  `json:"target"`
 	TeamId               TeamID                  `json:"team_id"`
 	UpdatedAt            time.Time               `json:"updated_at"`
@@ -1229,6 +1258,9 @@ type PublicURLPage struct {
 	NextCursor *PublicURLID `json:"next_cursor,omitempty"`
 	PublicUrls []PublicURL  `json:"public_urls"`
 }
+
+// PublicURLPurpose defines model for PublicURLPurpose.
+type PublicURLPurpose string
 
 // PublicURLScope defines model for PublicURLScope.
 type PublicURLScope string

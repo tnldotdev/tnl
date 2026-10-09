@@ -41,7 +41,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 		GuestID: guest.ID, TeamID: guest.TeamID, DomainID: domainID, MembershipID: guest.MembershipID,
 		ActingIdentityID: guest.ID, IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")),
 		CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".example.test",
-		Target:            "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember,
+		Target:            "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeDemo,
 		AllowedIPPrefixes: []string{"192.0.2.7/32"}, DNSState: PublicURLDNSPending,
 		PolicyRevision: 1, Ephemeral: true,
 	}

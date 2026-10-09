@@ -438,7 +438,7 @@ func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
 }
 
 func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
-	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "public_url_created", CanonicalHostname: "demo.example"}}
+	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "public_url_created", CanonicalHostname: "demo.example", Purpose: controlstate.PublicURLPurposeApp}}
 	authorizer := &recordingAuthorizer{decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
 		CanonicalHostname: "demo.example", PublicURLScope: "member", PolicyRevision: 9, DNSAuthorityReference: "dns_authority_1",
@@ -450,7 +450,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 		{"changed target", `["192.0.2.0/24","2001:db8::/64"]`, "http://127.0.0.1:4000"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"`+test.target+`","allowed_ip_prefixes":`+test.prefixes+`,"ephemeral":true}`))
+			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","purpose":"app","target":"`+test.target+`","allowed_ip_prefixes":`+test.prefixes+`,"ephemeral":true}`))
 			request.Header.Set("Authorization", "Bearer exact-access-token")
 			request.Header.Set("Idempotency-Key", "create-key")
 			response := httptest.NewRecorder()
@@ -465,7 +465,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	}
 	want := controlstate.CreatePublicURLRequest{
 		TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", ActingIdentityID: "identity_1", IdempotencyKey: "create-key",
-		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember,
+		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
 		AllowedIPPrefixes: []string{"192.0.2.0/24", "2001:db8::/64"}, DNSState: controlstate.PublicURLDNSPending,
 		DNSAuthorityReference: "dns_authority_1", PolicyRevision: 9, Ephemeral: true,
 	}
@@ -482,8 +482,19 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestCreateRouteRequiresPurpose(t *testing.T) {
+	for _, purpose := range []string{"", "unknown", "stripe"} {
+		body := `{"team_id":"team_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"http://127.0.0.1:3000","purpose":"` + purpose + `"}`
+		response := httptest.NewRecorder()
+		(&handler{}).CreatePublicURL(response, httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(body)), controlv1.CreatePublicURLParams{})
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("purpose %q was accepted: %d", purpose, response.Code)
+		}
+	}
+}
+
 func TestCreateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
-	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "public_url_created", CanonicalHostname: "demo.example"}}
+	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "public_url_created", CanonicalHostname: "demo.example", Purpose: controlstate.PublicURLPurposeApp}}
 	authorizer := &recordingAuthorizer{decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1",
 		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member", PolicyRevision: 9,
@@ -494,7 +505,7 @@ func TestCreateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
 	}
 	body, err := json.Marshal(controlv1.CreatePublicURLRequest{
 		TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
-		PublicUrlScope: controlv1.Member, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes,
+		PublicUrlScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes,
 	})
 	if err != nil || len(body) <= 64<<10 {
 		t.Fatalf("large create request body = %d bytes, %v", len(body), err)

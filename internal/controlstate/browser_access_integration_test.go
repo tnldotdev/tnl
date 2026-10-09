@@ -226,9 +226,9 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, created_by_identity_id, idempotency_key,
 		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
-		target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
+		target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
 		SELECT $1, team_id, domain_id, created_by_identity_id, 'browser-api', $2, $3,
-		'api-session.example.test', target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
+		'api-session.example.test', target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
 		FROM control.public_urls WHERE id = $5`, otherID, sealed, database.storageKey.CurrentID(), now, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
