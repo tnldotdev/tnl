@@ -246,6 +246,9 @@ jobs:
       - name: Run Go tests
         run: task go:test
 
+      - name: Test shell installer
+        run: task installer:test
+
   go-race:
     name: Go race
     runs-on: ubuntu-latest

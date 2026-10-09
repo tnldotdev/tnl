@@ -259,6 +259,12 @@ brew install tnldotdev/tap/tnl
 tnl publish 3000
 ```
 
+Or install with curl:
+
+```sh
+curl -fsSL https://tnl.dev/install | sh
+```
+
 This works very similarly to `tnl dev`. [Read about `tnl publish`](https://tnl.dev/docs/publish).
 
 ## how much does it cost?

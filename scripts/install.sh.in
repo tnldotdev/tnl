@@ -1,0 +1,159 @@
+#!/bin/sh
+# generated from scripts/install.sh.in and internal/clioutput; do not edit install.sh.
+# curl -fsSL https://tnl.dev/install | sh
+# TNL_VERSION selects an exact release; otherwise prefer stable, then a release candidate.
+# TNL_INSTALL selects the binary directory (default: ~/.local/bin).
+# release legal files are kept in <binary directory>/tnl-notices.
+
+@CLI_OUTPUT@
+
+tnl_release_tag() {
+  LC_ALL=C awk -v mode="$1" @RELEASE_PARSER@ "$2"
+}
+
+tnl_install() (
+  set -eu
+  command -v awk >/dev/null 2>&1 || {
+    printf '%s' @MISSING_AWK@ >&2
+    exit 1
+  }
+
+  step=setup
+  tmp=
+  staged=
+  present() {
+    tnl_frame 'tnl install' "$@"
+    printf '\n'
+  }
+  fail() {
+    present failed '' step "$step" error "$1" action "$2" >&2
+    exit 1
+  }
+  cleanup() {
+    [ -z "$tmp" ] || rm -rf "$tmp"
+    [ -z "$staged" ] || rm -rf "$staged"
+    return 0
+  }
+  trap cleanup 0
+  trap 'fail "installation interrupted" "run the installer again"' HUP INT TERM
+
+  for tool in curl tar uname mktemp mkdir cp mv chmod rm; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required to install tnl" "install $tool and run the installer again"
+  done
+  if command -v sha256sum >/dev/null 2>&1; then
+    checksum=sha256sum
+  elif command -v shasum >/dev/null 2>&1; then
+    checksum=shasum
+  else
+    fail 'a SHA-256 tool is required' 'install sha256sum or shasum and run the installer again'
+  fi
+
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux ;;
+    *) fail 'this operating system is not supported' 'use macOS or Linux to install tnl' ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) fail 'this architecture is not supported' 'use an amd64 or arm64 machine to install tnl' ;;
+  esac
+  [ -n "${TNL_INSTALL:-}" ] || [ -n "${HOME:-}" ] || fail 'the home directory is not set' 'set HOME or TNL_INSTALL before running the installer'
+  dir=${TNL_INSTALL:-${HOME:-}/.local/bin}
+  # absolute paths keep cleanup and option handling independent of the working directory.
+  case "$dir" in /*) ;; *) dir="$(pwd)/$dir" ;; esac
+  version=${TNL_VERSION:-}
+  if [ -n "$version" ]; then
+    version=${version#v}
+    printf '%s\n' "$version" | LC_ALL=C awk '
+      NR != 1 || $0 !~ /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/ { exit 1 }
+    ' || fail 'TNL_VERSION must name a released version' 'set TNL_VERSION to a version such as 0.1.0-rc.40'
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/tnl-install.XXXXXXXX" 2>/dev/null) || fail 'could not create a temporary directory' 'check that the temporary directory is writable'
+  repo=https://github.com/tnldotdev/tnl
+  api=https://api.github.com/repos/tnldotdev/tnl/releases
+
+  fetch() {
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 15 --max-time 300 --output "$2" "$1" 2>"$tmp/curl-error"
+  }
+
+  if [ -z "$version" ]; then
+    step='select release'
+    # only a missing stable release permits the release-candidate fallback.
+    status=$(curl --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 15 --max-time 60 --output "$tmp/release.json" \
+      --write-out '%{http_code}' "$api/latest" 2>"$tmp/curl-error") || fail 'could not select a release' 'check access to api.github.com and run the installer again'
+    case "$status" in
+      200) tag=$(tnl_release_tag stable "$tmp/release.json") || fail 'stable release metadata is invalid' 'set TNL_VERSION to an exact release or try again later' ;;
+      404)
+        fetch "$api?per_page=100" "$tmp/release.json" || fail 'could not find a release candidate' 'check access to api.github.com or set TNL_VERSION to an exact release'
+        tag=$(tnl_release_tag candidate "$tmp/release.json") || fail 'no published release candidate was found' 'set TNL_VERSION to an exact release or try again later'
+        ;;
+      *) fail 'GitHub could not select a release' 'try again later or set TNL_VERSION to an exact release' ;;
+    esac
+    version=${tag#v}
+  fi
+
+  archive="tnl_${version}_${os}_${arch}.tar.gz"
+  base="$repo/releases/download/v$version"
+  step=download
+  present downloading '' version "$version" platform "$os/$arch" >&2
+  fetch "$base/$archive" "$tmp/$archive" || fail 'could not download the release archive' 'check the version and access to github.com, then run the installer again'
+  fetch "$base/checksums.txt" "$tmp/checksums.txt" || fail 'could not download the release checksums' 'check access to github.com and run the installer again'
+
+  step='verify checksum'
+  present verifying '' archive "$archive" >&2
+  expected=$(LC_ALL=C awk -v name="$archive" '
+    $2 == name {
+      count++
+      if (NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/) invalid = 1
+      hash = $1
+    }
+    END { if (count != 1 || invalid) exit 1; print hash }
+  ' "$tmp/checksums.txt") || fail 'the release checksum is missing or invalid' 'run the installer again or select another release with TNL_VERSION'
+  if [ "$checksum" = sha256sum ]; then
+    actual=$(sha256sum <"$tmp/$archive" 2>"$tmp/checksum-error") || fail 'could not check the archive checksum' 'run the installer again'
+  else
+    actual=$(shasum -a 256 <"$tmp/$archive" 2>"$tmp/checksum-error") || fail 'could not check the archive checksum' 'run the installer again'
+  fi
+  actual=${actual%% *}
+  [ "$actual" = "$expected" ] || fail 'the archive checksum does not match' 'run the installer again to download a fresh archive'
+
+  step=extract
+  tar -xzf "$tmp/$archive" -C "$tmp" tnl LICENSE NOTICE THIRD_PARTY_LICENSES.txt 2>"$tmp/tar-error" || fail 'could not extract the release archive' 'run the installer again or select another release with TNL_VERSION'
+  for file in tnl LICENSE NOTICE THIRD_PARTY_LICENSES.txt; do
+    [ -f "$tmp/$file" ] && [ ! -L "$tmp/$file" ] || fail 'the release archive is missing a regular installation file' 'select another release with TNL_VERSION'
+  done
+
+  step=install
+  mkdir -p "$dir" 2>"$tmp/install-error" || fail 'could not create the installation directory' 'set TNL_INSTALL to a writable directory'
+  [ ! -d "$dir/tnl" ] || fail 'the binary path is a directory' 'set TNL_INSTALL to another directory'
+  staged=$(mktemp -d "$dir/.tnl-install.XXXXXXXX" 2>"$tmp/install-error") || fail 'could not stage the installation' 'set TNL_INSTALL to a writable directory'
+  cp "$tmp/tnl" "$staged/tnl" 2>"$tmp/install-error" || fail 'could not copy the binary' 'check free space and permissions in TNL_INSTALL'
+  chmod 755 "$staged/tnl" 2>"$tmp/install-error" || fail 'could not set executable permissions' 'check permissions in TNL_INSTALL'
+  mkdir -p "$dir/tnl-notices" 2>"$tmp/install-error" || fail 'could not create the notices directory' 'check permissions in TNL_INSTALL'
+  cp "$tmp/LICENSE" "$tmp/NOTICE" "$tmp/THIRD_PARTY_LICENSES.txt" "$dir/tnl-notices/" 2>"$tmp/install-error" || fail 'could not retain release notices' 'check free space and permissions in TNL_INSTALL'
+  mv -f "$staged/tnl" "$dir/tnl" 2>"$tmp/install-error" || fail 'could not install the binary' 'check permissions in TNL_INSTALL'
+
+  # quote the entire PATH addition as data; do not expand a custom path as shell code.
+  case ":${PATH:-}:" in
+    *":$dir:"*)
+      present installed 'start with: tnl publish 3000' version "$version" platform "$os/$arch" binary "$dir/tnl"
+      ;;
+    *)
+      quoted=$(printf '%s' "$dir" | awk '{
+        if (NR > 1) printf "\n"
+        for (i = 1; i <= length($0); i++) {
+          c = substr($0, i, 1)
+          if (c == "\047") printf "\047\\\047\047"
+          else printf "%s", c
+        }
+      }' 2>"$tmp/format-error") || fail 'could not format the PATH action' 'add TNL_INSTALL to PATH before running tnl'
+      present installed 'start with: tnl publish 3000' version "$version" platform "$os/$arch" binary "$dir/tnl" action "export PATH='$quoted':\"\$PATH\""
+      ;;
+  esac
+)
+
+# execution starts only after the complete script has been parsed.
+tnl_install
