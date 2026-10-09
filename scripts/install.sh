@@ -1,0 +1,121 @@
+#!/bin/sh
+# generated from scripts/install.sh.in; do not edit install.sh.
+# curl -fsSL https://tnl.dev/install | sh
+# TNL_VERSION selects an exact release (default: latest stable).
+# TNL_INSTALL overrides ~/.local/bin; legal files go in its tnl-notices directory.
+
+tnl_message() {
+  case "$1" in
+    installing) printf '%s\n' '+--[ tnl install ]-- installing -------------------------------+
+|                                                              |
+|  downloading and verifying the tnl client                    |
+|                                                              |
++--------------------------------------------------------------+
+' ;;
+    installed) printf '%s\n' '+--[ tnl install ]-- installed --------------------------------+
+|                                                              |
+|  tnl is installed. add the installation directory to PATH    |
+|  if needed.                                                  |
+|                                                              |
++-- start with: tnl publish 3000 ------------------------------+
+' ;;
+    failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
+|                                                              |
+|  could not install tnl. check the selected version, curl,    |
+|  tar, a SHA-256 tool, and write access to the install        |
+|  directory.                                                  |
+|                                                              |
++-- run the installer again -----------------------------------+
+' ;;
+    stable_failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
+|                                                              |
+|  could not find a stable tnl release. check GitHub access    |
+|  or set TNL_VERSION to an exact release.                     |
+|                                                              |
++-- check GitHub releases -------------------------------------+
+' ;;
+    checksum_failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
+|                                                              |
+|  the release checksum is missing, invalid, or does not       |
+|  match. download the release again.                          |
+|                                                              |
++-- run the installer again -----------------------------------+
+' ;;
+  esac
+}
+
+
+tnl_install() (
+  set -eu
+  tmp= staged= failure=failed
+  trap 'status=$?; rm -rf "$tmp" "$staged"; if [ "$status" -ne 0 ]; then tnl_message "$failure" >&3; fi; exit "$status"' 0
+  trap 'exit 1' HUP INT TERM
+
+  tnl_message installing >&3
+  for tool in curl tar awk uname mktemp mkdir cp mv chmod rm; do command -v "$tool" >/dev/null; done
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux ;;
+    *) exit 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) exit 1 ;;
+  esac
+  repo=https://github.com/tnldotdev/tnl
+  version=${TNL_VERSION:-}
+  if [ -z "$version" ]; then
+    failure=stable_failed
+    latest=$(curl -fsSL --head --proto '=https' --proto-redir '=https' \
+      --output /dev/null --write-out '%{url_effective}' "$repo/releases/latest")
+    case "$latest" in
+      "$repo"/releases/tag/v*) version=${latest##*/} ;;
+      *) exit 1 ;;
+    esac
+    printf '%s\n' "$version" | awk 'NR != 1 || $0 !~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { exit 1 }'
+    failure=failed
+  fi
+  version=${version#v}
+  case "$version" in ''|*[!0-9A-Za-z.-]*) exit 1 ;; esac
+  dir=${TNL_INSTALL:-$HOME/.local/bin}
+  case "$dir" in /*) ;; *) dir="$(pwd)/$dir" ;; esac
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/tnl-install.XXXXXXXX")
+  archive="tnl_${version}_${os}_${arch}.tar.gz"
+  base="$repo/releases/download/v$version"
+  curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/$archive" "$base/$archive"
+  curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/checksums.txt" "$base/checksums.txt"
+
+  failure=checksum_failed
+  expected=$(awk -v name="$archive" '
+    $2 == name {
+      count++; hash = $1
+      if (NF != 2 || length(hash) != 64 || hash ~ /[^0-9a-f]/) invalid = 1
+    }
+    END { if (count != 1 || invalid) exit 1; print hash }
+  ' "$tmp/checksums.txt")
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum <"$tmp/$archive")
+  else
+    actual=$(shasum -a 256 <"$tmp/$archive")
+  fi
+  [ "${actual%% *}" = "$expected" ]
+  failure=failed
+
+  tar -xzf "$tmp/$archive" -C "$tmp" tnl LICENSE NOTICE THIRD_PARTY_LICENSES.txt
+  for file in tnl LICENSE NOTICE THIRD_PARTY_LICENSES.txt; do
+    [ -f "$tmp/$file" ] && [ ! -L "$tmp/$file" ] || exit 1
+  done
+  mkdir -p "$dir/tnl-notices"
+  [ ! -d "$dir/tnl" ]
+  staged=$(mktemp -d "$dir/.tnl-install.XXXXXXXX")
+  cp "$tmp/tnl" "$staged/tnl"
+  chmod 755 "$staged/tnl"
+  cp "$tmp/LICENSE" "$tmp/NOTICE" "$tmp/THIRD_PARTY_LICENSES.txt" "$dir/tnl-notices/"
+  mv -f "$staged/tnl" "$dir/tnl"
+  tnl_message installed
+)
+
+# fd 3 keeps branded messages visible while suppressing raw tool errors.
+tnl_install 3>&2 2>/dev/null
