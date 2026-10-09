@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -20,6 +21,7 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 		name, kind, scope string
 		dnsAutomation     bool
 		nested            bool
+		simpleDirect      bool
 		maxChildLabels    int
 		expectDepthDenied bool
 	}{
@@ -27,7 +29,8 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 		{name: "custom_member_dns", kind: "custom", scope: "member", dnsAutomation: true, maxChildLabels: 1},
 		{name: "managed_member_no_dns", kind: "managed", scope: "member"},
 		{name: "custom_member_no_dns", kind: "custom", scope: "member"},
-		{name: "shared_dns", kind: "managed", scope: "shared", dnsAutomation: true, maxChildLabels: 1},
+		{name: "shared_dns", kind: "custom", scope: "shared", dnsAutomation: true, maxChildLabels: 1},
+		{name: "simple_direct_dns", kind: "managed", scope: "shared", dnsAutomation: true, simpleDirect: true},
 		{name: "shared_no_dns", kind: "custom", scope: "shared"},
 		{name: "nested_managed_dns", kind: "managed", scope: "member", dnsAutomation: true, nested: true},
 		{name: "nested_managed_manual_dns", kind: "managed", scope: "member", nested: true},
@@ -47,6 +50,11 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 			if test.scope == "shared" {
 				hostname, membershipID = "shared.routes.example.test", ""
 			}
+			teamKind := controlstate.TeamKindOrganization
+			mode := naming.ManagedURLModeGenerated
+			if test.simpleDirect {
+				teamKind, mode = controlstate.TeamKindPersonal, naming.ManagedURLModeSimple
+			}
 			store := &certificatePlanStoreStub{
 				publicURLMutationStoreStub: publicURLMutationStoreStub{
 					route: controlstate.PublicURL{
@@ -57,16 +65,17 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 					sessionSetup: controlstate.PublishRunSetup{PublishRunID: "session_1", PublicURLID: "public_url_1", PublishRunNumber: 1},
 				},
 				auth: localAuthorizationStoreStub{
-					principal: controlstate.ControlPrincipal{IdentityID: "identity_1", RetrySecret: [32]byte{1}},
+					principal: controlstate.ControlPrincipal{IdentityID: "identity_1", Administrator: test.simpleDirect, RetrySecret: [32]byte{1}},
 					identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
-						ID: "membership_1", TeamID: "team_1", Role: "owner", PolicyRevision: 1,
+						ID: "membership_1", TeamID: "team_1", TeamKind: teamKind, TeamDisplayName: "studio", Role: "owner", PolicyRevision: 1,
 						MemberSlug: "member", ManagedLabel: "member-unique",
 					}}},
 					domains: []controlstate.Domain{{ID: "domain_1", Kind: controlstate.DomainKind(test.kind), State: controlstate.DomainReady,
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}
-			h := testHandler(t, Config{DNSAutomation: test.dnsAutomation, ManagedDomainMaxMemberChildLabels: test.maxChildLabels}, store, store, nil)
+			h := testHandler(t, Config{DNSAutomation: test.dnsAutomation, ManagedURLMode: mode,
+				ManagedDomainMaxMemberChildLabels: test.maxChildLabels}, store, store, nil)
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 			request.Header.Set("Authorization", "Bearer access-token")
 			request.Header.Set("Idempotency-Key", "session-plan")
@@ -87,8 +96,19 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantScope, wantIDs := hostname, []string{hostname}
-			if test.dnsAutomation && test.scope == "member" && !test.nested {
-				wantScope, wantIDs = namespace, []string{namespace, "*." + namespace}
+			if test.dnsAutomation {
+				wantScope = namespace
+				if test.scope == "shared" {
+					wantScope, wantIDs = "routes.example.test", []string{"routes.example.test", "*.routes.example.test"}
+					if test.simpleDirect {
+						wantIDs = []string{"*.routes.example.test"}
+					}
+				} else {
+					if test.nested {
+						wantScope = "shop." + namespace
+					}
+					wantIDs = []string{"*." + wantScope}
+				}
 			}
 			plan := setup.CertificatePlan
 			slices.Sort(wantIDs)

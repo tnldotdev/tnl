@@ -10,14 +10,15 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationTeamCreation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creation")
 	session := newBuiltinSession(t, database, now)
 	personal, err := database.GetTeam(t.Context(), session.Identity.Identity.ID, session.Identity.PersonalTeamID)
-	if err != nil || personal.DisplayName == "" || personal.DisplayName != personal.ManagedLabel {
-		t.Fatalf("personal team generated name = %#v, %v", personal, err)
+	if err != nil || personal.DisplayName != "local-administrator" || personal.ManagedLabel == "" {
+		t.Fatalf("personal team name = %#v, %v", personal, err)
 	}
 	request := authorityTeamRequest(session.Identity.Identity.ID)
 	request.DisplayName, request.MemberSlug = "studio", ""
@@ -66,6 +67,40 @@ func TestIntegrationTeamCreation(t *testing.T) {
 	invitation := authorityInvitationRequest(session.Identity.Identity.ID, session.Identity.PersonalTeamID, "member", now)
 	if _, err := database.CreateTeamInvitation(t.Context(), invitation, now); !errors.Is(err, ErrAuthorityAccess) {
 		t.Fatalf("personal-team invitation: %v", err)
+	}
+}
+
+func TestIntegrationSimpleModeOnlyReservesReadableLabels(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "simple_labels")
+	database.managedURLMode = naming.ManagedURLModeSimple
+	admin := newBuiltinSession(t, database, now)
+	if member := admin.Identity.Memberships[0]; member.ManagedLabel != "local-administrator" {
+		t.Fatalf("builtin label = %q", member.ManagedLabel)
+	}
+	owner := admin.Identity.Identity.ID
+	teamRequest := authorityTeamRequest(owner)
+	teamRequest.DisplayName = "studio"
+	team, err := database.CreateTeam(t.Context(), teamRequest, now)
+	if err != nil || team.ManagedLabel != "studio" {
+		t.Fatalf("team label = %#v, %v", team, err)
+	}
+	creator, err := database.ListTeamMemberships(t.Context(), owner, team.ID)
+	if err != nil || len(creator) != 1 || creator[0].ManagedLabel != "studio" {
+		t.Fatalf("creator label = %#v, %v", creator, err)
+	}
+	member := addAuthorityMember(t, database, now, owner, team.ID, "alex", TeamRoleMember)
+	if member.ManagedLabel != "alex-studio" {
+		t.Fatalf("invited member label = %q", member.ManagedLabel)
+	}
+	identity := OIDCIdentity{Issuer: "https://issuer.example", Subject: "alex", DisplayName: "Alex",
+		AssertionDigest: sha256.Sum256([]byte("alex assertion")), AssertionExpiry: now.Add(time.Hour)}
+	personal, err := database.CreateOIDCControlSession(t.Context(), "tunnels.example.test", identity, time.Hour, 24*time.Hour, now)
+	if err != nil || len(personal.Identity.Memberships) != 1 || personal.Identity.Memberships[0].ManagedLabel != "alex" {
+		t.Fatalf("personal label = %#v, %v", personal.Identity, err)
+	}
+	var count int
+	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.managed_label_reservations`).Scan(&count); err != nil || count != 4 {
+		t.Fatalf("reserved labels = %d, want four readable names: %v", count, err)
 	}
 }
 

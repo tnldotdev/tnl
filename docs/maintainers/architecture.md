@@ -180,10 +180,18 @@ back to ordinary public URL lookup.
 
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
-one-label names use namespace wildcard DNS and certificates when automation
-is configured; deeper names use exact records and certificates. new custom
-domains require an explicit opt-in and DNS automation. disabling new claims
-does not affect existing custom domains or their release.
+the member namespace apex is reserved. by default, a self-hosted built-in
+administrator publishes directly under the managed domain; other personal
+teams use their reserved name and organization members use their member slug
+and team name. a shared hosted server can opt into generated labels. personal
+teams publish directly on their custom domains; organization members keep
+their member slug, and an admin or owner can publish a team-shared exact URL.
+when DNS automation is configured, sibling names use a wildcard under their
+authorized namespace or immediate parent; custom-domain apexes use an exact
+certificate name alongside the wildcard. without automation, managed-domain
+URLs use exact DNS and TLS-ALPN-01 certificates. new custom domains require
+an explicit opt-in and DNS automation. disabling new claims does not affect
+existing custom domains or their release.
 
 projects with `oauth: true` publish one saved OAuth callback URL while app
 tunnels run. linked worktrees share that URL through the same client state,

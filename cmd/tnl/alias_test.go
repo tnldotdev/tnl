@@ -17,7 +17,7 @@ import (
 
 func TestNestedAliasDiagnosticNamesDomainPolicyAndAvailableCustomDomain(t *testing.T) {
 	for _, custom := range []bool{false, true} {
-		services := publisherServices{hostname: "api.shop.member.tnl.dev", namespace: "member.tnl.dev", domainKind: authorityv1.Managed,
+		services := publisherServices{hostname: "api.shop.member.tnl.dev", namespace: "member.tnl.dev", domainKind: authorityv1.Managed, publicURLScope: controlv1.Member,
 			customDomainAvailable: custom, authenticated: &clientauth.Client{Discovery: controlv1.ControlDiscovery{ManagedDomain: "tnl.dev", ManagedDomainMaxMemberChildLabels: 1}}}
 		err := checkAliasHostnamePolicy(services)
 		if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.MemberHostnameDepthExceeded {

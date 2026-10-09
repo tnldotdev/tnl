@@ -12,7 +12,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestIntegrationURLUsesTheSelectedPublicURLScope(t *testing.T) {
+	for _, scope := range []controlv1.PublicURLScope{controlv1.Shared, controlv1.Member} {
+		config := integrationURLConfig(publisherServices{publicURLScope: scope}, "hooks.example.test")
+		if config.PublicURLScope != scope || config.Hostname != "hooks.example.test" || config.Ephemeral {
+			t.Fatalf("integration URL scope %q produced %#v", scope, config)
+		}
+	}
+}
 
 func TestIntegrationURLProgressFailureStopsTheTunnelWithItsCause(t *testing.T) {
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))

@@ -37,6 +37,7 @@ type PublicURLRecord struct {
 	DomainID             string
 	PublicURLID          string
 	CanonicalHostname    string
+	Namespace            string
 	WildcardHostname     string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string

@@ -23,6 +23,7 @@ type DNSPublicURLWork struct {
 	DomainID              string
 	DNSAuthorityReference string
 	CanonicalHostname     string
+	Namespace             string
 	PublicURLScope        PublicURLScope
 	State                 PublicURLDNSState
 	DNSRevision           uint64
@@ -93,7 +94,7 @@ func dnsRouteWork(row controlstatedb.ControlPublicUrl, requireLease bool) (DNSPu
 	}
 	return DNSPublicURLWork{
 		PublicURLID: row.ID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference.String,
-		CanonicalHostname: row.CanonicalHostname, PublicURLScope: PublicURLScope(row.PublicURLScope),
+		CanonicalHostname: row.CanonicalHostname, Namespace: row.Namespace, PublicURLScope: PublicURLScope(row.PublicURLScope),
 		State: state, DNSRevision: uint64(row.DnsRevision),
 		Attempts: uint64(row.DnsAttempts), AvailableAt: row.DnsAvailableAt.Time, LastError: row.DnsLastError.String,
 		WorkerID: row.DnsWorkOwner.String, WorkEpoch: uint64(row.DnsWorkEpoch), WorkExpiresAt: row.DnsWorkExpiresAt.Time,

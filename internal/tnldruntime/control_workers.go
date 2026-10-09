@@ -28,7 +28,7 @@ func (d *daemon) startControlWorkers(
 	acmeHTTPClient *http.Client,
 	metrics *observability.Metrics,
 ) error {
-	database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious)
+	database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious, cfg.ManagedURLMode)
 	if err != nil {
 		return err
 	}

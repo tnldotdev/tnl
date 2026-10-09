@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
@@ -30,6 +31,7 @@ type Config struct {
 	Role                              tnldconfig.Role
 	StartedAt                         time.Time
 	ManagedDomain                     string
+	ManagedURLMode                    naming.ManagedURLMode
 	ManagedDomainMaxMemberChildLabels int
 	CustomDomainsEnabled              bool
 	ControlURL                        string
@@ -232,7 +234,7 @@ func NewHandler(
 	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
 			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
-			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
+			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels, managedURLMode: cfg.ManagedURLMode,
 		}
 	}
 	if cfg.BrowserOIDCClientID != "" {
@@ -330,8 +332,13 @@ func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Reques
 }
 
 func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
+	mode := cfg.ManagedURLMode
+	if mode == "" {
+		mode = naming.ManagedURLModeGenerated
+	}
 	result := controlv1.ControlDiscovery{
 		ManagedDomain:                     cfg.ManagedDomain,
+		ManagedUrlMode:                    controlv1.ControlDiscoveryManagedUrlMode(mode),
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		DnsAutomation:                     cfg.DNSAutomation,

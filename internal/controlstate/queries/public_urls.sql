@@ -27,6 +27,7 @@ FOR SHARE;
 -- name: GetPublicURLCreationContext :one
 SELECT
     t.kind AS team_kind,
+    t.display_name AS team_display_name,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
     i.kind AS identity_kind,
@@ -74,6 +75,7 @@ INSERT INTO control.public_urls (
     request_digest_ciphertext,
     request_digest_storage_key_id,
     canonical_hostname,
+    namespace,
     target,
     public_url_scope,
     policy_revision,
@@ -100,6 +102,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(request_digest_ciphertext),
     sqlc.arg(request_digest_storage_key_id),
     sqlc.arg(canonical_hostname),
+    sqlc.arg(namespace),
     sqlc.arg(target),
     sqlc.arg(public_url_scope),
     sqlc.arg(policy_revision),

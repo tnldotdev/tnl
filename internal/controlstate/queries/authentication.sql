@@ -79,6 +79,13 @@ VALUES (sqlc.arg(label), sqlc.arg(created_at))
 ON CONFLICT (label) DO NOTHING
 RETURNING label;
 
+-- name: ReserveManagedDirectName :one
+INSERT INTO control.managed_label_reservations (label, created_at, direct_team_id)
+VALUES (sqlc.arg(label), sqlc.arg(created_at), sqlc.arg(team_id))
+ON CONFLICT (label) DO UPDATE SET direct_team_id = EXCLUDED.direct_team_id
+WHERE control.managed_label_reservations.direct_team_id = EXCLUDED.direct_team_id
+RETURNING label;
+
 -- name: CreateIdentity :exec
 INSERT INTO control.identities (
     id,
