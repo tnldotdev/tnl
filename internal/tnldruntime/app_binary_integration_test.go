@@ -132,7 +132,21 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	}
 	defer state.Close()
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
-	for index := 1; index <= 2; index++ {
+	for index := 1; index <= 3; index++ {
+		if index == 3 {
+			stopIntegrationBinaryProcess(t, runtimeProcess)
+			automatic := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "start", "--directory", project)
+			if err := waitForDoneWithin(automatic.done, 30*time.Second); err != nil {
+				t.Fatal("automatic local publisher did not start")
+			}
+			assertIntegrationBinaryProcessResult(t, automatic)
+			var newEndpoint struct {
+				Socket string `json:"socket"`
+			}
+			if err := json.Unmarshal([]byte(automatic.output.String()), &newEndpoint); err != nil || newEndpoint.Socket != endpoint.Socket {
+				t.Fatalf("automatic local publisher address = %q, error %v", automatic.output.String(), err)
+			}
+		}
 		owner := fmt.Sprintf("%032x", index)
 		var assigned privateprotocol.Assignment
 		if status := request("prepare", privateprotocol.Prepare{Protocol: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
@@ -210,7 +224,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			snapshot, err := state.SnapshotProject(ctx, project)
 			return err == nil && len(snapshot.Tunnels) == 0, err
 		})
-		if index == 2 && tunnel.PublicURLID == "" {
+		if tunnel.PublicURLID == "" {
 			t.Fatal("publication has no saved public URL")
 		}
 		if index == 1 {
