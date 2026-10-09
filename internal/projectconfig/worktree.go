@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -224,10 +225,22 @@ func SharedProjectLabel(role string, worktree Worktree, projectRoot string, salt
 	if relative != "." {
 		name += "-" + filepath.ToSlash(relative)
 	}
-	parts := worktreeLabelParts{
-		project: dnsLabelStem(name, "project"),
-		id:      labelID("tnl-shared-project-label-v1\x00", primary, filepath.Join(primary, relative), salt),
+	identity := filepath.Join(primary, relative)
+	var id string
+	switch role {
+	case "hooks":
+		hash := hmac.New(sha256.New, salt[:])
+		_, _ = hash.Write([]byte("tnl-shared-project-webhook-label-v2\x00"))
+		_, _ = hash.Write([]byte(primary))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(identity))
+		id = strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(hash.Sum(nil)[:8]))
+	case "oauth":
+		id = labelID("tnl-shared-project-oauth-label-v2\x00", primary, identity, salt)
+	default:
+		id = labelID("tnl-shared-project-label-v1\x00", primary, identity, salt)
 	}
+	parts := worktreeLabelParts{project: dnsLabelStem(name, "project"), id: id}
 	return formatWorktreeLabel(role, parts)
 }
 

@@ -140,7 +140,7 @@ func (q *Queries) GetCurrentOAuthCallback(ctx context.Context, arg GetCurrentOAu
 }
 
 const getIntegrationURLHostname = `-- name: GetIntegrationURLHostname :one
-SELECT hostname FROM integration_url_hostnames
+SELECT hostname, label_version FROM integration_url_hostnames
 WHERE server_origin = ?1 AND project_key = ?2
   AND namespace = ?3 AND purpose = ?4
 `
@@ -152,16 +152,21 @@ type GetIntegrationURLHostnameParams struct {
 	Purpose      string
 }
 
-func (q *Queries) GetIntegrationURLHostname(ctx context.Context, arg GetIntegrationURLHostnameParams) (string, error) {
+type GetIntegrationURLHostnameRow struct {
+	Hostname     string
+	LabelVersion int64
+}
+
+func (q *Queries) GetIntegrationURLHostname(ctx context.Context, arg GetIntegrationURLHostnameParams) (GetIntegrationURLHostnameRow, error) {
 	row := q.db.QueryRowContext(ctx, getIntegrationURLHostname,
 		arg.ServerOrigin,
 		arg.ProjectKey,
 		arg.Namespace,
 		arg.Purpose,
 	)
-	var hostname string
-	err := row.Scan(&hostname)
-	return hostname, err
+	var i GetIntegrationURLHostnameRow
+	err := row.Scan(&i.Hostname, &i.LabelVersion)
+	return i, err
 }
 
 const getOAuthAliasReturn = `-- name: GetOAuthAliasReturn :one
@@ -191,9 +196,35 @@ func (q *Queries) GetOAuthAliasReturn(ctx context.Context, arg GetOAuthAliasRetu
 	return i, err
 }
 
+const replaceLegacyIntegrationURLHostname = `-- name: ReplaceLegacyIntegrationURLHostname :exec
+UPDATE integration_url_hostnames SET hostname = ?1, label_version = 2
+WHERE server_origin = ?2 AND project_key = ?3
+  AND namespace = ?4 AND purpose = ?5
+  AND purpose IN ('oauth', 'hooks') AND label_version = 1
+`
+
+type ReplaceLegacyIntegrationURLHostnameParams struct {
+	Hostname     string
+	ServerOrigin string
+	ProjectKey   string
+	Namespace    string
+	Purpose      string
+}
+
+func (q *Queries) ReplaceLegacyIntegrationURLHostname(ctx context.Context, arg ReplaceLegacyIntegrationURLHostnameParams) error {
+	_, err := q.db.ExecContext(ctx, replaceLegacyIntegrationURLHostname,
+		arg.Hostname,
+		arg.ServerOrigin,
+		arg.ProjectKey,
+		arg.Namespace,
+		arg.Purpose,
+	)
+	return err
+}
+
 const saveIntegrationURLHostname = `-- name: SaveIntegrationURLHostname :exec
-INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO integration_url_hostnames (server_origin, project_key, namespace, purpose, hostname, label_version)
+VALUES (?1, ?2, ?3, ?4, ?5, 2)
 ON CONFLICT DO NOTHING
 `
 
