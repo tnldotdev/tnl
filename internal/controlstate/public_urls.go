@@ -243,7 +243,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Target: request.Target,
-		PublicURLScope: string(request.PublicURLScope), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),
@@ -263,11 +263,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
-	if err := queries.InsertPublicURLPurpose(ctx, controlstatedb.InsertPublicURLPurposeParams{
-		PublicURLID: publicURLID, Purpose: string(request.Purpose),
-	}); err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: create public_url: save purpose: %w", err)
-	}
 	if request.GuestID != "" {
 		if err := queries.InsertGuestPublicURL(ctx, controlstatedb.InsertGuestPublicURLParams{
 			PublicURLID: publicURLID, GuestID: request.GuestID, CreatedAt: timestamptz(now),
@@ -286,7 +281,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	d.activity.metrics.Load().ObservePublicURLCreated(string(request.Purpose))
 	result = publicURLFromModel(row, "")
-	result.Purpose = request.Purpose
 	if request.GuestID == "" {
 		result.AllowedIPPrefixes = append([]netip.Prefix(nil), prefixes...)
 	} else {
@@ -397,15 +391,10 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublicURL{}, err
 	}
-	purpose, err := queries.GetPublicURLPurpose(ctx, request.PublicURLID)
-	if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: update public_url: read purpose: %w", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: commit: %w", err)
 	}
 	result = publicURLFromModel(updated, "")
-	result.Purpose = PublicURLPurpose(purpose)
 	result.AllowedIPPrefixes = append([]netip.Prefix(nil), prefixes...)
 	return result, nil
 }
@@ -1012,7 +1001,7 @@ func nullableText(value string) pgtype.Text {
 func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID string) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, string(PublicURLPurposeUnknown), row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1088,7 +1077,7 @@ func publicURLModelFromDeleteRow(row controlstatedb.LockIdentityPublicURLForDele
 		RequestDigestCiphertext:   row.RequestDigestCiphertext,
 		RequestDigestStorageKeyID: row.RequestDigestStorageKeyID,
 		CanonicalHostname:         row.CanonicalHostname, Target: row.Target,
-		PublicURLScope: row.PublicURLScope, PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
 		AllowedIpPolicyCiphertext:   row.AllowedIpPolicyCiphertext,
 		AllowedIpPolicyStorageKeyID: row.AllowedIpPolicyStorageKeyID,
 		AllowedIpHashes:             row.AllowedIpHashes, AllowedIpHashKeyID: row.AllowedIpHashKeyID,

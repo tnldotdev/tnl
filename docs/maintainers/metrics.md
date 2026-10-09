@@ -81,12 +81,13 @@ For distinct identities rather than process-local counter rates, query control's
 committed ready runs. Each identity appears once per purpose in the window:
 
 ```sql
-SELECT p.purpose, count(DISTINCT r.acting_identity_id) AS identities
+SELECT u.purpose, count(DISTINCT r.acting_identity_id) AS identities
 FROM control.publish_runs AS r
-JOIN control.public_url_purposes AS p ON p.public_url_id = r.public_url_id
+JOIN control.public_urls AS u ON u.id = r.public_url_id
 WHERE r.ready_at >= now() - interval '30 days'
-GROUP BY p.purpose
-ORDER BY p.purpose;
+  AND u.purpose <> 'unknown'
+GROUP BY u.purpose
+ORDER BY u.purpose;
 ```
 
 The same purpose can be joined to `control.public_url_usage_buckets` for

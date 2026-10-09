@@ -8,7 +8,6 @@ FOR NO KEY UPDATE;
 
 -- name: GetPublicURLByCreatorIdempotency :one
 SELECT r.*,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -77,6 +76,7 @@ INSERT INTO control.public_urls (
     canonical_hostname,
     target,
     public_url_scope,
+    purpose,
     policy_revision,
     ip_policy,
     allowed_ip_policy_ciphertext,
@@ -103,6 +103,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(canonical_hostname),
     sqlc.arg(target),
     sqlc.arg(public_url_scope),
+    sqlc.arg(purpose),
     sqlc.arg(policy_revision),
     sqlc.arg(ip_policy),
     sqlc.narg(allowed_ip_policy_ciphertext),
@@ -119,14 +120,6 @@ INSERT INTO control.public_urls (
     sqlc.arg(created_at)
 )
 RETURNING *;
-
--- name: InsertPublicURLPurpose :exec
-INSERT INTO control.public_url_purposes (public_url_id, purpose)
-VALUES (sqlc.arg(public_url_id), sqlc.arg(purpose));
-
--- name: GetPublicURLPurpose :one
-SELECT COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p
-    WHERE p.public_url_id = sqlc.arg(public_url_id)), 'unknown')::text;
 
 -- name: UpdatePublicURL :one
 UPDATE control.public_urls
@@ -191,7 +184,6 @@ INSERT INTO control.admin_audit_events (
 
 -- name: ListIdentityPublicURLs :many
 SELECT r.*,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -214,7 +206,6 @@ LIMIT 101;
 
 -- name: GetIdentityPublicURL :one
 SELECT r.*,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s

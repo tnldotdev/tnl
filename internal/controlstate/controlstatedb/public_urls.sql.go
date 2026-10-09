@@ -138,8 +138,7 @@ func (q *Queries) DeletePublicURL(ctx context.Context, arg DeletePublicURLParams
 }
 
 const getIdentityPublicURL = `-- name: GetIdentityPublicURL :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, r.purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -253,8 +252,7 @@ func (q *Queries) GetIdentityPublicURL(ctx context.Context, arg GetIdentityPubli
 }
 
 const getPublicURLByCreatorIdempotency = `-- name: GetPublicURLByCreatorIdempotency :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, r.purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -436,18 +434,6 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 	return i, err
 }
 
-const getPublicURLPurpose = `-- name: GetPublicURLPurpose :one
-SELECT COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p
-    WHERE p.public_url_id = $1), 'unknown')::text
-`
-
-func (q *Queries) GetPublicURLPurpose(ctx context.Context, publicUrlID string) (string, error) {
-	row := q.db.QueryRow(ctx, getPublicURLPurpose, publicUrlID)
-	var column_1 string
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const insertExpiredEphemeralPublicURLDeleteAuditEvent = `-- name: InsertExpiredEphemeralPublicURLDeleteAuditEvent :exec
 INSERT INTO control.admin_audit_events (
     actor,
@@ -490,6 +476,7 @@ INSERT INTO control.public_urls (
     canonical_hostname,
     target,
     public_url_scope,
+    purpose,
     policy_revision,
     ip_policy,
     allowed_ip_policy_ciphertext,
@@ -522,16 +509,17 @@ INSERT INTO control.public_urls (
     $15,
     $16,
     $17,
-    'enabled',
     $18,
+    'enabled',
     $19,
-    CASE WHEN $19::text = 'pending' THEN $20::timestamptz END,
-    $21,
-    $22,
     $20,
-    $20
+    CASE WHEN $20::text = 'pending' THEN $21::timestamptz END,
+    $22,
+    $23,
+    $21,
+    $21
 )
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, purpose
 `
 
 type InsertPublicURLParams struct {
@@ -546,6 +534,7 @@ type InsertPublicURLParams struct {
 	CanonicalHostname           string
 	Target                      string
 	PublicURLScope              string
+	Purpose                     string
 	PolicyRevision              int64
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
@@ -572,6 +561,7 @@ func (q *Queries) InsertPublicURL(ctx context.Context, arg InsertPublicURLParams
 		arg.CanonicalHostname,
 		arg.Target,
 		arg.PublicURLScope,
+		arg.Purpose,
 		arg.PolicyRevision,
 		arg.IpPolicy,
 		arg.AllowedIpPolicyCiphertext,
@@ -623,6 +613,7 @@ func (q *Queries) InsertPublicURL(ctx context.Context, arg InsertPublicURLParams
 		&i.AllowedIpHashKeyID,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
+		&i.Purpose,
 	)
 	return i, err
 }
@@ -701,21 +692,6 @@ func (q *Queries) InsertPublicURLDeleteAuditEvent(ctx context.Context, arg Inser
 	return err
 }
 
-const insertPublicURLPurpose = `-- name: InsertPublicURLPurpose :exec
-INSERT INTO control.public_url_purposes (public_url_id, purpose)
-VALUES ($1, $2)
-`
-
-type InsertPublicURLPurposeParams struct {
-	PublicURLID string
-	Purpose     string
-}
-
-func (q *Queries) InsertPublicURLPurpose(ctx context.Context, arg InsertPublicURLPurposeParams) error {
-	_, err := q.db.Exec(ctx, insertPublicURLPurpose, arg.PublicURLID, arg.Purpose)
-	return err
-}
-
 const insertPublicURLUpdateAuditEvent = `-- name: InsertPublicURLUpdateAuditEvent :exec
 INSERT INTO control.admin_audit_events (
     actor_identity_id,
@@ -754,8 +730,7 @@ func (q *Queries) InsertPublicURLUpdateAuditEvent(ctx context.Context, arg Inser
 }
 
 const listIdentityPublicURLs = `-- name: ListIdentityPublicURLs :many
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
-    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, r.purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -919,7 +894,7 @@ func (q *Queries) ListTeamNamespaceLabels(ctx context.Context, teamID string) ([
 }
 
 const lockExpiredEphemeralPublicURLs = `-- name: LockExpiredEphemeralPublicURLs :many
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, purpose
 FROM control.public_urls
 WHERE ephemeral
   AND lifecycle_state <> 'deleted'
@@ -988,6 +963,7 @@ func (q *Queries) LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockEx
 			&i.AllowedIpHashKeyID,
 			&i.RequestDigestCiphertext,
 			&i.RequestDigestStorageKeyID,
+			&i.Purpose,
 		); err != nil {
 			return nil, err
 		}
@@ -1000,7 +976,7 @@ func (q *Queries) LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockEx
 }
 
 const lockIdentityPublicURLForDelete = `-- name: LockIdentityPublicURLForDelete :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, m.id AS actor_membership_id, m.role AS actor_role
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, r.purpose, m.id AS actor_membership_id, m.role AS actor_role
 FROM control.public_urls AS r
 JOIN control.team_memberships AS m
   ON m.team_id = r.team_id
@@ -1054,6 +1030,7 @@ type LockIdentityPublicURLForDeleteRow struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Purpose                     string
 	ActorMembershipID           string
 	ActorRole                   string
 }
@@ -1099,6 +1076,7 @@ func (q *Queries) LockIdentityPublicURLForDelete(ctx context.Context, arg LockId
 		&i.AllowedIpHashKeyID,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
+		&i.Purpose,
 		&i.ActorMembershipID,
 		&i.ActorRole,
 	)
@@ -1192,7 +1170,7 @@ WHERE id = $9
   AND lifecycle_state = 'enabled'
   AND mutation_revision = $10
   AND mutation_revision < 9223372036854775807
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, purpose
 `
 
 type UpdatePublicURLParams struct {
@@ -1260,6 +1238,7 @@ func (q *Queries) UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams
 		&i.AllowedIpHashKeyID,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
+		&i.Purpose,
 	)
 	return i, err
 }

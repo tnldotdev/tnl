@@ -35,7 +35,7 @@ func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *test
 		t.Fatalf("relabeling saved hostname = %v", err)
 	}
 	var stored string
-	if err := database.pool.QueryRow(t.Context(), `SELECT purpose FROM control.public_url_purposes WHERE public_url_id = $1`, created.ID).Scan(&stored); err != nil || stored != "webhooks" {
+	if err := database.pool.QueryRow(t.Context(), `SELECT purpose FROM control.public_urls WHERE id = $1`, created.ID).Scan(&stored); err != nil || stored != "webhooks" {
 		t.Fatalf("stored purpose = %q, error=%v", stored, err)
 	}
 	metric := httptest.NewRecorder()

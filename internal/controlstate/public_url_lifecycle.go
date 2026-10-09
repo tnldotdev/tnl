@@ -195,18 +195,11 @@ func (d *Database) MarkPublishRunReady(
 		routingTableRevision = publishedEvent.routingTableRevision
 		publicURLEntryRevision = publishedEvent.entryRevision
 	}
-	purpose := string(PublicURLPurposeUnknown)
-	if publishedEvent != nil {
-		purpose, err = queries.GetPublicURLPurpose(ctx, route.ID)
-		if err != nil {
-			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark publish run ready: read purpose: %w", err)
-		}
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark publish run ready: commit: %w", err)
 	}
 	if publishedEvent != nil {
-		d.activity.metrics.Load().ObservePublishRunReady(purpose)
+		d.activity.metrics.Load().ObservePublishRunReady(route.Purpose)
 	}
 	return publishRunLifecycle(session, connections, routingTableRevision, publicURLEntryRevision), nil
 }
