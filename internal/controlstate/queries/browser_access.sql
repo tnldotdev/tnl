@@ -21,20 +21,37 @@ SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
 FROM control.browser_access_sessions WHERE token_digest = $1;
 
 -- name: BrowserSessionPublicURLIncluded :one
-SELECT included.public_url_id
+SELECT url.id AS public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
-WHERE session.token_digest = sqlc.arg(token_digest) AND included.public_url_id = sqlc.arg(public_url_id);
+JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app'
+WHERE session.token_digest = sqlc.arg(token_digest)
+  AND ((session.preview_id IS NULL AND session.public_url_id = url.id)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = url.id));
+
+-- name: BrowserLoginPublicURL :one
+SELECT url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
+FROM control.public_urls AS url
+JOIN control.publish_runs AS run ON run.public_url_id = url.id
+WHERE url.id = sqlc.arg(public_url_id) AND url.purpose = 'app' AND url.lifecycle_state = 'enabled'
+  AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
+  AND run.browser_capable = true
+  AND (sqlc.narg(preview_id)::text IS NULL OR EXISTS (
+      SELECT 1 FROM control.preview_public_urls AS included
+      WHERE included.preview_id = sqlc.narg(preview_id) AND included.public_url_id = url.id));
+
+-- name: EnablePublishRunBrowserAccess :exec
+UPDATE control.publish_runs SET browser_capable = true WHERE id = sqlc.arg(publish_run_id);
 
 -- name: ListReadyPreviewBrowserHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
+SELECT url.id AS public_url_id, url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
 FROM control.preview_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 WHERE included.preview_id = sqlc.arg(preview_id)
-  AND url.lifecycle_state = 'enabled'
-  AND run.state = 'ready' AND run.publisher_expires_at > sqlc.arg(now)
-  AND run.share_capable = true
+  AND url.lifecycle_state = 'enabled' AND url.purpose = 'app'
+  AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
+  AND run.browser_capable = true
 ORDER BY url.id LIMIT 32;
 
 -- name: LockBrowserAccessSession :one
@@ -45,10 +62,17 @@ FROM control.browser_access_sessions WHERE token_digest = $1 FOR UPDATE;
 -- name: ShareBrowserAccessSession :one
 SELECT session.*
 FROM control.browser_access_sessions AS session
-JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
+JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app'
 WHERE session.token_digest = sqlc.arg(token_digest)
-  AND included.public_url_id = sqlc.arg(public_url_id)
-FOR SHARE OF session, included;
+  AND ((session.preview_id IS NULL AND session.public_url_id = sqlc.arg(public_url_id))
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = sqlc.arg(public_url_id)))
+FOR SHARE OF session;
+
+-- name: ShareBrowserPreviewPublicURL :one
+SELECT public_url_id FROM control.preview_public_urls
+WHERE preview_id = sqlc.arg(preview_id) AND public_url_id = sqlc.arg(public_url_id)
+FOR SHARE;
 
 -- name: ShareBrowserControlIdentity :one
 SELECT session.identity_id, identity.display_name, session.access_token_digest,
@@ -72,9 +96,12 @@ WHERE token_digest = sqlc.arg(token_digest) AND revoked_at IS NULL;
 -- name: RevokeBrowserAccessSession :exec
 UPDATE control.browser_access_sessions SET revoked_at = sqlc.arg(now)
 WHERE token_digest = sqlc.arg(token_digest) AND revoked_at IS NULL
-  AND EXISTS (SELECT 1 FROM control.preview_public_urls AS included
-              WHERE included.preview_id = control.browser_access_sessions.preview_id
-                AND included.public_url_id = sqlc.arg(public_url_id));
+  AND EXISTS (SELECT 1 FROM control.public_urls AS url
+              WHERE url.id = sqlc.arg(public_url_id) AND url.purpose = 'app')
+  AND ((control.browser_access_sessions.preview_id IS NULL AND control.browser_access_sessions.public_url_id = sqlc.arg(public_url_id))
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+               WHERE included.preview_id = control.browser_access_sessions.preview_id
+                 AND included.public_url_id = sqlc.arg(public_url_id)));
 
 -- name: InsertBrowserAccessHandoff :exec
 INSERT INTO control.browser_access_handoffs
@@ -88,6 +115,9 @@ FROM control.browser_access_sessions AS session
 WHERE handoff.token_digest = sqlc.arg(token_digest) AND handoff.public_url_id = sqlc.arg(public_url_id)
   AND handoff.consumed_at IS NULL AND handoff.expires_at > sqlc.arg(now)
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > sqlc.arg(now)
+  AND ((session.preview_id IS NULL AND session.public_url_id = handoff.public_url_id)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = handoff.public_url_id))
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
           handoff.next_url, handoff.bridge, session.expires_at;
 

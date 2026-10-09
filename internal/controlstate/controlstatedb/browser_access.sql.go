@@ -11,20 +11,54 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const browserLoginPublicURL = `-- name: BrowserLoginPublicURL :one
+SELECT url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
+FROM control.public_urls AS url
+JOIN control.publish_runs AS run ON run.public_url_id = url.id
+WHERE url.id = $1 AND url.purpose = 'app' AND url.lifecycle_state = 'enabled'
+  AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > $2
+  AND run.browser_capable = true
+  AND ($3::text IS NULL OR EXISTS (
+      SELECT 1 FROM control.preview_public_urls AS included
+      WHERE included.preview_id = $3 AND included.public_url_id = url.id))
+`
+
+type BrowserLoginPublicURLParams struct {
+	PublicURLID string
+	Now         pgtype.Timestamptz
+	PreviewID   pgtype.Text
+}
+
+type BrowserLoginPublicURLRow struct {
+	CanonicalHostname string
+	PublishRunID      string
+	PublishRunNumber  int64
+}
+
+func (q *Queries) BrowserLoginPublicURL(ctx context.Context, arg BrowserLoginPublicURLParams) (BrowserLoginPublicURLRow, error) {
+	row := q.db.QueryRow(ctx, browserLoginPublicURL, arg.PublicURLID, arg.Now, arg.PreviewID)
+	var i BrowserLoginPublicURLRow
+	err := row.Scan(&i.CanonicalHostname, &i.PublishRunID, &i.PublishRunNumber)
+	return i, err
+}
+
 const browserSessionPublicURLIncluded = `-- name: BrowserSessionPublicURLIncluded :one
-SELECT included.public_url_id
+SELECT url.id AS public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
-WHERE session.token_digest = $1 AND included.public_url_id = $2
+JOIN control.public_urls AS url ON url.id = $1 AND url.purpose = 'app'
+WHERE session.token_digest = $2
+  AND ((session.preview_id IS NULL AND session.public_url_id = url.id)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = url.id))
 `
 
 type BrowserSessionPublicURLIncludedParams struct {
-	TokenDigest []byte
 	PublicURLID string
+	TokenDigest []byte
 }
 
 func (q *Queries) BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error) {
-	row := q.db.QueryRow(ctx, browserSessionPublicURLIncluded, arg.TokenDigest, arg.PublicURLID)
+	row := q.db.QueryRow(ctx, browserSessionPublicURLIncluded, arg.PublicURLID, arg.TokenDigest)
 	var public_url_id string
 	err := row.Scan(&public_url_id)
 	return public_url_id, err
@@ -46,6 +80,9 @@ FROM control.browser_access_sessions AS session
 WHERE handoff.token_digest = $2 AND handoff.public_url_id = $3
   AND handoff.consumed_at IS NULL AND handoff.expires_at > $1
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > $1
+  AND ((session.preview_id IS NULL AND session.public_url_id = handoff.public_url_id)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = handoff.public_url_id))
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
           handoff.next_url, handoff.bridge, session.expires_at
 `
@@ -116,6 +153,15 @@ func (q *Queries) ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBro
 		&i.VerifierStorageKeyID,
 	)
 	return i, err
+}
+
+const enablePublishRunBrowserAccess = `-- name: EnablePublishRunBrowserAccess :exec
+UPDATE control.publish_runs SET browser_capable = true WHERE id = $1
+`
+
+func (q *Queries) EnablePublishRunBrowserAccess(ctx context.Context, publishRunID string) error {
+	_, err := q.db.Exec(ctx, enablePublishRunBrowserAccess, publishRunID)
+	return err
 }
 
 const getBrowserAccessSession = `-- name: GetBrowserAccessSession :one
@@ -245,14 +291,14 @@ func (q *Queries) InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrows
 }
 
 const listReadyPreviewBrowserHostnames = `-- name: ListReadyPreviewBrowserHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
+SELECT url.id AS public_url_id, url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
 FROM control.preview_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 WHERE included.preview_id = $1
-  AND url.lifecycle_state = 'enabled'
-  AND run.state = 'ready' AND run.publisher_expires_at > $2
-  AND run.share_capable = true
+  AND url.lifecycle_state = 'enabled' AND url.purpose = 'app'
+  AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > $2
+  AND run.browser_capable = true
 ORDER BY url.id LIMIT 32
 `
 
@@ -264,6 +310,8 @@ type ListReadyPreviewBrowserHostnamesParams struct {
 type ListReadyPreviewBrowserHostnamesRow struct {
 	PublicURLID       string
 	CanonicalHostname string
+	PublishRunID      string
+	PublishRunNumber  int64
 }
 
 func (q *Queries) ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error) {
@@ -275,7 +323,12 @@ func (q *Queries) ListReadyPreviewBrowserHostnames(ctx context.Context, arg List
 	var items []ListReadyPreviewBrowserHostnamesRow
 	for rows.Next() {
 		var i ListReadyPreviewBrowserHostnamesRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname); err != nil {
+		if err := rows.Scan(
+			&i.PublicURLID,
+			&i.CanonicalHostname,
+			&i.PublishRunID,
+			&i.PublishRunNumber,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -314,9 +367,12 @@ func (q *Queries) LockBrowserAccessSession(ctx context.Context, tokenDigest []by
 const revokeBrowserAccessSession = `-- name: RevokeBrowserAccessSession :exec
 UPDATE control.browser_access_sessions SET revoked_at = $1
 WHERE token_digest = $2 AND revoked_at IS NULL
-  AND EXISTS (SELECT 1 FROM control.preview_public_urls AS included
-              WHERE included.preview_id = control.browser_access_sessions.preview_id
-                AND included.public_url_id = $3)
+  AND EXISTS (SELECT 1 FROM control.public_urls AS url
+              WHERE url.id = $3 AND url.purpose = 'app')
+  AND ((control.browser_access_sessions.preview_id IS NULL AND control.browser_access_sessions.public_url_id = $3)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+               WHERE included.preview_id = control.browser_access_sessions.preview_id
+                 AND included.public_url_id = $3))
 `
 
 type RevokeBrowserAccessSessionParams struct {
@@ -359,19 +415,21 @@ func (q *Queries) RotateBrowserAccessSession(ctx context.Context, arg RotateBrow
 const shareBrowserAccessSession = `-- name: ShareBrowserAccessSession :one
 SELECT session.token_digest, session.preview_id, session.public_url_id, session.identity_id, session.display_name, session.access_ciphertext, session.refresh_ciphertext, session.storage_key_id, session.access_expires_at, session.expires_at, session.revoked_at
 FROM control.browser_access_sessions AS session
-JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
-WHERE session.token_digest = $1
-  AND included.public_url_id = $2
-FOR SHARE OF session, included
+JOIN control.public_urls AS url ON url.id = $1 AND url.purpose = 'app'
+WHERE session.token_digest = $2
+  AND ((session.preview_id IS NULL AND session.public_url_id = $1)
+       OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
+                  WHERE included.preview_id = session.preview_id AND included.public_url_id = $1))
+FOR SHARE OF session
 `
 
 type ShareBrowserAccessSessionParams struct {
-	TokenDigest []byte
 	PublicURLID string
+	TokenDigest []byte
 }
 
 func (q *Queries) ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error) {
-	row := q.db.QueryRow(ctx, shareBrowserAccessSession, arg.TokenDigest, arg.PublicURLID)
+	row := q.db.QueryRow(ctx, shareBrowserAccessSession, arg.PublicURLID, arg.TokenDigest)
 	var i ControlBrowserAccessSession
 	err := row.Scan(
 		&i.TokenDigest,
@@ -419,6 +477,24 @@ func (q *Queries) ShareBrowserControlIdentity(ctx context.Context, accessTokenID
 		&i.RefreshExpiresAt,
 	)
 	return i, err
+}
+
+const shareBrowserPreviewPublicURL = `-- name: ShareBrowserPreviewPublicURL :one
+SELECT public_url_id FROM control.preview_public_urls
+WHERE preview_id = $1 AND public_url_id = $2
+FOR SHARE
+`
+
+type ShareBrowserPreviewPublicURLParams struct {
+	PreviewID   string
+	PublicURLID string
+}
+
+func (q *Queries) ShareBrowserPreviewPublicURL(ctx context.Context, arg ShareBrowserPreviewPublicURLParams) (string, error) {
+	row := q.db.QueryRow(ctx, shareBrowserPreviewPublicURL, arg.PreviewID, arg.PublicURLID)
+	var public_url_id string
+	err := row.Scan(&public_url_id)
+	return public_url_id, err
 }
 
 const shareBrowserPublicURL = `-- name: ShareBrowserPublicURL :one
