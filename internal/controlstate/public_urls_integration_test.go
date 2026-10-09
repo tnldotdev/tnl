@@ -124,7 +124,7 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 	}
 	request := CreatePublicURLRequest{
 		ManagedURLMode: naming.ManagedURLModeSimple, TeamID: team.ID, DomainID: domains[0].ID,
-		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember,
+		MembershipID: members[0].ID, ActingIdentityID: owner, PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
 		IdempotencyKey: "simple-organization", RequestDigest: sha256.Sum256([]byte("simple-organization")),
 		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
 	}
