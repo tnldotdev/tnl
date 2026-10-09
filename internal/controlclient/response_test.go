@@ -109,7 +109,7 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 	} {
 		err := responseError(http.StatusForbidden, nil, []byte(`{"code":"`+test.code+`"}`))
 		reason, definition, typed := failure.Describe(err)
-		if !errors.Is(err, test.want) || !typed || reason != test.wantReason || !strings.Contains(definition.Action, "tnl login") {
+		if !errors.Is(err, test.want) || !typed || reason != test.wantReason || !strings.Contains(definition.Action, "tnl auth login") {
 			t.Fatalf("guest problem %s = %v", test.code, err)
 		}
 	}
