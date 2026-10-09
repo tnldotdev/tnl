@@ -236,6 +236,11 @@ func terminalResult(err error) (int, error) {
 }
 
 func writeCommandError(output io.Writer, err error) {
+	var machine *machineCommandError
+	if errors.As(err, &machine) {
+		writeMachineCommandError(output, machine.error)
+		return
+	}
 	err = classifyCommandError(err)
 	command := "tnl"
 	if contextual, ok := clioutput.CommandOf(err); ok {
@@ -273,6 +278,15 @@ func classifyCommandError(err error) error {
 	if _, classified := diagnostic.CodeOf(err); classified {
 		return err
 	}
+	if reason, _, owned := failure.Describe(err); owned {
+		switch reason {
+		case failure.Authentication, failure.ServerUnavailable, failure.ServerRateLimited, failure.DNSPending:
+			// common API sentinels have matching CLI diagnostics below.
+		default:
+			// an operation's more specific meaning takes precedence over its cause.
+			return err
+		}
+	}
 	if errors.Is(err, clientauth.ErrAuthenticationTimeout) {
 		return diagnostic.Wrap(diagnostic.AuthenticationTimeout, err)
 	}
@@ -304,6 +318,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 		if result != nil && command != "" {
 			result = clioutput.WrapCommand(command, result)
+		}
+		var reported *reportedError
+		if result != nil && machineOutputRequested(args) && !errors.As(result, &reported) {
+			result = &machineCommandError{result}
 		}
 	}()
 	parseArgs, devCommand, err := splitDevPassthrough(args)
