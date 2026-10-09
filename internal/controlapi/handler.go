@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -44,6 +45,7 @@ type Config struct {
 	ACMEDirectoryURL                  string
 	ServerDomain                      string
 	HTTPClient                        *http.Client
+	WebhookCatalog                    *webhookcatalog.Catalog
 	DNSAutomation                     bool
 	GuestDemoEnabled                  bool
 	Metrics                           *observability.Metrics
@@ -171,8 +173,9 @@ type handler struct {
 		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
 		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 	}
-	readiness  func(context.Context) error
-	authorizer publicURLAuthorizer
+	readiness      func(context.Context) error
+	authorizer     publicURLAuthorizer
+	webhookCatalog *webhookcatalog.Catalog
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -185,6 +188,10 @@ func NewHandler(
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
+	h.webhookCatalog = cfg.WebhookCatalog
+	if h.webhookCatalog == nil {
+		h.webhookCatalog = webhookcatalog.New(cfg.HTTPClient)
+	}
 	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
 	}

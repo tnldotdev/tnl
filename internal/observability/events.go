@@ -1,6 +1,26 @@
 package observability
 
-import "time"
+import (
+	"time"
+
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+)
+
+// ObserveWebhookProviderSource counts catalog lookups without URL or identity labels.
+func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
+	if m == nil {
+		return
+	}
+	if !controlv1.WebhookProvider(provider).Valid() {
+		provider = "unknown"
+	}
+	switch outcome {
+	case "served", "not_modified", "unavailable", "unknown":
+	default:
+		outcome = "unavailable"
+	}
+	m.webhookProviderSources.WithLabelValues(provider, outcome).Inc()
+}
 
 // visitor outcomes describe the last ingress boundary reached, not a completed
 // TLS handshake or a successful HTTP request at the local service.
