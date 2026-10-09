@@ -146,23 +146,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	}
 	var handler http.Handler
 	if config.Handler != nil {
-		limit := config.RequestLimit
-		if limit == 0 {
-			limit = localproxy.DefaultRequestLimit
-		}
-		active := make(chan struct{}, limit)
-		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			select {
-			case active <- struct{}{}:
-				defer func() { <-active }()
-				config.Handler.ServeHTTP(response, request)
-			default:
-				response.Header().Set("Retry-After", "1")
-				diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
-			}
-		})
+		handler = config.Handler
 	} else {
-		handler, err = localproxy.NewWithMountsHooksOptions(config.Target, hostname, config.RequestLimit, config.Mounts,
+		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.RequestLimit, config.Mounts,
 			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
 				if request != nil {
 					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
@@ -174,6 +160,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			return nil, err
 		}
 	}
+	limit := config.RequestLimit
+	if limit == 0 {
+		limit = localproxy.DefaultRequestLimit
+	}
+	active := make(chan struct{}, limit)
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
@@ -346,6 +337,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if config.ShareAccess != nil || config.Feedback != nil || config.BrowserAccess != nil {
 					request = stripTnlCookies(request)
+				}
+				select {
+				case active <- struct{}{}:
+					defer func() { <-active }()
+				default:
+					if request.ProtoMajor == 1 {
+						// avoid draining an unread body before sending the rejection.
+						response.Header().Set("Connection", "close")
+					}
+					response.Header().Set("Retry-After", "1")
+					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
+					return
 				}
 				handler.ServeHTTP(response, request)
 			}),

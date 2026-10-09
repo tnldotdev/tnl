@@ -142,6 +142,16 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 }
 
 func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, true, onTargetFailure)
+}
+
+// NewWithMountsHooksOptionsAdmitted forwards requests already admitted by the publisher.
+// the publisher owns the shared admission budget for proxied and inline handlers.
+func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
+}
+
+func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, onTargetFailure []func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -212,25 +222,29 @@ func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 		}
 		return strings.Compare(left.Prefix, right.Prefix)
 	})
-	requests := make(chan struct{}, requestLimit)
+	var requests chan struct{}
+	if admit {
+		requests = make(chan struct{}, requestLimit)
+	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if code := ValidateRequest(request, hostname); code != "" {
 			diagnostic.WriteHTTP(response, request, code)
 			return
 		}
-		// admission is shared across the public URL, not per visitor connection. do
-		// not queue handlers behind an upstream transport's connection limit.
-		select {
-		case requests <- struct{}{}:
-			defer func() { <-requests }()
-		default:
-			if request.ProtoMajor == 1 {
-				// avoid draining an unread body before sending the rejection.
-				response.Header().Set("Connection", "close")
+		if admit {
+			// callers without a publisher keep the same per-URL admission boundary.
+			select {
+			case requests <- struct{}{}:
+				defer func() { <-requests }()
+			default:
+				if request.ProtoMajor == 1 {
+					// avoid draining an unread body before sending the rejection.
+					response.Header().Set("Connection", "close")
+				}
+				response.Header().Set("Retry-After", "1")
+				diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
+				return
 			}
-			response.Header().Set("Retry-After", "1")
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
-			return
 		}
 		escapedPath := request.URL.EscapedPath()
 		for _, mount := range routes {
