@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func prepareAliasServices(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, alias config.Alias, server, team string, authenticated *clientauth.Client) (publisherServices, error) {
@@ -217,6 +218,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 			prefixes = policy.prefixes
 		}
 		config := services.config(base.Target, slices.Clone(prefixes), base.RequestLimit)
+		config.Purpose = controlv1.PublicURLCreatePurposeAlias
 		config.Mounts, config.ObserveResponse = base.Mounts, base.ObserveResponse
 		var mu sync.Mutex
 		lastReport := time.Time{}

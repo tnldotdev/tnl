@@ -185,6 +185,12 @@ is configured; deeper names use exact records and certificates. new custom
 domains require an explicit opt-in and DNS automation. disabling new claims
 does not affect existing custom domains or their release.
 
+new public URL creation records one immutable, client-declared purpose: `app`,
+`alias`, `demo`, `oauth`, or `webhooks`. existing URLs without this field remain
+`unknown` and are excluded from purpose counters. ingress can associate
+connection and byte usage with that saved URL, but cannot see which provider
+sent a webhook: paths remain inside visitor TLS until local tnl terminates it.
+
 projects with `oauth: true` publish one saved OAuth callback URL while app
 tunnels run. linked worktrees share that URL through the same client state,
 server, and project namespace, even if an app service selects another domain.
@@ -217,10 +223,16 @@ provider retries may revisit already successful worktrees. GET, HEAD, and
 OPTIONS verification requires matching bounded responses. No request journal or
 replay is retained.
 Changed declarations drain the webhook publish run before re-publication;
-tnl reads provider source policies from tnl.dev, with ETag revalidation and a
-bounded last-good SQLite cache. An unavailable source affects only its endpoint.
-Overrides replace rather than union with catalog ranges. New runs resolve
-sources independently of OAuth; the app handles request authentication.
+Control and standalone serve `/v1/webhook-providers/{provider}/source` using a
+fixed provider enum. They read only documented webhook sender feeds and bounded
+static ranges, with a short-lived in-process cache and a bounded last-good
+fallback. If no usable range exists, the response is unavailable rather than
+an unrestricted policy. The provider-labelled API request metric measures
+lookups, not configured endpoints or actual webhook deliveries.
+tnl reads its selected server with ETag revalidation and a per-server,
+bounded last-good SQLite cache. An unavailable source affects only its
+endpoint. Overrides replace rather than union with catalog ranges. New runs
+resolve sources independently of OAuth; the app authenticates each request.
 
 Selected endpoints instead select one explicitly claimed receiver. Ownership
 is tied to that tunnel's liveness lease, not to publisher leadership or its

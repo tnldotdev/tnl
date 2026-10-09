@@ -50,6 +50,11 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 					t.Fatalf("%s %s = %d, %v; want %d and no-store", check.method, check.path, response.Code, response.Header(), check.status)
 				}
 			}
+			catalog := httptest.NewRecorder()
+			handler.ServeHTTP(catalog, httptest.NewRequest(http.MethodGet, "/v1/webhook-providers/custom/source", nil))
+			if catalog.Code != http.StatusOK || catalog.Header().Get("Cache-Control") != "public, max-age=900" || !strings.Contains(catalog.Body.String(), `"kind":"*"`) {
+				t.Fatalf("catalog cache policy = %d, %q, %q", catalog.Code, catalog.Header().Get("Cache-Control"), catalog.Body.String())
+			}
 			response := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 			if !strings.Contains(response.Body.String(), `operation="`+test.identityOperation+`",outcome="client_error",surface="`+test.identitySurface+`"`) {

@@ -24,7 +24,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 	request := CreatePublicURLRequest{
 		TeamID: "team_concurrent_creator", DomainID: "domain_concurrent_creator", ActingIdentityID: identity,
 		IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")), CanonicalHostname: "first.concurrent-creator.example.test",
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, DNSState: PublicURLDNSUnmanaged,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged,
 		PolicyRevision: 1,
 	}
 	first, err := database.CreatePublicURL(ctx, request, now)

@@ -208,6 +208,35 @@ paths:
                 $ref: "#/components/schemas/ControlDiscovery"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/webhook-providers/{provider}/source:
+    get:
+      operationId: getWebhookProviderSource
+      summary: Read one webhook provider source policy
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/WebhookProvider"
+      responses:
+        "200":
+          description: Webhook provider source policy
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookProviderSourceResponse"
+        "304":
+          description: Source policy matches If-None-Match
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/guest-demo:
     post:
       operationId: createGuestDemo
@@ -1166,6 +1195,62 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    WebhookProvider:
+      type: string
+      enum:
+        [
+          amazon-sns,
+          auth0,
+          clerk,
+          custom,
+          discord,
+          github,
+          gitlab,
+          incident-io,
+          lemon-squeezy,
+          linear,
+          loops,
+          paddle,
+          postmark,
+          resend,
+          sendgrid,
+          shopify,
+          slack,
+          stripe,
+          supabase,
+          telegram,
+          twilio,
+          vercel,
+          workos,
+        ]
+    WebhookProviderSourceResponse:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, ranges]
+              properties:
+                kind:
+                  type: string
+                  const: ip_ranges
+                ranges:
+                  type: array
+                  minItems: 1
+                  maxItems: 512
+                  uniqueItems: true
+                  items:
+                    type: string
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  const: "*"
     ResourceID:
       type: string
       minLength: 1
@@ -1359,6 +1444,12 @@ components:
     PublicURLScope:
       type: string
       enum: [member, shared]
+    PublicURLCreatePurpose:
+      type: string
+      enum: [app, alias, demo, oauth, webhooks]
+    PublicURLPurpose:
+      type: string
+      enum: [unknown, app, alias, demo, oauth, webhooks]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -1373,6 +1464,7 @@ components:
           canonical_hostname,
           target,
           public_url_scope,
+          purpose,
           policy_revision,
           lifecycle_state,
           next_publish_run_number,
@@ -1397,6 +1489,8 @@ components:
           pattern: "^http://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
+        purpose:
+          $ref: "#/components/schemas/PublicURLPurpose"
         policy_revision:
           type: integer
           format: int64
@@ -1442,7 +1536,7 @@ components:
     CreatePublicURLRequest:
       type: object
       additionalProperties: false
-      required: [team_id, domain_id, canonical_hostname, target, public_url_scope]
+      required: [team_id, domain_id, canonical_hostname, target, public_url_scope, purpose]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
@@ -1458,6 +1552,8 @@ components:
           pattern: "^http://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
+        purpose:
+          $ref: "#/components/schemas/PublicURLCreatePurpose"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

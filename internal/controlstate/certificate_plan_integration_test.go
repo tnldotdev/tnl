@@ -71,7 +71,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				route, err = database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
 					TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 					ActingIdentityID: local.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
-					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember,
+					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
 					DNSState: PublicURLDNSPending, DNSAuthorityReference: reference,
 				}, now)
 				if err != nil {

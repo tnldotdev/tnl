@@ -198,6 +198,9 @@ func (d *Database) MarkPublishRunReady(
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark publish run ready: commit: %w", err)
 	}
+	if publishedEvent != nil {
+		d.activity.metrics.Load().ObservePublishRunReady(route.Purpose)
+	}
 	return publishRunLifecycle(session, connections, routingTableRevision, publicURLEntryRevision), nil
 }
 

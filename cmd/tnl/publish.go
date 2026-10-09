@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publishCommand struct {
@@ -192,6 +193,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {
 		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
+		publisherConfig.Purpose = controlv1.PublicURLCreatePurposeDemo
 	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service, nil)
 	if err != nil {

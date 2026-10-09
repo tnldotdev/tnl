@@ -13,7 +13,7 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 	result := controlv1.PublicURL{
 		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
-		PublicUrlScope: controlv1.PublicURLScope(route.PublicURLScope), PolicyRevision: route.PolicyRevision,
+		PublicUrlScope: controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
 		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
 		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}

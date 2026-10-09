@@ -79,9 +79,9 @@ func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffi
 		{`UPDATE control.teams SET default_domain_id = $1 WHERE id = $2`, []any{domainID, teamID}},
 		{`INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
 			request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
-			target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
+			target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
 			VALUES ($2, $3, $4, $5, 'seed', $6, $7, $8,
-			'http://127.0.0.1:3000', 'shared', 1, 'allow_all', 'enabled', 'published', $1, $1)`,
+			'http://127.0.0.1:3000', 'shared', 'app', 1, 'allow_all', 'enabled', 'published', $1, $1)`,
 			[]any{now, publicURLID, teamID, domainID, identityID, sealedDigest, database.storageKey.CurrentID(), "route-" + suffix + ".example.test"}},
 	} {
 		if _, err := database.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
