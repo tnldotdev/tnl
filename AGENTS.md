@@ -69,7 +69,7 @@ mutation counters; public URL counters are publish run numbers.
 | **publisher**     | The local `tnl publish` or `tnl dev` process when its architectural role matters. |
 | **visitor**       | A browser or other client connecting to a public URL.                             |
 | **local service** | The project's local HTTP application.                                             |
-| **target**        | The local HTTP URL the publisher uses to reach the local service.                 |
+| **target**        | The HTTP or HTTPS origin the publisher uses to reach a service.                   |
 | **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle.                |
 
 ## projects and client state

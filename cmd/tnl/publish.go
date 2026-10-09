@@ -25,7 +25,7 @@ type publishCommand struct {
 	openOptions `embed:""`
 	remoteFlags `embed:""`
 	tunnelFlags `embed:""`
-	Target      string            `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or HTTP URL on this computer."`
+	Target      string            `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or HTTP or HTTPS target origin."`
 	Output      publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo        bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 

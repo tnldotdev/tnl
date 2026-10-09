@@ -110,20 +110,38 @@ test("registers Bun's resolved port without replacing its server", async () => {
   });
 });
 
-test("rejects a Bun TLS listener and stops it", async () => {
+test("registers a Bun TLS listener", async () => {
   const bootstrap = await startTestBootstrap();
   await withProcessEnvironment(bootstrap.environment, async () => {
     const { tnl } = await import("@tnldotdev/tnl");
     const stop = vi.fn(async () => {});
-    await expect(
-      tnl.register({
-        port: 5173,
-        hostname: "127.0.0.1",
-        url: new URL("https://127.0.0.1:5173"),
-        stop,
-      }),
-    ).rejects.toMatchObject({ code: "sdk.target_invalid" });
-    expect(stop).toHaveBeenCalledWith(true);
-    expect(bootstrap.requests).toHaveLength(0);
+    await tnl.register({
+      port: 5173,
+      hostname: "localhost",
+      url: new URL("https://localhost:5173"),
+      stop,
+    });
+    expect(stop).not.toHaveBeenCalled();
+    expect(bootstrap.requests[1]?.body).toEqual({
+      protocol: 1,
+      framework: "bun",
+      target: "https://localhost:5173",
+    });
+  });
+});
+
+test("uses an explicit HTTPS certificate hostname for a bound listener", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const { tnl } = await import("@tnldotdev/tnl");
+    await tnl.register(
+      { port: 5173, hostname: "127.0.0.1", url: new URL("https://127.0.0.1:5173"), stop: () => {} },
+      { targetHostname: "localhost" },
+    );
+    expect(bootstrap.requests[1]?.body).toEqual({
+      protocol: 1,
+      framework: "bun",
+      target: "https://localhost:5173",
+    });
   });
 });

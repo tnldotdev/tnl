@@ -8,13 +8,13 @@ import (
 )
 
 func TestValidateTarget(t *testing.T) {
-	for _, target := range []string{"http://127.0.0.1:3000", "http://[::1]:3000"} {
+	for _, target := range []string{"http://127.0.0.1:3000", "http://[::1]:3000", "https://127.0.0.1:3000", "http://app:3000", "https://api.example:443"} {
 		if err := ValidateTarget(target); err != nil {
 			t.Fatalf("target %q: %v", target, err)
 		}
 	}
 	for _, target := range []string{
-		"https://127.0.0.1:3000", "http://localhost:3000", "http://192.0.2.1:3000",
+		"http://localhost:3000", "http://APP:3000", "https://api.example:0443",
 		"http://127.0.0.1", "http://127.0.0.1:3000/", "http://user@127.0.0.1:3000",
 		"http://127.0.0.1:03000", "http://127.0.0.1:99999", "http://[0:0:0:0:0:0:0:1]:3000",
 	} {

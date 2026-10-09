@@ -135,7 +135,7 @@ func TestUpdateRouteRequiresCompleteDesiredState(t *testing.T) {
 		{"missing IP policy", `{"target":"http://127.0.0.1:4000"}`},
 		{"missing target", `{"allowed_ip_prefixes":[]}`},
 		{"null IP policy", `{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":null}`},
-		{"invalid target", `{"target":"https://127.0.0.1:4000","allowed_ip_prefixes":[]}`},
+		{"invalid target", `{"target":"https://127.0.0.1:4000/path","allowed_ip_prefixes":[]}`},
 		{"duplicate canonical prefix", `{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":["192.0.2.1/24","192.0.2.0/24"]}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -57,7 +57,7 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 func TestKnownCaseChangesGuidanceButNotDiagnosticIdentity(t *testing.T) {
 	err := Wrap(TargetUnavailable, syscall.ECONNREFUSED)
 	text, ok := TextForError(err)
-	if !ok || !strings.Contains(text, "x  local service refused connection") ||
+	if !ok || !strings.Contains(text, "x  target refused connection") ||
 		!strings.Contains(text, "help  https://tnl.dev/e/target?case=connection-refused") ||
 		!strings.Contains(text, string(TargetUnavailable)) {
 		t.Fatalf("contextual diagnostic = %q", text)
@@ -183,9 +183,9 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 					response.Header().Get("Referrer-Policy") != "no-referrer" {
 					t.Fatalf("HTML headers = %v", response.Header())
 				}
-				if !strings.Contains(get.Body.String(), `<h1>local service unavailable</h1>`) ||
+				if !strings.Contains(get.Body.String(), `<h1>target unavailable</h1>`) ||
 					!strings.Contains(get.Body.String(), `<code>TNL_TARGET_UNAVAILABLE</code>`) ||
-					!strings.Contains(get.Body.String(), "<title>local service unavailable - tnl</title>") {
+					!strings.Contains(get.Body.String(), "<title>target unavailable - tnl</title>") {
 					t.Fatalf("HTML diagnostic content = %q", get.Body.String())
 				}
 			}

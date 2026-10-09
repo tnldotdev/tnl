@@ -114,10 +114,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if flags.Target == "" {
 		if service != "" {
 			return failure.Wrap("select target for service", failure.MissingTarget,
-				fmt.Errorf("local target is required for service %q through publish.target", service))
+				fmt.Errorf("target is required for service %q through publish.target", service))
 		}
-		return failure.Wrap("select local target", failure.MissingTarget,
-			errors.New("local target is required as an argument or publish.target in project configuration"))
+		return failure.Wrap("select target", failure.MissingTarget,
+			errors.New("target is required as an argument or publish.target in project configuration"))
 	}
 	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
 		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)

@@ -59,7 +59,7 @@ export interface TnlConfig {
   publish?: Publish;
   dev?: Dev;
   /**
-   * Named local services with optional tunnel, publish, and dev overrides and path mounts.
+   * Named services with optional tunnel, publish, and dev overrides and path mounts.
    */
   services?: {
     [k: string]:
@@ -213,7 +213,7 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local HTTP URL or port reached by the publisher.
+   * HTTP or HTTPS origin reachable by the publisher, or a local port.
    */
   target?: string | number;
 }
