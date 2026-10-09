@@ -1488,7 +1488,7 @@ components:
         target:
           type: string
           format: uri
-          pattern: "^http://"
+          pattern: "^https?://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -1551,7 +1551,7 @@ components:
         target:
           type: string
           format: uri
-          pattern: "^http://"
+          pattern: "^https?://"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2254,7 +2254,7 @@ components:
         target:
           type: string
           format: uri
-          pattern: "^http://"
+          pattern: "^https?://"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

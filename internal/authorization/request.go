@@ -257,7 +257,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 	return netip.PrefixFrom(address, bits).Masked(), nil
 }
 
-// ValidateTarget accepts the local HTTP target format used by public URLs.
+// ValidateTarget accepts the canonical HTTP or HTTPS target format used by public URLs.
 func ValidateTarget(target string) error {
 	canonical, err := localproxy.NormalizeTarget(target)
 	if err != nil || canonical != target {

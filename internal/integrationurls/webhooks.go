@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -324,10 +325,14 @@ func deliverWebhook(incoming *http.Request, receiver clientstate.TunnelInfo, bod
 	if err != nil {
 		return webhookResponse{}, err
 	}
-	target := strings.TrimPrefix(canonicalTarget, "http://")
+	parsed, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return webhookResponse{}, err
+	}
+	target := parsed.Host
 	ctx, cancel := context.WithTimeout(incoming.Context(), 10*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, incoming.Method, "http://"+target+incoming.URL.RequestURI(), bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, incoming.Method, canonicalTarget+incoming.URL.RequestURI(), bytes.NewReader(body))
 	if err != nil {
 		return webhookResponse{}, err
 	}

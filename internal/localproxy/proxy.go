@@ -1,8 +1,9 @@
-// Package localproxy forwards one public hostname to one local HTTP target.
+// Package localproxy forwards one public hostname to one HTTP or HTTPS target.
 package localproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -28,14 +29,23 @@ const maxHeaderFields = 100
 // across all visitor connections and HTTP/2 streams.
 const DefaultRequestLimit = 500
 
-// Preflight validates target and verifies that it accepts a local TCP connection.
+// Preflight validates the target and verifies that it accepts a connection.
 func Preflight(ctx context.Context, target string) error {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return err
 	}
-	targetAddress := strings.TrimPrefix(canonicalTarget, "http://")
-	connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", targetAddress)
+	parsed, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return err
+	}
+	dialer := &net.Dialer{Timeout: 3 * time.Second}
+	var connection net.Conn
+	if parsed.Scheme == "https" {
+		connection, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{MinVersion: tls.VersionTLS12}}).DialContext(ctx, "tcp", parsed.Host)
+	} else {
+		connection, err = dialer.DialContext(ctx, "tcp", parsed.Host)
+	}
 	if err != nil {
 		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
 	}
@@ -45,7 +55,7 @@ func Preflight(ctx context.Context, target string) error {
 	return nil
 }
 
-// WaitForTarget waits until a valid target accepts a local TCP connection.
+// WaitForTarget waits until a valid target accepts a connection.
 func WaitForTarget(ctx context.Context, target string) error {
 	return waitForTarget(ctx, target, Preflight)
 }
@@ -177,14 +187,18 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 	if err != nil {
 		return nil, err
 	}
-	targetAddress := strings.TrimPrefix(canonicalTarget, "http://")
-	targetURL := &url.URL{Scheme: "http", Host: targetAddress}
+	targetURL, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return nil, err
+	}
+	targetAddress := targetURL.Host
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
 	var failing atomic.Bool
 	transport := &http.Transport{
 		Proxy:               nil,
 		DisableCompression:  true,
 		ForceAttemptHTTP2:   false,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
 		MaxConnsPerHost:     requestLimit,
@@ -253,10 +267,10 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, onTar
 	return proxy, nil
 }
 
-// NormalizeTarget validates a local proxy target and returns its canonical HTTP origin.
+// NormalizeTarget validates a proxy target and returns its canonical HTTP or HTTPS origin.
 func NormalizeTarget(target string) (string, error) {
 	if target == "" || strings.ContainsFunc(target, unicode.IsSpace) {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP URL on this computer"))
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP or HTTPS origin"))
 	}
 
 	barePort := true
@@ -267,31 +281,41 @@ func NormalizeTarget(target string) (string, error) {
 		}
 	}
 
-	hostname, portText := "127.0.0.1", target
+	hostname, portText, scheme := "127.0.0.1", target, "http"
 	localhostName, localhostPort, localhostTarget := strings.Cut(target, ":")
 	if !barePort && localhostTarget && strings.EqualFold(localhostName, "localhost") && !strings.Contains(localhostPort, ":") {
 		portText = localhostPort
 	} else if !barePort {
 		parsed, err := url.Parse(target)
-		if err != nil || !strings.EqualFold(parsed.Scheme, "http") || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.ForceQuery || parsed.RawQuery != "" || strings.Contains(target, "#") {
-			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP URL on this computer"))
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.Opaque != "" || parsed.ForceQuery || parsed.RawQuery != "" || strings.Contains(target, "#") ||
+			!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP or HTTPS origin"))
 		}
+		scheme = strings.ToLower(parsed.Scheme)
 		hostname, portText = parsed.Hostname(), parsed.Port()
-		if strings.EqualFold(hostname, "localhost") {
+		if scheme == "http" && strings.EqualFold(hostname, "localhost") {
 			hostname = "127.0.0.1"
 		}
 	}
 
-	address, err := netip.ParseAddr(hostname)
-	if err != nil || !address.IsLoopback() || address.Zone() != "" {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target host must be localhost, a 127.x.x.x address, or ::1"))
+	if address, err := netip.ParseAddr(hostname); err == nil {
+		if address.Zone() != "" {
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target host must not have an IP zone"))
+		}
+		hostname = address.String()
+	} else {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || canonical != strings.ToLower(hostname) {
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target requires a DNS name or IP address"))
+		}
+		hostname = canonical
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target requires a valid port"))
 	}
-	targetAddress := net.JoinHostPort(address.String(), strconv.Itoa(port))
-	return "http://" + targetAddress, nil
+	targetAddress := net.JoinHostPort(hostname, strconv.Itoa(port))
+	return scheme + "://" + targetAddress, nil
 }
 
 // ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.

@@ -52,7 +52,7 @@ type TNL struct {
 	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev               *Dev                   `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, and dev overrides and path mounts."`
+	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services with optional tunnel, publish, and dev overrides and path mounts."`
 	Webhooks          map[string]Webhook     `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases           map[string]Alias       `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
@@ -126,7 +126,7 @@ type Tunnel struct {
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"Local HTTP URL or port reached by the publisher."`
+	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
 }
 
 type Dev struct {
@@ -135,7 +135,7 @@ type Dev struct {
 	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty" jsonschema_description:"Maximum time to wait for the local service to start."`
 }
 
-// Target accepts either a local HTTP URL or a literal port.
+// Target accepts an HTTP or HTTPS origin or a literal local port.
 type Target string
 
 func (t *Target) UnmarshalJSON(data []byte) error {
