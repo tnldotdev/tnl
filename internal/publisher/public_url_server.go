@@ -309,11 +309,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
 				if denied && !sharePermitted && (!browserSignedIn || !browser.VisitAllowed) {
-					if !browserSignedIn && config.BrowserAccess != nil && config.BrowserAccess.shares != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
-						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
-						response.Header().Set("Cache-Control", "no-store")
-						response.Header().Set("Referrer-Policy", "no-referrer")
-						http.Redirect(response, request, "/__tnl/team/login?return="+url.QueryEscape(request.URL.RequestURI()), http.StatusSeeOther)
+					if config.BrowserAccess != nil && diagnostic.IsHTMLDocumentRequest(request) && validBrowserPath(request.URL.RequestURI()) {
+						action := diagnostic.SecondaryAction{Label: "sign in", Path: "/__tnl/team/login?return=" + url.QueryEscape(request.URL.RequestURI())}
+						if browserSignedIn {
+							action.Label, action.Path, action.Post = "switch account", "/__tnl/team/switch-account?return="+url.QueryEscape(request.URL.RequestURI()), true
+						}
+						diagnostic.WriteRestrictedBrowserHTTP(response, request, action)
 						return
 					}
 					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)

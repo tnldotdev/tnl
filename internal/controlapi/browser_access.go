@@ -29,11 +29,11 @@ const browserCallbackPath = "/v1/browser/callback"
 const browserLoginCookieName = "__Host-tnl-browser-login"
 
 func validBrowserReturnPath(path string) bool {
-	if path == "" || len(path) > 2048 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n#") {
+	if path == "" || len(path) > 2048 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n# \t") {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(path)
-	return err == nil && parsed.Host == "" && !parsed.IsAbs()
+	return err == nil && parsed.Host == "" && !parsed.IsAbs() && !strings.HasPrefix(parsed.Path, "//") && !strings.ContainsAny(parsed.Path, "\\\r\n")
 }
 
 func (h *handler) browserHTTPClient() *http.Client {
@@ -67,6 +67,10 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 	}
 	if !validBrowserReturnPath(params.ReturnPath) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview return path")
+		return
+	}
+	if params.Prompt != nil && string(*params.Prompt) != "select_account" {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser sign-in prompt")
 		return
 	}
 	var preview controlstate.Preview
@@ -115,7 +119,11 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		return
 	}
 	http.SetCookie(response, &http.Cookie{Name: browserLoginCookieName, Value: base64.RawURLEncoding.EncodeToString(binding), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(5 * time.Minute)})
-	http.Redirect(response, request, config.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce)), http.StatusFound)
+	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce)}
+	if params.Prompt != nil {
+		options = append(options, oauth2.SetAuthURLParam("prompt", string(*params.Prompt)))
+	}
+	http.Redirect(response, request, config.AuthCodeURL(state, options...), http.StatusFound)
 }
 
 func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.CompletePreviewBrowserLoginParams) {

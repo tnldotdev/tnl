@@ -198,7 +198,7 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	return o.emitLocked(publishEvent{Type: publishEventStarting, Target: target})
 }
 
-func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
+func (o *publishOutput) ready(url string, publishRunNumber uint64, access ...*publisher.AccessInfo) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.readyPublishRunNumber = max(o.readyPublishRunNumber, publishRunNumber)
@@ -232,8 +232,11 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.inspection == config.RequestInspectionDetailed {
 				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
 			}
-			if o.current != "" {
+			if o.current != "" && (len(access) == 0 || access[0] == nil) {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
+			}
+			if len(access) > 0 && access[0] != nil {
+				fields = append(fields, readyAccessFields(*access[0])...)
 			}
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
@@ -457,7 +460,7 @@ func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, outpu
 		if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 			return err
 		}
-		return output.ready(event.PublicURL, event.PublishRunNumber)
+		return output.ready(event.PublicURL, event.PublishRunNumber, event.AccessInfo)
 	case publisher.EventDraining:
 		return tunnel.SetDraining(context.WithoutCancel(ctx))
 	case publisher.EventTransportFallback:

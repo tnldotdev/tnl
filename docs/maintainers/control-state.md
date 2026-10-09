@@ -118,6 +118,14 @@ capability, identity, and visit permission through commit. A run that stops or
 is replaced during authority I/O cannot use the earlier capability preflight to
 admit a visitor. `BrowserAuthorization` remains a URL-scoped datastore helper.
 
+Denied browser documents keep the policy diagnostic's 403 status and help URL.
+When the app publisher installed browser access, the diagnostic offers a small
+sign-in action; it never starts authentication automatically. A signed-in
+identity without visit permission gets a same-origin POST account-switch action.
+The publisher revokes the browser session before starting control login with
+`prompt=select_account`. API, asset, and non-navigation requests retain the
+ordinary diagnostic. Browser authorization failures remain unavailable responses.
+
 `reviewerAccess` in `reviewer_access.go` composes those decisions for feedback.
 An allowed IP or current share admits a signed-in nonmember with verified
 attribution. Identity alone never admits a reviewer. Report creation and event
