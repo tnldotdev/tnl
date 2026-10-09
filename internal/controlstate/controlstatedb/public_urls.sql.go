@@ -139,6 +139,7 @@ func (q *Queries) DeletePublicURL(ctx context.Context, arg DeletePublicURLParams
 
 const getIdentityPublicURL = `-- name: GetIdentityPublicURL :one
 SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
+    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -200,6 +201,7 @@ type GetIdentityPublicURLRow struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Purpose                     string
 	OpenPublishRunID            string
 }
 
@@ -244,6 +246,7 @@ func (q *Queries) GetIdentityPublicURL(ctx context.Context, arg GetIdentityPubli
 		&i.AllowedIpHashKeyID,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
+		&i.Purpose,
 		&i.OpenPublishRunID,
 	)
 	return i, err
@@ -251,6 +254,7 @@ func (q *Queries) GetIdentityPublicURL(ctx context.Context, arg GetIdentityPubli
 
 const getPublicURLByCreatorIdempotency = `-- name: GetPublicURLByCreatorIdempotency :one
 SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
+    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -305,6 +309,7 @@ type GetPublicURLByCreatorIdempotencyRow struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Purpose                     string
 	OpenPublishRunID            string
 }
 
@@ -349,6 +354,7 @@ func (q *Queries) GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetP
 		&i.AllowedIpHashKeyID,
 		&i.RequestDigestCiphertext,
 		&i.RequestDigestStorageKeyID,
+		&i.Purpose,
 		&i.OpenPublishRunID,
 	)
 	return i, err
@@ -428,6 +434,18 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 		&i.DnsAuthorityReference,
 	)
 	return i, err
+}
+
+const getPublicURLPurpose = `-- name: GetPublicURLPurpose :one
+SELECT COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p
+    WHERE p.public_url_id = $1), 'unknown')::text
+`
+
+func (q *Queries) GetPublicURLPurpose(ctx context.Context, publicUrlID string) (string, error) {
+	row := q.db.QueryRow(ctx, getPublicURLPurpose, publicUrlID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const insertExpiredEphemeralPublicURLDeleteAuditEvent = `-- name: InsertExpiredEphemeralPublicURLDeleteAuditEvent :exec
@@ -683,6 +701,21 @@ func (q *Queries) InsertPublicURLDeleteAuditEvent(ctx context.Context, arg Inser
 	return err
 }
 
+const insertPublicURLPurpose = `-- name: InsertPublicURLPurpose :exec
+INSERT INTO control.public_url_purposes (public_url_id, purpose)
+VALUES ($1, $2)
+`
+
+type InsertPublicURLPurposeParams struct {
+	PublicURLID string
+	Purpose     string
+}
+
+func (q *Queries) InsertPublicURLPurpose(ctx context.Context, arg InsertPublicURLPurposeParams) error {
+	_, err := q.db.Exec(ctx, insertPublicURLPurpose, arg.PublicURLID, arg.Purpose)
+	return err
+}
+
 const insertPublicURLUpdateAuditEvent = `-- name: InsertPublicURLUpdateAuditEvent :exec
 INSERT INTO control.admin_audit_events (
     actor_identity_id,
@@ -722,6 +755,7 @@ func (q *Queries) InsertPublicURLUpdateAuditEvent(ctx context.Context, arg Inser
 
 const listIdentityPublicURLs = `-- name: ListIdentityPublicURLs :many
 SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id,
+    COALESCE((SELECT p.purpose FROM control.public_url_purposes AS p WHERE p.public_url_id = r.id), 'unknown')::text AS purpose,
     COALESCE((
         SELECT s.id
         FROM control.publish_runs AS s
@@ -787,6 +821,7 @@ type ListIdentityPublicURLsRow struct {
 	AllowedIpHashKeyID          pgtype.Text
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
+	Purpose                     string
 	OpenPublishRunID            string
 }
 
@@ -837,6 +872,7 @@ func (q *Queries) ListIdentityPublicURLs(ctx context.Context, arg ListIdentityPu
 			&i.AllowedIpHashKeyID,
 			&i.RequestDigestCiphertext,
 			&i.RequestDigestStorageKeyID,
+			&i.Purpose,
 			&i.OpenPublishRunID,
 		); err != nil {
 			return nil, err

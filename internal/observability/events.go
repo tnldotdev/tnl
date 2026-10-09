@@ -22,6 +22,26 @@ func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
 	m.webhookProviderSources.WithLabelValues(provider, outcome).Inc()
 }
 
+func validPublicURLPurpose(purpose string) bool {
+	switch purpose {
+	case "app", "alias", "demo", "oauth", "webhooks":
+		return true
+	}
+	return false
+}
+
+func (m *Metrics) ObservePublicURLCreated(purpose string) {
+	if m != nil && validPublicURLPurpose(purpose) {
+		m.publicURLsCreated.WithLabelValues(purpose).Inc()
+	}
+}
+
+func (m *Metrics) ObservePublishRunReady(purpose string) {
+	if m != nil && validPublicURLPurpose(purpose) {
+		m.publishRunsReady.WithLabelValues(purpose).Inc()
+	}
+}
+
 // visitor outcomes describe the last ingress boundary reached, not a completed
 // TLS handshake or a successful HTTP request at the local service.
 func (m *Metrics) ObserveVisitor(outcome VisitorOutcome) {

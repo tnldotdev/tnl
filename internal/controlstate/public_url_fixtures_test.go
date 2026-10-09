@@ -83,6 +83,7 @@ func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffi
 			VALUES ($2, $3, $4, $5, 'seed', $6, $7, $8,
 			'http://127.0.0.1:3000', 'shared', 1, 'allow_all', 'enabled', 'published', $1, $1)`,
 			[]any{now, publicURLID, teamID, domainID, identityID, sealedDigest, database.storageKey.CurrentID(), "route-" + suffix + ".example.test"}},
+		{`INSERT INTO control.public_url_purposes (public_url_id, purpose) VALUES ($1, 'app')`, []any{publicURLID}},
 	} {
 		if _, err := database.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)

@@ -317,6 +317,33 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for PublicURLCreatePurpose.
+const (
+	PublicURLCreatePurposeAlias    PublicURLCreatePurpose = "alias"
+	PublicURLCreatePurposeApp      PublicURLCreatePurpose = "app"
+	PublicURLCreatePurposeDemo     PublicURLCreatePurpose = "demo"
+	PublicURLCreatePurposeOauth    PublicURLCreatePurpose = "oauth"
+	PublicURLCreatePurposeWebhooks PublicURLCreatePurpose = "webhooks"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLCreatePurpose enum.
+func (e PublicURLCreatePurpose) Valid() bool {
+	switch e {
+	case PublicURLCreatePurposeAlias:
+		return true
+	case PublicURLCreatePurposeApp:
+		return true
+	case PublicURLCreatePurposeDemo:
+		return true
+	case PublicURLCreatePurposeOauth:
+		return true
+	case PublicURLCreatePurposeWebhooks:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublicURLLifecycleState.
 const (
 	Enabled   PublicURLLifecycleState = "enabled"
@@ -329,6 +356,36 @@ func (e PublicURLLifecycleState) Valid() bool {
 	case Enabled:
 		return true
 	case Suspended:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicURLPurpose.
+const (
+	PublicURLPurposeAlias    PublicURLPurpose = "alias"
+	PublicURLPurposeApp      PublicURLPurpose = "app"
+	PublicURLPurposeDemo     PublicURLPurpose = "demo"
+	PublicURLPurposeOauth    PublicURLPurpose = "oauth"
+	PublicURLPurposeUnknown  PublicURLPurpose = "unknown"
+	PublicURLPurposeWebhooks PublicURLPurpose = "webhooks"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLPurpose enum.
+func (e PublicURLPurpose) Valid() bool {
+	switch e {
+	case PublicURLPurposeAlias:
+		return true
+	case PublicURLPurposeApp:
+		return true
+	case PublicURLPurposeDemo:
+		return true
+	case PublicURLPurposeOauth:
+		return true
+	case PublicURLPurposeUnknown:
+		return true
+	case PublicURLPurposeWebhooks:
 		return true
 	default:
 		return false
@@ -879,14 +936,15 @@ type CreatePreviewRequest struct {
 
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
-	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname CanonicalHostname `json:"canonical_hostname"`
-	DomainId          DomainID          `json:"domain_id"`
-	Ephemeral         *bool             `json:"ephemeral,omitempty"`
-	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
-	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
-	Target            string            `json:"target"`
-	TeamId            TeamID            `json:"team_id"`
+	AllowedIpPrefixes *[]string              `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname CanonicalHostname      `json:"canonical_hostname"`
+	DomainId          DomainID               `json:"domain_id"`
+	Ephemeral         *bool                  `json:"ephemeral,omitempty"`
+	MembershipId      *MembershipID          `json:"membership_id,omitempty"`
+	PublicUrlScope    PublicURLScope         `json:"public_url_scope"`
+	Purpose           PublicURLCreatePurpose `json:"purpose"`
+	Target            string                 `json:"target"`
+	TeamId            TeamID                 `json:"team_id"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1189,10 +1247,14 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
+	Purpose              PublicURLPurpose        `json:"purpose"`
 	Target               string                  `json:"target"`
 	TeamId               TeamID                  `json:"team_id"`
 	UpdatedAt            time.Time               `json:"updated_at"`
 }
+
+// PublicURLCreatePurpose defines model for PublicURLCreatePurpose.
+type PublicURLCreatePurpose string
 
 // PublicURLID defines model for PublicURLID.
 type PublicURLID = ResourceID
@@ -1205,6 +1267,9 @@ type PublicURLPage struct {
 	NextCursor *PublicURLID `json:"next_cursor,omitempty"`
 	PublicUrls []PublicURL  `json:"public_urls"`
 }
+
+// PublicURLPurpose defines model for PublicURLPurpose.
+type PublicURLPurpose string
 
 // PublicURLScope defines model for PublicURLScope.
 type PublicURLScope string

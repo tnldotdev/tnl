@@ -746,7 +746,7 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	request := CreatePublicURLRequest{
 		TeamID: team.ID, DomainID: domain.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
 		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.member." + domain.CanonicalDomain,
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
+		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
 	}
 	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {

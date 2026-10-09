@@ -59,9 +59,10 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 	return origin, services, err
 }
 
-func integrationURLConfig(services publisherServices, hostname string) publisher.Config {
+func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLCreatePurpose) publisher.Config {
 	config := services.config(integrationURLTarget, []string{}, 32)
 	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, controlv1.Member, false
+	config.Purpose = purpose
 	return config
 }
 
@@ -79,7 +80,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	integrationURLPublisher := integrationurls.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
 		Prepare: func(context.Context) (integrationurls.Snapshot, error) {
-			config := integrationURLConfig(services, oauth.Hostname)
+			config := integrationURLConfig(services, oauth.Hostname, controlv1.PublicURLCreatePurposeOauth)
 			config.Handler = integrationurls.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
 				if telemetry != nil {
 					telemetry.Report(newIntegrationTelemetry(telemetryOAuthRedirected, ""))
@@ -245,7 +246,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReached, telemetryWebhookDelivery(mode)))
 				}
 			}
-			config := integrationURLConfig(services, origin.Hostname)
+			config := integrationURLConfig(services, origin.Hostname, controlv1.PublicURLCreatePurposeWebhooks)
 			config.Handler, config.AllowedIPPrefixes = handler, prefixes
 			return integrationurls.Snapshot{Config: config, Revision: revision}, nil
 		},

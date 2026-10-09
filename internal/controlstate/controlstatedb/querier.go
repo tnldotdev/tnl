@@ -149,6 +149,7 @@ type Querier interface {
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
 	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
+	GetPublicURLPurpose(ctx context.Context, publicUrlID string) (string, error)
 	GetPublicURLUsageBucketByID(ctx context.Context, bucketID int64) (ControlPublicUrlUsageBucket, error)
 	GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetPublicURLUsageBucketForUpdateParams) (ControlPublicUrlUsageBucket, error)
 	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
@@ -194,6 +195,7 @@ type Querier interface {
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
 	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
+	InsertPublicURLPurpose(ctx context.Context, arg InsertPublicURLPurposeParams) error
 	InsertPublicURLUpdateAuditEvent(ctx context.Context, arg InsertPublicURLUpdateAuditEventParams) error
 	InsertPublicURLUsageDelivery(ctx context.Context, arg InsertPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error)

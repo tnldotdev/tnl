@@ -44,6 +44,7 @@ type PublicURL struct {
 	CanonicalHostname             string
 	Target                        string
 	PublicURLScope                PublicURLScope
+	Purpose                       PublicURLPurpose
 	PolicyRevision                int64
 	LifecycleState                PublicURLLifecycleState
 	DNSAuthorityReference         string
@@ -70,6 +71,7 @@ type CreatePublicURLRequest struct {
 	CanonicalHostname     string
 	Target                string
 	PublicURLScope        PublicURLScope
+	Purpose               PublicURLPurpose
 	AllowedIPPrefixes     []string
 	DNSState              PublicURLDNSState
 	DNSAuthorityReference string
@@ -137,6 +139,9 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	})
 	if err == nil {
 		if PublicURLLifecycleState(existing.LifecycleState) == PublicURLLifecycleDeleted {
+			return PublicURL{}, ErrPublicURLIdempotency
+		}
+		if existing.Purpose != string(request.Purpose) {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
@@ -258,6 +263,11 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
+	if err := queries.InsertPublicURLPurpose(ctx, controlstatedb.InsertPublicURLPurposeParams{
+		PublicURLID: publicURLID, Purpose: string(request.Purpose),
+	}); err != nil {
+		return PublicURL{}, fmt.Errorf("controlstate: create public_url: save purpose: %w", err)
+	}
 	if request.GuestID != "" {
 		if err := queries.InsertGuestPublicURL(ctx, controlstatedb.InsertGuestPublicURLParams{
 			PublicURLID: publicURLID, GuestID: request.GuestID, CreatedAt: timestamptz(now),
@@ -274,7 +284,9 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if err := tx.Commit(ctx); err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: commit: %w", err)
 	}
+	d.activity.metrics.Load().ObservePublicURLCreated(string(request.Purpose))
 	result = publicURLFromModel(row, "")
+	result.Purpose = request.Purpose
 	if request.GuestID == "" {
 		result.AllowedIPPrefixes = append([]netip.Prefix(nil), prefixes...)
 	} else {
@@ -385,10 +397,15 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublicURL{}, err
 	}
+	purpose, err := queries.GetPublicURLPurpose(ctx, request.PublicURLID)
+	if err != nil {
+		return PublicURL{}, fmt.Errorf("controlstate: update public_url: read purpose: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: commit: %w", err)
 	}
 	result = publicURLFromModel(updated, "")
+	result.Purpose = PublicURLPurpose(purpose)
 	result.AllowedIPPrefixes = append([]netip.Prefix(nil), prefixes...)
 	return result, nil
 }
@@ -869,6 +886,7 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 		}
 	}
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
+		!request.Purpose.ValidForCreation() || request.GuestID != "" && request.Purpose != PublicURLPurposeDemo ||
 		request.DNSAuthorityReference != "" && !validStateText(request.DNSAuthorityReference) ||
 		request.DNSState == PublicURLDNSUnmanaged && request.DNSAuthorityReference != "" ||
 		request.PublicURLScope != PublicURLScopeMember && request.PublicURLScope != PublicURLScopeShared ||
@@ -994,7 +1012,7 @@ func nullableText(value string) pgtype.Text {
 func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID string) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, string(PublicURLPurposeUnknown), row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1002,7 +1020,7 @@ func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID st
 func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempotencyRow) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1010,7 +1028,7 @@ func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempot
 func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1018,7 +1036,7 @@ func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) Public
 func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1026,7 +1044,7 @@ func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicUR
 func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsDataRow) PublicURL {
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
 		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -1034,7 +1052,7 @@ func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsD
 func publicURLFromValues(
 	id, teamID, domainID string,
 	membershipID pgtype.Text,
-	canonicalHostname, target, publicURLScope string,
+	canonicalHostname, target, publicURLScope, purpose string,
 	policyRevision int64,
 	lifecycleState string,
 	dnsAuthorityReference pgtype.Text,
@@ -1048,7 +1066,7 @@ func publicURLFromValues(
 ) PublicURL {
 	result := PublicURL{
 		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
-		CanonicalHostname: canonicalHostname, Target: target, PublicURLScope: PublicURLScope(publicURLScope),
+		CanonicalHostname: canonicalHostname, Target: target, PublicURLScope: PublicURLScope(publicURLScope), Purpose: PublicURLPurpose(purpose),
 		PolicyRevision: policyRevision, LifecycleState: PublicURLLifecycleState(lifecycleState),
 		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: PublicURLDNSState(dnsState),
 		NextPublishRunNumber: nextPublishRunNumber,

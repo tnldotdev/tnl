@@ -101,7 +101,7 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 	return &certificateTestControl{
 		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
 		setup: controlv1.PublishRunSetup{
-			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, LifecycleState: controlv1.Enabled},
+			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.PublicURLPurposeApp, LifecycleState: controlv1.Enabled},
 			PublishRun:      controlv1.PublishRun{Id: "publish_run_0123456789abcdef0123456789abcdef", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
 			PublishRunToken: token.String(), CertificatePlan: plan,
 		},

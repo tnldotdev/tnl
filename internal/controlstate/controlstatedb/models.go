@@ -493,6 +493,11 @@ type ControlPublicUrl struct {
 	RequestDigestStorageKeyID   pgtype.Text
 }
 
+type ControlPublicUrlPurpose struct {
+	PublicURLID string
+	Purpose     string
+}
+
 type ControlPublicUrlRecoveryEpisode struct {
 	ID               int64
 	PublicURLID      string
