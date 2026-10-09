@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -34,8 +33,8 @@ import (
 )
 
 type runtimeCommand struct {
-	Start runtimeOptions `cmd:"" hidden:""`
-	Serve runtimeOptions `cmd:"" hidden:""`
+	Address runtimeOptions `cmd:"" hidden:""`
+	Serve   runtimeOptions `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
@@ -125,7 +124,7 @@ func runtimeAvailable(ctx context.Context, socket string) bool {
 	return response.StatusCode == http.StatusNoContent
 }
 
-func runRuntimeStart(ctx context.Context, options runtimeOptions, output io.Writer) error {
+func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {
 	project, state, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
@@ -133,34 +132,6 @@ func runRuntimeStart(ctx context.Context, options runtimeOptions, output io.Writ
 	socket, err := runtimeSocket(project.Root, state)
 	if err != nil {
 		return err
-	}
-	if !runtimeAvailable(ctx, socket) {
-		binary, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		command := exec.Command(binary, "--no-telemetry", "runtime", "serve", "--directory", project.Root, "--state-dir", state)
-		command.Dir = project.Root
-		command.Env = os.Environ()
-		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		command.Stdin, command.Stdout, command.Stderr = nil, io.Discard, io.Discard
-		if err := command.Start(); err != nil {
-			return err
-		}
-		go func() { _ = command.Wait() }()
-		deadline := time.NewTimer(15 * time.Second)
-		defer deadline.Stop()
-		ticker := time.NewTicker(50 * time.Millisecond)
-		defer ticker.Stop()
-		for !runtimeAvailable(ctx, socket) {
-			select {
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			case <-deadline.C:
-				return failure.Wrap("start local publisher", failure.TunnelUnavailable, errors.New("local publisher did not start"))
-			case <-ticker.C:
-			}
-		}
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Protocol int    `json:"protocol"`
@@ -213,6 +184,9 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 }
 
 func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
+	// the app process starts this worker. when it exits, the other registered
+	// apps reconnect to a worker they own instead of relying on an orphan.
+	parentPID := os.Getppid()
 	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
@@ -281,6 +255,9 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 			}
 			return err
 		case <-ticker.C:
+			if os.Getppid() != parentPID {
+				return nil
+			}
 			if runtime.manager.Sweep(runtime.manager.Alive) {
 				return nil
 			}

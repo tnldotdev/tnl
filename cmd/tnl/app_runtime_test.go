@@ -59,6 +59,32 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	return a, state, started
 }
 
+func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"directory":"."}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "state")
+	var output bytes.Buffer
+	if err := runRuntimeAddress(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var address struct {
+		Protocol int    `json:"protocol"`
+		Socket   string `json:"socket"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Protocol != 1 || address.Socket == "" {
+		t.Fatalf("runtime address = %s, error %v", output.String(), err)
+	}
+	if runtimeAvailable(t.Context(), address.Socket) {
+		t.Fatal("address lookup started the local publisher")
+	}
+}
+
 func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *testing.T) {
 	a, state, started := testAppRuntime(t)
 	id, err := a.manager.Reserve("api", "owner", 1, "https://api.example")
