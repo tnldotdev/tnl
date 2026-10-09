@@ -200,7 +200,10 @@ redirect URI. control and relays receive neither login state nor callback
 contents. a callback to a stopped or replaced run fails instead of reaching
 another worktree.
 
-Declared webhook endpoints use one saved `hooks-…` hostname. Each live participant
+Declared webhook endpoints use one saved `hooks-…` hostname with a 64-bit,
+13-character webhook-specific HMAC suffix. OAuth uses a separate HMAC purpose
+and keeps its six-character suffix. Client state replaces each pre-change
+saved hostname once when the project next selects it. Each live participant
 registers its declarations separately from receiver selection. All declarations
 for a named endpoint must agree on service, exact path, methods, and source
 policy. SQLite registration rejects conflicting names and paths atomically.

@@ -77,6 +77,7 @@ type IntegrationUrlHostname struct {
 	Namespace    string
 	Purpose      string
 	Hostname     string
+	LabelVersion int64
 }
 
 type IntegrationUrlPublisher struct {

@@ -112,6 +112,14 @@ func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
 			SharedProjectIdentity(linkedWorktree, linkedProject); first != second {
 			t.Fatalf("shared project identities differ for %s: %q != %q", relative, first, second)
 		}
+		hooks := SharedProjectLabel("hooks", mainWorktree, mainProject, salt)
+		oauth := SharedProjectLabel("oauth", mainWorktree, mainProject, salt)
+		if hooks != SharedProjectLabel("hooks", linkedWorktree, linkedProject, salt) ||
+			len(hooks[strings.LastIndexByte(hooks, '-')+1:]) != 13 ||
+			len(oauth[strings.LastIndexByte(oauth, '-')+1:]) != 6 || hooks == oauth ||
+			hooks == SharedProjectLabel("hooks", mainWorktree, mainProject, [32]byte{2}) {
+			t.Fatalf("purpose-separated project labels: hooks %q oauth %q", hooks, oauth)
+		}
 	}
 	runWorktreeGit(t, linked, "switch", "-c", "new-branch")
 	changedBranch, err := ResolveWorktree(t.Context(), linked)
