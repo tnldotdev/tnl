@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/authorityapi"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -31,15 +32,16 @@ func (feedbackPolicyBrowserVerifier) Verify(context.Context, string) (oidcauth.I
 }
 
 type feedbackPolicyAPIFixture struct {
-	t          *testing.T
-	database   *controlstate.Database
-	now        time.Time
-	owner      controlstate.ControlSession
-	membership controlstate.Membership
-	publicURL  controlstate.PublicURL
-	run        controlstate.PublishRunSetup
-	preview    controlstate.Preview
-	mux        *http.ServeMux
+	t           *testing.T
+	database    *controlstate.Database
+	databaseURL string
+	now         time.Time
+	owner       controlstate.ControlSession
+	membership  controlstate.Membership
+	publicURL   controlstate.PublicURL
+	run         controlstate.PublishRunSetup
+	preview     controlstate.Preview
+	mux         *http.ServeMux
 }
 
 func newFeedbackPolicyAPIFixture(t *testing.T, cfg Config) feedbackPolicyAPIFixture {
@@ -114,7 +116,8 @@ func newFeedbackPolicyAPIFixture(t *testing.T, cfg Config) feedbackPolicyAPIFixt
 	if _, err := authorityapi.Register(mux, authorityapi.Config{BrowserOIDCVerifier: feedbackPolicyBrowserVerifier{}, LoginToken: loginToken}, database); err != nil {
 		t.Fatal(err)
 	}
-	return feedbackPolicyAPIFixture{t, database, now, session, membership, publicURL, setup, preview, mux}
+	return feedbackPolicyAPIFixture{t: t, database: database, databaseURL: databaseURL, now: now,
+		owner: session, membership: membership, publicURL: publicURL, run: setup, preview: preview, mux: mux}
 }
 
 func (f feedbackPolicyAPIFixture) call(method, path, body, token, key string, status int) *httptest.ResponseRecorder {
@@ -183,6 +186,22 @@ func (f feedbackPolicyAPIFixture) authentication() controlstate.PublishRunAuthen
 
 func (f feedbackPolicyAPIFixture) browserSession(issuedAt time.Time, accessLifetime, browserLifetime time.Duration) (controlstate.ControlSession, string) {
 	f.t.Helper()
+	if err := f.database.EnableBrowserAccess(f.t.Context(), f.authentication(), f.now); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.database.EnableShareAccess(f.t.Context(), f.authentication(), f.preview.ID); err != nil {
+		f.t.Fatal(err)
+	}
+	connection, err := pgx.Connect(f.t.Context(), f.databaseURL)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer connection.Close(f.t.Context())
+	// browser handoffs require a ready run; certificate readiness is covered by
+	// the publisher integration tests rather than this feedback HTTP boundary.
+	if _, err := connection.Exec(f.t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2 WHERE id = $1`, f.run.PublishRunID, f.now); err != nil {
+		f.t.Fatal(err)
+	}
 	session, err := f.database.CreateOIDCControlSession(f.t.Context(), "policy.example.test", controlstate.OIDCIdentity{
 		Issuer: "https://issuer.example.test", Subject: "external-reviewer", DisplayName: "verified external reviewer",
 		AssertionDigest: sha256.Sum256([]byte(f.t.Name())), AssertionExpiry: issuedAt.Add(time.Minute),
@@ -202,7 +221,7 @@ func (f feedbackPolicyAPIFixture) browserSession(issuedAt time.Time, accessLifet
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := f.database.RedeemBrowserHandoff(f.t.Context(), f.publicURL.ID, handoff.Token, issuedAt)
+	cookie, _, _, _, _, err := f.database.RedeemBrowserHandoff(f.t.Context(), f.authentication(), handoff.Token, issuedAt)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -248,9 +267,6 @@ func TestIntegrationFeedbackPolicySignedExternalReviewerHTTP(t *testing.T) {
 			}
 			access := controlv1.FeedbackReviewerAccess{AllowedIp: admission == "IP", BrowserCookieSecret: &cookie}
 			if admission == "share" {
-				if err := f.database.EnableShareAccess(t.Context(), f.authentication(), f.preview.ID); err != nil {
-					t.Fatal(err)
-				}
 				secret := bytes.Repeat([]byte{1}, 32)
 				share, err := f.database.CreateShare(t.Context(), controlstate.CreateShareRequest{
 					PreviewID: f.preview.ID, TeamID: f.membership.TeamID, ActingIdentityID: f.membership.IdentityID, IdempotencyKey: "external-share",
