@@ -23,20 +23,21 @@ var ErrOwnerConflict = errors.New("another live app owns this service")
 var ErrRegistrationStale = errors.New("app registration is stale")
 
 type Service struct {
-	Project          string       `json:"project,omitempty"`
-	Name             string       `json:"service"`
-	Directory        string       `json:"directory"`
-	PublicURL        string       `json:"public_url,omitempty"`
-	RegistrationID   string       `json:"registration_id,omitempty"`
-	Target           string       `json:"target,omitempty"`
-	Framework        string       `json:"framework,omitempty"`
-	Registered       bool         `json:"registered"`
-	Routable         bool         `json:"routable"`
-	Ready            bool         `json:"ready"`
-	PublishRunNumber uint64       `json:"publish_run_number,omitempty"`
-	Readiness        Readiness    `json:"readiness"`
-	Observation      *Observation `json:"observation,omitempty"`
-	Failure          string       `json:"failure,omitempty"`
+	Project           string       `json:"project,omitempty"`
+	Name              string       `json:"service"`
+	Directory         string       `json:"directory"`
+	PublicURL         string       `json:"public_url,omitempty"`
+	RegistrationID    string       `json:"registration_id,omitempty"`
+	Target            string       `json:"target,omitempty"`
+	Framework         string       `json:"framework,omitempty"`
+	Registered        bool         `json:"registered"`
+	Routable          bool         `json:"routable"`
+	Ready             bool         `json:"ready"`
+	PublishRunNumber  uint64       `json:"publish_run_number,omitempty"`
+	ProvisioningStage string       `json:"provisioning_stage,omitempty"`
+	Readiness         Readiness    `json:"readiness"`
+	Observation       *Observation `json:"observation,omitempty"`
+	Failure           string       `json:"failure,omitempty"`
 }
 
 type Event struct {

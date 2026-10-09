@@ -594,6 +594,8 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			return err
 		}
 		switch event.Type {
+		case publisher.EventProvisioningStep:
+			a.manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
 		case publisher.EventProvisioning, publisher.EventDraining:
 			return observe(event.PublishRunNumber, false)
 		case publisher.EventProvisioningStalled:

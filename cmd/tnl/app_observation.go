@@ -96,6 +96,9 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 		if service.PublishRunNumber != 0 {
 			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(service.PublishRunNumber, 10)})
 		}
+		if service.ProvisioningStage != "" {
+			fields = append(fields, clioutput.Field{Label: "provisioning", Value: service.ProvisioningStage})
+		}
 		if service.Failure != "" {
 			fields = append(fields, clioutput.Field{Label: "recent failure", Value: service.Failure})
 		}
