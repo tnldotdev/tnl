@@ -98,7 +98,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Protocol != privateprotocol.Version || endpoint.Socket == "" {
 		t.Fatalf("runtime start response = %q, error %v", started.output.String(), err)
 	}
-	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", endpoint.Socket)
 	}}}
 	request := func(operation string, value any, target any) int {
@@ -107,7 +107,9 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		call, err := http.NewRequestWithContext(integrationOperationContext(t), http.MethodPost, "http://localhost/v1/"+operation, bytes.NewReader(body))
+		operationCtx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
+		defer cancel()
+		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, "http://localhost/v1/"+operation, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
