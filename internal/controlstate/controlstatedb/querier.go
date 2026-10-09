@@ -243,6 +243,7 @@ type Querier interface {
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
+	ListTeamPublicURLPublishCredentials(ctx context.Context, arg ListTeamPublicURLPublishCredentialsParams) ([]ListTeamPublicURLPublishCredentialsRow, error)
 	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)

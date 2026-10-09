@@ -234,6 +234,59 @@ func (q *Queries) ListPublicURLPublishCredentials(ctx context.Context, publicUrl
 	return items, nil
 }
 
+const listTeamPublicURLPublishCredentials = `-- name: ListTeamPublicURLPublishCredentials :many
+SELECT credentials.id, credentials.public_url_id, credentials.created_at,
+    credentials.expires_at, credentials.revoked_at, routes.canonical_hostname
+FROM control.public_url_publish_credentials AS credentials
+JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
+WHERE routes.team_id = $1
+    AND routes.lifecycle_state <> 'deleted'
+    AND ($2::text IS NULL OR credentials.id > $2)
+ORDER BY credentials.id
+LIMIT 101
+`
+
+type ListTeamPublicURLPublishCredentialsParams struct {
+	TeamID string
+	Cursor pgtype.Text
+}
+
+type ListTeamPublicURLPublishCredentialsRow struct {
+	ID                string
+	PublicURLID       string
+	CreatedAt         pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	CanonicalHostname string
+}
+
+func (q *Queries) ListTeamPublicURLPublishCredentials(ctx context.Context, arg ListTeamPublicURLPublishCredentialsParams) ([]ListTeamPublicURLPublishCredentialsRow, error) {
+	rows, err := q.db.Query(ctx, listTeamPublicURLPublishCredentials, arg.TeamID, arg.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamPublicURLPublishCredentialsRow
+	for rows.Next() {
+		var i ListTeamPublicURLPublishCredentialsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicURLID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CanonicalHostname,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokePublicURLPublishCredential = `-- name: RevokePublicURLPublishCredential :one
 UPDATE control.public_url_publish_credentials
 SET revoked_at = COALESCE(revoked_at, $1)

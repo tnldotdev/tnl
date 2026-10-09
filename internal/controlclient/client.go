@@ -319,6 +319,42 @@ func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicURLI
 	return page.Credentials, err
 }
 
+func (c *Client) ListTeamPublicURLPublishCredentials(ctx context.Context, teamID, cursor string) (controlv1.PublicURLPublishCredentialPage, error) {
+	params := &controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: teamID}
+	if cursor != "" {
+		params.Cursor = &cursor
+	}
+	return requestWithAccess[controlv1.PublicURLPublishCredentialPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListTeamPublicURLPublishCredentials(ctx, params, editors...)
+	})
+}
+
+func (c *Client) AllTeamPublicURLPublishCredentials(ctx context.Context, teamID string) ([]controlv1.PublicURLPublishCredential, error) {
+	items := []controlv1.PublicURLPublishCredential{}
+	cursor := ""
+	for {
+		page, err := c.ListTeamPublicURLPublishCredentials(ctx, teamID, cursor)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, page.Credentials...)
+		if page.NextCursor == nil {
+			return items, nil
+		}
+		if len(page.Credentials) == 0 || *page.NextCursor <= cursor {
+			return nil, failure.Wrap("list publish credentials", failure.ServerResponseInvalid, errors.New("control returned an invalid credential cursor"))
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func (c *Client) RevokePublishCredentialByID(ctx context.Context, teamID, credentialID string) (controlv1.PublicURLPublishCredential, error) {
+	params := &controlv1.RevokePublishCredentialByIDParams{TeamId: teamID}
+	return requestWithAccess[controlv1.PublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokePublishCredentialByID(ctx, credentialID, params, editors...)
+	})
+}
+
 func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RevokePublicURLPublishCredential(ctx, publicURLID, credentialID, editors...)

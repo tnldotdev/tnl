@@ -49,6 +49,7 @@ COPY --from=build --chown=65532:65532 --chmod=0700 /out/client-state /state
 COPY --chown=65532:65532 LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/
 
 USER 65532:65532
+ENV TNL_STATE_DIR=/state
 WORKDIR /
 EXPOSE 8443/tcp 8443/udp 9090/tcp 9443/tcp 9444/tcp
 

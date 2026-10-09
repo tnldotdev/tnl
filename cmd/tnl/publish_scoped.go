@@ -57,20 +57,12 @@ func (*scopedPublishControl) DeletePublicURL(context.Context, string) error {
 }
 
 func runScopedPublish(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter) (result error) {
-	if flags.AccessToken != "" || flags.PublicURL == "" || flags.Name != "" || flags.Domain != "" || flags.Team != "" ||
+	if flags.AccessToken != "" || flags.Name != "" || flags.Domain != "" || flags.Team != "" ||
 		flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) != 0 {
-		return failure.Wrap("validate scoped publish options", failure.InvalidTunnelFlags, errors.New("a scoped publish credential requires --public-url and cannot change saved URL settings"))
+		return failure.Wrap("validate scoped publish options", failure.InvalidTunnelFlags, errors.New("a scoped publish credential cannot change saved URL settings"))
 	}
 	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0 {
 		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
-	}
-	target, err := localproxy.NormalizeTarget(flags.Target)
-	if err != nil {
-		return err
-	}
-	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
-	if err != nil {
-		return err
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
@@ -90,8 +82,26 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if err != nil {
 		return classifyScopedPublishError(err)
 	}
-	if flags.PublicURL != "https://"+route.CanonicalHostname || target != route.Target || route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled {
+	if route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
+		flags.PublicURL != "" && flags.PublicURL != "https://"+route.CanonicalHostname {
 		return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("credential is bound to another public URL or target"))
+	}
+	target, err := localproxy.NormalizeTarget(route.Target)
+	if err != nil || target != route.Target {
+		return failure.Wrap("read scoped publish target", failure.ServerResponseInvalid, errors.New("control returned an invalid saved target"))
+	}
+	if flags.Target != "" {
+		selected, err := localproxy.NormalizeTarget(flags.Target)
+		if err != nil {
+			return err
+		}
+		if selected != target {
+			return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("target differs from the saved public URL"))
+		}
+	}
+	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
+	if err != nil {
+		return err
 	}
 	if flags.projectRoot == "" {
 		flags.projectRoot, err = currentProjectRoot(ctx)

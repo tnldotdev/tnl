@@ -78,7 +78,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	service := ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
-	} else if flags.Target == "" {
+	} else if flags.Target == "" && flags.PublishCredential == "" {
 		var err error
 		service, err = c.defaultService()
 		if err != nil {
@@ -111,11 +111,18 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.CAFile != nil {
 		flags.TargetCAFile = *effective.Publish.CAFile
 	}
-	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	if flags.PublishCredential == "" {
+		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+	} else if flags.RequestLimit == nil && effective.Tunnel != nil {
+		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
+		flags.RequestLimit = effective.Tunnel.RequestLimit
+	}
 	applyRequestInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
-	if flags.Target == "" {
+	if flags.PublishCredential == "" {
+		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
+	}
+	if flags.Target == "" && flags.PublishCredential == "" {
 		if service != "" {
 			return failure.Wrap("select target for service", failure.MissingTarget,
 				fmt.Errorf("target is required for service %q through publish.target", service))
@@ -421,11 +428,11 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
-	case "url credential create <public-url-id>":
+	case "url credential create <service-or-public-url-id>":
 		apply(&flags.URL.Credential.Create.remoteFlags, true)
 	case "url credential list <public-url-id>":
 		apply(&flags.URL.Credential.List.remoteFlags, true)
-	case "url credential revoke <public-url-id> <credential-id>":
+	case "url credential revoke <credential-id>":
 		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)

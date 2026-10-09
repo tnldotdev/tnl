@@ -544,11 +544,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "url credential create <public-url-id>":
-		return runURLCredentialCreate(ctx, flags.URL.Credential.Create, stdout, stderr)
+	case "url credential create <service-or-public-url-id>":
+		return runURLCredentialCreate(ctx, flags.URL.Credential.Create, project, stdout, stderr)
 	case "url credential list <public-url-id>":
 		return runURLCredentialList(ctx, flags.URL.Credential.List, stdout, stderr)
-	case "url credential revoke <public-url-id> <credential-id>":
+	case "url credential revoke <credential-id>":
 		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
@@ -638,7 +638,9 @@ func canonicalParsedCommand(command string) string {
 	case "publish":
 		return "publish <service-or-target>"
 	case "url credential create":
-		return "url credential create <public-url-id>"
+		return "url credential create <service-or-public-url-id>"
+	case "url credential list":
+		return "url credential list <public-url-id>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

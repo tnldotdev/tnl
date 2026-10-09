@@ -200,8 +200,8 @@ func TestPublishHostnameOptions(t *testing.T) {
 }
 
 func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
-	t.Setenv("TNL_TARGET", "http://app:3000")
-	t.Setenv("TNL_PUBLIC_URL", "https://app.example.test")
+	t.Setenv("TNL_TARGET", "")
+	t.Setenv("TNL_PUBLIC_URL", "")
 	t.Setenv("TNL_PUBLISH_CREDENTIAL", "tnl_publish_example")
 	var flags cli
 	parser, err := kong.New(&flags)
@@ -212,8 +212,8 @@ func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "http://app:3000" ||
-		flags.Publish.PublicURL != "https://app.example.test" || flags.Publish.PublishCredential != "tnl_publish_example" {
+	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "" ||
+		flags.Publish.PublicURL != "" || flags.Publish.PublishCredential != "tnl_publish_example" {
 		t.Fatalf("environment publish command %q = %#v", parsed.Command(), flags.Publish)
 	}
 	if err := (projectConfiguration{}).applyPublish(&flags.Publish); err != nil || flags.Publish.Name != "" {
@@ -221,19 +221,29 @@ func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 	}
 }
 
-func TestCredentialProvisioningSelectsOptionalPublicURLID(t *testing.T) {
-	for _, args := range [][]string{
-		{"url", "credential", "create", "--public-url", "https://app.example.test", "--target", "http://app:3000"},
-		{"url", "credential", "create", "url_0123456789abcdefghijkl"},
+func TestCredentialCommandsSelectOptionalServiceAndURLFilters(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"url", "credential", "create", "--target", "http://app:3000"}, "url credential create <service-or-public-url-id>"},
+		{[]string{"url", "credential", "create", "api", "--output", "json"}, "url credential create <service-or-public-url-id>"},
+		{[]string{"url", "credential", "create", "url_0123456789abcdefghijkl"}, "url credential create <service-or-public-url-id>"},
+		{[]string{"url", "credential", "list"}, "url credential list <public-url-id>"},
+		{[]string{"url", "credential", "list", "url_0123456789abcdefghijkl"}, "url credential list <public-url-id>"},
+		{[]string{"url", "credential", "revoke", "upc_0123456789abcdefghijkl", "--output", "json"}, "url credential revoke <credential-id>"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
 		if err != nil {
 			t.Fatal(err)
 		}
-		parsed, err := parser.Parse(args)
-		if err != nil || canonicalParsedCommand(parsed.Command()) != "url credential create <public-url-id>" {
-			t.Fatalf("credential create %v: %v, command = %q", args, err, parsed.Command())
+		parsed, err := parser.Parse(test.args)
+		if err != nil {
+			t.Fatalf("parse credential command %v: %v", test.args, err)
+		}
+		if got := canonicalParsedCommand(parsed.Command()); got != test.want {
+			t.Fatalf("credential command %v = %q, want %q", test.args, got, test.want)
 		}
 	}
 }

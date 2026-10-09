@@ -78,6 +78,8 @@ type PublicURLPublishCredentialStore interface {
 	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
 	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
 	ListPublicURLPublishCredentials(context.Context, string) ([]controlstate.PublicURLPublishCredential, error)
+	ListTeamPublicURLPublishCredentials(context.Context, string, string) (controlstate.PublicURLPublishCredentialPage, error)
+	PublicURLPublishCredentialByID(context.Context, string) (controlstate.PublicURLPublishCredential, error)
 	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
 }
 

@@ -79,7 +79,8 @@ func (h *handler) CreatePublicURLPublishCredential(response http.ResponseWriter,
 }
 
 func (h *handler) ListPublicURLPublishCredentials(response http.ResponseWriter, request *http.Request, publicURLID controlv1.PublicURLID) {
-	if _, _, ok := h.credentialManagementRoute(response, request, string(publicURLID)); !ok {
+	route, _, ok := h.credentialManagementRoute(response, request, string(publicURLID))
+	if !ok {
 		return
 	}
 	credentials, err := h.publishCredentials.ListPublicURLPublishCredentials(request.Context(), string(publicURLID))
@@ -89,18 +90,97 @@ func (h *handler) ListPublicURLPublishCredentials(response http.ResponseWriter, 
 	}
 	items := make([]controlv1.PublicURLPublishCredential, len(credentials))
 	for index, credential := range credentials {
-		items[index] = credentialResponse(credential)
+		items[index] = credentialResponse(credential, "https://"+route.CanonicalHostname)
 	}
 	writeJSON(response, http.StatusOK, struct {
 		Credentials []controlv1.PublicURLPublishCredential `json:"credentials"`
 	}{Credentials: items})
 }
 
-func credentialResponse(credential controlstate.PublicURLPublishCredential) controlv1.PublicURLPublishCredential {
+func credentialResponse(credential controlstate.PublicURLPublishCredential, publicURL string) controlv1.PublicURLPublishCredential {
 	return controlv1.PublicURLPublishCredential{
-		Id: credential.ID, PublicUrlId: credential.PublicURLID,
+		Id: credential.ID, PublicUrlId: credential.PublicURLID, PublicUrl: publicURL,
 		CreatedAt: credential.CreatedAt, ExpiresAt: credential.ExpiresAt, RevokedAt: credential.RevokedAt,
 	}
+}
+
+func (h *handler) ListTeamPublicURLPublishCredentials(response http.ResponseWriter, request *http.Request, params controlv1.ListTeamPublicURLPublishCredentialsParams) {
+	if h.publishCredentials == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "publish credentials are unavailable")
+		return
+	}
+	principal, ok := h.authorizeRouteReads(response, request)
+	if !ok {
+		return
+	}
+	if _, found := principal.teamIDs[string(params.TeamId)]; !found {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "team access denied")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = string(*params.Cursor)
+	}
+	page, err := h.publishCredentials.ListTeamPublicURLPublishCredentials(request.Context(), string(params.TeamId), cursor)
+	if err != nil {
+		writeControlStateProblem(response, "list team publish credentials", err)
+		return
+	}
+	result := controlv1.PublicURLPublishCredentialPage{Credentials: make([]controlv1.PublicURLPublishCredential, len(page.Credentials))}
+	for index, item := range page.Credentials {
+		result.Credentials[index] = controlv1.PublicURLPublishCredential{
+			Id: item.ID, PublicUrlId: item.PublicURLID, PublicUrl: item.PublicURL,
+			CreatedAt: item.CreatedAt, ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt,
+		}
+	}
+	if page.NextCursor != "" {
+		result.NextCursor = &page.NextCursor
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (h *handler) RevokePublishCredentialByID(response http.ResponseWriter, request *http.Request, credentialID controlv1.ResourceID, params controlv1.RevokePublishCredentialByIDParams) {
+	if h.publishCredentials == nil || h.store == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "publish credentials are unavailable")
+		return
+	}
+	principal, ok := h.authorizeRouteReads(response, request)
+	if !ok {
+		return
+	}
+	credential, err := h.publishCredentials.PublicURLPublishCredentialByID(request.Context(), string(credentialID))
+	if err != nil {
+		writeControlStateProblem(response, "read publish credential", err)
+		return
+	}
+	route, err := h.store.GetPublicURLForAuthorization(request.Context(), credential.PublicURLID)
+	if err != nil {
+		writeControlStateProblem(response, "read credential public URL", err)
+		return
+	}
+	if route.TeamID != string(params.TeamId) {
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		return
+	}
+	allowed := make([]string, len(route.AllowedIPPrefixes))
+	for index, prefix := range route.AllowedIPPrefixes {
+		allowed[index] = prefix.String()
+	}
+	if _, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
+		Operation: authorization.OperationPublicURLDelete, TeamID: route.TeamID,
+		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
+		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
+		Target: route.Target, AllowedIPPrefixes: allowed, Ephemeral: route.Ephemeral, PublicURLID: route.ID,
+		PublicURLMutationRevision: route.MutationRevision,
+	}); !ok {
+		return
+	}
+	revoked, err := h.publishCredentials.RevokePublicURLPublishCredential(request.Context(), route.ID, string(credentialID), time.Now())
+	if err != nil {
+		writeControlStateProblem(response, "revoke publish credential", err)
+		return
+	}
+	writeJSON(response, http.StatusOK, credentialResponse(revoked, "https://"+route.CanonicalHostname))
 }
 
 func (h *handler) RevokePublicURLPublishCredential(response http.ResponseWriter, request *http.Request, publicURLID controlv1.PublicURLID, credentialID controlv1.ResourceID) {
