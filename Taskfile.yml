@@ -362,7 +362,6 @@ tasks:
   installer:test:
     desc: Test the shell installer without accessing GitHub or client state
     cmds:
-      - go test ./internal/clioutput
       - pnpm exec vitest run scripts/install.test.ts
 
   js:test:coverage:

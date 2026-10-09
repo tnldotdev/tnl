@@ -13,8 +13,6 @@ const (
 	defaultWidth = 64
 	maxWidth     = 72
 	framePadding = 2
-	topFormat    = "+--[ %s ]-- %s "
-	footerFormat = "+-- %s "
 )
 
 // Frame is one complete human-readable command result or diagnostic.
@@ -151,10 +149,10 @@ func Render(frame Frame) (string, error) {
 		return "", errors.New("clioutput: command and state are required")
 	}
 
-	topPrefix := fmt.Sprintf(topFormat, command, state)
+	topPrefix := "+--[ " + command + " ]-- " + state + " "
 	bottomPrefix := ""
 	if footer != "" {
-		bottomPrefix = fmt.Sprintf(footerFormat, footer)
+		bottomPrefix = "+-- " + footer + " "
 	}
 	width := max(defaultWidth, len(topPrefix)+2, len(bottomPrefix)+2)
 	if width > maxWidth {
