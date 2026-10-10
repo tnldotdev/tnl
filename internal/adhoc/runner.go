@@ -120,5 +120,9 @@ func Run(ctx context.Context, options Options) (result error) {
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: tlsConfig},
 		Observe:       options.Observe,
 	}
-	return publisher.Run(ctx, publication)
+	result = publisher.Run(ctx, publication)
+	if ctx.Err() != nil && errors.Is(result, context.Canceled) {
+		result = nil
+	}
+	return result
 }
