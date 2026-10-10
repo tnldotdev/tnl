@@ -234,6 +234,15 @@ public URL or allow it to act as a saved-URL credential. control checks the
 stored kind as well as the token's prefix, and team credential listing and
 revocation handle both kinds by credential ID.
 
+ad-hoc allocation is control-owned: one invocation ID and an ephemeral
+credential select one URL beneath the stored namespace. control rechecks the
+stored credential, current membership and domain, and the public URL creation
+gate in the creation transaction. the caller supplies a canonical loopback
+target and visitor IP policy, never the hostname. the 128-bit `eph-` label is
+random; identical allocation retries return the same saved URL, while changed
+inputs conflict. namespace wildcard DNS covers the label, but ingress still
+requires the exact saved URL and a ready publish run before routing visitors.
+
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
 the member namespace apex is reserved. by default, a self-hosted built-in

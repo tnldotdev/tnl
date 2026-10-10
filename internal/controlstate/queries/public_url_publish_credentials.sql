@@ -27,7 +27,7 @@ INSERT INTO control.public_url_publish_credentials (
 ) RETURNING *;
 
 -- name: GetReadyEphemeralCredentialDomain :one
-SELECT id, canonical_domain, kind
+SELECT id, canonical_domain, kind, dns_authority_reference
 FROM control.domains
 WHERE id = sqlc.arg(domain_id) AND state = 'ready' AND released_at IS NULL
     AND (kind = 'managed' OR team_id = sqlc.arg(team_id))

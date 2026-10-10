@@ -376,6 +376,12 @@ func (c *Client) PublicURLForPublishCredential(ctx context.Context, credential c
 	return request[controlv1.PublicURL](ctx, c, credential.String(), c.api.GetPublicURLForPublishCredential)
 }
 
+func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
+	return request[controlv1.PublicURL](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AllocateEphemeralPublicURL(ctx, body, editors...)
+	})
+}
+
 func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
 	return request[controlv1.PublishRunSetup](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

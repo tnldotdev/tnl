@@ -445,6 +445,20 @@ func TestNormalizeTarget(t *testing.T) {
 	}
 }
 
+func TestParseCanonicalTarget(t *testing.T) {
+	for _, target := range []string{"http://127.0.0.1:3000", "https://[::1]:443", "http://192.0.2.1:3000"} {
+		parsed, err := ParseCanonicalTarget(target)
+		if err != nil || parsed.String() != target {
+			t.Fatalf("canonical target %q = %v, %v", target, parsed, err)
+		}
+	}
+	for _, target := range []string{"3000", "http://localhost:3000", "HTTP://127.0.0.1:03000", "http://127.0.0.1:3000/path"} {
+		if _, err := ParseCanonicalTarget(target); err == nil {
+			t.Fatalf("noncanonical target %q was accepted", target)
+		}
+	}
+}
+
 func TestPreflightRequiresAvailableTarget(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(upstream.Close)

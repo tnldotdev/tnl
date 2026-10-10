@@ -7,9 +7,20 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
-func TestIntegrationEphemeralCredentialKeepsItsScopeAndRevokesByID(t *testing.T) {
+type testEphemeralCredentialScope struct {
+	database   *Database
+	now        time.Time
+	run        PublishRunRequest
+	route      PublicURL
+	credential PublicURLPublishCredential
+	secret     credentials.EphemeralCredential
+}
+
+func issueTestEphemeralCredential(t *testing.T) testEphemeralCredentialScope {
+	t.Helper()
 	database, now, run, _ := newPublishRunPrerequisites(t)
 	route, err := database.GetPublicURLForAuthorization(t.Context(), run.PublicURLID)
 	if err != nil {
@@ -33,6 +44,13 @@ func TestIntegrationEphemeralCredentialKeepsItsScopeAndRevokesByID(t *testing.T)
 	if err != nil || credential.Kind != PublishCredentialEphemeral || credential.PublicURLID != "" || credential.Namespace != namespace {
 		t.Fatalf("issued ad-hoc credential = %#v, %v", credential, err)
 	}
+	return testEphemeralCredentialScope{database, now, run, route, credential, secret}
+}
+
+func TestIntegrationEphemeralCredentialKeepsItsScopeAndRevokesByID(t *testing.T) {
+	fixture := issueTestEphemeralCredential(t)
+	database, now, run, credential, secret := fixture.database, fixture.now, fixture.run, fixture.credential, fixture.secret
+	var err error
 	selected, err := database.AuthenticateEphemeralCredential(t.Context(), secret, now)
 	if err != nil || selected.ID != credential.ID {
 		t.Fatalf("authenticate ad-hoc credential = %#v, %v", selected, err)

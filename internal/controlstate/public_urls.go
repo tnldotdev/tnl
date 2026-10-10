@@ -78,6 +78,9 @@ type CreatePublicURLRequest struct {
 	DNSAuthorityReference string
 	PolicyRevision        uint64
 	Ephemeral             bool
+	EphemeralCredentialID string
+	EphemeralTokenDigest  credentials.SecretHash
+	EphemeralNamespace    string
 }
 
 type AuthorizedPublicURLUpdateRequest struct {
@@ -130,6 +133,19 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	} else if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
 	}
+	if request.EphemeralCredentialID != "" {
+		credential, domain, err := validateEphemeralAllocation(ctx, queries, request, now)
+		if err != nil {
+			return PublicURL{}, err
+		}
+		request.DNSAuthorityReference = domain.DnsAuthorityReference.String
+		request.PolicyRevision = uint64(credential.PolicyRevision)
+		if request.EphemeralNamespace == domain.CanonicalDomain {
+			request.PublicURLScope, request.MembershipID = PublicURLScopeShared, ""
+		} else {
+			request.PublicURLScope, request.MembershipID = PublicURLScopeMember, credential.MembershipID
+		}
+	}
 	policyRevision := int64(0)
 	namespace := ""
 	if request.GuestID != "" {
@@ -166,6 +182,12 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: read idempotent public_url: %w", err)
+	}
+	if request.EphemeralCredentialID != "" {
+		request.CanonicalHostname, err = newEphemeralHostname(request.EphemeralNamespace)
+		if err != nil {
+			return PublicURL{}, err
+		}
 	}
 	if request.GuestID != "" {
 		guest, err := queries.LockGuestTrialByID(ctx, request.GuestID)
@@ -230,6 +252,9 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 				TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug,
 				ManagedLabel: creation.ActorManagedLabel,
 			})
+		}
+		if request.EphemeralCredentialID != "" && namespace != request.EphemeralNamespace {
+			return PublicURL{}, ErrPublicURLAccess
 		}
 		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
 			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
@@ -910,13 +935,16 @@ func closePublishRun(
 func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Prefix, error) {
 	for _, value := range []string{
 		request.TeamID, request.DomainID, request.ActingIdentityID, request.IdempotencyKey,
-		request.CanonicalHostname, string(request.PublicURLScope), string(request.DNSState),
+		string(request.PublicURLScope), string(request.DNSState),
 	} {
 		if !validStateText(value) {
 			return nil, ErrPublicURLInvalid
 		}
 	}
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
+		request.EphemeralCredentialID == "" && !validStateText(request.CanonicalHostname) ||
+		request.EphemeralCredentialID != "" && (request.CanonicalHostname != "" || !request.Ephemeral ||
+			!opaqueid.Valid(request.EphemeralCredentialID, opaqueid.PublicURLPublishCredentialPrefix)) ||
 		!request.Purpose.ValidForCreation() || request.GuestID != "" && request.Purpose != PublicURLPurposeDemo ||
 		request.DNSAuthorityReference != "" && !validStateText(request.DNSAuthorityReference) ||
 		request.DNSState == PublicURLDNSUnmanaged && request.DNSAuthorityReference != "" ||
@@ -927,9 +955,11 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 	if request.GuestID != "" && (!validStateText(request.GuestID) || request.ActingIdentityID != request.GuestID || request.PolicyRevision == 0) {
 		return nil, ErrPublicURLInvalid
 	}
-	canonical, err := naming.CanonicalizeHostname(request.CanonicalHostname)
-	if err != nil || canonical != request.CanonicalHostname {
-		return nil, ErrPublicURLInvalid
+	if request.EphemeralCredentialID == "" {
+		canonical, err := naming.CanonicalizeHostname(request.CanonicalHostname)
+		if err != nil || canonical != request.CanonicalHostname {
+			return nil, ErrPublicURLInvalid
+		}
 	}
 	if request.Target == "" && (request.Purpose != PublicURLPurposeApp || request.Ephemeral) ||
 		request.Target != "" && authorization.ValidateTarget(request.Target) != nil {

@@ -779,6 +779,15 @@ type AdminServerStatus struct {
 // AdminServerStatusRole defines model for AdminServerStatus.Role.
 type AdminServerStatusRole string
 
+// AllocateEphemeralPublicURLRequest defines model for AllocateEphemeralPublicURLRequest.
+type AllocateEphemeralPublicURLRequest struct {
+	AllowAllIps  *bool                       `json:"allow_all_ips,omitempty"`
+	AllowIp      *[]string                   `json:"allow_ip,omitempty"`
+	InvocationId ResourceID                  `json:"invocation_id"`
+	Limits       *PublisherApplicationLimits `json:"limits,omitempty"`
+	Target       string                      `json:"target"`
+}
+
 // AppendFeedbackEventRequest defines model for AppendFeedbackEventRequest.
 type AppendFeedbackEventRequest struct {
 	Evidence *FeedbackEvidence `json:"evidence,omitempty"`
@@ -1414,6 +1423,16 @@ type PublishRunVersionRequest struct {
 	PublishRunNumber int64 `json:"publish_run_number"`
 }
 
+// PublisherApplicationLimits defines model for PublisherApplicationLimits.
+type PublisherApplicationLimits struct {
+	Concurrency *int `json:"concurrency,omitempty"`
+	Rate        *struct {
+		Per      string `json:"per"`
+		Requests int    `json:"requests"`
+	} `json:"rate,omitempty"`
+	Requests *int `json:"requests,omitempty"`
+}
+
 // PublisherConnectionID defines model for PublisherConnectionID.
 type PublisherConnectionID = ResourceID
 
@@ -1749,6 +1768,9 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// AllocateEphemeralPublicURLJSONRequestBody defines body for AllocateEphemeralPublicURL for application/json ContentType.
+type AllocateEphemeralPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
+
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
@@ -2037,6 +2059,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateEphemeralPublicURLWithBody Create a temporary public URL for one ad-hoc publication
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+	AllocateEphemeralPublicURLWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateEphemeralPublicURL Create a temporary public URL for one ad-hoc publication
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+	AllocateEphemeralPublicURL(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListFeedbackThreads List feedback threads manageable in one team
 	//
@@ -2717,6 +2753,40 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 // Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetControlDiscoveryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateEphemeralPublicURLWithBody Create a temporary public URL for one ad-hoc publication
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+func (c *Client) AllocateEphemeralPublicURLWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateEphemeralPublicURLRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateEphemeralPublicURL Create a temporary public URL for one ad-hoc publication
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateEphemeralPublicURLRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4415,6 +4485,46 @@ func NewGetControlDiscoveryRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewAllocateEphemeralPublicURLRequest calls the generic AllocateEphemeralPublicURL builder with application/json body
+func NewAllocateEphemeralPublicURLRequest(server string, body AllocateEphemeralPublicURLJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAllocateEphemeralPublicURLRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAllocateEphemeralPublicURLRequestWithBody constructs an http.Request for the AllocateEphemeralPublicURL method, with any body, and a specified content type
+func NewAllocateEphemeralPublicURLRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ephemeral-public-urls")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6857,6 +6967,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
+	// AllocateEphemeralPublicURLWithBodyWithResponse Create a temporary public URL for one ad-hoc publication
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+	AllocateEphemeralPublicURLWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error)
+
+	// AllocateEphemeralPublicURLWithResponse Create a temporary public URL for one ad-hoc publication
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+	AllocateEphemeralPublicURLWithResponse(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error)
+
 	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -7932,6 +8056,54 @@ func (r GetControlDiscoveryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetControlDiscoveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AllocateEphemeralPublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AllocateEphemeralPublicURLResponse) GetJSON201() *PublicURL {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AllocateEphemeralPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AllocateEphemeralPublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AllocateEphemeralPublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllocateEphemeralPublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AllocateEphemeralPublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10456,6 +10628,32 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
+// AllocateEphemeralPublicURLWithBodyWithResponse Create a temporary public URL for one ad-hoc publication
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+func (c *ClientWithResponses) AllocateEphemeralPublicURLWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error) {
+	rsp, err := c.AllocateEphemeralPublicURLWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateEphemeralPublicURLResponse(rsp)
+}
+
+// AllocateEphemeralPublicURLWithResponse Create a temporary public URL for one ad-hoc publication
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
+func (c *ClientWithResponses) AllocateEphemeralPublicURLWithResponse(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error) {
+	rsp, err := c.AllocateEphemeralPublicURL(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateEphemeralPublicURLResponse(rsp)
+}
+
 // ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -11793,6 +11991,39 @@ func ParseGetControlDiscoveryResponse(rsp *http.Response) (*GetControlDiscoveryR
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAllocateEphemeralPublicURLResponse parses an HTTP response from a AllocateEphemeralPublicURLWithResponse call
+func ParseAllocateEphemeralPublicURLResponse(rsp *http.Response) (*AllocateEphemeralPublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AllocateEphemeralPublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -13473,6 +13704,9 @@ type ServerInterface interface {
 	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
+	// AllocateEphemeralPublicURL Create a temporary public URL for one ad-hoc publication
+	// (POST /v1/ephemeral-public-urls)
+	AllocateEphemeralPublicURL(w http.ResponseWriter, r *http.Request)
 	// ListFeedbackThreads List feedback threads manageable in one team
 	// (GET /v1/feedback)
 	ListFeedbackThreads(w http.ResponseWriter, r *http.Request, params ListFeedbackThreadsParams)
@@ -13946,6 +14180,20 @@ func (siw *ServerInterfaceWrapper) GetControlDiscovery(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetControlDiscovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AllocateEphemeralPublicURL operation middleware
+func (siw *ServerInterfaceWrapper) AllocateEphemeralPublicURL(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AllocateEphemeralPublicURL(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15720,6 +15968,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publish-credentials", wrapper.ListTeamPublicURLPublishCredentials)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-credentials", wrapper.CreateEphemeralPublishCredential)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-credentials/{credential_id}", wrapper.RevokePublishCredentialByID)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ephemeral-public-urls", wrapper.AllocateEphemeralPublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-access", wrapper.EnableShareAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-state", wrapper.GetPublishRunShareState)
