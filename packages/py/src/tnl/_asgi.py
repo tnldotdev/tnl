@@ -195,6 +195,21 @@ class Tunnel:
         )
         while not self._closed and not self._finished.done():
             try:
+                if self._serve_task.done():
+                    if self._registered:
+                        try:
+                            await self._native.request(
+                                self._socket, "unregister", self._registration
+                            )
+                        except TnlError:
+                            # close retries cleanup if the native publisher is unavailable.
+                            pass
+                        else:
+                            self._registered = False
+                    self._fail(
+                        TnlError("sdk.listener_failed", "ASGI listener stopped during publication")
+                    )
+                    return
                 self._observe(status)
                 if self._closed or self._finished.done():
                     return

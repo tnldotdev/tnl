@@ -111,6 +111,10 @@ assert subprocess.check_output([str(binary), "version"], text=True).strip() == f
     ],
     { maxBuffer: 1024 * 1024 },
   );
+  await execFileAsync(python, ["-I", path.resolve("packages/py/tests/wheel_smoke.py")], {
+    maxBuffer: 1024 * 1024,
+    timeout: 30_000,
+  });
 } finally {
   await rm(environment, { recursive: true, force: true });
 }
