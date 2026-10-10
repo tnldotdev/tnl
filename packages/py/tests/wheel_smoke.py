@@ -31,7 +31,7 @@ class NativeStub(NativeRuntime):
         if operation == "renew":
             return None
         return {
-            "protocol": 1,
+            "version": 1,
             "registration_id": payload["registration_id"],
             "state": "routable",
             "public_url_id": "url_wheel_smoke",
