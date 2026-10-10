@@ -58,6 +58,7 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	if err != nil {
 		return Project{}, err
 	}
+	config.NormalizePublicURLs(&project.Config)
 
 	names := make([]string, 0, len(project.Config.Services))
 	for name := range project.Config.Services {

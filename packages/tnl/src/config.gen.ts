@@ -48,7 +48,7 @@ export interface TnlConfig {
      */
     allowIP?: string[];
     /**
-     * Exact HTTPS public URL to publish.
+     * Exact public URL hostname or HTTPS origin to publish.
      */
     publicURL?: string;
     /**
@@ -97,7 +97,7 @@ export interface TnlConfig {
              */
             allowIP?: string[];
             /**
-             * Exact HTTPS public URL to publish.
+             * Exact public URL hostname or HTTPS origin to publish.
              */
             publicURL?: string;
             /**
@@ -200,7 +200,7 @@ export interface TnlConfig {
            */
           allowIP?: string[];
           /**
-           * Exact authorized HTTPS public URL; mutually exclusive with name and domain.
+           * Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain.
            */
           publicURL?: string;
         }

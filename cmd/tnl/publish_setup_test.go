@@ -100,12 +100,18 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 			if test.host != "" {
 				publicURL = "https://" + test.host
 			}
-			hostname, domain, scope, err := resolvePublishHostname(publicURL, name, "", current)
-			if err != nil {
-				t.Fatal(err)
+			inputs := []string{publicURL}
+			if test.host != "" {
+				inputs = append(inputs, test.host)
 			}
-			if hostname != wantHost || domain.Id != "domain_1" || scope != wantScope {
-				t.Fatalf("resolution = %q, %q, %q; want %q, %q", hostname, domain.Id, scope, wantHost, wantScope)
+			for _, input := range inputs {
+				hostname, domain, scope, err := resolvePublishHostname(input, name, "", current)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if hostname != wantHost || domain.Id != "domain_1" || scope != wantScope {
+					t.Fatalf("resolution = %q, %q, %q; want %q, %q", hostname, domain.Id, scope, wantHost, wantScope)
+				}
 			}
 		})
 	}

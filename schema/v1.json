@@ -97,7 +97,7 @@
             },
             "public_url": {
               "type": "string",
-              "description": "Exact HTTPS public URL to publish."
+              "description": "Exact public URL hostname or HTTPS origin to publish."
             },
             "open": {
               "type": "boolean",
@@ -187,7 +187,7 @@
                   },
                   "public_url": {
                     "type": "string",
-                    "description": "Exact HTTPS public URL to publish."
+                    "description": "Exact public URL hostname or HTTPS origin to publish."
                   },
                   "open": {
                     "type": "boolean",
@@ -387,7 +387,7 @@
               },
               "public_url": {
                 "type": "string",
-                "description": "Exact authorized HTTPS public URL; mutually exclusive with name and domain."
+                "description": "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."
               },
               "allow_ip": {
                 "items": {

@@ -39,6 +39,24 @@ func TestAliasFingerprintDistinguishesInheritedAndExplicitEmptyVisitorPolicy(t *
 	}
 }
 
+func TestAliasExactHostnameHasOneIdentityAndFingerprint(t *testing.T) {
+	bare, origin := "review.example.test", "https://review.example.test"
+	_, bareHash, err := (Alias{Service: "api", PublicURL: &bare}).DefinitionBytes("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, originHash, err := (Alias{Service: "api", PublicURL: &origin}).DefinitionBytes("review")
+	if err != nil || bareHash != originHash {
+		t.Fatalf("equivalent exact aliases have different hashes: %x, %x, %v", bareHash, originHash, err)
+	}
+	config := TNL{Services: Services{"api": {}}, Aliases: map[string]Alias{
+		"first": {Service: "api", PublicURL: &bare}, "second": {Service: "api", PublicURL: &origin},
+	}}
+	if err := ValidateAliases(config); err == nil || !strings.Contains(err.Error(), "also used") {
+		t.Fatalf("equivalent exact aliases were not detected: %v", err)
+	}
+}
+
 func TestInvalidAliasDeclarations(t *testing.T) {
 	for _, test := range []struct{ name, declaration, want string }{
 		{"missing service", `{"review":{"service":"missing"}}`, "not configured"},

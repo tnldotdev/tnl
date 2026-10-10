@@ -10,6 +10,27 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
+func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
+	for name, contents := range map[string]string{
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    api:\n      tunnel:\n        public_url: api.example.test\n  aliases:\n    review:\n      service: api\n      public_url: review.example.test\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"api":{"tunnel":{"public_url":"api.example.test"}}},"aliases":{"review":{"service":"api","public_url":"review.example.test"}}}}`,
+	} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		document, err := LoadDocument(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		service := document.TNL.Services["api"]
+		alias := document.TNL.Aliases["review"]
+		if service.Tunnel == nil || service.Tunnel.PublicURL == nil || *service.Tunnel.PublicURL != "https://api.example.test" || alias.PublicURL == nil || *alias.PublicURL != "https://review.example.test" {
+			t.Fatalf("%s exact public URLs were not normalized: %#v", name, document.TNL)
+		}
+	}
+}
+
 func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 	directory := t.TempDir()
 	for name, test := range map[string]struct{ contents, category string }{
@@ -244,7 +265,7 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"server URL":                 {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
 		"uppercase domain":           {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},
 		"multi-label name":           {`{"version":1,"tnl":{"tunnel":{"name":"api.example"}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api.example\n", "tunnel.name must be one lowercase ASCII DNS label"},
-		"public URL path":            {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be an HTTPS public URL"},
+		"public URL path":            {`{"version":1,"tnl":{"tunnel":{"public_url":"https://api.example.test/path"}}}`, "version: 1\ntnl:\n  tunnel:\n    public_url: https://api.example.test/path\n", "tunnel.public_url must be a canonical hostname or HTTPS public URL"},
 		"root name with service":     {`{"version":1,"tnl":{"tunnel":{"name":"api"},"services":{"api":{}}}}`, "version: 1\ntnl:\n  tunnel:\n    name: api\n  services:\n    api: {}\n", "tunnel.name and tunnel.public_url belong under services.NAME.tunnel"},
 		"service server":             {`{"version":1,"tnl":{"services":{"web":{"server":"https://control.example"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      server: https://control.example\n", "server"},
 		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
