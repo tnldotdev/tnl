@@ -228,6 +228,12 @@ match; the publish run token handles later run operations. control records the
 credential used to start a run and closes that run on heartbeat if the
 credential expires, is revoked, or its issuer loses publish authority.
 
+an ephemeral credential instead records a team, ready domain, membership,
+namespace, and DNS-01 wildcard certificate plan. issuing it does not create a
+public URL or allow it to act as a saved-URL credential. control checks the
+stored kind as well as the token's prefix, and team credential listing and
+revocation handle both kinds by credential ID.
+
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
 the member namespace apex is reserved. by default, a self-hosted built-in

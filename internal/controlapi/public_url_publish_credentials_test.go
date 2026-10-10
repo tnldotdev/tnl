@@ -18,6 +18,7 @@ import (
 type scopedCredentialStoreStub struct {
 	PublicURLPublishCredentialStore
 	credential     controlstate.PublicURLPublishCredential
+	issuedScope    controlstate.CreateEphemeralCredentialRequest
 	page           controlstate.PublicURLPublishCredentialPage
 	validations    int
 	revocations    int
@@ -27,6 +28,20 @@ type scopedCredentialStoreStub struct {
 func (s *scopedCredentialStoreStub) CreatePublicURLPublishCredential(_ context.Context, request controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error) {
 	s.issuedLifetime = request.ExpiresAt.Sub(request.Now)
 	return s.credential, "tnl_publish_one_time_secret", nil
+}
+
+func (s *scopedCredentialStoreStub) CreateEphemeralCredential(_ context.Context, request controlstate.CreateEphemeralCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.EphemeralCredential, error) {
+	s.issuedScope = request
+	return controlstate.PublicURLPublishCredential{
+		ID: "upc_ephemeral", Kind: controlstate.PublishCredentialEphemeral, TeamID: request.TeamID,
+		DomainID: request.DomainID, Namespace: request.Namespace, CreatedAt: request.Now, ExpiresAt: request.ExpiresAt,
+	}, "tnl_eph_one_time_secret", nil
+}
+
+func (s *scopedCredentialStoreStub) RevokeEphemeralCredential(_ context.Context, teamID, id string, now time.Time) (controlstate.PublicURLPublishCredential, error) {
+	s.revocations++
+	s.credential.RevokedAt = &now
+	return s.credential, nil
 }
 
 func (s *scopedCredentialStoreStub) ListPublicURLPublishCredentials(_ context.Context, _ string) ([]controlstate.PublicURLPublishCredential, error) {
@@ -154,6 +169,79 @@ func TestPublishCredentialIsReturnedOnlyAtIssuance(t *testing.T) {
 	}
 }
 
+func TestEphemeralCredentialRequiresDNSWildcardAndDoesNotCreateURL(t *testing.T) {
+	namespace := "member.example.test"
+	store := &scopedCredentialStoreStub{}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", DomainID: "domain_1", ActingMembershipID: "membership_1",
+		ActingRole: "member", PolicyRevision: 1, Namespace: namespace,
+		CertificatePlan: &authorization.CertificatePlan{CacheKey: namespace, Scope: namespace,
+			Identifiers: []string{"*." + namespace}, ChallengeMethod: "dns-01"},
+	}}
+	h := &handler{publishCredentials: store, authorizer: authorizer, config: Config{DNSAutomation: true}}
+	newRequest := func() *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/v1/publish-credentials", strings.NewReader(`{"team_id":"team_1","domain_id":"domain_1","public_url_scope":"member","expires_in_seconds":604800}`))
+		request.Header.Set("Authorization", "Bearer access-token")
+		return request
+	}
+	response := httptest.NewRecorder()
+	h.CreateEphemeralPublishCredential(response, newRequest())
+	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" ||
+		store.issuedScope.Namespace != namespace || store.issuedScope.ExpiresAt.Sub(store.issuedScope.Now) != 7*24*time.Hour ||
+		strings.Contains(response.Body.String(), "public_url_id") {
+		t.Fatalf("ad-hoc issuance = %d %s, scope = %#v", response.Code, response.Body.String(), store.issuedScope)
+	}
+	if len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationCredentialCreate {
+		t.Fatalf("ad-hoc authorization = %#v", authorizer.requests)
+	}
+	h.config.DNSAutomation = false
+	response = httptest.NewRecorder()
+	h.CreateEphemeralPublishCredential(response, newRequest())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("manual DNS issuance = %d", response.Code)
+	}
+	h.config.DNSAutomation = true
+	authorizer.decision.CertificatePlan.ChallengeMethod = "tls-alpn-01"
+	response = httptest.NewRecorder()
+	h.CreateEphemeralPublishCredential(response, newRequest())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("exact-certificate issuance = %d", response.Code)
+	}
+}
+
+func TestTeamCanListAndRevokeAdHocCredentialWithoutAURL(t *testing.T) {
+	now := time.Now()
+	credential := &scopedCredentialStoreStub{credential: controlstate.PublicURLPublishCredential{
+		ID: "upc_ephemeral", Kind: controlstate.PublishCredentialEphemeral,
+		TeamID: "team_1", DomainID: "domain_1", Namespace: "member.example.test", MembershipID: "membership_1",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}, page: controlstate.PublicURLPublishCredentialPage{Credentials: []controlstate.PublicURLPublishCredentialSummary{
+		{ID: "upc_ephemeral", Kind: controlstate.PublishCredentialEphemeral,
+			TeamID: "team_1", DomainID: "domain_1", Namespace: "member.example.test", CreatedAt: now, ExpiresAt: now.Add(time.Hour)},
+	}}}
+	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
+	}}
+	h := &handler{store: &publicURLMutationStoreStub{}, publishCredentials: credential, authorizer: authorizer}
+	request := httptest.NewRequest(http.MethodGet, "/v1/publish-credentials?team_id=team_1", nil)
+	request.Header.Set("Authorization", "Bearer access-token")
+	response := httptest.NewRecorder()
+	h.ListTeamPublicURLPublishCredentials(response, request, controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: "team_1"})
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "public_url_id") ||
+		!strings.Contains(response.Body.String(), `"kind":"ephemeral"`) {
+		t.Fatalf("team ad-hoc list = %d %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodDelete, "/v1/publish-credentials/upc_ephemeral?team_id=team_1", nil)
+	request.Header.Set("Authorization", "Bearer access-token")
+	response = httptest.NewRecorder()
+	h.RevokePublishCredentialByID(response, request, "upc_ephemeral", controlv1.RevokePublishCredentialByIDParams{TeamId: "team_1"})
+	if response.Code != http.StatusOK || credential.revocations != 1 ||
+		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationCredentialRevoke ||
+		strings.Contains(response.Body.String(), "public_url_id") {
+		t.Fatalf("ad-hoc revoke = %d %s, requests = %#v", response.Code, response.Body.String(), authorizer.requests)
+	}
+}
+
 func TestTeamCredentialManagementKeepsTeamBoundaryAndSecretPrivate(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
@@ -181,7 +269,7 @@ func TestTeamCredentialManagementKeepsTeamBoundaryAndSecretPrivate(t *testing.T)
 	h.ListTeamPublicURLPublishCredentials(response, request, controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: "team_1"})
 	var page controlv1.PublicURLPublishCredentialPage
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Credentials) != 1 ||
-		page.Credentials[0].PublicUrl != "https://app.example" || strings.Contains(response.Body.String(), "tnl_publish_") {
+		page.Credentials[0].PublicUrl == nil || *page.Credentials[0].PublicUrl != "https://app.example" || strings.Contains(response.Body.String(), "tnl_publish_") {
 		t.Fatalf("team credential list = %d %s", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodDelete, "/v1/publish-credentials/upc_1?team_id=team_2", nil)

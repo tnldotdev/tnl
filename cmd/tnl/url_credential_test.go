@@ -115,7 +115,10 @@ func TestCredentialManagementOutputShowsMetadataWithoutSecrets(t *testing.T) {
 		t.Fatalf("JSON list output = %q, %v", output.String(), err)
 	}
 	output.Reset()
-	revoked := controlv1.PublicURLPublishCredential{Id: "upc_old", PublicUrlId: "url_app", PublicUrl: "https://app.example.test", RevokedAt: &now}
+	urlID := controlv1.PublicURLID("url_app")
+	publicURL := "https://app.example.test"
+	revoked := controlv1.PublicURLPublishCredential{Id: "upc_old", Kind: controlv1.PublicURLPublishCredentialKindSavedUrl,
+		PublicUrlId: &urlID, PublicUrl: &publicURL, RevokedAt: &now}
 	if err := writeCredentialRevokeResult(credentialOutputJSON, revoked, &output); err != nil {
 		t.Fatal(err)
 	}

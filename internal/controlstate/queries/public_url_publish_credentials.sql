@@ -12,6 +12,27 @@ INSERT INTO control.public_url_publish_credentials (
     sqlc.arg(created_at), sqlc.arg(expires_at)
 ) RETURNING *;
 
+-- name: InsertEphemeralPublishCredential :one
+INSERT INTO control.public_url_publish_credentials (
+    id, kind, token_id, token_digest, issued_by_identity_id, membership_id,
+    policy_revision, target, team_id, domain_id, namespace, issued_role,
+    certificate_cache_key, certificate_scope, certificate_identifiers,
+    certificate_challenge_method, created_at, expires_at
+) VALUES (
+    sqlc.arg(id), 'ephemeral', sqlc.arg(token_id), sqlc.arg(token_digest),
+    sqlc.arg(issued_by_identity_id), sqlc.arg(membership_id), sqlc.arg(policy_revision),
+    '', sqlc.arg(team_id), sqlc.arg(domain_id), sqlc.arg(namespace), sqlc.arg(issued_role),
+    sqlc.arg(certificate_cache_key), sqlc.arg(certificate_scope),
+    sqlc.arg(certificate_identifiers), 'dns-01', sqlc.arg(created_at), sqlc.arg(expires_at)
+) RETURNING *;
+
+-- name: GetReadyEphemeralCredentialDomain :one
+SELECT id, canonical_domain, kind
+FROM control.domains
+WHERE id = sqlc.arg(domain_id) AND state = 'ready' AND released_at IS NULL
+    AND (kind = 'managed' OR team_id = sqlc.arg(team_id))
+FOR SHARE;
+
 -- name: GetPublicURLPublishCredentialByTokenID :one
 SELECT * FROM control.public_url_publish_credentials WHERE token_id = sqlc.arg(token_id);
 
@@ -24,12 +45,16 @@ WHERE public_url_id = sqlc.arg(public_url_id)
 ORDER BY created_at DESC, id;
 
 -- name: ListTeamPublicURLPublishCredentials :many
-SELECT credentials.id, credentials.public_url_id, credentials.created_at,
-    credentials.expires_at, credentials.revoked_at, routes.canonical_hostname
+SELECT credentials.id, credentials.kind, COALESCE(credentials.public_url_id, '') AS public_url_id,
+    credentials.created_at, credentials.expires_at, credentials.revoked_at,
+    COALESCE(routes.canonical_hostname, '') AS canonical_hostname,
+    COALESCE(credentials.team_id, routes.team_id) AS team_id,
+    COALESCE(credentials.domain_id, routes.domain_id) AS domain_id,
+    COALESCE(credentials.namespace, '') AS namespace
 FROM control.public_url_publish_credentials AS credentials
-JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
-WHERE routes.team_id = sqlc.arg(team_id)
-    AND routes.lifecycle_state <> 'deleted'
+LEFT JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
+WHERE ((credentials.kind = 'saved_url' AND routes.team_id = sqlc.arg(team_id) AND routes.lifecycle_state <> 'deleted')
+    OR (credentials.kind = 'ephemeral' AND credentials.team_id = sqlc.arg(team_id)))
     AND (sqlc.narg(cursor)::text IS NULL OR credentials.id > sqlc.narg(cursor))
 ORDER BY credentials.id
 LIMIT 101;
@@ -38,6 +63,12 @@ LIMIT 101;
 UPDATE control.public_url_publish_credentials
 SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))
 WHERE id = sqlc.arg(id) AND public_url_id = sqlc.arg(public_url_id)
+RETURNING *;
+
+-- name: RevokeEphemeralPublishCredential :one
+UPDATE control.public_url_publish_credentials
+SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))
+WHERE id = sqlc.arg(id) AND kind = 'ephemeral' AND team_id = sqlc.arg(team_id)
 RETURNING *;
 
 -- name: AttachPublishRunCredential :execrows

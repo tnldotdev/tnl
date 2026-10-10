@@ -83,6 +83,13 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	if acting.ID == "" {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
+	if request.Operation == authorization.OperationCredentialRevoke {
+		if request.PublicURLMembershipID != acting.ID && acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		return authorization.Decision{IdentityID: principal.IdentityID, TeamID: request.TeamID,
+			ActingMembershipID: acting.ID, ActingRole: string(acting.Role), PolicyRevision: uint64(acting.PolicyRevision)}, nil
+	}
 	if request.Operation == authorization.OperationFeedbackManage || request.Operation == authorization.OperationPreviewVisit {
 		if request.PublicURLID == "" || request.PublicURLMutationRevision == 0 {
 			return authorization.Decision{}, authorization.ErrForbidden
@@ -111,7 +118,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	publicURLMembershipID := request.PublicURLMembershipID
 	if request.PublicURLScope == authorization.PublicURLScopeMember {
 		if publicURLMembershipID == "" {
-			if request.Operation == authorization.OperationPublicURLCreate {
+			if request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationCredentialCreate {
 				publicURLMembershipID = acting.ID
 			} else {
 				return authorization.Decision{}, authorization.ErrForbidden
@@ -141,6 +148,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	if request.PublicURLScope == authorization.PublicURLScopeShared {
 		namespace = domain.CanonicalDomain
 	}
+	decision.Namespace = namespace
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
 		(request.Operation == authorization.OperationPublicURLCreate || request.Operation == authorization.OperationPublishRunCreate) {
 		depth, within := naming.ChildDepth(request.CanonicalHostname, namespace)
@@ -153,6 +161,10 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	}
 	if request.Operation == authorization.OperationPublishRunCreate {
 		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace,
+			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
+	}
+	if request.Operation == authorization.OperationCredentialCreate {
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan("eph-aaaaaaaaaaaaaaaaaaaaaaaaaa."+namespace, namespace,
 			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
 	}
 	return decision, nil

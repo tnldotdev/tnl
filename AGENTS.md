@@ -161,6 +161,7 @@ not _inbox_, for the collection of threads.
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
 | **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
 | **public URL publish credential**   | A revocable credential to publish one saved public URL.                                            |
+| **ephemeral credential**            | A revocable credential to create temporary public URLs in one authorized namespace.                |
 
 ## visitor connections
 
