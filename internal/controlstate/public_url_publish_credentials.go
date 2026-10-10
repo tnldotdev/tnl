@@ -42,9 +42,10 @@ type CreatePublicURLPublishCredentialRequest struct {
 }
 
 type PublicURLPublishCredentialSummary struct {
-	ID, PublicURLID, PublicURL string
-	CreatedAt, ExpiresAt       time.Time
-	RevokedAt                  *time.Time
+	ID, PublicURLID, PublicURL, TeamID, DomainID, Namespace string
+	Kind                                                    PublishCredentialKind
+	CreatedAt, ExpiresAt                                    time.Time
+	RevokedAt                                               *time.Time
 }
 
 type PublicURLPublishCredentialPage struct {
@@ -191,8 +192,12 @@ func (d *Database) ListTeamPublicURLPublishCredentials(ctx context.Context, team
 	page := PublicURLPublishCredentialPage{Credentials: make([]PublicURLPublishCredentialSummary, 0, min(len(rows), 100))}
 	for _, row := range rows[:min(len(rows), 100)] {
 		entry := PublicURLPublishCredentialSummary{
-			ID: row.ID, PublicURLID: row.PublicURLID.String, PublicURL: "https://" + row.CanonicalHostname,
+			ID: row.ID, PublicURLID: row.PublicURLID, Kind: PublishCredentialKind(row.Kind),
+			TeamID: row.TeamID, DomainID: row.DomainID, Namespace: row.Namespace,
 			CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time,
+		}
+		if row.CanonicalHostname != "" {
+			entry.PublicURL = "https://" + row.CanonicalHostname
 		}
 		if row.RevokedAt.Valid {
 			entry.RevokedAt = &row.RevokedAt.Time

@@ -3,6 +3,7 @@ package controlapi
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -64,13 +65,9 @@ func (h *handler) CreatePublicURLPublishCredential(response http.ResponseWriter,
 			return
 		}
 	}
-	expiresIn := 90 * 24 * time.Hour
-	if body.ExpiresInSeconds != nil {
-		if *body.ExpiresInSeconds < 1 || *body.ExpiresInSeconds > 90*24*60*60 {
-			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "credential lifetime must be greater than zero and at most 90d")
-			return
-		}
-		expiresIn = time.Duration(*body.ExpiresInSeconds) * time.Second
+	expiresIn, ok := publishCredentialLifetime(response, body.ExpiresInSeconds)
+	if !ok {
+		return
 	}
 	route, decision, ok := h.credentialManagementRoute(response, request, string(publicURLID))
 	if !ok {
@@ -90,6 +87,67 @@ func (h *handler) CreatePublicURLPublishCredential(response http.ResponseWriter,
 	writeJSON(response, http.StatusCreated, controlv1.IssuedPublicURLPublishCredential{
 		Id: credential.ID, PublicUrlId: credential.PublicURLID,
 		CreatedAt: credential.CreatedAt, ExpiresAt: credential.ExpiresAt, Credential: secret.String(),
+	})
+}
+
+func publishCredentialLifetime(response http.ResponseWriter, seconds *int64) (time.Duration, bool) {
+	if seconds == nil {
+		return 90 * 24 * time.Hour, true
+	}
+	if *seconds < 1 || *seconds > 90*24*60*60 {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "credential lifetime must be greater than zero and at most 90d")
+		return 0, false
+	}
+	return time.Duration(*seconds) * time.Second, true
+}
+
+func (h *handler) CreateEphemeralPublishCredential(response http.ResponseWriter, request *http.Request) {
+	var body controlv1.CreateEphemeralPublishCredentialRequest
+	if err := decodeJSON(response, request, &body); err != nil || !authorization.PublicURLScope(body.PublicUrlScope).Valid() {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid ad-hoc credential scope")
+		return
+	}
+	expiresIn, ok := publishCredentialLifetime(response, body.ExpiresInSeconds)
+	if !ok {
+		return
+	}
+	if h.publishCredentials == nil || !h.config.DNSAutomation {
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "ad-hoc credentials require automated DNS")
+		return
+	}
+	decision, ok := h.authorizeMutation(response, request, authorization.Request{
+		Operation: authorization.OperationCredentialCreate, TeamID: string(body.TeamId), DomainID: string(body.DomainId),
+		PublicURLScope: authorization.PublicURLScope(body.PublicUrlScope),
+	})
+	if !ok {
+		return
+	}
+	plan := decision.CertificatePlan
+	if decision.Namespace == "" || plan == nil || plan.ChallengeMethod != certificateidentity.ChallengeDNS01 ||
+		!slices.Contains(plan.Identifiers, "*."+decision.Namespace) {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "an authorized DNS-01 wildcard namespace is required")
+		return
+	}
+	now := time.Now()
+	credential, secret, err := h.publishCredentials.CreateEphemeralCredential(request.Context(), controlstate.CreateEphemeralCredentialRequest{
+		TeamID: decision.TeamID, DomainID: decision.DomainID, Namespace: decision.Namespace,
+		MembershipID: decision.ActingMembershipID, IdentityID: decision.IdentityID, Role: decision.ActingRole,
+		PolicyRevision: decision.PolicyRevision, CertificatePlan: *plan, Now: now, ExpiresAt: now.Add(expiresIn),
+	})
+	if errors.Is(err, controlstate.ErrEphemeralCredential) {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "ad-hoc credential scope is no longer authorized")
+		return
+	}
+	if err != nil {
+		writeControlStateProblem(response, "create ad-hoc credential", err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	secretText := secret.String()
+	writeJSON(response, http.StatusCreated, controlv1.IssuedEphemeralPublishCredential{
+		Id: credential.ID, Kind: controlv1.IssuedEphemeralPublishCredentialKindEphemeral,
+		TeamId: credential.TeamID, DomainId: credential.DomainID, Namespace: credential.Namespace,
+		CreatedAt: credential.CreatedAt, ExpiresAt: credential.ExpiresAt, Credential: &secretText,
 	})
 }
 
@@ -113,8 +171,21 @@ func (h *handler) ListPublicURLPublishCredentials(response http.ResponseWriter, 
 }
 
 func credentialResponse(credential controlstate.PublicURLPublishCredential, publicURL string) controlv1.PublicURLPublishCredential {
+	urlID := controlv1.PublicURLID(credential.PublicURLID)
 	return controlv1.PublicURLPublishCredential{
-		Id: credential.ID, PublicUrlId: credential.PublicURLID, PublicUrl: publicURL,
+		Id: credential.ID, Kind: controlv1.PublicURLPublishCredentialKindSavedUrl,
+		PublicUrlId: &urlID, PublicUrl: &publicURL,
+		CreatedAt: credential.CreatedAt, ExpiresAt: credential.ExpiresAt, RevokedAt: credential.RevokedAt,
+	}
+}
+
+func ephemeralCredentialResponse(credential controlstate.PublicURLPublishCredential) controlv1.PublicURLPublishCredential {
+	teamID := controlv1.TeamID(credential.TeamID)
+	domainID := controlv1.DomainID(credential.DomainID)
+	namespace := credential.Namespace
+	return controlv1.PublicURLPublishCredential{
+		Id: credential.ID, Kind: controlv1.PublicURLPublishCredentialKindEphemeral,
+		TeamId: &teamID, DomainId: &domainID, Namespace: &namespace,
 		CreatedAt: credential.CreatedAt, ExpiresAt: credential.ExpiresAt, RevokedAt: credential.RevokedAt,
 	}
 }
@@ -143,8 +214,18 @@ func (h *handler) ListTeamPublicURLPublishCredentials(response http.ResponseWrit
 	}
 	result := controlv1.PublicURLPublishCredentialPage{Credentials: make([]controlv1.PublicURLPublishCredential, len(page.Credentials))}
 	for index, item := range page.Credentials {
+		if item.Kind == controlstate.PublishCredentialEphemeral {
+			result.Credentials[index] = ephemeralCredentialResponse(controlstate.PublicURLPublishCredential{
+				ID: item.ID, Kind: item.Kind, TeamID: item.TeamID, DomainID: item.DomainID, Namespace: item.Namespace,
+				CreatedAt: item.CreatedAt, ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt,
+			})
+			continue
+		}
+		urlID := controlv1.PublicURLID(item.PublicURLID)
+		url := item.PublicURL
 		result.Credentials[index] = controlv1.PublicURLPublishCredential{
-			Id: item.ID, PublicUrlId: item.PublicURLID, PublicUrl: item.PublicURL,
+			Id: item.ID, Kind: controlv1.PublicURLPublishCredentialKindSavedUrl,
+			PublicUrlId: &urlID, PublicUrl: &url,
 			CreatedAt: item.CreatedAt, ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt,
 		}
 	}
@@ -166,6 +247,25 @@ func (h *handler) RevokePublishCredentialByID(response http.ResponseWriter, requ
 	credential, err := h.publishCredentials.PublicURLPublishCredentialByID(request.Context(), string(credentialID))
 	if err != nil {
 		writeControlStateProblem(response, "read publish credential", err)
+		return
+	}
+	if credential.Kind == controlstate.PublishCredentialEphemeral {
+		if credential.TeamID != string(params.TeamId) {
+			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+			return
+		}
+		if _, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
+			Operation: authorization.OperationCredentialRevoke, TeamID: credential.TeamID,
+			PublicURLMembershipID: credential.MembershipID,
+		}); !ok {
+			return
+		}
+		revoked, err := h.publishCredentials.RevokeEphemeralCredential(request.Context(), credential.TeamID, credential.ID, time.Now())
+		if err != nil {
+			writeControlStateProblem(response, "revoke ad-hoc credential", err)
+			return
+		}
+		writeJSON(response, http.StatusOK, ephemeralCredentialResponse(revoked))
 		return
 	}
 	route, err := h.store.GetPublicURLForAuthorization(request.Context(), credential.PublicURLID)

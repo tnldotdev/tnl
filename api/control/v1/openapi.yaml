@@ -729,6 +729,26 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
   /v1/publish-credentials:
+    post:
+      operationId: createEphemeralPublishCredential
+      summary: Issue a credential for ad-hoc public URLs in one namespace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEphemeralPublishCredentialRequest"
+      responses:
+        "201":
+          description: One-time credential and its authorized namespace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedEphemeralPublishCredential"
+        default:
+          $ref: "#/components/responses/Problem"
     get:
       operationId: listTeamPublicURLPublishCredentials
       summary: List publish credentials in the selected team without secrets
@@ -1650,16 +1670,25 @@ components:
     PublicURLPublishCredential:
       type: object
       additionalProperties: false
-      required: [id, public_url_id, public_url, created_at, expires_at]
+      required: [id, kind, created_at, expires_at]
       properties:
         id:
           $ref: "#/components/schemas/ResourceID"
+        kind:
+          type: string
+          enum: [saved_url, ephemeral]
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
         public_url:
           type: string
           format: uri
           pattern: "^https://"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
         created_at:
           type: string
           format: date-time
@@ -1689,6 +1718,47 @@ components:
           format: int64
           minimum: 1
           maximum: 7776000
+    CreateEphemeralPublishCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, domain_id, public_url_scope]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 7776000
+    IssuedEphemeralPublishCredential:
+      type: object
+      additionalProperties: false
+      required: [id, kind, team_id, domain_id, namespace, created_at, expires_at, credential]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        kind:
+          type: string
+          enum: [ephemeral]
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        credential:
+          type: string
+          writeOnly: true
     IssuedPublicURLPublishCredential:
       type: object
       additionalProperties: false

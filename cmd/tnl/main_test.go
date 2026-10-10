@@ -223,6 +223,7 @@ func TestCredentialCommandsSelectOptionalServiceAndURLFilters(t *testing.T) {
 		want string
 	}{
 		{[]string{"url", "credential", "create", "--target", "http://app:3000"}, "url credential create <service-or-public-url-id>"},
+		{[]string{"url", "credential", "create", "--ephemeral", "--expires-in", "7d"}, "url credential create <service-or-public-url-id>"},
 		{[]string{"url", "credential", "create", "api", "--output", "json"}, "url credential create <service-or-public-url-id>"},
 		{[]string{"url", "credential", "create", "url_0123456789abcdefghijkl"}, "url credential create <service-or-public-url-id>"},
 		{[]string{"url", "credential", "list"}, "url credential list <public-url-id>"},

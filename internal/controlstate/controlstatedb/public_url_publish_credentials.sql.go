@@ -134,6 +134,109 @@ func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID
 	return i, err
 }
 
+const getReadyEphemeralCredentialDomain = `-- name: GetReadyEphemeralCredentialDomain :one
+SELECT id, canonical_domain, kind
+FROM control.domains
+WHERE id = $1 AND state = 'ready' AND released_at IS NULL
+    AND (kind = 'managed' OR team_id = $2)
+FOR SHARE
+`
+
+type GetReadyEphemeralCredentialDomainParams struct {
+	DomainID string
+	TeamID   pgtype.Text
+}
+
+type GetReadyEphemeralCredentialDomainRow struct {
+	ID              string
+	CanonicalDomain string
+	Kind            string
+}
+
+func (q *Queries) GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error) {
+	row := q.db.QueryRow(ctx, getReadyEphemeralCredentialDomain, arg.DomainID, arg.TeamID)
+	var i GetReadyEphemeralCredentialDomainRow
+	err := row.Scan(&i.ID, &i.CanonicalDomain, &i.Kind)
+	return i, err
+}
+
+const insertEphemeralPublishCredential = `-- name: InsertEphemeralPublishCredential :one
+INSERT INTO control.public_url_publish_credentials (
+    id, kind, token_id, token_digest, issued_by_identity_id, membership_id,
+    policy_revision, target, team_id, domain_id, namespace, issued_role,
+    certificate_cache_key, certificate_scope, certificate_identifiers,
+    certificate_challenge_method, created_at, expires_at
+) VALUES (
+    $1, 'ephemeral', $2, $3,
+    $4, $5, $6,
+    '', $7, $8, $9, $10,
+    $11, $12,
+    $13, 'dns-01', $14, $15
+) RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role
+`
+
+type InsertEphemeralPublishCredentialParams struct {
+	ID                     string
+	TokenID                string
+	TokenDigest            []byte
+	IssuedByIdentityID     string
+	MembershipID           string
+	PolicyRevision         int64
+	TeamID                 pgtype.Text
+	DomainID               pgtype.Text
+	Namespace              pgtype.Text
+	IssuedRole             pgtype.Text
+	CertificateCacheKey    string
+	CertificateScope       string
+	CertificateIdentifiers []string
+	CreatedAt              pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+}
+
+func (q *Queries) InsertEphemeralPublishCredential(ctx context.Context, arg InsertEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error) {
+	row := q.db.QueryRow(ctx, insertEphemeralPublishCredential,
+		arg.ID,
+		arg.TokenID,
+		arg.TokenDigest,
+		arg.IssuedByIdentityID,
+		arg.MembershipID,
+		arg.PolicyRevision,
+		arg.TeamID,
+		arg.DomainID,
+		arg.Namespace,
+		arg.IssuedRole,
+		arg.CertificateCacheKey,
+		arg.CertificateScope,
+		arg.CertificateIdentifiers,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	var i ControlPublicUrlPublishCredential
+	err := row.Scan(
+		&i.ID,
+		&i.PublicURLID,
+		&i.TokenID,
+		&i.TokenDigest,
+		&i.IssuedByIdentityID,
+		&i.MembershipID,
+		&i.PolicyRevision,
+		&i.Target,
+		&i.CertificateCacheKey,
+		&i.CertificateScope,
+		&i.CertificateIdentifiers,
+		&i.CertificateChallengeMethod,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
+	)
+	return i, err
+}
+
 const insertPublicURLPublishCredential = `-- name: InsertPublicURLPublishCredential :one
 INSERT INTO control.public_url_publish_credentials (
     id, public_url_id, token_id, token_digest, issued_by_identity_id,
@@ -257,12 +360,16 @@ func (q *Queries) ListPublicURLPublishCredentials(ctx context.Context, publicUrl
 }
 
 const listTeamPublicURLPublishCredentials = `-- name: ListTeamPublicURLPublishCredentials :many
-SELECT credentials.id, credentials.public_url_id, credentials.created_at,
-    credentials.expires_at, credentials.revoked_at, routes.canonical_hostname
+SELECT credentials.id, credentials.kind, COALESCE(credentials.public_url_id, '') AS public_url_id,
+    credentials.created_at, credentials.expires_at, credentials.revoked_at,
+    COALESCE(routes.canonical_hostname, '') AS canonical_hostname,
+    COALESCE(credentials.team_id, routes.team_id) AS team_id,
+    COALESCE(credentials.domain_id, routes.domain_id) AS domain_id,
+    COALESCE(credentials.namespace, '') AS namespace
 FROM control.public_url_publish_credentials AS credentials
-JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
-WHERE routes.team_id = $1
-    AND routes.lifecycle_state <> 'deleted'
+LEFT JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
+WHERE ((credentials.kind = 'saved_url' AND routes.team_id = $1 AND routes.lifecycle_state <> 'deleted')
+    OR (credentials.kind = 'ephemeral' AND credentials.team_id = $1))
     AND ($2::text IS NULL OR credentials.id > $2)
 ORDER BY credentials.id
 LIMIT 101
@@ -275,11 +382,15 @@ type ListTeamPublicURLPublishCredentialsParams struct {
 
 type ListTeamPublicURLPublishCredentialsRow struct {
 	ID                string
-	PublicURLID       pgtype.Text
+	Kind              string
+	PublicURLID       string
 	CreatedAt         pgtype.Timestamptz
 	ExpiresAt         pgtype.Timestamptz
 	RevokedAt         pgtype.Timestamptz
 	CanonicalHostname string
+	TeamID            string
+	DomainID          string
+	Namespace         string
 }
 
 func (q *Queries) ListTeamPublicURLPublishCredentials(ctx context.Context, arg ListTeamPublicURLPublishCredentialsParams) ([]ListTeamPublicURLPublishCredentialsRow, error) {
@@ -293,11 +404,15 @@ func (q *Queries) ListTeamPublicURLPublishCredentials(ctx context.Context, arg L
 		var i ListTeamPublicURLPublishCredentialsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Kind,
 			&i.PublicURLID,
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
 			&i.CanonicalHostname,
+			&i.TeamID,
+			&i.DomainID,
+			&i.Namespace,
 		); err != nil {
 			return nil, err
 		}
@@ -307,6 +422,47 @@ func (q *Queries) ListTeamPublicURLPublishCredentials(ctx context.Context, arg L
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeEphemeralPublishCredential = `-- name: RevokeEphemeralPublishCredential :one
+UPDATE control.public_url_publish_credentials
+SET revoked_at = COALESCE(revoked_at, $1)
+WHERE id = $2 AND kind = 'ephemeral' AND team_id = $3
+RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role
+`
+
+type RevokeEphemeralPublishCredentialParams struct {
+	RevokedAt pgtype.Timestamptz
+	ID        string
+	TeamID    pgtype.Text
+}
+
+func (q *Queries) RevokeEphemeralPublishCredential(ctx context.Context, arg RevokeEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error) {
+	row := q.db.QueryRow(ctx, revokeEphemeralPublishCredential, arg.RevokedAt, arg.ID, arg.TeamID)
+	var i ControlPublicUrlPublishCredential
+	err := row.Scan(
+		&i.ID,
+		&i.PublicURLID,
+		&i.TokenID,
+		&i.TokenDigest,
+		&i.IssuedByIdentityID,
+		&i.MembershipID,
+		&i.PolicyRevision,
+		&i.Target,
+		&i.CertificateCacheKey,
+		&i.CertificateScope,
+		&i.CertificateIdentifiers,
+		&i.CertificateChallengeMethod,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
+	)
+	return i, err
 }
 
 const revokePublicURLPublishCredential = `-- name: RevokePublicURLPublishCredential :one

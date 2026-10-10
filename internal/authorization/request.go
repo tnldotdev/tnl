@@ -18,6 +18,8 @@ type Operation string
 
 const (
 	OperationPublicURLCreate  Operation = "public_url.create"
+	OperationCredentialCreate Operation = "credential.create"
+	OperationCredentialRevoke Operation = "credential.revoke"
 	OperationPublicURLUpdate  Operation = "public_url.update"
 	OperationPublishRunCreate Operation = "publish_run.create"
 	OperationPublicURLDelete  Operation = "public_url.delete"
@@ -89,6 +91,7 @@ type Decision struct {
 	PolicyRevision        uint64
 	DomainID              string
 	CanonicalHostname     string
+	Namespace             string
 	PublicURLScope        PublicURLScope
 	DNSAuthorityReference string
 	CertificatePlan       *CertificatePlan

@@ -311,6 +311,15 @@ func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURL
 	})
 }
 
+func (c *Client) CreateEphemeralPublishCredential(ctx context.Context, teamID, domainID string, scope controlv1.PublicURLScope, expiresIn time.Duration) (controlv1.IssuedEphemeralPublishCredential, error) {
+	seconds := int64(expiresIn / time.Second)
+	return requestWithAccess[controlv1.IssuedEphemeralPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateEphemeralPublishCredential(ctx, controlv1.CreateEphemeralPublishCredentialRequest{
+			TeamId: teamID, DomainId: domainID, PublicUrlScope: scope, ExpiresInSeconds: &seconds,
+		}, editors...)
+	})
+}
+
 func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicURLID string) ([]controlv1.PublicURLPublishCredential, error) {
 	page, err := requestWithAccess[struct {
 		Credentials []controlv1.PublicURLPublishCredential `json:"credentials"`

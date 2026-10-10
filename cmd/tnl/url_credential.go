@@ -38,6 +38,7 @@ type publicURLCredentialCreateCommand struct {
 	PublicURL       string               `name:"public-url" help:"Exact public URL hostname or HTTPS origin to save before issuing the credential."`
 	Name            string               `name:"name" help:"One label under the selected domain or namespace."`
 	Domain          string               `name:"domain" help:"Team domain for this public URL."`
+	Ephemeral       bool                 `name:"ephemeral" help:"Issue a credential for temporary public URLs in the selected namespace."`
 	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
 	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
@@ -59,8 +60,11 @@ type publicURLCredentialRevokeCommand struct {
 
 type publicURLCredentialListEntry struct {
 	CredentialID string     `json:"credential_id"`
-	PublicURLID  string     `json:"public_url_id"`
-	PublicURL    string     `json:"public_url"`
+	Kind         string     `json:"kind"`
+	PublicURLID  string     `json:"public_url_id,omitempty"`
+	PublicURL    string     `json:"public_url,omitempty"`
+	TeamID       string     `json:"team_id,omitempty"`
+	Namespace    string     `json:"namespace,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	ExpiresAt    time.Time  `json:"expires_at"`
 	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
@@ -72,10 +76,23 @@ type publicURLCredentialListResult struct {
 }
 
 func credentialListEntry(item controlv1.PublicURLPublishCredential) publicURLCredentialListEntry {
-	return publicURLCredentialListEntry{
-		CredentialID: item.Id, PublicURLID: item.PublicUrlId, PublicURL: item.PublicUrl,
+	entry := publicURLCredentialListEntry{
+		CredentialID: item.Id, Kind: string(item.Kind),
 		CreatedAt: item.CreatedAt, ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt,
 	}
+	if item.PublicUrlId != nil {
+		entry.PublicURLID = string(*item.PublicUrlId)
+	}
+	if item.PublicUrl != nil {
+		entry.PublicURL = *item.PublicUrl
+	}
+	if item.TeamId != nil {
+		entry.TeamID = string(*item.TeamId)
+	}
+	if item.Namespace != nil {
+		entry.Namespace = *item.Namespace
+	}
+	return entry
 }
 
 type publicURLCredentialCreateResult struct {
@@ -92,6 +109,13 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 	expiresIn, err := parseCredentialLifetime(flags.ExpiresIn)
 	if err != nil {
 		return failure.Wrap("validate credential lifetime", failure.InvalidTunnelFlags, err)
+	}
+	if flags.Ephemeral {
+		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs {
+			return failure.Wrap("validate ad-hoc credential options", failure.InvalidTunnelFlags,
+				errors.New("--ephemeral cannot select an existing URL, name, target, or visitor policy"))
+		}
+		return runEphemeralCredentialCreate(ctx, flags, expiresIn, output, diagnostics)
 	}
 	isURLID := opaqueid.Valid(flags.Selector, opaqueid.PublicURLPrefix)
 	if isURLID && (flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs) {
@@ -143,6 +167,65 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 		Target: route.Target, CredentialID: issued.Id, Credential: issued.Credential, ExpiresAt: issued.ExpiresAt,
 	}
 	return writeCredentialCreateResult(flags.Output, result, output, diagnostics)
+}
+
+type ephemeralCredentialCreateResult struct {
+	SchemaVersion int       `json:"schema_version"`
+	Kind          string    `json:"kind"`
+	TeamID        string    `json:"team_id"`
+	DomainID      string    `json:"domain_id"`
+	Namespace     string    `json:"namespace"`
+	CredentialID  string    `json:"credential_id"`
+	Credential    string    `json:"credential"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+func runEphemeralCredentialCreate(ctx context.Context, flags publicURLCredentialCreateCommand, expiresIn time.Duration, output, diagnostics io.Writer) error {
+	session, err := openTeamSession(ctx, flags.selection(), "tnl url credential create", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.currentWithDomains(ctx)
+	if err != nil {
+		return err
+	}
+	domain, err := readyDomain(current, flags.Domain)
+	if err != nil {
+		return err
+	}
+	namespace, direct := current.namespace(domain)
+	scope := controlv1.Member
+	if direct {
+		scope = controlv1.Shared
+	}
+	issued, err := session.authenticated.Control.CreateEphemeralPublishCredential(ctx, current.team.Id, domain.Id, scope, expiresIn)
+	if err != nil {
+		return err
+	}
+	if issued.TeamId != current.team.Id || issued.DomainId != domain.Id || issued.Namespace != namespace ||
+		issued.Kind != controlv1.IssuedEphemeralPublishCredentialKindEphemeral || issued.Credential == nil ||
+		!issued.ExpiresAt.After(time.Now()) {
+		return failure.Wrap("validate ad-hoc credential", failure.ServerResponseInvalid, errors.New("control returned a different ad-hoc scope"))
+	}
+	if _, _, _, err := credentials.ParseEphemeralCredential(credentials.EphemeralCredential(*issued.Credential)); err != nil {
+		return failure.Wrap("validate ad-hoc credential", failure.ServerResponseInvalid, err)
+	}
+	result := ephemeralCredentialCreateResult{SchemaVersion: 1, Kind: string(issued.Kind), TeamID: issued.TeamId,
+		DomainID: issued.DomainId, Namespace: issued.Namespace, CredentialID: issued.Id,
+		Credential: *issued.Credential, ExpiresAt: issued.ExpiresAt}
+	if flags.Output == credentialOutputJSON {
+		return json.NewEncoder(output).Encode(result)
+	}
+	if err := writeHumanFrame(diagnostics, "tnl url credential create", "created", "save the credential; it will not be shown again",
+		clioutput.Fields(clioutput.Field{Label: "kind", Value: result.Kind},
+			clioutput.Field{Label: "namespace", Value: result.Namespace},
+			clioutput.Field{Label: "credential", Value: result.CredentialID},
+			clioutput.Field{Label: "expires", Value: result.ExpiresAt.UTC().Format(time.RFC3339)})); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(output, result.Credential)
+	return err
 }
 
 func parseCredentialLifetime(value string) (time.Duration, error) {
@@ -307,8 +390,12 @@ func runURLCredentialList(ctx context.Context, flags publicURLCredentialListComm
 	}
 	result := publicURLCredentialListResult{SchemaVersion: 1, Credentials: []publicURLCredentialListEntry{}}
 	for _, item := range items {
-		if flags.PublicURLID != "" && item.PublicUrlId != flags.PublicURLID {
+		if flags.PublicURLID != "" && (item.PublicUrlId == nil || string(*item.PublicUrlId) != flags.PublicURLID) {
 			continue
+		}
+		if item.Kind == controlv1.PublicURLPublishCredentialKindSavedUrl && (item.PublicUrlId == nil || item.PublicUrl == nil) ||
+			item.Kind == controlv1.PublicURLPublishCredentialKindEphemeral && (item.TeamId == nil || item.Namespace == nil) {
+			return failure.Wrap("validate credential list", failure.ServerResponseInvalid, errors.New("control returned incomplete credential scope"))
 		}
 		result.Credentials = append(result.Credentials, credentialListEntry(item))
 	}
@@ -327,11 +414,14 @@ func writeCredentialListResult(mode credentialOutputMode, result publicURLCreden
 		} else if !item.ExpiresAt.After(now) {
 			state = "expired"
 		}
-		blocks = append(blocks, clioutput.Section(item.CredentialID, clioutput.Fields(
-			clioutput.Field{Label: "public URL", Value: item.PublicURL},
-			clioutput.Field{Label: "state", Value: state},
-			clioutput.Field{Label: "expires", Value: item.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")},
-		)))
+		fields := []clioutput.Field{{Label: "kind", Value: item.Kind}, {Label: "state", Value: state}}
+		if item.Kind == string(controlv1.PublicURLPublishCredentialKindEphemeral) {
+			fields = append(fields, clioutput.Field{Label: "namespace", Value: item.Namespace})
+		} else {
+			fields = append(fields, clioutput.Field{Label: "public URL", Value: item.PublicURL})
+		}
+		fields = append(fields, clioutput.Field{Label: "expires", Value: item.ExpiresAt.UTC().Format(time.RFC3339)})
+		blocks = append(blocks, clioutput.Section(item.CredentialID, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(output, "tnl url credential list", countState(len(result.Credentials), "credential", "credentials"), "", blocks...)
 }
@@ -350,7 +440,9 @@ func runURLCredentialRevoke(ctx context.Context, flags publicURLCredentialRevoke
 	if err != nil {
 		return err
 	}
-	if revoked.RevokedAt == nil || revoked.Id != flags.CredentialID || revoked.PublicUrl == "" {
+	if revoked.RevokedAt == nil || revoked.Id != flags.CredentialID ||
+		revoked.Kind == controlv1.PublicURLPublishCredentialKindSavedUrl && revoked.PublicUrl == nil ||
+		revoked.Kind == controlv1.PublicURLPublishCredentialKindEphemeral && revoked.Namespace == nil {
 		return failure.Wrap("validate revoked credential", failure.ServerResponseInvalid, errors.New("control returned incomplete revoked credential metadata"))
 	}
 	return writeCredentialRevokeResult(flags.Output, revoked, output)
@@ -359,16 +451,18 @@ func runURLCredentialRevoke(ctx context.Context, flags publicURLCredentialRevoke
 func writeCredentialRevokeResult(mode credentialOutputMode, revoked controlv1.PublicURLPublishCredential, output io.Writer) error {
 	if mode == credentialOutputJSON {
 		return json.NewEncoder(output).Encode(struct {
-			SchemaVersion int       `json:"schema_version"`
-			CredentialID  string    `json:"credential_id"`
-			PublicURLID   string    `json:"public_url_id"`
-			PublicURL     string    `json:"public_url"`
-			RevokedAt     time.Time `json:"revoked_at"`
-		}{SchemaVersion: 1, CredentialID: revoked.Id, PublicURLID: revoked.PublicUrlId,
-			PublicURL: revoked.PublicUrl, RevokedAt: *revoked.RevokedAt})
+			SchemaVersion int `json:"schema_version"`
+			publicURLCredentialListEntry
+		}{SchemaVersion: 1, publicURLCredentialListEntry: credentialListEntry(revoked)})
+	}
+	fields := []clioutput.Field{{Label: "credential", Value: revoked.Id}, {Label: "kind", Value: string(revoked.Kind)}}
+	if revoked.Namespace != nil {
+		fields = append(fields, clioutput.Field{Label: "namespace", Value: *revoked.Namespace})
+	} else if revoked.PublicUrl != nil {
+		fields = append(fields, clioutput.Field{Label: "public URL", Value: *revoked.PublicUrl})
 	}
 	return writeHumanFrame(output, "tnl url credential revoke", "revoked", "active run stops on its next heartbeat",
-		clioutput.Fields(clioutput.Field{Label: "credential", Value: revoked.Id}, clioutput.Field{Label: "public URL", Value: revoked.PublicUrl}))
+		clioutput.Fields(fields...))
 }
 
 func checkSelectedCredentialURL(ctx context.Context, session *teamSession, publicURLID string) error {
