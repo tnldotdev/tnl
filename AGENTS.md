@@ -147,20 +147,20 @@ not _inbox_, for the collection of threads.
 
 ## publisher connections
 
-| Term                                | Definition                                                                                         |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **publisher connection**            | A long-lived multiplexed connection from a publisher to a relay.                                   |
-| **publisher connection ID**         | The unique identifier for one publisher connection from creation through close.                    |
-| **connection slot**                 | One of the two publisher connections maintained by a publish run.                                  |
-| **connection assignment**           | Control's instruction assigning a connection slot to a particular relay service and relay address. |
-| **connection assignment revision**  | An ever-increasing number changed whenever control replaces the assignment for a connection slot.  |
-| **assigned relay**                  | The relay service selected by control for a connection assignment.                                 |
-| **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a publish run.        |
-| **ready publisher connection**      | An authenticated, current publisher connection that can carry visitor streams.                     |
-| **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                      |
-| **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
-| **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
-| **public URL publish credential**   | A revocable credential to publish one saved public URL.                                            |
+| Term                                | Definition                                                                                          |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **publisher connection**            | A long-lived multiplexed connection from a publisher to a relay.                                    |
+| **publisher connection ID**         | The unique identifier for one publisher connection from creation through close.                     |
+| **connection slot**                 | One of the two publisher connections maintained by a publish run.                                   |
+| **connection assignment**           | Control's instruction assigning a connection slot to a particular relay service and relay address.  |
+| **connection assignment revision**  | An ever-increasing number changed whenever control replaces the assignment for a connection slot.   |
+| **assigned relay**                  | The relay service selected by control for a connection assignment.                                  |
+| **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a publish run.         |
+| **ready publisher connection**      | An authenticated, current publisher connection that can carry visitor streams.                      |
+| **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                       |
+| **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                          |
+| **publish run token**               | A credential authorizing the publisher to update one publish run.                                   |
+| **public URL publish credential**   | A revocable credential to publish one saved public URL.                                             |
 | **ephemeral credential**            | A revocable credential to create temporary public URLs in one authorized namespace.                 |
 
 ## visitor connections
