@@ -34,6 +34,13 @@ enabled with its public IPs, DNS work for that seeded pool keeps using the
 existing ingress-address configuration; another disabled pool never receives
 DNS records.
 
+Migration 25 records the visitor service protocol separately from a public
+URL's purpose. Database URLs have no saved private target. Control assigns a
+TCP port only after the pool and port have been enabled. A claimed URL keeps
+its port across runs; deletion moves the claim into seven days of quarantine.
+Cleanup releases a bounded batch after the deadline, retaining the historical
+hostname-and-port pair so a new URL cannot take both values at once.
+
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
 requires migration 12's queue table, including for storage-key rotation. The

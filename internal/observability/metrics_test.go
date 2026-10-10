@@ -221,6 +221,18 @@ func TestMetricsExposeEffectiveCapacityLimits(t *testing.T) {
 	}
 }
 
+func TestMetricsExposeTCPPortPoolCapacity(t *testing.T) {
+	metrics := New("control")
+	metrics.SetTCPPortPoolCapacity("ingress-a", 100, 31, 7, 62)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `tnl_control_tcp_port_pool_ports{pool="ingress-a",state="available"} 62`) ||
+		!strings.Contains(response.Body.String(), `tnl_control_tcp_port_pool_ports{pool="ingress-a",state="quarantined"} 7`) {
+		t.Fatalf("port pool capacity missing: %s", response.Body.String())
+	}
+}
+
 func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 	for _, test := range []struct {
 		role string

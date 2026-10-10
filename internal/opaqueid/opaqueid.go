@@ -50,6 +50,7 @@ const (
 	TeamPrefix                       = "tm_"
 	TunnelPrefix                     = "tun_"
 	TelemetryEventPrefix             = "tev_"
+	TCPPortClaimPrefix               = "tpc_"
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
 	PreviewPrefix                    = "pv_"

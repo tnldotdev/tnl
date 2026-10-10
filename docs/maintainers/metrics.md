@@ -52,6 +52,7 @@ publisher connections are not the same as database claims.
 | `tnl_control_dns_work_duration_seconds{kind,phase,outcome}`            | DNS work and verification.                                            |
 | `tnl_control_public_url_usage_items_total{result}`                     | Finalized, delivered, or retried items.                               |
 | `tnl_control_cleanup_last_success_timestamp_seconds{kind}`             | Last successful cleanup.                                              |
+| `tnl_control_tcp_port_pool_ports{pool,state}`                           | Available, claimed, quarantined, and configured TCP ports per pool.   |
 | `tnl_control_guest_trials_last_24h{stage}`                             | Issued, allocated, ready, or ended guest trials from committed state. |
 | `tnl_control_public_url_recovery_duration_seconds`                     | Newly observed recovery durations.                                    |
 
@@ -104,6 +105,9 @@ provider's webhook reached and succeeded at a local handler.
 | `tnl_database_failures_total{phase,outcome}`             | Connection, transaction, and SQL failures. |
 
 Scraping never queries PostgreSQL or a remote service. Metric labels use
-fixed operations and outcomes, never hostnames, IDs, credentials, or raw URLs.
+fixed operations and outcomes, plus a bounded operator-owned ingress pool ID;
+never public URL IDs, hostnames, credentials, or raw URLs. The pool gauge is a
+database-wide snapshot on each control process, so use the maximum across
+replicas rather than summing it.
 Definitions and role registration live in `internal/observability`; record
 events at their ingress, relay, control, or worker boundary.
