@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
@@ -61,7 +62,8 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 	}
 	existing, err := queries.GetHeldTCPPortClaim(ctx, publicURLID)
 	if err == nil {
-		if existing.IngressPoolID != url.IngressPoolID || existing.CanonicalHostname != url.CanonicalHostname {
+		if existing.IngressPoolID != url.IngressPoolID || existing.CanonicalHostname != url.CanonicalHostname ||
+			!url.PublicPort.Valid || url.PublicPort.Int32 != existing.Port {
 			return TCPPortClaim{}, ErrPublicURLMutationStale
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -72,13 +74,29 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return TCPPortClaim{}, err
 	}
+	if url.PublicPort.Valid {
+		return TCPPortClaim{}, ErrPublicURLMutationStale
+	}
+	claim, err := allocateTCPPortForURL(ctx, queries, publicURLID, url.IngressPoolID, url.CanonicalHostname, PublicURLServiceProtocol(url.ServiceProtocol), now)
+	if err != nil {
+		return TCPPortClaim{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TCPPortClaim{}, err
+	}
+	return claim, nil
+}
+
+// allocateTCPPortForURL runs inside the caller's URL-locked transaction. a new
+// URL creation also uses it, so the URL and its port become visible together.
+func allocateTCPPortForURL(ctx context.Context, queries *controlstatedb.Queries, publicURLID, poolID, hostname string, protocol PublicURLServiceProtocol, now time.Time) (TCPPortClaim, error) {
 	preferred := []int32{5432, 15432, 25432, 35432, 45432, 55432}
-	if url.ServiceProtocol == "mysql" {
+	if protocol == PublicURLServiceMySQL {
 		preferred = []int32{3306, 13306, 23306, 33306, 43306, 53306, 63306}
 	}
 	for range 8 {
 		port, err := queries.ChooseTCPPort(ctx, controlstatedb.ChooseTCPPortParams{
-			IngressPoolID: url.IngressPoolID, CanonicalHostname: url.CanonicalHostname,
+			IngressPoolID: poolID, CanonicalHostname: hostname,
 			PreferredPorts: preferred, Seed: publicURLID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -92,8 +110,8 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 			return TCPPortClaim{}, err
 		}
 		claim, err := queries.InsertTCPPortClaim(ctx, controlstatedb.InsertTCPPortClaimParams{
-			ID: id, PublicURLID: publicURLID, IngressPoolID: url.IngressPoolID,
-			CanonicalHostname: url.CanonicalHostname, Port: port, ClaimedAt: timestamptz(now),
+			ID: id, PublicURLID: publicURLID, IngressPoolID: poolID,
+			CanonicalHostname: hostname, Port: port, ClaimedAt: timestamptz(now),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			// another URL claimed this port during selection; read a new snapshot.
@@ -102,8 +120,11 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 		if err != nil {
 			return TCPPortClaim{}, fmt.Errorf("controlstate: reserve TCP port: %w", err)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return TCPPortClaim{}, err
+		updated, err := queries.SetPublicURLTCPPort(ctx, controlstatedb.SetPublicURLTCPPortParams{
+			PublicURLID: publicURLID, Port: pgtype.Int4{Int32: port, Valid: true},
+		})
+		if err != nil || updated != 1 {
+			return TCPPortClaim{}, ErrPublicURLMutationStale
 		}
 		return tcpPortClaim(claim), nil
 	}

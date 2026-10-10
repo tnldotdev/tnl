@@ -43,6 +43,8 @@ type PublicURL struct {
 	MembershipID                  string
 	CanonicalHostname             string
 	Target                        string
+	ServiceProtocol               PublicURLServiceProtocol
+	PublicPort                    *uint16
 	PublicURLScope                PublicURLScope
 	Purpose                       PublicURLPurpose
 	PolicyRevision                int64
@@ -70,6 +72,7 @@ type CreatePublicURLRequest struct {
 	RequestDigest         [32]byte
 	CanonicalHostname     string
 	Target                string
+	ServiceProtocol       PublicURLServiceProtocol
 	PublicURLScope        PublicURLScope
 	Purpose               PublicURLPurpose
 	ManagedURLMode        naming.ManagedURLMode
@@ -110,6 +113,9 @@ type PublicURLPage struct {
 }
 
 func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLRequest, now time.Time) (result PublicURL, retErr error) {
+	if request.ServiceProtocol == "" {
+		request.ServiceProtocol = PublicURLServiceHTTP
+	}
 	prefixes, err := validateCreatePublicURLRequest(request)
 	if err != nil {
 		return PublicURL{}, err
@@ -169,7 +175,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if PublicURLLifecycleState(existing.LifecycleState) == PublicURLLifecycleDeleted {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
-		if existing.Purpose != string(request.Purpose) {
+		if existing.Purpose != string(request.Purpose) || existing.ServiceProtocol != string(request.ServiceProtocol) {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
@@ -323,7 +329,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
 		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
-		PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		ServiceProtocol: string(request.ServiceProtocol),
+		PolicyRevision:  policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),
@@ -342,6 +349,13 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			}
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
+	}
+	if request.ServiceProtocol != PublicURLServiceHTTP {
+		claim, err := allocateTCPPortForURL(ctx, queries, publicURLID, ingressPoolID, row.CanonicalHostname, request.ServiceProtocol, now)
+		if err != nil {
+			return PublicURL{}, err
+		}
+		row.PublicPort = pgtype.Int4{Int32: int32(claim.Port), Valid: true}
 	}
 	if request.EphemeralCredentialID != "" {
 		rows, err := queries.InsertEphemeralPublicURLAllocation(ctx, controlstatedb.InsertEphemeralPublicURLAllocationParams{
@@ -418,7 +432,9 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
 		return PublicURL{}, ErrPublicURLNotEnabled
 	}
-	if request.Target == "" && (route.Target != "" || route.Purpose != string(PublicURLPurposeApp) || route.Ephemeral) {
+	if request.Target == "" && (route.Target != "" || route.Purpose != string(PublicURLPurposeApp) ||
+		route.Ephemeral && route.ServiceProtocol == string(PublicURLServiceHTTP)) ||
+		request.Target != "" && route.ServiceProtocol != string(PublicURLServiceHTTP) {
 		return PublicURL{}, ErrPublicURLInvalid
 	}
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
@@ -1011,7 +1027,9 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 			return nil, ErrPublicURLInvalid
 		}
 	}
-	if request.Target == "" && (request.Purpose != PublicURLPurposeApp || request.Ephemeral) ||
+	if !request.ServiceProtocol.Valid() || request.ServiceProtocol != PublicURLServiceHTTP &&
+		(request.Purpose != PublicURLPurposeApp || request.Target != "" || request.GuestID != "" || request.EphemeralCredentialID != "") ||
+		request.Target == "" && (request.Purpose != PublicURLPurposeApp || request.Ephemeral && request.ServiceProtocol == PublicURLServiceHTTP) ||
 		request.Target != "" && authorization.ValidateTarget(request.Target) != nil {
 		return nil, ErrPublicURLInvalid
 	}
@@ -1117,7 +1135,7 @@ func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID st
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
 	)
 }
 
@@ -1125,7 +1143,7 @@ func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempot
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
 	)
 }
 
@@ -1133,7 +1151,7 @@ func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) Public
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
 	)
 }
 
@@ -1141,7 +1159,7 @@ func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicUR
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
 	)
 }
 
@@ -1149,7 +1167,7 @@ func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsD
 	return publicURLFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
 	)
 }
 
@@ -1167,11 +1185,14 @@ func publicURLFromValues(
 	expiresAt pgtype.Timestamptz,
 	openPublishRunID string,
 	createdAt, updatedAt pgtype.Timestamptz,
+	serviceProtocol string,
+	publicPort pgtype.Int4,
 ) PublicURL {
 	result := PublicURL{
 		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
 		CanonicalHostname: canonicalHostname, Target: target, PublicURLScope: PublicURLScope(publicURLScope), Purpose: PublicURLPurpose(purpose),
-		PolicyRevision: policyRevision, LifecycleState: PublicURLLifecycleState(lifecycleState),
+		ServiceProtocol: PublicURLServiceProtocol(serviceProtocol),
+		PolicyRevision:  policyRevision, LifecycleState: PublicURLLifecycleState(lifecycleState),
 		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: PublicURLDNSState(dnsState),
 		NextPublishRunNumber: nextPublishRunNumber,
 		MutationRevision:     uint64(mutationRevision), AuthorizationPublishRunNumber: uint64(nextPublishRunNumber),
@@ -1181,6 +1202,10 @@ func publicURLFromValues(
 	if expiresAt.Valid {
 		value := expiresAt.Time
 		result.ExpiresAt = &value
+	}
+	if publicPort.Valid {
+		value := uint16(publicPort.Int32)
+		result.PublicPort = &value
 	}
 	return result
 }
@@ -1192,7 +1217,8 @@ func publicURLModelFromDeleteRow(row controlstatedb.LockIdentityPublicURLForDele
 		RequestDigestCiphertext:   row.RequestDigestCiphertext,
 		RequestDigestStorageKeyID: row.RequestDigestStorageKeyID,
 		CanonicalHostname:         row.CanonicalHostname, Target: row.Target,
-		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, ServiceProtocol: row.ServiceProtocol, PublicPort: row.PublicPort,
+		PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
 		AllowedIpPolicyCiphertext:   row.AllowedIpPolicyCiphertext,
 		AllowedIpPolicyStorageKeyID: row.AllowedIpPolicyStorageKeyID,
 		AllowedIpHashes:             row.AllowedIpHashes, AllowedIpHashKeyID: row.AllowedIpHashKeyID,

@@ -431,6 +431,27 @@ func (e PublicURLScope) Valid() bool {
 	}
 }
 
+// Defines values for PublicURLServiceProtocol.
+const (
+	Http     PublicURLServiceProtocol = "http"
+	Mysql    PublicURLServiceProtocol = "mysql"
+	Postgres PublicURLServiceProtocol = "postgres"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLServiceProtocol enum.
+func (e PublicURLServiceProtocol) Valid() bool {
+	switch e {
+	case Http:
+		return true
+	case Mysql:
+		return true
+	case Postgres:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublishRunState.
 const (
 	PublishRunStateCanceled PublishRunState = "canceled"
@@ -985,15 +1006,16 @@ type CreatePublicURLPublishCredentialRequest struct {
 
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
-	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname CanonicalHostname `json:"canonical_hostname"`
-	DomainId          DomainID          `json:"domain_id"`
-	Ephemeral         *bool             `json:"ephemeral,omitempty"`
-	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
-	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
-	Purpose           PublicURLPurpose  `json:"purpose"`
+	AllowedIpPrefixes *[]string                 `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname CanonicalHostname         `json:"canonical_hostname"`
+	DomainId          DomainID                  `json:"domain_id"`
+	Ephemeral         *bool                     `json:"ephemeral,omitempty"`
+	MembershipId      *MembershipID             `json:"membership_id,omitempty"`
+	PublicUrlScope    PublicURLScope            `json:"public_url_scope"`
+	Purpose           PublicURLPurpose          `json:"purpose"`
+	ServiceProtocol   *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 
-	// Target empty only for a saved app public URL with no saved target.
+	// Target Empty for targetless app URLs and PostgreSQL or MySQL endpoints.
 	Target string `json:"target"`
 	TeamId TeamID `json:"team_id"`
 }
@@ -1321,10 +1343,14 @@ type PublicURL struct {
 	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
-	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
-	Purpose              PublicURLPurpose        `json:"purpose"`
 
-	// Target empty when a saved app public URL has no saved target.
+	// PublicPort Stable visitor TCP port for a PostgreSQL or MySQL public URL.
+	PublicPort      *int                     `json:"public_port,omitempty"`
+	PublicUrlScope  PublicURLScope           `json:"public_url_scope"`
+	Purpose         PublicURLPurpose         `json:"purpose"`
+	ServiceProtocol PublicURLServiceProtocol `json:"service_protocol"`
+
+	// Target Empty for targetless app URLs and database endpoints that take a local publisher target.
 	Target    string    `json:"target"`
 	TeamId    TeamID    `json:"team_id"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -1370,6 +1396,9 @@ type PublicURLPurpose string
 
 // PublicURLScope defines model for PublicURLScope.
 type PublicURLScope string
+
+// PublicURLServiceProtocol defines model for PublicURLServiceProtocol.
+type PublicURLServiceProtocol string
 
 // PublishRun defines model for PublishRun.
 type PublishRun struct {

@@ -1,5 +1,5 @@
 -- name: LockTCPPortPublicURL :one
-SELECT id, canonical_hostname, ingress_pool_id, service_protocol, lifecycle_state
+SELECT id, canonical_hostname, ingress_pool_id, service_protocol, lifecycle_state, public_port
 FROM control.public_urls
 WHERE id = sqlc.arg(public_url_id)
 FOR NO KEY UPDATE;
@@ -34,6 +34,11 @@ INSERT INTO control.tcp_port_claims
 VALUES (sqlc.arg(id), sqlc.arg(public_url_id), sqlc.arg(ingress_pool_id),
     sqlc.arg(canonical_hostname), sqlc.arg(port), 'held', sqlc.arg(claimed_at))
 ON CONFLICT DO NOTHING RETURNING *;
+
+-- name: SetPublicURLTCPPort :execrows
+UPDATE control.public_urls SET public_port = sqlc.arg(port)
+WHERE id = sqlc.arg(public_url_id) AND public_port IS NULL
+  AND service_protocol IN ('postgres', 'mysql');
 
 -- name: QuarantineTCPPortClaim :execrows
 UPDATE control.tcp_port_claims SET state = 'quarantined',
