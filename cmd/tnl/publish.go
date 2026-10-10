@@ -207,7 +207,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
 		publisherConfig.Purpose = controlv1.Demo
 	}
-	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service, nil)
+	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
 	}

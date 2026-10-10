@@ -82,7 +82,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 
 func TestDetailedRequestCaptureIsVisibleInReadyOutput(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput(publishOutputHuman, "tnl dev", io.Discard, &stderr, nil)
+	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestPublishOutputNDJSONAuthorityRetryMetadata(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout bytes.Buffer
-			output, err := newPublishOutput("ndjson", "tnl dev", &stdout, io.Discard, nil)
+			output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -396,7 +396,7 @@ func TestPublishOutputProvisioningStalledWarning(t *testing.T) {
 
 func TestPublishOutputHumanProvisioningWarningStopsAtReady(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +468,7 @@ func TestPublishOutputTransportFallbackWarning(t *testing.T) {
 
 func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stderr.String()
-	if strings.Count(got, "+--[ tnl dev ]-- transport fallback ") != 1 ||
+	if strings.Count(got, "+--[ tnl publish ]-- transport fallback ") != 1 ||
 		!strings.Contains(got, "tunnel continues over TLS/TCP") ||
 		!strings.Contains(got, "transport") || !strings.Contains(got, "TLS/TCP fallback") {
 		t.Fatalf("human output = %q", got)
@@ -524,7 +524,7 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 
 func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, func(string) error {
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, func(string) error {
 		return errors.New("browser\x1b unavailable")
 	})
 	if err != nil {
@@ -537,9 +537,9 @@ func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stderr.String()
-	if strings.Count(got, "+--[ tnl dev ]-- ") != 2 ||
+	if strings.Count(got, "+--[ tnl publish ]-- ") != 2 ||
 		!strings.Contains(got, "]-- ready ") || !strings.Contains(got, "]-- browser not opened ") ||
-		!strings.Contains(got, "+\n\n+--[ tnl dev ]-- browser not opened ") ||
+		!strings.Contains(got, "+\n\n+--[ tnl publish ]-- browser not opened ") ||
 		!strings.Contains(got, "open the printed public URL manually") || strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
@@ -561,13 +561,13 @@ func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
 
 func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput("ndjson", "tnl dev", io.Discard, &stderr, nil)
+	output, err := newPublishOutput("ndjson", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	output.logf("connection %s", "lost\x1b")
 	got := stderr.String()
-	if !strings.HasPrefix(got, "+--[ tnl dev ]-- publisher connection disrupted ") ||
+	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
 		!strings.Contains(got, "a publisher connection could not be established") || strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
@@ -604,7 +604,7 @@ func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
 
 func TestPublishOutputWarnsWhenRunningLocalServiceFails(t *testing.T) {
 	var stderr bytes.Buffer
-	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
