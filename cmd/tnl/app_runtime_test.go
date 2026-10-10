@@ -85,6 +85,23 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 	}
 }
 
+func TestRuntimeAddressWorksWithoutProjectConfiguration(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	directory := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	var output bytes.Buffer
+	if err := runRuntimeAddress(t.Context(), runtimeOptions{Directory: directory, StateDir: state}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var address struct {
+		Protocol int    `json:"protocol"`
+		Socket   string `json:"socket"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Protocol != 1 || address.Socket == "" || runtimeAvailable(t.Context(), address.Socket) {
+		t.Fatalf("unconfigured runtime address = %#v, %v", address, err)
+	}
+}
+
 func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *testing.T) {
 	a, state, started := testAppRuntime(t)
 	id, err := a.manager.Reserve("api", "owner", 1, "https://api.example")

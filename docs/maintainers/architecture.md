@@ -146,8 +146,11 @@ project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain it. the socket is user-owned
 and mode 0600 beneath a stable, short mode-0700 directory under `/tmp`.
 `internal/privateprotocol` bounds and
-validates requests; golden fixtures describe its wire shape. control credentials
-remain in the native process and never cross the socket or browser metadata.
+validates requests; golden fixtures describe its wire shape. configured-service
+control sessions remain in the native process. an ad-hoc credential crosses
+only this private socket when the app registers its bound target; it does not
+enter snapshots, diagnostics, or browser metadata. the native runtime can
+start without a project file for ad-hoc registrations.
 
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;

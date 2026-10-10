@@ -69,9 +69,6 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	if !project.Found() || len(project.Config.Services) == 0 {
-		return projectConfiguration{}, "", failure.Wrap("prepare app", failure.ProjectConfigMissing, errors.New("configure at least one project service"))
-	}
 	if selected := os.Getenv("TNL_SERVER"); selected != "" {
 		canonical, err := clientstate.CanonicalServer(selected)
 		if err != nil {
