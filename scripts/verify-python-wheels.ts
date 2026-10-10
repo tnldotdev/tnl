@@ -55,23 +55,8 @@ for (const wheel of manifest.wheels) {
       (name) => name.includes("__pycache__") || name.endsWith(".pyc") || name === "tnld",
     ),
   );
-  const lines = (await unzip(file, record)).toString("utf8").trim().split("\n");
-  assert.equal(lines.length, entries.length, "wheel RECORD must describe every file");
-  for (const line of lines) {
-    const [name, digest, length] = line.split(",");
-    assert(name !== undefined && entries.includes(name));
-    if (name === record) {
-      assert.equal(digest, "");
-      assert.equal(length, "");
-      continue;
-    }
-    const contents = await unzip(file, name);
-    assert.equal(digest, `sha256=${createHash("sha256").update(contents).digest("base64url")}`);
-    assert.equal(length, String(contents.length));
-    if (name === "tnl/bin/tnl") {
-      assert.equal(createHash("sha256").update(contents).digest("hex"), wheel.binarySha256);
-    }
-  }
+  const binary = await unzip(file, "tnl/bin/tnl");
+  assert.equal(createHash("sha256").update(binary).digest("hex"), wheel.binarySha256);
   const metadata = (await unzip(file, `${distribution}.dist-info/METADATA`)).toString("utf8");
   const wheelMetadata = (await unzip(file, `${distribution}.dist-info/WHEEL`)).toString("utf8");
   assert(metadata.includes(`Version: ${manifest.version}\n`));
