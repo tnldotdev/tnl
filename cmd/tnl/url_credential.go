@@ -37,8 +37,8 @@ type publicURLCredentialCreateCommand struct {
 	Selector        string               `arg:"" name:"service-or-public-url-id" optional:"" help:"Configured service or saved public URL ID. Omit to use a single service or create a new saved URL."`
 	PublicURL       string               `name:"public-url" help:"Exact public URL to save before issuing the credential."`
 	Name            string               `name:"name" help:"One label under the selected domain or namespace."`
-	Domain          string               `name:"domain" help:"Ready team domain for a generated or named public URL."`
-	Target          string               `name:"target" help:"Optional saved HTTP or HTTPS target origin; omit to supply the target when publishing."`
+	Domain          string               `name:"domain" help:"Team domain for this public URL."`
+	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
 	Output          credentialOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
