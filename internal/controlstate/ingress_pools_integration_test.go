@@ -98,3 +98,32 @@ func TestIntegrationPublicURLPinsTeamIngressPoolAtCreation(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegrationPrimaryIngressPoolProvisioningIsAdditive(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "ingress_pool_inventory")
+	ctx := t.Context()
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 15432}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 15432, 3306}, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := database.GetIngressPool(ctx, "ingress-a")
+	if err != nil || pool.State != "enabled" || pool.IPv4Address.String() != "192.0.2.10" || pool.IPv6Address.String() != "2001:db8::10" {
+		t.Fatalf("enabled pool = %#v, %v", pool, err)
+	}
+	capacities, err := database.TCPPortPoolCapacities(ctx)
+	if err != nil || len(capacities) != 1 || capacities[0].ConfiguredPorts != 3 || capacities[0].AvailablePorts != 3 {
+		t.Fatalf("expanded inventory = %#v, %v", capacities, err)
+	}
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.20", "2001:db8::10", []int32{5432}, now.Add(time.Hour)); err == nil {
+		t.Fatal("a later control process changed the public address for existing URL placements")
+	}
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 5432}, now); err == nil {
+		t.Fatal("duplicate operator port inventory accepted")
+	}
+	capacities, err = database.TCPPortPoolCapacities(ctx)
+	if err != nil || len(capacities) != 1 || capacities[0].ConfiguredPorts != 3 {
+		t.Fatalf("failed configuration changed inventory = %#v, %v", capacities, err)
+	}
+}

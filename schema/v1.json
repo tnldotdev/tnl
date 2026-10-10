@@ -686,6 +686,10 @@
           "type": "array",
           "description": "Stable ingress IPv6 address published in owned public URL records; repeat for each address."
         },
+        "tcp_ports": {
+          "type": "string",
+          "description": "TCP ports verified on the public ingress address, as comma-separated numbers or ranges."
+        },
         "cluster_secret": {
           "type": "string",
           "description": "Current shared secret for private communication among control, ingress, and relays."
