@@ -441,7 +441,7 @@ func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 		{"name", []string{"publish", "--demo", "--name", "saved"}, failure.DemoURLManaged, "remove --name or --public-url"},
 		{"public url", []string{"publish", "--demo", "--public-url", "https://saved.example"}, failure.DemoURLManaged, "remove --name or --public-url"},
 		{"ephemeral", []string{"publish", "--demo", "--ephemeral=false"}, failure.DemoMustBeEphemeral, "remove --ephemeral=false"},
-		{"request limit", []string{"publish", "--demo", "--request-limit", "0"}, failure.InvalidTunnelFlags, "--request-limit"},
+		{"concurrency", []string{"publish", "--demo", "--concurrency", "0"}, failure.InvalidTunnelFlags, "--concurrency"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer

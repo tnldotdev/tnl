@@ -148,6 +148,9 @@ func ValidateTNL(config TNL) error {
 	if err := validateServiceValues(config.Tunnel, config.Publish, config.Dev); err != nil {
 		return err
 	}
+	if err := validateRatePair(config.Tunnel, nil); err != nil {
+		return err
+	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
 		if config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil {
 			return errors.New("tunnel.name and tunnel.public_url belong under services.NAME.tunnel when services are configured")
@@ -182,6 +185,9 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
 		if err := validateServiceValues(service.Tunnel, service.Publish, service.Dev); err != nil {
+			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if len(service.Paths) > 32 {
@@ -242,8 +248,13 @@ func validateServerAndTeam(server, team *string) error {
 
 func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 	if tunnel != nil {
-		if tunnel.RequestLimit != nil && *tunnel.RequestLimit <= 0 {
-			return errors.New("tunnel.request_limit must be greater than zero")
+		if limits := tunnel.Limits; limits != nil {
+			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
+				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")
+			}
+			if limits.Rate != nil && (limits.Rate.Requests != nil && *limits.Rate.Requests <= 0 || limits.Rate.Per != nil && limits.Rate.Per.Value() <= 0) {
+				return errors.New("tunnel.limits.rate requests and per must be positive")
+			}
 		}
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
 			return errors.New("tunnel.name and tunnel.public_url are mutually exclusive")
@@ -308,6 +319,26 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 				return errors.New("dev.startup_timeout must be greater than zero and at most 10 minutes")
 			}
 		}
+	}
+	return nil
+}
+
+func validateRatePair(tunnel, base *Tunnel) error {
+	if tunnel == nil || tunnel.Limits == nil || tunnel.Limits.Rate == nil {
+		return nil
+	}
+	rate := tunnel.Limits.Rate
+	requests, per := rate.Requests, rate.Per
+	if base != nil && base.Limits != nil && base.Limits.Rate != nil {
+		if requests == nil {
+			requests = base.Limits.Rate.Requests
+		}
+		if per == nil {
+			per = base.Limits.Rate.Per
+		}
+	}
+	if requests == nil || per == nil {
+		return errors.New("tunnel.limits.rate requires positive requests and per")
 	}
 	return nil
 }

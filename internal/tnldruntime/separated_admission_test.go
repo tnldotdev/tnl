@@ -22,7 +22,7 @@ type separatedAdmissionLimits struct {
 	PublisherConnectionLimit         int64 `json:"publisher_connection_limit"`
 	RelayStreamCapacity              int64 `json:"relay_stream_capacity"`
 	QUICMaxIncomingStreams           int64 `json:"quic_max_incoming_streams"`
-	PublisherRequestLimit            int   `json:"publisher_request_limit"`
+	PublisherConcurrency             int   `json:"publisher_concurrency"`
 }
 
 type separatedIngressAdmissionLimits struct {
@@ -48,7 +48,7 @@ func init() {
 	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", -1, "maximum publisher connections per relay process (-1: automatic)")
 	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", -1, "maximum visitor streams per relay process (-1: automatic)")
 	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", -1, "maximum incoming QUIC streams per publisher connection (-1: automatic)")
-	flag.IntVar(&runtimeLoadAdmission.PublisherRequestLimit, "tnl-runtime-load-publisher-request-limit", 500, "maximum concurrent requests handled by each publisher route")
+	flag.IntVar(&runtimeLoadAdmission.PublisherConcurrency, "tnl-runtime-load-publisher-concurrency", 500, "maximum concurrent requests handled by each publisher route")
 }
 
 func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
@@ -102,12 +102,12 @@ func verifySeparatedAdmission(t *testing.T) {
 	t.Helper()
 	components := make(map[string]any)
 	for shard, component := range separatedPublisherComponents() {
-		var publisherLimit int
-		separatedWait(t, separatedPublisherShardKey(shard, "request-limit"), 15*time.Second, &publisherLimit)
-		if publisherLimit != runtimeLoadAdmission.PublisherRequestLimit {
-			t.Fatalf("%s request limit = %d, want %d", component, publisherLimit, runtimeLoadAdmission.PublisherRequestLimit)
+		var concurrency int
+		separatedWait(t, separatedPublisherShardKey(shard, "concurrency"), 15*time.Second, &concurrency)
+		if concurrency != runtimeLoadAdmission.PublisherConcurrency {
+			t.Fatalf("%s concurrency = %d, want %d", component, concurrency, runtimeLoadAdmission.PublisherConcurrency)
 		}
-		components[component] = map[string]int{"request_limit": publisherLimit}
+		components[component] = map[string]int{"concurrency": concurrency}
 	}
 	for _, component := range append(separatedIngresses(), "relay-a", "relay-b") {
 		var applied separatedAdmissionLimits

@@ -326,9 +326,7 @@
       ],
       "actions": {
         "visitor": ["honor `Retry-After: 1` before retrying"],
-        "publisher": [
-          "check `--request-limit` and local service concurrency if saturation persists"
-        ]
+        "publisher": ["check `--concurrency` and local service capacity if saturation persists"]
       }
     },
     {

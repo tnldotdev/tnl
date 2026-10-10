@@ -189,7 +189,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
-	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	publisherConfig := services.config(target, policy.prefixes, flags.limits())
 	publisherConfig.TargetOptions = targetOptions
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {

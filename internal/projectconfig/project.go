@@ -182,8 +182,27 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
 	}
-	if override.RequestLimit != nil {
-		result.RequestLimit = override.RequestLimit
+	if override.Limits != nil {
+		if result.Limits == nil {
+			result.Limits = &config.Limits{}
+		}
+		if override.Limits.Requests != nil {
+			result.Limits.Requests = override.Limits.Requests
+		}
+		if override.Limits.Concurrency != nil {
+			result.Limits.Concurrency = override.Limits.Concurrency
+		}
+		if override.Limits.Rate != nil {
+			if result.Limits.Rate == nil {
+				result.Limits.Rate = &config.Rate{}
+			}
+			if override.Limits.Rate.Requests != nil {
+				result.Limits.Rate.Requests = override.Limits.Rate.Requests
+			}
+			if override.Limits.Rate.Per != nil {
+				result.Limits.Rate.Per = override.Limits.Rate.Per
+			}
+		}
 	}
 	return result
 }
@@ -234,6 +253,14 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	}
 	result := *value
 	result.AllowIP = slices.Clone(value.AllowIP)
+	if value.Limits != nil {
+		limits := *value.Limits
+		if limits.Rate != nil {
+			rate := *limits.Rate
+			limits.Rate = &rate
+		}
+		result.Limits = &limits
+	}
 	return &result
 }
 

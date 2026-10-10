@@ -2,6 +2,15 @@
 
 import type { TnlProjectMetadata } from "./index.js";
 
+type TnlRateSegment = `${number}${"ns" | "us" | "µs" | "ms" | "s" | "m" | "h"}`;
+
+/** a Go duration with one to four numeric unit segments; tnl checks positivity at runtime. */
+export type TnlRatePeriod =
+  | TnlRateSegment
+  | `${TnlRateSegment}${TnlRateSegment}`
+  | `${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}`
+  | `${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}`;
+
 export interface TnlConfig {
   /**
    * Control URL used by this project.
@@ -39,6 +48,20 @@ export interface TnlConfig {
      * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
+    limits?: {
+      /**
+       * Total admitted application requests for this tunnel.
+       */
+      requests?: number;
+      rate?: {
+        requests: number;
+        per: TnlRatePeriod;
+      };
+      /**
+       * Maximum simultaneous application requests, streams, and upgrades.
+       */
+      concurrency?: number;
+    };
     /**
      * Allow visitors from every IP address.
      */
@@ -51,10 +74,6 @@ export interface TnlConfig {
      * Exact public URL hostname or HTTPS origin to publish.
      */
     publicURL?: string;
-    /**
-     * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
-     */
-    requestLimit?: number;
   };
   publish?: Publish;
   readiness?: Readiness;
@@ -88,6 +107,20 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              /**
+               * Total admitted application requests for this tunnel.
+               */
+              requests?: number;
+              rate?: {
+                requests: number;
+                per: TnlRatePeriod;
+              };
+              /**
+               * Maximum simultaneous application requests, streams, and upgrades.
+               */
+              concurrency?: number;
+            };
             /**
              * Allow visitors from every IP address.
              */
@@ -100,10 +133,6 @@ export interface TnlConfig {
              * Exact public URL hostname or HTTPS origin to publish.
              */
             publicURL?: string;
-            /**
-             * Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.
-             */
-            requestLimit?: number;
           };
           publish?: Publish;
           readiness?: Readiness;

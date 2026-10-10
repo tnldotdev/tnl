@@ -49,7 +49,7 @@ type PublisherConfig struct {
 	QUICQlog                    bool
 	QUICKeepAlive               time.Duration
 	Parallel                    int
-	RequestLimit                int
+	Concurrency                 int
 	// StartParallel overrides Parallel only during activation; shutdown has its own bound.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -194,9 +194,9 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			RequestLimit: config.RequestLimit,
-			Ephemeral:    config.Ephemeral,
-			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
+			Limits:    publisher.ApplicationLimits{Concurrency: config.Concurrency},
+			Ephemeral: config.Ephemeral,
+			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},

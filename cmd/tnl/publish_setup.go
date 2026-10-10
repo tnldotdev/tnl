@@ -9,13 +9,13 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -280,14 +280,22 @@ func namespaceForMembership(current teamContext, domain authorityv1.Domain) stri
 	return namespace
 }
 
-func (flags tunnelFlags) requestLimit() int {
-	if flags.RequestLimit != nil {
-		return *flags.RequestLimit
+func (flags tunnelFlags) limits() publisher.ApplicationLimits {
+	limits := publisher.ApplicationLimits{}
+	if flags.Requests != nil {
+		limits.Requests = *flags.Requests
 	}
-	return localproxy.DefaultRequestLimit
+	if flags.Concurrency != nil {
+		limits.Concurrency = *flags.Concurrency
+	}
+	if flags.RateRequests != nil {
+		limits.RateRequests = *flags.RateRequests
+		limits.RatePer, _ = time.ParseDuration(flags.RatePer)
+	}
+	return limits
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string, requestLimit int) publisher.Config {
+func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits) publisher.Config {
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	return publisher.Config{
 		Control:           p.routes,
@@ -299,7 +307,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, req
 		Purpose:           controlv1.App,
 		PolicyRevision:    p.policyRevision,
 		Target:            target,
-		RequestLimit:      requestLimit,
+		Limits:            limits,
 		AllowedIPPrefixes: allowedIPPrefixes,
 		Ephemeral:         p.ephemeral,
 		State:             p.state,

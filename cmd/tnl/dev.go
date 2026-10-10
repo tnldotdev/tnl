@@ -328,7 +328,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer recorder.Close()
 	go func() {
-		publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+		publisherConfig := services.config(target, policy.prefixes, flags.limits())
 		publisherConfig.TargetOptions = targetOptions
 		publisherConfig.ObserveRequest = requestObservation(recorder)
 		publisherConfig.RequestInspection = flags.RequestInspection

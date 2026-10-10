@@ -117,14 +117,26 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Tunnel struct {
-	Domain       *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name         *string  `json:"name,omitempty" yaml:"name,omitempty"`
-	PublicURL    *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Open         *bool    `json:"open,omitempty" yaml:"open,omitempty"`
-	AllowIP      []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
-	AllowAllIPs  *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
-	Ephemeral    *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	RequestLimit *int     `json:"request_limit,omitempty" yaml:"request_limit,omitempty" jsonschema:"minimum=1" jsonschema_description:"Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades. Defaults to 500."`
+	Domain      *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Name        *string  `json:"name,omitempty" yaml:"name,omitempty"`
+	PublicURL   *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Open        *bool    `json:"open,omitempty" yaml:"open,omitempty"`
+	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
+	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
+	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
+}
+
+// Limits apply to application requests after visitor access.
+type Limits struct {
+	Requests    *int  `json:"requests,omitempty" yaml:"requests,omitempty"`
+	Rate        *Rate `json:"rate,omitempty" yaml:"rate,omitempty"`
+	Concurrency *int  `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
+}
+
+type Rate struct {
+	Requests *int      `json:"requests,omitempty" yaml:"requests,omitempty"`
+	Per      *Duration `json:"per,omitempty" yaml:"per,omitempty"`
 }
 
 type Publish struct {

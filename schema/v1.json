@@ -124,11 +124,37 @@
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
             },
-            "request_limit": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
-              "default": 500
+            "limits": {
+              "properties": {
+                "requests": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Total admitted application requests for this tunnel."
+                },
+                "rate": {
+                  "properties": {
+                    "requests": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "per": {
+                      "type": "string",
+                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": ["requests", "per"]
+                },
+                "concurrency": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Maximum simultaneous application requests, streams, and upgrades.",
+                  "default": 500
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
             }
           },
           "additionalProperties": false,
@@ -214,11 +240,37 @@
                     "type": "boolean",
                     "description": "Remove the public URL when this tunnel stops."
                   },
-                  "request_limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
-                    "default": 500
+                  "limits": {
+                    "properties": {
+                      "requests": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Total admitted application requests for this tunnel."
+                      },
+                      "rate": {
+                        "properties": {
+                          "requests": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "per": {
+                            "type": "string",
+                            "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["requests", "per"]
+                      },
+                      "concurrency": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum simultaneous application requests, streams, and upgrades.",
+                        "default": 500
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
                   }
                 },
                 "additionalProperties": false,

@@ -508,7 +508,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	if err != nil {
 		return err
 	}
-	configuration := services.config(service.Target, preparation.policy.prefixes, flags.requestLimit())
+	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name

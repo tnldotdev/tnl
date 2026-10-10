@@ -62,7 +62,10 @@ type tunnelFlags struct {
 	AllowIP            []string                     `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
 	AllowAllIPs        bool                         `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
 	Ephemeral          bool                         `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	RequestLimit       *int                         `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
+	Requests           *int                         `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
+	RateRequests       *int                         `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
+	RatePer            string                       `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
+	Concurrency        *int                         `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
 	TargetCAFile       string                       `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS target."`
 	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
 

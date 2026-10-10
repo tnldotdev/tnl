@@ -217,7 +217,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 			}
 			prefixes = policy.prefixes
 		}
-		config := services.config(base.Target, slices.Clone(prefixes), base.RequestLimit)
+		config := services.config(base.Target, slices.Clone(prefixes), base.Limits)
 		config.Purpose = controlv1.Alias
 		config.Mounts, config.ObserveResponse = base.Mounts, base.ObserveResponse
 		config.AdmitRequest = base.AdmitRequest

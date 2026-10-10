@@ -44,8 +44,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := tunnel.Properties.Get("ephemeral"); !found {
 		t.Fatal("tunnel ephemeral property is missing")
 	}
-	if limit, found := tunnel.Properties.Get("request_limit"); !found || limit.Minimum != "1" || limit.Default != 500 {
-		t.Fatalf("tunnel request limit schema = %#v", limit)
+	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
+		t.Fatalf("tunnel limits schema = %#v", limits)
+	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Default != 500 {
+		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
 	}
 	if _, found := tunnel.Properties.Get("allow_providers"); found {
 		t.Fatal("tunnel-wide provider grants must not be generated")
@@ -62,7 +64,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "allowIP" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "requestLimit" || keys["request_inspection"] != "requestInspection" || keys["strip_prefix"] != "stripPrefix" {
+	if keys["allow_ip"] != "allowIP" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["request_inspection"] != "requestInspection" || keys["strip_prefix"] != "stripPrefix" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))
