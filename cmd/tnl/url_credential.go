@@ -40,6 +40,7 @@ type publicURLCredentialCreateCommand struct {
 	Domain          string               `name:"domain" help:"Team domain for this public URL."`
 	Ephemeral       bool                 `name:"ephemeral" help:"Issue a credential for temporary public URLs in the selected namespace."`
 	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
+	Protocol        string               `name:"protocol" help:"Service protocol of a new saved public URL: http (default), postgres, or mysql."`
 	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
@@ -110,8 +111,16 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 	if err != nil {
 		return failure.Wrap("validate credential lifetime", failure.InvalidTunnelFlags, err)
 	}
+	protocol, err := publishProtocol(flags.Protocol)
+	if err != nil {
+		return err
+	}
+	if protocol != controlv1.Http && flags.Target != "" {
+		return failure.Wrap("reserve database public URL", failure.InvalidTunnelFlags,
+			errors.New("database targets stay on the publisher; omit --target and supply host:port when publishing"))
+	}
 	if flags.Ephemeral {
-		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs {
+		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs || flags.Protocol != "" && flags.Protocol != "http" {
 			return failure.Wrap("validate ad-hoc credential options", failure.InvalidTunnelFlags,
 				errors.New("--ephemeral cannot select an existing URL, name, target, or visitor policy"))
 		}
@@ -152,6 +161,14 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 			return controlclient.ErrNotFound
 		}
 	}
+	if flags.Protocol != "" && flags.Protocol != string(route.ServiceProtocol) {
+		return failure.Wrap("validate credential protocol", failure.PublishCredentialMismatch,
+			errors.New("protocol differs from the saved public URL"))
+	}
+	publicAddress, err := savedPublicAddress(route)
+	if err != nil {
+		return err
+	}
 	issued, err := session.authenticated.Control.CreatePublicURLPublishCredential(ctx, route.Id, expiresIn)
 	if err != nil {
 		return err
@@ -163,7 +180,7 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 		return failure.Wrap("validate issued credential", failure.ServerResponseInvalid, err)
 	}
 	result := publicURLCredentialCreateResult{
-		SchemaVersion: 1, PublicURL: "https://" + route.CanonicalHostname, PublicURLID: route.Id,
+		SchemaVersion: 1, PublicURL: publicAddress, PublicURLID: route.Id,
 		Target: route.Target, CredentialID: issued.Id, Credential: issued.Credential, ExpiresAt: issued.ExpiresAt,
 	}
 	return writeCredentialCreateResult(flags.Output, result, output, diagnostics)
@@ -315,6 +332,10 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 }
 
 func reservePublishCredentialURL(ctx context.Context, session *teamSession, flags publicURLCredentialCreateCommand) (controlv1.PublicURL, error) {
+	protocol, err := publishProtocol(flags.Protocol)
+	if err != nil {
+		return controlv1.PublicURL{}, err
+	}
 	target := ""
 	if flags.Target != "" {
 		var err error
@@ -345,6 +366,9 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 			TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: services.hostname,
 			Target: target, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App,
 		}
+		if protocol != controlv1.Http {
+			request.ServiceProtocol = &protocol
+		}
 		if services.publicURLScope == controlv1.Member {
 			request.MembershipId = &services.membershipID
 		}
@@ -361,7 +385,9 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	if route.AllowedIpPrefixes != nil {
 		currentPolicy = *route.AllowedIpPrefixes
 	}
-	if target != "" && route.Target != target || route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
+	if target != "" && route.Target != target || route.ServiceProtocol != protocol ||
+		protocol != controlv1.Http && (route.Target != "" || route.PublicPort == nil) ||
+		route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
 		route.Ephemeral || !slices.Equal(currentPolicy, policy.prefixes) {
 		return controlv1.PublicURL{}, failure.Wrap("reserve public URL for credential", failure.PublishCredentialMismatch,
 			fmt.Errorf("public URL %s already exists with a different target or visitor policy", route.Id))
