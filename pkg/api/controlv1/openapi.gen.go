@@ -785,7 +785,9 @@ type AllocateEphemeralPublicURLRequest struct {
 	AllowIp      *[]string                   `json:"allow_ip,omitempty"`
 	InvocationId ResourceID                  `json:"invocation_id"`
 	Limits       *PublisherApplicationLimits `json:"limits,omitempty"`
-	Target       string                      `json:"target"`
+
+	// Target Local service address, such as http://app.internal:3000.
+	Target string `json:"target"`
 }
 
 // AppendFeedbackEventRequest defines model for AppendFeedbackEventRequest.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"time"
 
@@ -48,10 +47,8 @@ func Run(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	target, err := localproxy.NormalizeTarget(options.Target)
-	parsed, parseErr := url.Parse(target)
-	if err != nil || target != options.Target || parseErr != nil ||
-		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
-		return errors.New("ad-hoc publisher requires a canonical loopback target")
+	if err != nil || target != options.Target {
+		return errors.New("ad-hoc target must be an HTTP or HTTPS address with a host and port")
 	}
 	client, err := controlclient.New(options.ControlURL, options.HTTPClient, "")
 	if err != nil {
