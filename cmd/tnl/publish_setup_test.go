@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -63,12 +64,12 @@ func TestResolveIPPolicyFailsWhenCurrentIPCannotBeResolved(t *testing.T) {
 }
 
 func TestPublisherConfigPreservesEphemeralRouteChoice(t *testing.T) {
-	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, 750)
+	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, publisher.ApplicationLimits{Concurrency: 750})
 	if !configured.Ephemeral {
 		t.Fatal("ephemeral route choice was not passed to the publisher")
 	}
-	if configured.RequestLimit != 750 {
-		t.Fatalf("request limit = %d", configured.RequestLimit)
+	if configured.Limits.Concurrency != 750 {
+		t.Fatalf("concurrency = %d", configured.Limits.Concurrency)
 	}
 }
 

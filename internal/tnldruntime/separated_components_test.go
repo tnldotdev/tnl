@@ -290,7 +290,7 @@ func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 }
 
 func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int) {
-	separatedWrite(t, separatedPublisherShardKey(shard, "request-limit"), runtimeLoadAdmission.PublisherRequestLimit)
+	separatedWrite(t, separatedPublisherShardKey(shard, "concurrency"), runtimeLoadAdmission.PublisherConcurrency)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
@@ -321,7 +321,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
-		RequestLimit: runtimeLoadAdmission.PublisherRequestLimit,
+		Concurrency:  runtimeLoadAdmission.PublisherConcurrency,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {

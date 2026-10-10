@@ -342,7 +342,7 @@
       "slug": "invalid-tunnel-flags",
       "class": "invalid",
       "message": "tunnel options conflict or contain an invalid value",
-      "action": "check --public-url, --name, --allow-ip, and --request-limit"
+      "action": "check --public-url, --name, --allow-ip, and --concurrency"
     },
     {
       "code": "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED",

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -113,9 +114,9 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if flags.PublishCredential == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-	} else if flags.RequestLimit == nil && effective.Tunnel != nil {
+	} else if effective.Tunnel != nil {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
-		flags.RequestLimit = effective.Tunnel.RequestLimit
+		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
 	applyRequestInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
@@ -168,9 +169,7 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	if tunnel == nil {
 		return
 	}
-	if flags.RequestLimit == nil {
-		flags.RequestLimit = tunnel.RequestLimit
-	}
+	applyTunnelLimits(flags, tunnel.Limits)
 	if flags.Domain == "" && tunnel.Domain != nil {
 		flags.Domain = *tunnel.Domain
 	}
@@ -197,6 +196,26 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	}
 }
 
+func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
+	if limits == nil {
+		return
+	}
+	if flags.Requests == nil {
+		flags.Requests = limits.Requests
+	}
+	if flags.Concurrency == nil {
+		flags.Concurrency = limits.Concurrency
+	}
+	if limits.Rate != nil {
+		if flags.RateRequests == nil {
+			flags.RateRequests = limits.Rate.Requests
+		}
+		if flags.RatePer == "" && limits.Rate.Per != nil {
+			flags.RatePer = limits.Rate.Per.Value().String()
+		}
+	}
+}
+
 func applyRequestInspection(flags *tunnelFlags, effective config.TNL) {
 	if flags.requestInspectionFromCLI {
 		return
@@ -207,8 +226,17 @@ func applyRequestInspection(flags *tunnelFlags, effective config.TNL) {
 }
 
 func validateTunnelFlags(flags tunnelFlags) error {
-	if flags.RequestLimit != nil && *flags.RequestLimit <= 0 {
-		return errors.New("--request-limit must be greater than zero")
+	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
+		return errors.New("--requests and --concurrency must be greater than zero")
+	}
+	if (flags.RateRequests == nil) != (flags.RatePer == "") {
+		return errors.New("--rate-requests and --rate-per must be supplied together")
+	}
+	if flags.RateRequests != nil {
+		period, err := time.ParseDuration(flags.RatePer)
+		if *flags.RateRequests <= 0 || err != nil || period <= 0 {
+			return errors.New("--rate-requests and --rate-per must be positive")
+		}
 	}
 	if flags.PublicURL != "" && flags.Name != "" {
 		return errors.New("--public-url and --name are mutually exclusive")

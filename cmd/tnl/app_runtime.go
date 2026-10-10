@@ -523,7 +523,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	if err != nil {
 		return err
 	}
-	configuration := services.config(service.Target, preparation.policy.prefixes, flags.requestLimit())
+	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
 		return err

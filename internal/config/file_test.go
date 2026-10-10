@@ -74,7 +74,10 @@ tnl:
   tunnel:
     allow_ip: [192.0.2.1]
     allow_all_ips: false
-    request_limit: 750
+    limits:
+      requests: 20
+      rate: {requests: 5, per: 1m}
+      concurrency: 750
   publish:
     target: 3000
   readiness:
@@ -92,7 +95,10 @@ tnl:
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
 		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
-		document.TNL.Tunnel.RequestLimit == nil || *document.TNL.Tunnel.RequestLimit != 750 {
+		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
+		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
+		document.TNL.Tunnel.Limits.Rate == nil || document.TNL.Tunnel.Limits.Rate.Requests == nil || *document.TNL.Tunnel.Limits.Rate.Requests != 5 ||
+		document.TNL.Tunnel.Limits.Rate.Per == nil || document.TNL.Tunnel.Limits.Rate.Per.Value() != time.Minute {
 		t.Fatalf("document = %#v", document)
 	}
 }
@@ -257,8 +263,10 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero request limit":         {`{"version":1,"tnl":{"tunnel":{"request_limit":0}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 0\n", "tunnel.request_limit must be greater than zero"},
-		"negative request limit":     {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
+		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
+		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "services.web: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
+		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "tunnel.limits.rate requires positive requests and per"},
+		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
 		"invalid request inspection": {`{"version":1,"tnl":{"request_inspection":"all"}}`, "version: 1\ntnl:\n  request_inspection: all\n", "request_inspection"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"request_inspection":"all"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      request_inspection: all\n", "request_inspection"},
 		"retired dev":                {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "dev"},

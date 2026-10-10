@@ -148,7 +148,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
-		RequestLimit:           flags.requestLimit(), RequestInspection: flags.RequestInspection,
+		Limits:                 flags.limits(), RequestInspection: flags.RequestInspection,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}

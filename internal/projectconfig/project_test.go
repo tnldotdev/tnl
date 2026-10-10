@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 )
@@ -87,6 +88,34 @@ func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
 			(effective.Tunnel.AllowAllIPs != nil && *effective.Tunnel.AllowAllIPs) != test.all {
 			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
 		}
+	}
+}
+
+func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
+	requests, rateRequests, concurrency := 20, 5, 3
+	period := config.Duration(time.Minute)
+	override := config.Duration(2 * time.Minute)
+	project := Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Limits: &config.Limits{
+			Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}, Concurrency: &concurrency,
+		}},
+		Services: config.Services{"api": {Tunnel: &config.Tunnel{Limits: &config.Limits{
+			Rate: &config.Rate{Per: &override},
+		}}}},
+	}}
+	if err := config.ValidateTNL(project.Config); err != nil {
+		t.Fatal(err)
+	}
+	service, err := project.EffectiveService("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := service.Tunnel.Limits
+	if limits.Requests != &requests || limits.Concurrency != &concurrency || limits.Rate.Requests != &rateRequests || limits.Rate.Per != &override {
+		t.Fatalf("service limits = %#v", limits)
+	}
+	if project.Config.Tunnel.Limits.Rate.Per != &period {
+		t.Fatal("service override changed root rate period")
 	}
 }
 

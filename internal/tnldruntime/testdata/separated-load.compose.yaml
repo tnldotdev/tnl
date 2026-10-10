@@ -54,7 +54,7 @@ x-runtime: &runtime
         -tnl-runtime-load-challenge-hostname-connection-limit='${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}' \
         -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:--1}' \
-        -tnl-runtime-load-publisher-request-limit='${PUBLISHER_REQUEST_LIMIT:-500}' \
+        -tnl-runtime-load-publisher-concurrency='${PUBLISHER_CONCURRENCY:-500}' \
         -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:--1}' \
         -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \

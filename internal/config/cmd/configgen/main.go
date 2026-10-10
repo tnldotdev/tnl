@@ -13,7 +13,6 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/webhookips"
@@ -145,10 +144,14 @@ func tunnelSchema() *jsonschema.Schema {
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
-	properties.Set("request_limit", &jsonschema.Schema{
-		Type: "integer", Minimum: "1", Default: localproxy.DefaultRequestLimit,
-		Description: "Maximum concurrent requests forwarded by the publisher for this public URL, including streams and upgrades.",
-	})
+	limitProperties := jsonschema.NewProperties()
+	limitProperties.Set("requests", &jsonschema.Schema{Type: "integer", Minimum: "1", Description: "Total admitted application requests for this tunnel."})
+	rateProperties := jsonschema.NewProperties()
+	rateProperties.Set("requests", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	rateProperties.Set("per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
+	limitProperties.Set("rate", &jsonschema.Schema{Type: "object", Required: []string{"requests", "per"}, Properties: rateProperties, AdditionalProperties: jsonschema.FalseSchema})
+	limitProperties.Set("concurrency", &jsonschema.Schema{Type: "integer", Minimum: "1", Default: 500, Description: "Maximum simultaneous application requests, streams, and upgrades."})
+	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
 	allowAllProperties := jsonschema.NewProperties()
 	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{

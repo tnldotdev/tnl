@@ -253,7 +253,6 @@ var typeScriptKeyMappings = map[string]string{
 	"source_ips":         "sourceIPs",
 	"allow_all_ips":      "allowAllIPs",
 	"startup_timeout":    "startupTimeout",
-	"request_limit":      "requestLimit",
 	"request_inspection": "requestInspection",
 	"strip_prefix":       "stripPrefix",
 	"public_url":         "publicURL",

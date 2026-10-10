@@ -4,13 +4,49 @@ import {
   type TnlConfigContext,
   type TnlConfigInput,
   type TnlConfigForServices,
+  type TnlRatePeriod,
 } from "@tnldotdev/tnl/config";
 
 const staticConfig = {
-  tunnel: { allowIP: ["192.0.2.0/24"], domain: "example.test", requestLimit: 750 },
+  tunnel: {
+    allowIP: ["192.0.2.0/24"],
+    domain: "example.test",
+    limits: { requests: 20, rate: { requests: 5, per: "1m" }, concurrency: 750 },
+  },
   publish: { target: 3000 },
   readiness: { path: "/health" },
 } satisfies TnlConfigInput;
+
+"1m" satisfies TnlRatePeriod;
+"1h30m" satisfies TnlRatePeriod;
+"1h2m3s4ms" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods require a numeric amount and duration unit.
+"minute" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods do not use plain numbers.
+"1" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods do not include spaces.
+"1 minute" satisfies TnlRatePeriod;
+({
+  tunnel: {
+    // @ts-expect-error requestLimit is not a configuration alias for limits.concurrency.
+    requestLimit: 5,
+  },
+}) satisfies TnlConfig;
+({
+  services: {
+    api: {
+      tunnel: {
+        limits: {
+          rate: {
+            requests: 1,
+            // @ts-expect-error service limits use the same rate period type.
+            per: "minute",
+          },
+        },
+      },
+    },
+  },
+}) satisfies TnlConfig;
 
 const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
   ...staticConfig,

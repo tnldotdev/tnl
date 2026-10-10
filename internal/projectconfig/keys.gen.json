@@ -3,7 +3,6 @@
   "allow_ip": "allowIP",
   "public_url": "publicURL",
   "request_inspection": "requestInspection",
-  "request_limit": "requestLimit",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix"
 }

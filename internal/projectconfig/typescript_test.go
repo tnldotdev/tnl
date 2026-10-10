@@ -18,7 +18,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
   requestInspection: "detailed",
-  tunnel: {domain: "routes.example.test", requestLimit: 750},
+  tunnel: {domain: "routes.example.test", limits: {requests: 20, rate: {requests: 5, per: "1m"}, concurrency: 750}},
   publish: {target: 3000},
   readiness: {path: "/health"},
   services: {
@@ -44,7 +44,10 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
 		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
 		value.Services["site"].Paths["/api"].Service != "api" || !value.Services["site"].Paths["/v1"].StripPrefix ||
-		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
+		value.Tunnel.Limits == nil || value.Tunnel.Limits.Concurrency == nil || *value.Tunnel.Limits.Concurrency != 750 ||
+		value.Tunnel.Limits.Requests == nil || *value.Tunnel.Limits.Requests != 20 ||
+		value.Tunnel.Limits.Rate == nil || value.Tunnel.Limits.Rate.Requests == nil || *value.Tunnel.Limits.Rate.Requests != 5 ||
+		value.Tunnel.Limits.Rate.Per == nil || value.Tunnel.Limits.Rate.Per.Value() != time.Minute ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
 		value.Readiness == nil || value.Readiness.Path != "/health" ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
@@ -196,7 +199,8 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
 		"service server":     {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
 		"service team":       {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"request limit":      {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
+		"concurrency":        {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, "services.api: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
+		"old request limit":  {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
 		"request inspection": {`export default {services: {api: {requestInspection: "all"}}};`, "services.api.request_inspection: must be summary or detailed"},
 		"retired dev":        {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":             {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
