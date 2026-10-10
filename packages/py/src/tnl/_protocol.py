@@ -61,7 +61,7 @@ _code = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 
 def parse_status(value: object, registration_id: str) -> Status:
     if not isinstance(value, dict) or set(value) - {
-        "protocol",
+        "version",
         "registration_id",
         "state",
         "public_url_id",
@@ -70,7 +70,7 @@ def parse_status(value: object, registration_id: str) -> Status:
         "failure_code",
     }:
         raise InvalidResponse()
-    if value.get("protocol") != 1 or value.get("registration_id") != registration_id:
+    if value.get("version") != 1 or value.get("registration_id") != registration_id:
         raise InvalidResponse()
     state: object = value.get("state")
     if not isinstance(state, str) or state not in _states:

@@ -42,8 +42,8 @@ class NativeRuntime:
             result: object = json.loads(stdout)
             if (
                 not isinstance(result, dict)
-                or set(result) != {"protocol", "socket"}
-                or result["protocol"] != 1
+                or set(result) != {"version", "socket"}
+                or result["version"] != 1
                 or not isinstance(result["socket"], str)
                 or not Path(result["socket"]).is_absolute()
                 or "\0" in result["socket"]

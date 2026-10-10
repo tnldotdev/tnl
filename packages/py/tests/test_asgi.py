@@ -38,7 +38,7 @@ class FakeNative(NativeRuntime):
             self.target = str(payload["target"])
             assert payload["credential"] == _token
             return {
-                "protocol": 1,
+                "version": 1,
                 "registration_id": payload["registration_id"],
                 "state": "routable",
                 "public_url_id": "url_allocated",
@@ -49,7 +49,7 @@ class FakeNative(NativeRuntime):
             if self.fail_status:
                 raise NativeUnavailable()
             return {
-                "protocol": 1,
+                "version": 1,
                 "registration_id": payload["registration_id"],
                 "state": "routable",
                 "public_url_id": "url_allocated",
@@ -171,7 +171,7 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
         async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
             if operation == "register":
                 return {
-                    "protocol": 1,
+                    "version": 1,
                     "registration_id": payload["registration_id"],
                     "state": "failed",
                     "failure_code": "runtime.publication_failed",

@@ -30,7 +30,7 @@ def test_native_request_uses_the_bounded_private_socket() -> None:
                 received.append(json.loads(await reader.readexactly(size)))
                 payload = json.dumps(
                     {
-                        "protocol": 1,
+                        "version": 1,
                         "registration_id": "ivk_example",
                         "state": "routable",
                         "public_url_id": "url_example",
@@ -54,7 +54,7 @@ def test_native_request_uses_the_bounded_private_socket() -> None:
                     socket,
                     "status",
                     {
-                        "protocol": 1,
+                        "version": 1,
                         "registration_id": "ivk_example",
                         "owner": "owner",
                     },
@@ -62,7 +62,7 @@ def test_native_request_uses_the_bounded_private_socket() -> None:
                 assert parse_status(value, "ivk_example").state == "routable"
                 assert received == [
                     {
-                        "protocol": 1,
+                        "version": 1,
                         "registration_id": "ivk_example",
                         "owner": "owner",
                     }
@@ -95,7 +95,7 @@ def test_native_request_rejects_oversized_socket_response() -> None:
             server = await asyncio.start_unix_server(handle, path=socket)
             try:
                 with pytest.raises(InvalidResponse):
-                    await NativeRuntime().request(socket, "status", {"protocol": 1})
+                    await NativeRuntime().request(socket, "status", {"version": 1})
             finally:
                 server.close()
                 await server.wait_closed()
