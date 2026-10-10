@@ -60,6 +60,34 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	}
 }
 
+func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *testing.T) {
+	allowed := []string{"192.0.2.0/24"}
+	want := controlv1.PublicURL{
+		Id: "public_url_existing", TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"),
+		CanonicalHostname: "demo.example", PublicUrlScope: controlv1.Member, Purpose: controlv1.App,
+		AllowedIpPrefixes: &allowed, LifecycleState: controlv1.Enabled,
+	}
+	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.PublicURL{want}}
+	got, created, err := createOrLoadPublicURL(t.Context(), Config{
+		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
+		Target: "http://127.0.0.1:3000", AllowedIPPrefixes: allowed, PreserveSavedURLTarget: true,
+	})
+	if err != nil || created || got.Target != "" || control.updated != nil {
+		t.Fatalf("credential-backed URL changed: route = %#v, created = %t, update = %#v, err = %v", got, created, control.updated, err)
+	}
+	control.allowed = append(control.allowed, "update")
+	control.updateErr = controlclient.ErrStatusConflict
+	_, _, err = createOrLoadPublicURL(t.Context(), Config{
+		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
+		Target: "http://127.0.0.1:3000", PreserveSavedURLTarget: true,
+	})
+	if err == nil || control.updated == nil {
+		t.Fatalf("changed visitor policy was accepted: update = %#v, err = %v", control.updated, err)
+	}
+}
+
 func TestCreateOrLoadRouteRejectsDifferentIdentityOrLifecycle(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.PublicURL{{
 		Id: "public_url_existing", TeamId: "team_1", DomainId: "domain_other",

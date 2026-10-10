@@ -23,6 +23,17 @@ SELECT * FROM control.public_url_publish_credentials
 WHERE public_url_id = sqlc.arg(public_url_id)
 ORDER BY created_at DESC, id;
 
+-- name: ListTeamPublicURLPublishCredentials :many
+SELECT credentials.id, credentials.public_url_id, credentials.created_at,
+    credentials.expires_at, credentials.revoked_at, routes.canonical_hostname
+FROM control.public_url_publish_credentials AS credentials
+JOIN control.public_urls AS routes ON routes.id = credentials.public_url_id
+WHERE routes.team_id = sqlc.arg(team_id)
+    AND routes.lifecycle_state <> 'deleted'
+    AND (sqlc.narg(cursor)::text IS NULL OR credentials.id > sqlc.narg(cursor))
+ORDER BY credentials.id
+LIMIT 101;
+
 -- name: RevokePublicURLPublishCredential :one
 UPDATE control.public_url_publish_credentials
 SET revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))

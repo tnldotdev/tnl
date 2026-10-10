@@ -722,6 +722,46 @@ paths:
                 $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publish-credentials:
+    get:
+      operationId: listTeamPublicURLPublishCredentials
+      summary: List publish credentials in the selected team without secrets
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Page of public URL publish credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURLPublishCredentialPage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publish-credentials/{credential_id}:
+    delete:
+      operationId: revokePublishCredentialByID
+      summary: Revoke a publish credential by its globally unique ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+        - $ref: "#/components/parameters/TeamIDQuery"
+      responses:
+        "200":
+          description: Revoked credential metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURLPublishCredential"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
       operationId: heartbeatPublishRun
@@ -1564,8 +1604,8 @@ components:
           $ref: "#/components/schemas/CanonicalHostname"
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty when a saved app public URL has no saved target.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -1604,12 +1644,16 @@ components:
     PublicURLPublishCredential:
       type: object
       additionalProperties: false
-      required: [id, public_url_id, created_at, expires_at]
+      required: [id, public_url_id, public_url, created_at, expires_at]
       properties:
         id:
           $ref: "#/components/schemas/ResourceID"
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
+        public_url:
+          type: string
+          format: uri
+          pattern: "^https://"
         created_at:
           type: string
           format: date-time
@@ -1619,6 +1663,17 @@ components:
         revoked_at:
           type: string
           format: date-time
+    PublicURLPublishCredentialPage:
+      type: object
+      additionalProperties: false
+      required: [credentials]
+      properties:
+        credentials:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicURLPublishCredential"
+        next_cursor:
+          $ref: "#/components/schemas/ResourceID"
     IssuedPublicURLPublishCredential:
       type: object
       additionalProperties: false
@@ -1663,8 +1718,8 @@ components:
           $ref: "#/components/schemas/CanonicalHostname"
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty only for a saved app public URL with no saved target.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2366,8 +2421,8 @@ components:
       properties:
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty only when keeping a saved app public URL targetless.
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

@@ -32,12 +32,23 @@ type CreatePublicURLPublishCredentialRequest struct {
 	Now, ExpiresAt                                        time.Time
 }
 
+type PublicURLPublishCredentialSummary struct {
+	ID, PublicURLID, PublicURL string
+	CreatedAt, ExpiresAt       time.Time
+	RevokedAt                  *time.Time
+}
+
+type PublicURLPublishCredentialPage struct {
+	Credentials []PublicURLPublishCredentialSummary
+	NextCursor  string
+}
+
 var ErrPublicURLPublishCredential = errors.New("controlstate: public URL publish credential is invalid or expired")
 
 // CreatePublicURLPublishCredential issues a secret only for an enabled, authorized saved URL.
 func (d *Database) CreatePublicURLPublishCredential(ctx context.Context, request CreatePublicURLPublishCredentialRequest) (result PublicURLPublishCredential, secret credentials.PublicURLPublishCredential, retErr error) {
 	if request.PublicURLID == "" || request.IdentityID == "" || request.MembershipID == "" || request.PolicyRevision == 0 ||
-		request.Target == "" || !request.ExpiresAt.After(request.Now) || request.ExpiresAt.After(request.Now.Add(maximumPublishCredentialLifetime)) {
+		!request.ExpiresAt.After(request.Now) || request.ExpiresAt.After(request.Now.Add(maximumPublishCredentialLifetime)) {
 		return result, "", ErrPublicURLPublishCredential
 	}
 	plan := request.CertificatePlan
@@ -153,6 +164,53 @@ func (d *Database) ListPublicURLPublishCredentials(ctx context.Context, publicUR
 		result[index] = publicURLPublishCredentialFromRow(row)
 	}
 	return result, nil
+}
+
+func (d *Database) ListTeamPublicURLPublishCredentials(ctx context.Context, teamID, cursor string) (PublicURLPublishCredentialPage, error) {
+	if !validStateText(teamID) || cursor != "" && !opaqueid.Valid(cursor, opaqueid.PublicURLPublishCredentialPrefix) {
+		return PublicURLPublishCredentialPage{}, ErrPublicURLInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return PublicURLPublishCredentialPage{}, err
+	}
+	rows, err := controlstatedb.New(d.pool).ListTeamPublicURLPublishCredentials(ctx, controlstatedb.ListTeamPublicURLPublishCredentialsParams{
+		TeamID: teamID, Cursor: nullableText(cursor),
+	})
+	if err != nil {
+		return PublicURLPublishCredentialPage{}, err
+	}
+	page := PublicURLPublishCredentialPage{Credentials: make([]PublicURLPublishCredentialSummary, 0, min(len(rows), 100))}
+	for _, row := range rows[:min(len(rows), 100)] {
+		entry := PublicURLPublishCredentialSummary{
+			ID: row.ID, PublicURLID: row.PublicURLID, PublicURL: "https://" + row.CanonicalHostname,
+			CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time,
+		}
+		if row.RevokedAt.Valid {
+			entry.RevokedAt = &row.RevokedAt.Time
+		}
+		page.Credentials = append(page.Credentials, entry)
+	}
+	if len(rows) > 100 {
+		page.NextCursor = page.Credentials[len(page.Credentials)-1].ID
+	}
+	return page, nil
+}
+
+func (d *Database) PublicURLPublishCredentialByID(ctx context.Context, id string) (PublicURLPublishCredential, error) {
+	if !opaqueid.Valid(id, opaqueid.PublicURLPublishCredentialPrefix) {
+		return PublicURLPublishCredential{}, ErrPublicURLNotFound
+	}
+	if err := d.requireOpen(); err != nil {
+		return PublicURLPublishCredential{}, err
+	}
+	row, err := controlstatedb.New(d.pool).GetPublicURLPublishCredentialByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PublicURLPublishCredential{}, ErrPublicURLNotFound
+	}
+	if err != nil {
+		return PublicURLPublishCredential{}, err
+	}
+	return publicURLPublishCredentialFromRow(row), nil
 }
 
 func (d *Database) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string, now time.Time) (PublicURLPublishCredential, error) {

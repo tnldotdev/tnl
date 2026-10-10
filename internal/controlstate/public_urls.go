@@ -366,6 +366,9 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
 		return PublicURL{}, ErrPublicURLNotEnabled
 	}
+	if request.Target == "" && (route.Target != "" || route.Purpose != string(PublicURLPurposeApp) || route.Ephemeral) {
+		return PublicURL{}, ErrPublicURLInvalid
+	}
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
 		return PublicURL{}, ErrPublicURLMutationStale
 	}
@@ -907,7 +910,7 @@ func closePublishRun(
 func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Prefix, error) {
 	for _, value := range []string{
 		request.TeamID, request.DomainID, request.ActingIdentityID, request.IdempotencyKey,
-		request.CanonicalHostname, request.Target, string(request.PublicURLScope), string(request.DNSState),
+		request.CanonicalHostname, string(request.PublicURLScope), string(request.DNSState),
 	} {
 		if !validStateText(value) {
 			return nil, ErrPublicURLInvalid
@@ -928,7 +931,8 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 	if err != nil || canonical != request.CanonicalHostname {
 		return nil, ErrPublicURLInvalid
 	}
-	if err := authorization.ValidateTarget(request.Target); err != nil {
+	if request.Target == "" && (request.Purpose != PublicURLPurposeApp || request.Ephemeral) ||
+		request.Target != "" && authorization.ValidateTarget(request.Target) != nil {
 		return nil, ErrPublicURLInvalid
 	}
 	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
@@ -943,13 +947,13 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 }
 
 func validateAuthorizedPublicURLUpdateRequest(request AuthorizedPublicURLUpdateRequest) ([]netip.Prefix, error) {
-	for _, value := range []string{request.PublicURLID, request.TeamID, request.ActingIdentityID, request.Target} {
+	for _, value := range []string{request.PublicURLID, request.TeamID, request.ActingIdentityID} {
 		if !validStateText(value) {
 			return nil, ErrPublicURLInvalid
 		}
 	}
 	if request.PolicyRevision == 0 || request.ExpectedMutationRevision == 0 ||
-		authorization.ValidateTarget(request.Target) != nil {
+		request.Target != "" && authorization.ValidateTarget(request.Target) != nil {
 		return nil, ErrPublicURLInvalid
 	}
 	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)

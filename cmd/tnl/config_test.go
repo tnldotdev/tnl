@@ -124,6 +124,24 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 	}
 }
 
+func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
+	name := "project-url"
+	allowAllIPs := true
+	ephemeral := true
+	limit := 20
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, RequestLimit: &limit},
+		Services: config.Services{"api": {}, "web": {}},
+	}}}
+	flags := publishCommand{PublishCredential: "tnl_publish_example"}
+	if err := project.applyPublish(&flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.RequestLimit == nil || *flags.RequestLimit != limit {
+		t.Fatalf("credential publish inherited a project URL or visitor policy: %#v", flags)
+	}
+}
+
 func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://environment.example")
 	t.Setenv("TNL_NAME", "environment-name")
