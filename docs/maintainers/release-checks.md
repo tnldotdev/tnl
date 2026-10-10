@@ -24,8 +24,8 @@ SERVER=https://control.tnl.wtf TEAM=team_... STATE_DIR=/private/tnl-staging \
 
 `plan` makes no server request. `run` is not read-only: it creates up to three
 public URLs and four publish runs in the test team. Review the plan, then run
-`release:check:run` with the same inputs. Use `https://control.tnl.dev` and its
-own test team after production deployment. If no custom domain is ready, omit
+`release:check:run` with the same inputs. After deployment, use that server's
+control URL and its own test team. If no custom domain is ready, omit
 `CUSTOM_DOMAIN` and report that shared-hostname coverage was not exercised.
 
 The runner stops each publisher to remove ephemeral public URLs and deletes

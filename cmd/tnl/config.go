@@ -371,7 +371,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	case "auth status":
 		apply(&flags.Auth.Status.remoteFlags, false)
 	case "auth login", "auth login run", "auth login start":
-		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, flags.Auth.Login.LoginToken)
+		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, os.Getenv("TNL_LOGIN_TOKEN"))
 	case "auth login wait <operation-id>", "auth login inspect <operation-id>", "auth login cancel <operation-id>":
 		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
 	case "auth logout":
