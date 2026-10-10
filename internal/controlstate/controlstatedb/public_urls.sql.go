@@ -370,6 +370,7 @@ const getPublicURLCreationContext = `-- name: GetPublicURLCreationContext :one
 SELECT
     t.kind AS team_kind,
     t.display_name AS team_display_name,
+    t.ingress_pool_id,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
     i.kind AS identity_kind,
@@ -409,6 +410,7 @@ type GetPublicURLCreationContextParams struct {
 type GetPublicURLCreationContextRow struct {
 	TeamKind              string
 	TeamDisplayName       string
+	IngressPoolID         string
 	TeamCreatorIdentityID string
 	PolicyRevision        int64
 	IdentityKind          string
@@ -429,6 +431,7 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 	err := row.Scan(
 		&i.TeamKind,
 		&i.TeamDisplayName,
+		&i.IngressPoolID,
 		&i.TeamCreatorIdentityID,
 		&i.PolicyRevision,
 		&i.IdentityKind,
@@ -443,6 +446,17 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 		&i.DnsAuthorityReference,
 	)
 	return i, err
+}
+
+const getTeamIngressPoolID = `-- name: GetTeamIngressPoolID :one
+SELECT ingress_pool_id FROM control.teams WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetTeamIngressPoolID(ctx context.Context, teamID string) (string, error) {
+	row := q.db.QueryRow(ctx, getTeamIngressPoolID, teamID)
+	var ingress_pool_id string
+	err := row.Scan(&ingress_pool_id)
+	return ingress_pool_id, err
 }
 
 const insertExpiredEphemeralPublicURLDeleteAuditEvent = `-- name: InsertExpiredEphemeralPublicURLDeleteAuditEvent :exec
@@ -489,6 +503,7 @@ INSERT INTO control.public_urls (
     target,
     public_url_scope,
     purpose,
+    ingress_pool_id,
     policy_revision,
     ip_policy,
     allowed_ip_policy_ciphertext,
@@ -523,14 +538,15 @@ INSERT INTO control.public_urls (
     $17,
     $18,
     $19,
-    'enabled',
     $20,
+    'enabled',
     $21,
-    CASE WHEN $21::text = 'pending' THEN $22::timestamptz END,
-    $23,
-    $24,
     $22,
-    $22
+    CASE WHEN $22::text = 'pending' THEN $23::timestamptz END,
+    $24,
+    $25,
+    $23,
+    $23
 )
 RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose, ingress_pool_id
 `
@@ -549,6 +565,7 @@ type InsertPublicURLParams struct {
 	Target                      string
 	PublicURLScope              string
 	Purpose                     string
+	IngressPoolID               string
 	PolicyRevision              int64
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
@@ -577,6 +594,7 @@ func (q *Queries) InsertPublicURL(ctx context.Context, arg InsertPublicURLParams
 		arg.Target,
 		arg.PublicURLScope,
 		arg.Purpose,
+		arg.IngressPoolID,
 		arg.PolicyRevision,
 		arg.IpPolicy,
 		arg.AllowedIpPolicyCiphertext,

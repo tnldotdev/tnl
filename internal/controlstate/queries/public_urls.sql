@@ -28,6 +28,7 @@ FOR SHARE;
 SELECT
     t.kind AS team_kind,
     t.display_name AS team_display_name,
+    t.ingress_pool_id,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
     i.kind AS identity_kind,
@@ -64,6 +65,9 @@ JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
 WHERE m.team_id = sqlc.arg(team_id)
   AND m.removed_at IS NULL;
 
+-- name: GetTeamIngressPoolID :one
+SELECT ingress_pool_id FROM control.teams WHERE id = sqlc.arg(team_id) AND deleted_at IS NULL;
+
 -- name: InsertPublicURL :one
 INSERT INTO control.public_urls (
     id,
@@ -79,6 +83,7 @@ INSERT INTO control.public_urls (
     target,
     public_url_scope,
     purpose,
+    ingress_pool_id,
     policy_revision,
     ip_policy,
     allowed_ip_policy_ciphertext,
@@ -107,6 +112,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(target),
     sqlc.arg(public_url_scope),
     sqlc.arg(purpose),
+    sqlc.arg(ingress_pool_id),
     sqlc.arg(policy_revision),
     sqlc.arg(ip_policy),
     sqlc.narg(allowed_ip_policy_ciphertext),

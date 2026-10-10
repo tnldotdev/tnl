@@ -26,6 +26,14 @@ to one saved public URL and one pool. Released claims retain the hostname and
 port so another public URL cannot later receive the same pair. Adding a second
 pool must not change the pool already pinned to an existing public URL.
 
+Migration 24 prevents moving a team to another pool while it has any saved
+public URLs. Creation reads the team's pool under its authorization lock and
+pins it to the new URL. DNS work uses the URL's pinned pool, so member wildcard
+records cannot alternate between ingress addresses. Until `ingress-a` is
+enabled with its public IPs, DNS work for that seeded pool keeps using the
+existing ingress-address configuration; another disabled pool never receives
+DNS records.
+
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
 requires migration 12's queue table, including for storage-key rotation. The

@@ -150,6 +150,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	policyRevision := int64(0)
 	namespace := ""
+	ingressPoolID := ""
 	if request.GuestID != "" {
 		policyRevision = positive(request.PolicyRevision)
 	}
@@ -199,6 +200,10 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 	}
 	if request.GuestID != "" {
+		ingressPoolID, err = queries.GetTeamIngressPoolID(ctx, request.TeamID)
+		if err != nil {
+			return PublicURL{}, fmt.Errorf("controlstate: read guest team ingress pool: %w", err)
+		}
 		guest, err := queries.LockGuestTrialByID(ctx, request.GuestID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PublicURL{}, ErrPublicURLAccess
@@ -252,6 +257,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
 		}
+		ingressPoolID = creation.IngressPoolID
 		if request.PublicURLScope == PublicURLScopeShared {
 			namespace = creation.CanonicalDomain
 		} else {
@@ -316,7 +322,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
-		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
+		PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),

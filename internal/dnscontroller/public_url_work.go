@@ -107,11 +107,31 @@ func (w *Worker) publicURLRecord(
 	ctx context.Context,
 	work controlstate.DNSPublicURLWork,
 ) (PublicURLRecord, []string, bool, error) {
+	pool, err := w.store.GetIngressPool(ctx, work.IngressPoolID)
+	if err != nil {
+		return PublicURLRecord{}, nil, false, err
+	}
+	if pool.ID != work.IngressPoolID {
+		return PublicURLRecord{}, nil, false, terminalf("public URL ingress pool does not match the saved pool")
+	}
 	record := PublicURLRecord{
 		PublicURLID: work.PublicURLID, DomainID: work.DomainID, CanonicalHostname: work.CanonicalHostname,
 		Namespace:            work.Namespace,
 		IngressIPv4Addresses: append([]string(nil), w.config.IngressIPv4Addresses...),
 		IngressIPv6Addresses: append([]string(nil), w.config.IngressIPv6Addresses...),
+	}
+	if pool.State == "enabled" || pool.State == "draining" {
+		record.IngressIPv4Addresses, record.IngressIPv6Addresses = nil, nil
+		if pool.IPv4Address.IsValid() {
+			record.IngressIPv4Addresses = []string{pool.IPv4Address.String()}
+		}
+		if pool.IPv6Address.IsValid() {
+			record.IngressIPv6Addresses = []string{pool.IPv6Address.String()}
+		}
+	} else if pool.State == "disabled" && work.IngressPoolID != "ingress-a" {
+		return PublicURLRecord{}, nil, false, nil
+	} else if pool.State != "disabled" {
+		return PublicURLRecord{}, nil, false, terminalf("public URL ingress pool is invalid")
 	}
 	if work.CanonicalHostname == w.config.ManagedDomain || strings.HasSuffix(work.CanonicalHostname, "."+w.config.ManagedDomain) {
 		record.ZoneID, record.ZoneDomain = w.config.ManagedZoneID, w.config.ManagedDomain
