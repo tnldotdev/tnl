@@ -35,6 +35,22 @@ func (d *daemon) startControlWorkers(
 	d.database = database
 	database.Instrument(metrics)
 	metrics.RegisterDatabase(database.PrometheusMetrics)
+	ports, err := cfg.ConfiguredTCPPorts()
+	if err != nil {
+		return err
+	}
+	if len(ports) != 0 {
+		ipv4, ipv6 := "", ""
+		if len(cfg.IngressIPv4Addresses) != 0 {
+			ipv4 = cfg.IngressIPv4Addresses[0]
+		}
+		if len(cfg.IngressIPv6Addresses) != 0 {
+			ipv6 = cfg.IngressIPv6Addresses[0]
+		}
+		if err := database.EnsurePrimaryIngressPool(ctx, ipv4, ipv6, ports, time.Now()); err != nil {
+			return fmt.Errorf("configure ingress-a TCP ports: %w", err)
+		}
+	}
 	d.start("expire saved publish runs", func() error {
 		return runExpiredPublishRunCleanup(lifetime, database, metrics)
 	})

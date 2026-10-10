@@ -7,7 +7,64 @@ package controlstatedb
 
 import (
 	"context"
+	"net/netip"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const enableIngressPool = `-- name: EnableIngressPool :one
+UPDATE control.ingress_pools SET ipv4_address = $1::inet,
+    ipv6_address = $2::inet,
+    state = 'enabled', updated_at = GREATEST(updated_at, $3)
+WHERE id = $4 AND state = 'disabled'
+RETURNING id, ipv4_address, ipv6_address, state, created_at, updated_at
+`
+
+type EnableIngressPoolParams struct {
+	Ipv4Address *netip.Addr
+	Ipv6Address *netip.Addr
+	UpdatedAt   pgtype.Timestamptz
+	ID          string
+}
+
+func (q *Queries) EnableIngressPool(ctx context.Context, arg EnableIngressPoolParams) (ControlIngressPool, error) {
+	row := q.db.QueryRow(ctx, enableIngressPool,
+		arg.Ipv4Address,
+		arg.Ipv6Address,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i ControlIngressPool
+	err := row.Scan(
+		&i.ID,
+		&i.Ipv4Address,
+		&i.Ipv6Address,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const enableIngressPoolPorts = `-- name: EnableIngressPoolPorts :execrows
+INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled)
+SELECT $1, listed.port, true
+FROM unnest($2::integer[]) AS listed(port)
+ON CONFLICT (ingress_pool_id, port) DO UPDATE SET enabled = true
+`
+
+type EnableIngressPoolPortsParams struct {
+	IngressPoolID string
+	Ports         []int32
+}
+
+func (q *Queries) EnableIngressPoolPorts(ctx context.Context, arg EnableIngressPoolPortsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, enableIngressPoolPorts, arg.IngressPoolID, arg.Ports)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const getIngressPool = `-- name: GetIngressPool :one
 SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1
@@ -15,6 +72,24 @@ SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM contro
 
 func (q *Queries) GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error) {
 	row := q.db.QueryRow(ctx, getIngressPool, id)
+	var i ControlIngressPool
+	err := row.Scan(
+		&i.ID,
+		&i.Ipv4Address,
+		&i.Ipv6Address,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockIngressPoolForProvision = `-- name: LockIngressPoolForProvision :one
+SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockIngressPoolForProvision(ctx context.Context, id string) (ControlIngressPool, error) {
+	row := q.db.QueryRow(ctx, lockIngressPoolForProvision, id)
 	var i ControlIngressPool
 	err := row.Scan(
 		&i.ID,
