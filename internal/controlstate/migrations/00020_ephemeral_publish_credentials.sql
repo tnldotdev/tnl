@@ -15,7 +15,7 @@ ALTER TABLE control.public_url_publish_credentials
 
 ALTER TABLE control.public_url_publish_credentials
     ADD CONSTRAINT public_url_publish_credentials_scope_check CHECK (
-        (kind = 'saved_url' AND public_url_id IS NOT NULL AND target <> '' AND namespace IS NULL)
+        (kind = 'saved_url' AND public_url_id IS NOT NULL AND namespace IS NULL)
         OR (kind = 'ephemeral' AND public_url_id IS NULL AND target = ''
             AND team_id IS NOT NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> ''
             AND issued_role IS NOT NULL AND certificate_challenge_method = 'dns-01')
@@ -35,4 +35,4 @@ ALTER TABLE control.public_url_publish_credentials
     DROP COLUMN team_id,
     DROP COLUMN kind,
     ALTER COLUMN public_url_id SET NOT NULL,
-    ADD CONSTRAINT public_url_publish_credentials_target_check CHECK (target <> '');
+    ADD CONSTRAINT public_url_publish_credentials_target_check CHECK (target <> '' OR public_url_id IS NOT NULL);
