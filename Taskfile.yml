@@ -162,9 +162,13 @@ tasks:
       - uv run --frozen --project packages/py pytest -q packages/py/tests
 
   py:build:
-    desc: Build the local Python SDK wheel
+    desc: Build and verify four platform Python wheels from a GoReleaser snapshot
+    preconditions:
+      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
+        msg: Run task release:snapshot before building Python wheels
     cmds:
-      - uv build --wheel --project packages/py --out-dir packages/py/dist
+      - node scripts/pack-python-wheels.ts dist/py
+      - node scripts/verify-python-wheels.ts dist/py
 
   py:check:
     desc: Run all Python SDK checks
@@ -180,6 +184,7 @@ tasks:
       - task: js:pack
       - task: release:snapshot
       - task: release:npm-package
+      - task: py:build
 
   go:generate:
     cmds:
