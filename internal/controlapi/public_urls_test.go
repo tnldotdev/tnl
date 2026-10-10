@@ -3,6 +3,7 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -149,6 +150,25 @@ func TestUpdateRouteRequiresCompleteDesiredState(t *testing.T) {
 				t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
 			}
 		})
+	}
+}
+
+func TestUpdateRouteRejectsKeepingEphemeralPublicURL(t *testing.T) {
+	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", Ephemeral: true,
+		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
+		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
+	}}
+	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
+	for _, kept := range []bool{true, false} {
+		body := fmt.Sprintf(`{"target":"http://127.0.0.1:3000","allowed_ip_prefixes":[],"kept":%t}`, kept)
+		request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer access-token")
+		response := httptest.NewRecorder()
+		(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
+		if response.Code != http.StatusBadRequest || store.update.PublicURLID != "" {
+			t.Fatalf("ephemeral keep=%t: response=%d, update=%+v", kept, response.Code, store.update)
+		}
 	}
 }
 

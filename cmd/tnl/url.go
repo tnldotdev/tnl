@@ -133,6 +133,10 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if route.TeamId != current.team.Id {
 		return controlclient.ErrNotFound
 	}
+	if (flags.Keep || flags.AutoRetire) && route.Ephemeral {
+		return failure.Wrap("validate URL retirement", failure.InvalidTunnelFlags,
+			errors.New("ephemeral public URLs are removed after their tunnel stops"))
+	}
 	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
 		return failure.Wrap("validate database URL update", failure.InvalidTunnelFlags,
 			errors.New("database targets are configured on the publisher, not the saved public URL"))

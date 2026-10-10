@@ -288,6 +288,15 @@ func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 	if err != nil || !route.Ephemeral || route.ExpiresAt == nil || !route.ExpiresAt.Equal(now.Add(ephemeralPublicURLGracePeriod)) {
 		t.Fatalf("ephemeral route = %#v, %v", route, err)
 	}
+	for _, kept := range []bool{true, false} {
+		if _, err := database.UpdateAuthorizedPublicURL(t.Context(), AuthorizedPublicURLUpdateRequest{
+			PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
+			Target: route.Target, AllowedIPPrefixes: []string{}, PolicyRevision: uint64(route.PolicyRevision),
+			ExpectedMutationRevision: route.MutationRevision, Kept: &kept,
+		}, now); !errors.Is(err, ErrPublicURLInvalid) {
+			t.Fatalf("ephemeral keep=%t changed retention: %v", kept, err)
+		}
+	}
 	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), route.ExpiresAt.Add(-time.Microsecond)); err != nil || count != 0 {
 		t.Fatalf("early expiry = %d, %v", count, err)
 	}
