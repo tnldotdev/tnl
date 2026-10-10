@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -57,6 +59,9 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	ServiceProtocol          controlv1.PublicURLServiceProtocol
+	TargetTLSName            string
+	DatabaseTLSPassthrough   bool
 	PreserveSavedURLTarget   bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
@@ -148,14 +153,38 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.State == nil {
 		return errors.New("publisher: client state is required")
 	}
-	config.Target, err = localproxy.NormalizeTarget(config.Target)
-	if err != nil {
-		return err
+	if config.ServiceProtocol == "" {
+		config.ServiceProtocol = controlv1.Http
 	}
-	if config.Handler == nil {
-		if err := localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions); err != nil {
+	if config.ServiceProtocol == controlv1.Http {
+		if config.TargetTLSName != "" || config.DatabaseTLSPassthrough {
+			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database TLS settings require a database service protocol"))
+		}
+		config.Target, err = localproxy.NormalizeTarget(config.Target)
+		if err != nil {
 			return err
 		}
+		if config.Handler == nil {
+			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
+		}
+	} else {
+		_, err = newDatabaseForwarding(PublicURLServerConfig{
+			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol, PublicPort: 1024,
+			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetOptions: config.TargetOptions,
+			DatabaseTLSPassthrough: config.DatabaseTLSPassthrough, Handler: config.Handler, Mounts: config.Mounts,
+		})
+		if err == nil {
+			var connection net.Conn
+			connection, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", config.Target)
+			if err == nil {
+				err = connection.Close()
+			} else {
+				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect database target: %w", err))
+			}
+		}
+	}
+	if err != nil {
+		return err
 	}
 	hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
 	if err != nil {
@@ -186,9 +215,13 @@ func Run(ctx context.Context, config Config) (result error) {
 			return err
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
+			publicAddress := "https://" + setup.PublicUrl.CanonicalHostname
+			if setup.PublicUrl.PublicPort != nil {
+				publicAddress = net.JoinHostPort(setup.PublicUrl.CanonicalHostname, strconv.Itoa(*setup.PublicUrl.PublicPort))
+			}
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
-				PublicURL: "https://" + setup.PublicUrl.CanonicalHostname, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
+				PublicURL: publicAddress, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
 			})
 		})
 		if ctx.Err() != nil {
@@ -223,6 +256,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	if config.AllocatedPublicURL != nil {
 		route := *config.AllocatedPublicURL
 		if !config.Ephemeral || !route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
+			(config.ServiceProtocol != "" && config.ServiceProtocol != controlv1.Http) ||
 			route.Target != config.Target || route.Purpose != controlv1.App {
 			return controlv1.PublicURL{}, false, errors.New("publisher: allocated ad-hoc public URL does not match its target")
 		}
@@ -258,7 +292,13 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	}
 	body := controlv1.CreatePublicURLRequest{
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
-		Target: config.Target, PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
+		PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
+	}
+	if config.ServiceProtocol == controlv1.Http {
+		body.Target = config.Target
+	} else {
+		protocol := config.ServiceProtocol
+		body.ServiceProtocol = &protocol
 	}
 	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
@@ -278,6 +318,13 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope || route.Purpose != config.Purpose ||
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
+	}
+	if config.ServiceProtocol == controlv1.Postgres || config.ServiceProtocol == controlv1.Mysql {
+		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || route.Target != "" {
+			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
+		}
+	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http {
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
@@ -303,6 +350,15 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 	desiredPolicy := config.AllowedIPPrefixes
 	if desiredPolicy == nil {
 		desiredPolicy = []string{}
+	}
+	if config.ServiceProtocol == controlv1.Postgres || config.ServiceProtocol == controlv1.Mysql {
+		if slices.Equal(currentPolicy, desiredPolicy) {
+			return route, nil
+		}
+		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{
+			Target: route.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+		})
+		return updated, classifyPublicURLConflict(err)
 	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
 		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{

@@ -33,30 +33,35 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname          string
-	PreviewID         string
-	PublicURLID       string
-	PublishRunNumber  uint64
-	Target            string
-	TargetOptions     localproxy.TargetOptions
-	Handler           http.Handler
-	AdmitRequest      func(*http.Request) error
-	ObserveResponse   func(*http.Response) error
-	Mounts            []localproxy.Mount
-	ShareAccess       *shareAccess
-	BrowserAccess     *browserAccess
-	Feedback          *feedbackRuntime
-	RequestLimit      int // zero selects localproxy.DefaultRequestLimit.
-	Limits            ApplicationLimits
-	OnTargetFailure   func()
-	ObserveRequest    func(RequestObservation)
-	RequestInspection projectconfig.RequestInspectionMode
-	Certificate       tls.Certificate
-	CertificatePlan   controlv1.CertificatePlan
+	Hostname               string
+	PreviewID              string
+	PublicURLID            string
+	PublishRunNumber       uint64
+	Target                 string
+	ServiceProtocol        controlv1.PublicURLServiceProtocol
+	PublicPort             uint16
+	TargetTLSName          string
+	DatabaseTLSPassthrough bool
+	TargetOptions          localproxy.TargetOptions
+	Handler                http.Handler
+	AdmitRequest           func(*http.Request) error
+	ObserveResponse        func(*http.Response) error
+	Mounts                 []localproxy.Mount
+	ShareAccess            *shareAccess
+	BrowserAccess          *browserAccess
+	Feedback               *feedbackRuntime
+	RequestLimit           int // zero selects localproxy.DefaultRequestLimit.
+	Limits                 ApplicationLimits
+	OnTargetFailure        func()
+	ObserveRequest         func(RequestObservation)
+	RequestInspection      projectconfig.RequestInspectionMode
+	Certificate            tls.Certificate
+	CertificatePlan        controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
 	hostname           string
+	database           *databaseForwarding
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]
@@ -136,6 +141,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.RequestLimit < 0 {
 		return nil, errors.New("publisher: request limit cannot be negative")
 	}
+	database, err := newDatabaseForwarding(config)
+	if err != nil {
+		return nil, err
+	}
 	if config.Limits.Concurrency == 0 {
 		config.Limits.Concurrency = config.RequestLimit
 	}
@@ -155,7 +164,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	var handler http.Handler
-	if config.Handler != nil {
+	if database != nil {
+		handler = http.NotFoundHandler()
+	} else if config.Handler != nil {
 		handler = config.Handler
 	} else {
 		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts,
@@ -174,6 +185,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
 		hostname:        hostname,
+		database:        database,
 		admission:       admission,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
@@ -701,6 +713,18 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 		return
 	}
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
+	if r.database != nil {
+		if header.Destination.Port() == r.database.publicPort {
+			if !denied {
+				r.database.forward(metadata, r.tls, r.hostname)
+			}
+			return
+		}
+		// certificate challenges still arrive on HTTPS port 443.
+		if header.Destination.Port() != 443 {
+			return
+		}
+	}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
