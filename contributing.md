@@ -6,6 +6,7 @@ Run commands from the repository root. The tool versions are pinned in `mise.tom
 mise trust
 mise install
 mise exec -- pnpm install --frozen-lockfile
+mise exec -- uv sync --frozen --project packages/py
 ```
 
 ## check your change
@@ -34,7 +35,7 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 
 | When you need to check           | Command after `mise exec --`                                 | What you need                                                            |
 | -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript package                    |
+| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages        |
 | Go races                         | `task go:test:race`                                          | No database                                                              |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                               |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available |
@@ -42,6 +43,7 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 | Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in  |
 | Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                             |
 | npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                               |
+| Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`      |
 | Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                             |
 | Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain              |
 
@@ -94,6 +96,14 @@ API. Write npm runtime code and tooling in TypeScript. Validate external data
 before treating it as a known type. The
 [compatibility workflow](.github/workflows/checks.yml) checks supported
 framework versions.
+
+### test the python binding
+
+Run `mise exec -- task py:check` for Ruff, mypy, and pytest. The Python
+distribution source is under `packages/py/`; uv uses its committed `uv.lock`.
+`task py:build` makes a local wheel for package checks. The ASGI tests cover
+lifespan startup, streamed responses, WebSockets, private Unix-socket bounds,
+and cleanup without a deployed server.
 
 ## edit generated sources
 

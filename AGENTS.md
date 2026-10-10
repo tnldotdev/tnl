@@ -324,7 +324,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
-- Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
+- Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile` and `mise exec -- uv sync --frozen --project packages/py`; run repository commands from the root through `mise exec --`.
 - Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
 - Task targets are the public test interface; use `go:test:integration:*` and `go:test:load:*`, and have CI call the same targets.
@@ -334,6 +334,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
 - Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
+- Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned native socket protocol shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
 
 # tests and benchmarks
 
