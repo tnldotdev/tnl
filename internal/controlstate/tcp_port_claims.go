@@ -72,14 +72,10 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return TCPPortClaim{}, err
 	}
-	preferred := []int32{5432, 15432, 25432, 35432, 45432, 55432}
-	if url.ServiceProtocol == "mysql" {
-		preferred = []int32{3306, 13306, 23306, 33306, 43306, 53306, 63306}
-	}
 	for range 8 {
 		port, err := queries.ChooseTCPPort(ctx, controlstatedb.ChooseTCPPortParams{
 			IngressPoolID: url.IngressPoolID, CanonicalHostname: url.CanonicalHostname,
-			PreferredPorts: preferred, Seed: publicURLID,
+			Seed: publicURLID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TCPPortClaim{}, ErrTCPPortPoolFull

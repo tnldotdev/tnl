@@ -13,7 +13,7 @@ func TestIntegrationTCPPortAllocationAndQuarantine(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_pools SET ipv4_address = '192.0.2.10', state = 'enabled' WHERE id = 'ingress-a'`); err != nil {
 		t.Fatal(err)
 	}
-	for _, port := range []int{5432, 15432, 3306} {
+	for _, port := range []int{10001, 11111, 5432, 3306} {
 		if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_pool_ports
 			(ingress_pool_id, port, enabled) VALUES ('ingress-a', $1, true)`, port); err != nil {
 			t.Fatal(err)
@@ -36,7 +36,7 @@ func TestIntegrationTCPPortAllocationAndQuarantine(t *testing.T) {
 	}
 	first := create(1, "postgres")
 	firstClaim, err := database.AllocateTCPPort(t.Context(), first.ID, now)
-	if err != nil || firstClaim.Port != 5432 || firstClaim.IngressPoolID != "ingress-a" {
+	if err != nil || firstClaim.IngressPoolID != "ingress-a" || firstClaim.Port != 10001 && firstClaim.Port != 11111 {
 		t.Fatalf("first PostgreSQL address = %#v, %v", firstClaim, err)
 	}
 	repeated, err := database.AllocateTCPPort(t.Context(), first.ID, now.Add(time.Hour))
@@ -45,20 +45,25 @@ func TestIntegrationTCPPortAllocationAndQuarantine(t *testing.T) {
 	}
 	mysql := create(2, "mysql")
 	mysqlClaim, err := database.AllocateTCPPort(t.Context(), mysql.ID, now)
-	if err != nil || mysqlClaim.Port != 3306 {
+	if err != nil || mysqlClaim.Port == firstClaim.Port || mysqlClaim.Port != 10001 && mysqlClaim.Port != 11111 {
 		t.Fatalf("MySQL address = %#v, %v", mysqlClaim, err)
 	}
 	second := create(3, "postgres")
 	secondClaim, err := database.AllocateTCPPort(t.Context(), second.ID, now)
-	if err != nil || secondClaim.Port != 15432 {
-		t.Fatalf("second PostgreSQL address = %#v, %v", secondClaim, err)
+	if err != nil || secondClaim.Port != 5432 && secondClaim.Port != 3306 {
+		t.Fatalf("PostgreSQL fallback address = %#v, %v", secondClaim, err)
+	}
+	secondMySQL := create(4, "mysql")
+	secondMySQLClaim, err := database.AllocateTCPPort(t.Context(), secondMySQL.ID, now)
+	if err != nil || secondMySQLClaim.Port == secondClaim.Port || secondMySQLClaim.Port != 5432 && secondMySQLClaim.Port != 3306 {
+		t.Fatalf("MySQL fallback address = %#v, %v", secondMySQLClaim, err)
 	}
 	capacities, err := database.TCPPortPoolCapacities(t.Context())
 	if err != nil || len(capacities) != 1 || capacities[0].IngressPoolID != "ingress-a" ||
-		capacities[0].ConfiguredPorts != 3 || capacities[0].ClaimedPorts != 3 || capacities[0].AvailablePorts != 0 {
+		capacities[0].ConfiguredPorts != 4 || capacities[0].ClaimedPorts != 4 || capacities[0].AvailablePorts != 0 {
 		t.Fatalf("full pool capacity = %#v, %v", capacities, err)
 	}
-	waiting := create(4, "postgres")
+	waiting := create(5, "postgres")
 	if _, err := database.AllocateTCPPort(t.Context(), waiting.ID, now); !errors.Is(err, ErrTCPPortPoolFull) {
 		t.Fatalf("full pool did not reject another URL: %v", err)
 	}
@@ -75,7 +80,7 @@ func TestIntegrationTCPPortAllocationAndQuarantine(t *testing.T) {
 		}
 	}
 	thirdClaim, err := database.AllocateTCPPort(t.Context(), waiting.ID, now.Add(9*24*time.Hour))
-	if err != nil || thirdClaim.Port != 5432 {
+	if err != nil || thirdClaim.Port != firstClaim.Port {
 		t.Fatalf("port after quarantine = %#v, %v", thirdClaim, err)
 	}
 	if _, err := database.AllocateTCPPort(t.Context(), mysql.ID, now); err != nil {

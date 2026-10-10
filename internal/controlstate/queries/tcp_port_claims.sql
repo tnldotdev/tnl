@@ -24,7 +24,7 @@ WHERE ports.ingress_pool_id = sqlc.arg(ingress_pool_id)
       WHERE historical.ingress_pool_id = ports.ingress_pool_id AND historical.port = ports.port
         AND historical.canonical_hostname = sqlc.arg(canonical_hostname)
   )
-ORDER BY COALESCE(array_position(sqlc.arg(preferred_ports)::integer[], ports.port), 2147483647),
+ORDER BY CASE WHEN ports.port::text = reverse(ports.port::text) THEN 0 ELSE 1 END,
          md5(sqlc.arg(seed)::text || ports.port::text)
 LIMIT 1;
 

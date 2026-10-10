@@ -27,25 +27,19 @@ WHERE ports.ingress_pool_id = $1
       WHERE historical.ingress_pool_id = ports.ingress_pool_id AND historical.port = ports.port
         AND historical.canonical_hostname = $2
   )
-ORDER BY COALESCE(array_position($3::integer[], ports.port), 2147483647),
-         md5($4::text || ports.port::text)
+ORDER BY CASE WHEN ports.port::text = reverse(ports.port::text) THEN 0 ELSE 1 END,
+         md5($3::text || ports.port::text)
 LIMIT 1
 `
 
 type ChooseTCPPortParams struct {
 	IngressPoolID     string
 	CanonicalHostname string
-	PreferredPorts    []int32
 	Seed              string
 }
 
 func (q *Queries) ChooseTCPPort(ctx context.Context, arg ChooseTCPPortParams) (int32, error) {
-	row := q.db.QueryRow(ctx, chooseTCPPort,
-		arg.IngressPoolID,
-		arg.CanonicalHostname,
-		arg.PreferredPorts,
-		arg.Seed,
-	)
+	row := q.db.QueryRow(ctx, chooseTCPPort, arg.IngressPoolID, arg.CanonicalHostname, arg.Seed)
 	var port int32
 	err := row.Scan(&port)
 	return port, err

@@ -39,7 +39,9 @@ URL's purpose. Database URLs have no saved private target. Control assigns a
 TCP port only after the pool and port have been enabled. A claimed URL keeps
 its port across runs; deletion moves the claim into seven days of quarantine.
 Cleanup releases a bounded batch after the deadline, retaining the historical
-hostname-and-port pair so a new URL cannot take both values at once.
+hostname-and-port pair so a new URL cannot take both values at once. Both
+database protocols prefer available symmetric ports (such as `10001`), then
+choose among the remaining available ports using the public URL ID.
 
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
