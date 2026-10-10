@@ -24,7 +24,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const directory = process.argv[process.argv.indexOf("--directory") + 1];
 const socket = join(directory, "manager.sock");
-if (process.argv.includes("address")) process.stdout.write(JSON.stringify({ protocol: 1, socket }) + "\\n");
+if (process.argv.includes("address")) process.stdout.write(JSON.stringify({ version: 1, socket }) + "\\n");
 else if (process.argv.includes("serve")) {
   const server = http.createServer((_request, response) => response.writeHead(204).end());
   server.listen(socket);
@@ -64,7 +64,7 @@ test("accepts the native private protocol golden assignment", async () => {
 
 function assignment(registration = "a") {
   return {
-    protocol: 1,
+    version: 1,
     registration_id: `reg_${registration.repeat(32)}`,
     service: "api",
     hostname: "api.member.example",

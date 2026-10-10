@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -142,7 +141,7 @@ func ValidateTNL(config TNL) error {
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
-	if err := validateServiceValues(config.Tunnel, config.Publish, config.Dev); err != nil {
+	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
 		return err
 	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
@@ -178,7 +177,7 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceDirectory(service.Directory); err != nil {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
-		if err := validateServiceValues(service.Tunnel, service.Publish, service.Dev); err != nil {
+		if err := validateServiceValues(service.Tunnel, service.Publish); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if len(service.Paths) > 32 {
@@ -209,9 +208,6 @@ func validateReadiness(value *Readiness) error {
 	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
 		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
 	}
-	if value.Status != nil && (*value.Status < 200 || *value.Status > 499 || *value.Status == 408 || *value.Status == 429) {
-		return errors.New("readiness.status must be between 200 and 499 except 408 and 429")
-	}
 	return nil
 }
 
@@ -237,7 +233,7 @@ func validateServerAndTeam(server, team *string) error {
 	return nil
 }
 
-func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
+func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
 		if tunnel.RequestLimit != nil && *tunnel.RequestLimit <= 0 {
 			return errors.New("tunnel.request_limit must be greater than zero")
@@ -282,27 +278,6 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 	if publish != nil && publish.Target != nil {
 		if _, err := localproxy.NormalizeTarget(string(*publish.Target)); err != nil {
 			return fmt.Errorf("publish.target: %w", err)
-		}
-	}
-	if dev != nil {
-		if dev.Command != nil {
-			if len(dev.Command) == 0 {
-				return errors.New("dev.command must not be empty")
-			}
-			for _, argument := range dev.Command {
-				if argument == "" {
-					return errors.New("dev.command arguments must not be empty")
-				}
-			}
-		}
-		if dev.Port != nil && (*dev.Port < 1 || *dev.Port > 65535) {
-			return errors.New("dev.port must be between 1 and 65535")
-		}
-		if dev.StartupTimeout != nil {
-			value := dev.StartupTimeout.Value()
-			if value <= 0 || value > 10*time.Minute {
-				return errors.New("dev.startup_timeout must be greater than zero and at most 10 minutes")
-			}
 		}
 	}
 	return nil

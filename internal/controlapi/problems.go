@@ -28,7 +28,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	case errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "public URL access denied")
 	case errors.Is(err, controlstate.ErrGuestTrialSpent):
-		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl login to continue")
+		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl auth login to continue")
 	case errors.Is(err, controlstate.ErrPublicURLConflict):
 		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "public URL hostname is unavailable")
 	case errors.Is(err, controlstate.ErrPublishRunOpen):

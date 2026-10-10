@@ -85,7 +85,7 @@ export async function installRuntimeFixture(
   const binary = join(directory, "native-publisher");
   await writeFile(
     binary,
-    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, socket: bootstrap.socket }))});\n`,
+    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ version: 1, socket: bootstrap.socket }))});\n`,
   );
   await chmod(binary, 0o700);
   await writeFile(

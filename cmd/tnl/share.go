@@ -138,7 +138,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 
 func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer) (*teamSession, controlv1.Preview, []controlv1.PublicURL, error) {
 	if !project.Found() || len(project.Config.Services) == 0 {
-		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services and start an integrated app to save its preview"))
+		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services, then start your app"))
 	}
 	session, err := openTeamSession(ctx, flags, command, diagnostics)
 	if err != nil {
@@ -155,7 +155,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		if err != nil {
 			return nil, controlv1.Preview{}, nil, err
 		}
-		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start an integrated app first"))
+		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start a configured app service first"))
 	}
 	preview, err := session.authenticated.Control.GetPreview(ctx, id)
 	if err != nil || preview.TeamId != current.team.Id || preview.Id != id {
@@ -375,7 +375,7 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 		return err
 	}
 	if !found {
-		return failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start an integrated app first"))
+		return failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start a configured app service first"))
 	}
 	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, id, false)
 	if err != nil {

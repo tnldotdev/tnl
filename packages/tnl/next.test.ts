@@ -31,7 +31,7 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
       framework: string,
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => process.env.TNL_DEV_SOCKET ?? "",
+        start: async () => process.env.APP_TEST_SOCKET ?? "",
         request: actual.runtimeRequest,
       });
       onTestFinished(() => prepared.close());
@@ -140,12 +140,10 @@ describe("withTnl", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({
         hostname: "override.example",
-        namespace: "member.example",
         project: runtimeProject,
-        protocol: 1,
+        version: 1,
         publicURL: "https://override.example",
         service: "api",
-        tunnelID: `tun_${"b".repeat(22)}`,
       }),
     });
     const originalContext: NextConfigContext = { defaultConfig: { reactStrictMode: false } };
@@ -157,7 +155,6 @@ describe("withTnl", () => {
         ...bootstrap.environment,
         __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200",
         PORT: "3200",
-        TNL_DEV_PORT: "3200",
       },
       async () => {
         const wrapped = withTnl(async (phase, factoryContext) => {
@@ -185,9 +182,9 @@ describe("withTnl", () => {
     expect(
       bootstrap.requests.map(({ body, path: requestPath }) => ({ body, path: requestPath })),
     ).toMatchObject([
-      { body: { protocol: 1, framework: "next" }, path: "/v1/prepare" },
+      { body: { version: 1, framework: "next" }, path: "/v1/prepare" },
       {
-        body: { protocol: 1, target: "http://127.0.0.1:3200" },
+        body: { version: 1, target: "http://127.0.0.1:3200" },
         path: "/v1/register",
       },
     ]);
@@ -232,12 +229,11 @@ describe("withTnl", () => {
         ...bootstrap.environment,
         __NEXT_PRIVATE_ORIGIN: origin,
         PORT: port,
-        TNL_DEV_PORT: undefined,
       },
       async () => await withTnl()(developmentPhase, context),
     );
     expect(bootstrap.requests[1]?.body).toMatchObject({
-      protocol: 1,
+      version: 1,
       target: expected,
     });
   });
@@ -256,30 +252,13 @@ describe("withTnl", () => {
   ])("rejects $name before networking", async ({ environment }) => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(
-      { ...bootstrap.environment, TNL_DEV_PORT: undefined, ...environment },
+      { ...bootstrap.environment, ...environment },
       async () =>
         await expect(withTnl()(developmentPhase, context)).rejects.toMatchObject({
           code: "sdk.target_invalid",
         }),
     );
     expect(bootstrap.requests).toHaveLength(0);
-  });
-
-  test("preserves a local host when tnl dev forces only the port", async () => {
-    const bootstrap = await startTestBootstrap();
-    await withProcessEnvironment(
-      {
-        ...bootstrap.environment,
-        __NEXT_PRIVATE_ORIGIN: "http://[::1]:3200",
-        PORT: "3200",
-        TNL_DEV_PORT: "3200",
-      },
-      async () => await withTnl()(developmentPhase, context),
-    );
-    expect(bootstrap.requests[1]?.body).toMatchObject({
-      protocol: 1,
-      target: "http://[::1]:3200",
-    });
   });
 });
 
@@ -294,11 +273,11 @@ test(
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
-        body: { protocol: 1, framework: "next" },
+        body: { version: 1, framework: "next" },
         path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { protocol: 1, target: `http://127.0.0.1:${port}` },
+        body: { version: 1, target: `http://127.0.0.1:${port}` },
         path: "/v1/register",
       });
 
@@ -378,7 +357,7 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
 
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
-      body: { protocol: 1, framework: "next" },
+      body: { version: 1, framework: "next" },
       path: "/v1/prepare",
     });
     const registration = await fixture.request(1);

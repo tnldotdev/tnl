@@ -12,8 +12,8 @@ import (
 )
 
 func TestPrepareGoldenAndStrictRequestBounds(t *testing.T) {
-	golden := `{"protocol":1,"directory":"/project","service":"web","framework":"node","owner":"0123456789abcdef0123456789abcdef","pid":123}`
-	request := Prepare{Protocol: 1, Directory: "/project", Service: "web", Framework: "node", Owner: "0123456789abcdef0123456789abcdef", PID: 123}
+	golden := `{"version":1,"directory":"/project","service":"web","framework":"node","owner":"0123456789abcdef0123456789abcdef","pid":123}`
+	request := Prepare{Version: 1, Directory: "/project", Service: "web", Framework: "node", Owner: "0123456789abcdef0123456789abcdef", PID: 123}
 	data, err := json.Marshal(request)
 	if err != nil || string(data) != golden {
 		t.Fatalf("golden = %s, %v", data, err)
@@ -42,9 +42,9 @@ func TestSharedSDKGoldenAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := map[string]any{
-		"prepare":    Prepare{Protocol: 1, Directory: "/project", Service: "web", Framework: "node", Owner: "0123456789abcdef0123456789abcdef", PID: 123},
-		"register":   Registration{Protocol: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Owner: "0123456789abcdef0123456789abcdef", Target: "http://127.0.0.1:1234"},
-		"assignment": Assignment{Protocol: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: "web.member.example", PublicURL: "https://web.member.example", Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{"web": {Namespace: "member.example", Hostname: "web.member.example", URL: "https://web.member.example"}}, Dev: true}},
+		"prepare":    Prepare{Version: 1, Directory: "/project", Service: "web", Framework: "node", Owner: "0123456789abcdef0123456789abcdef", PID: 123},
+		"register":   Registration{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Owner: "0123456789abcdef0123456789abcdef", Target: "http://127.0.0.1:1234"},
+		"assignment": Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: "web.member.example", PublicURL: "https://web.member.example", Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{"web": {Namespace: "member.example", Hostname: "web.member.example", URL: "https://web.member.example"}}, Dev: true}},
 	}
 	for name, value := range values {
 		actual, err := json.Marshal(value)

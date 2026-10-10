@@ -125,83 +125,6 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	return nil
 }
 
-func (c projectConfiguration) applyDev(flags *devCommand) error {
-	service := flags.Service
-	if service == "" {
-		var err error
-		service, err = c.defaultService()
-		if err != nil {
-			return err
-		}
-	} else if _, found := c.Config.Services[service]; !found {
-		return failure.Wrap("select project service", failure.ServiceNotConfigured, fmt.Errorf("service %q is not configured", service))
-	}
-	effective, err := c.EffectiveService(service)
-	if err != nil {
-		return err
-	}
-	flags.Service = service
-	flags.projectRoot = c.Root
-	flags.project = c
-	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
-	if err != nil {
-		return err
-	}
-	if flags.Team != "" {
-		flags.selectedTeam = flags.Team
-	} else {
-		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, effective.Team)
-		if err != nil {
-			return err
-		}
-	}
-	if service == "" {
-		flags.commandDir = c.Root
-	} else {
-		flags.commandDir = c.ServiceDirectories[service]
-		if flags.commandDir == "" {
-			flags.commandDir = c.Root
-		}
-	}
-	if flags.commandDir == "" && c.Selection.Path != "" {
-		flags.commandDir = c.Root
-	}
-	if flags.portFromCLI && flags.Port == 0 {
-		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("port must be between 1 and 65535"))
-	}
-	if flags.startupTimeoutFromCLI && flags.StartupTimeout == 0 {
-		return failure.Wrap("validate startup timeout", failure.InvalidStartupTimeout,
-			errors.New("startup timeout must be greater than zero and at most 10 minutes"))
-	}
-	if len(flags.Command) == 0 && effective.Dev != nil && effective.Dev.Command != nil {
-		flags.Command = slices.Clone(effective.Dev.Command)
-	}
-	if flags.Port == 0 && effective.Dev != nil && effective.Dev.Port != nil {
-		flags.Port = *effective.Dev.Port
-	}
-	if flags.StartupTimeout == 0 && effective.Dev != nil && effective.Dev.StartupTimeout != nil {
-		flags.StartupTimeout = effective.Dev.StartupTimeout.Value()
-	}
-	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-	applyRequestInspection(&flags.tunnelFlags, effective)
-	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
-	_, domainFromEnvironment := os.LookupEnv("TNL_DOMAIN")
-	runtimeServerOverride := flags.ServerURL != "" && !flags.serverFromConfig
-	flags.useMetadataHostname = flags.PublicURL == "" && flags.Name == "" && flags.Team == "" &&
-		flags.Ephemeral && !runtimeServerOverride && !ephemeralFromEnvironment &&
-		!flags.domainFromCLI && !domainFromEnvironment &&
-		effective.Tunnel != nil && effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
-	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
-	if flags.StartupTimeout == 0 {
-		flags.StartupTimeout = defaultDevStartupTimeout
-	}
-	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
-		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
-	}
-	return nil
-}
-
 func (c projectConfiguration) defaultService() (string, error) {
 	if len(c.Config.Services) == 0 {
 		return "", nil
@@ -371,7 +294,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	case "auth status":
 		apply(&flags.Auth.Status.remoteFlags, false)
 	case "auth login", "auth login run", "auth login start":
-		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, flags.Auth.Login.LoginToken)
+		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, os.Getenv("TNL_LOGIN_TOKEN"))
 	case "auth login wait <operation-id>", "auth login inspect <operation-id>", "auth login cancel <operation-id>":
 		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
 	case "auth logout":

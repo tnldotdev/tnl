@@ -102,12 +102,12 @@ func TestInitAmbiguousFrameworkOutputNeedsAction(t *testing.T) {
 	}
 }
 
-func TestInitGenericMissingSettingsRepeatUntilAnswered(t *testing.T) {
+func TestInitGenericShowsRegistrationStepsOnRepeat(t *testing.T) {
 	for _, test := range []struct {
-		name, script, action, command string
+		name, script string
 	}{
-		{"script", "node server.js", "services.app.dev.port", `["node","server.js"]`},
-		{"no script", "", "services.app.dev.command and services.app.dev.port", ""},
+		{"script", "node server.js"},
+		{"no script", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := genericInitFixture(t, test.script, "npm")
@@ -145,7 +145,7 @@ func TestInitFrameworkIntegrationDoesNotPromptForPort(t *testing.T) {
 				t.Fatal(err)
 			}
 			config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
-			if err != nil || strings.Contains(string(config), "port:") || strings.Contains(stdout.String(), "services.app.dev.port") || stderr.Len() != 0 {
+			if err != nil || strings.Contains(string(config), "port:") || stderr.Len() != 0 {
 				t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", config, stdout.String(), stderr.String(), err)
 			}
 		})
@@ -245,7 +245,7 @@ func TestInitPreservesCustomizedGenericService(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, "tnl.config.ts")
-			custom := bytes.Replace(initConfigSourceWithPort("app", []string{"node", "server.js"}, 4173), []byte("  services:"), []byte("  // configured by the developer\n  services:"), 1)
+			custom := bytes.Replace(initConfigSource("app"), []byte("  services:"), []byte("  // configured by the developer\n  services:"), 1)
 			if err := os.WriteFile(path, custom, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -254,59 +254,9 @@ func TestInitPreservesCustomizedGenericService(t *testing.T) {
 				t.Fatal(err)
 			}
 			after, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(after, custom) || !strings.Contains(stdout.String(), "[ tnl init ]-- already configured") || strings.Contains(stdout.String(), "services.app.dev.port") || stderr.Len() != 0 {
+			if err != nil || !bytes.Equal(after, custom) || !strings.Contains(stdout.String(), "[ tnl init ]-- already configured") || stderr.Len() != 0 {
 				t.Fatalf("config = %q, stdout = %q, stderr = %q, err = %v", after, stdout.String(), stderr.String(), err)
 			}
 		})
-	}
-}
-
-func TestInitMigratesGeneratedFrameworkCommandBeforeChangingDevScript(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, legacyInitConfigSource("app", []string{"pnpm", "dev"}, 0), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	var output bytes.Buffer
-	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSource("app", nil)) || strings.Contains(output.String(), `"tnl dev"`) {
-		t.Fatalf("migrated config = %s, output = %s, err = %v", data, output.String(), err)
-	}
-	packagePath := filepath.Join(root, "package.json")
-	packageJSON, err := os.ReadFile(packagePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(packagePath, bytes.Replace(packageJSON, []byte("next dev"), []byte("tnl dev"), 1), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	output.Reset()
-	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSource("app", nil)) || !strings.Contains(output.String(), "restore package.json scripts.dev") {
-		t.Fatalf("repeat config = %s, output = %s, err = %v", data, output.String(), err)
-	}
-}
-
-func TestInitCannotReuseGenericScriptOnceItStartsTnl(t *testing.T) {
-	root := genericInitFixture(t, "tnl dev", "pnpm")
-	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, initConfigSourceWithPort("app", []string{"pnpm", "dev"}, 4242), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	var output bytes.Buffer
-	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, initConfigSourceWithPort("app", nil, 4242)) || !strings.Contains(output.String(), "restore package.json scripts.dev") {
-		t.Fatalf("generic config = %s, output = %s, err = %v", data, output.String(), err)
 	}
 }
