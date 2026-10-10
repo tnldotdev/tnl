@@ -710,6 +710,11 @@
           "type": "string",
           "description": "Stable ingress process identity."
         },
+        "ingress_pool_id": {
+          "type": "string",
+          "description": "Ingress pool served by this ingress process.",
+          "default": "ingress-a"
+        },
         "relay_service_id": {
           "type": "string",
           "description": "Stable relay service identity for this relay process."
