@@ -336,9 +336,25 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		value := int64(*projection.RecoveryEpisodeID)
 		recoveryEpisodeID = &value
 	}
+	var poolID *ingressv1.Identifier
+	if projection.IngressPoolID != "" {
+		id := ingressv1.Identifier(projection.IngressPoolID)
+		poolID = &id
+	}
+	var protocol *ingressv1.IngressRoutingTableEntryServiceProtocol
+	if projection.ServiceProtocol != "" {
+		value := ingressv1.IngressRoutingTableEntryServiceProtocol(projection.ServiceProtocol)
+		protocol = &value
+	}
+	var publicPort *int
+	if projection.PublicPort != nil {
+		value := int(*projection.PublicPort)
+		publicPort = &value
+	}
 	return ingressv1.IngressRoutingTableEntry{
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
+		IngressPoolId: poolID, ServiceProtocol: protocol, PublicPort: publicPort,
 		PolicyRevision:  int64(projection.PolicyRevision),
 		IpPolicy:        ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),
 		AllowedIpHashes: hashed, IpPolicyKey: verifier,

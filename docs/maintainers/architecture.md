@@ -75,6 +75,14 @@ visitor may use a separate, bounded forwarding budget to reach the publisher
 for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
+For a database public URL, ingress uses the original destination port in the
+trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
+entry binds that port to a saved public URL within one ingress pool; missing or
+conflicting entries fail closed. Ingress applies the same IP policy, admission,
+and retry boundary before forwarding database startup bytes unchanged. It closes
+a denied database connection without opening a publisher stream. Database TLS
+negotiation belongs to the publisher, not ingress.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

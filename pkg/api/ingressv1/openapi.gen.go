@@ -57,6 +57,27 @@ func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
 	}
 }
 
+// Defines values for IngressRoutingTableEntryServiceProtocol.
+const (
+	Http     IngressRoutingTableEntryServiceProtocol = "http"
+	Mysql    IngressRoutingTableEntryServiceProtocol = "mysql"
+	Postgres IngressRoutingTableEntryServiceProtocol = "postgres"
+)
+
+// Valid indicates whether the value is a known member of the IngressRoutingTableEntryServiceProtocol enum.
+func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
+	switch e {
+	case Http:
+		return true
+	case Mysql:
+		return true
+	case Postgres:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IngressRoutingTableEventKind.
 const (
 	ChallengeTombstone IngressRoutingTableEventKind = "challenge_tombstone"
@@ -220,21 +241,27 @@ type IngressRoutingPublisherConnection struct {
 type IngressRoutingTableEntry struct {
 	AllowedIpHashes   []HashedIPPrefix                 `json:"allowed_ip_hashes"`
 	CanonicalHostname string                           `json:"canonical_hostname"`
+	IngressPoolId     *Identifier                      `json:"ingress_pool_id,omitempty"`
 	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey          *[]byte                             `json:"ip_policy_key,omitempty"`
-	PolicyRevision       int64                               `json:"policy_revision"`
-	PublicUrlExpiresAt   time.Time                           `json:"public_url_expires_at"`
-	PublicUrlId          Identifier                          `json:"public_url_id"`
-	PublishRunId         Identifier                          `json:"publish_run_id"`
-	PublishRunNumber     int64                               `json:"publish_run_number"`
-	PublisherConnections []IngressRoutingPublisherConnection `json:"publisher_connections"`
-	RecoveryEpisodeId    *int64                              `json:"recovery_episode_id,omitempty"`
+	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
+	PolicyRevision       int64                                    `json:"policy_revision"`
+	PublicPort           *int                                     `json:"public_port,omitempty"`
+	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
+	PublicUrlId          Identifier                               `json:"public_url_id"`
+	PublishRunId         Identifier                               `json:"publish_run_id"`
+	PublishRunNumber     int64                                    `json:"publish_run_number"`
+	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
+	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
+	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
 }
 
 // IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
 type IngressRoutingTableEntryIpPolicy string
+
+// IngressRoutingTableEntryServiceProtocol defines model for IngressRoutingTableEntry.ServiceProtocol.
+type IngressRoutingTableEntryServiceProtocol string
 
 // IngressRoutingTableEvent defines model for IngressRoutingTableEvent.
 type IngressRoutingTableEvent struct {

@@ -210,6 +210,9 @@ type IngressRoutingTableProjection struct {
 	PublicURLID          string                                   `json:"public_url_id"`
 	PublishRunNumber     uint64                                   `json:"publish_run_number"`
 	CanonicalHostname    string                                   `json:"canonical_hostname"`
+	IngressPoolID        string                                   `json:"ingress_pool_id,omitempty"`
+	ServiceProtocol      PublicURLServiceProtocol                 `json:"service_protocol,omitempty"`
+	PublicPort           *uint16                                  `json:"public_port,omitempty"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
 	IPPolicy             IPPolicy                                 `json:"ip_policy"`
 	AllowedIPHashes      []ippolicy.Entry                         `json:"allowed_ip_hashes,omitempty"`
@@ -837,9 +840,14 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	projection := IngressRoutingTableProjection{
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
+		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
 		IPPolicy:             policy,
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
+	}
+	if route.PublicPort.Valid {
+		port := uint16(route.PublicPort.Int32)
+		projection.PublicPort = &port
 	}
 	var policyCiphertext []byte
 	policyStorageKeyID := ""

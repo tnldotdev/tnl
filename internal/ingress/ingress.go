@@ -1,5 +1,5 @@
-// Package ingress routes TLS connections by exact SNI hostname without
-// terminating their TLS.
+// package ingress routes HTTPS by exact SNI and database connections by the
+// trusted destination port without terminating visitor TLS.
 package ingress
 
 import (
@@ -37,6 +37,7 @@ type PublicURL struct {
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
 	Backends          []routebackend.Backend
+	PublicPort        uint16
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
@@ -69,6 +70,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
+	LookupPort                      func(uint16) (PublicURL, string)
 	LookupChallenge                 func(string) ([]routebackend.Backend, string)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
@@ -240,6 +242,15 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		return nil
 	}
 	_ = public.SetReadDeadline(time.Time{})
+	// fly sends the visitor's original destination in the trusted outer header.
+	// database clients start with protocol negotiation, not a TLS ClientHello.
+	if s.config.RequireProxyHeader && destination.Port() != 443 {
+		finishInspection()
+		if s.config.LookupPort == nil {
+			return nil
+		}
+		return s.forwardPort(public, source, destination, reader)
+	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
 	if err != nil {
