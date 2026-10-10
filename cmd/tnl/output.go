@@ -9,11 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -357,29 +355,9 @@ func (o *publishOutput) failed(err error) error {
 	if o.mode == publishOutputHuman {
 		return nil
 	}
-	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) ||
-		errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited)
-	presented := presentFailure(err)
-	event := publishEvent{Type: publishEventError, Message: boundedOutputError(err), Reason: string(presented.reason), Retryable: &retryable}
-	if code, ok := diagnostic.CodeOf(err); ok {
-		event.Code = string(code)
-		event.HelpURL = diagnostic.HelpURLForError(err)
-	} else if helpURL := failure.HelpURL(presented.reason, failure.KnownCase(err)); helpURL != "" {
-		event.Code = string(presented.reason)
-		event.HelpURL = helpURL
-	}
-	var limited *controlclient.RateLimitError
-	if errors.As(err, &limited) && limited.RetryAfter > 0 {
-		retryAt := time.Now().Add(limited.RetryAfter).UTC()
-		event.RetryAt = &retryAt
-	} else {
-		var authorityLimited *authorityclient.RateLimitError
-		if errors.As(err, &authorityLimited) && authorityLimited.RetryAfter > 0 {
-			retryAt := time.Now().Add(authorityLimited.RetryAfter).UTC()
-			event.RetryAt = &retryAt
-		}
-	}
-	return o.emit(event)
+	detail := commandDiagnosticFor(err)
+	return o.emit(publishEvent{Type: publishEventError, Message: detail.Message, Reason: detail.Reason,
+		Code: detail.Code, HelpURL: detail.HelpURL, Retryable: &detail.Retryable, RetryAt: detail.RetryAt})
 }
 
 func (o *publishOutput) finish(ctx context.Context, result error) error {
