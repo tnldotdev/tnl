@@ -55,6 +55,13 @@ func runSession(
 		setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
 		return errors.New("publisher: server returned a different publish run")
 	}
+	var publicPort uint16
+	if setup.PublicUrl.PublicPort != nil {
+		if *setup.PublicUrl.PublicPort < 1024 || *setup.PublicUrl.PublicPort > 65535 {
+			return errors.New("publisher: server returned invalid database public port")
+		}
+		publicPort = uint16(*setup.PublicUrl.PublicPort)
+	}
 	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
 		return errors.New("publisher: server returned an invalid certificate plan")
@@ -178,14 +185,17 @@ func runSession(
 		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, TargetOptions: config.TargetOptions, CertificatePlan: plan,
-		Mounts:            config.Mounts,
-		ShareAccess:       shareRuntime,
-		Feedback:          feedback,
-		RequestLimit:      config.RequestLimit,
-		Limits:            config.Limits,
-		ObserveRequest:    config.ObserveRequest,
-		RequestInspection: config.RequestInspection,
-		Handler:           config.Handler,
+		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName,
+		PublicPort:             publicPort,
+		DatabaseTLSPassthrough: config.DatabaseTLSPassthrough,
+		Mounts:                 config.Mounts,
+		ShareAccess:            shareRuntime,
+		Feedback:               feedback,
+		RequestLimit:           config.RequestLimit,
+		Limits:                 config.Limits,
+		ObserveRequest:         config.ObserveRequest,
+		RequestInspection:      config.RequestInspection,
+		Handler:                config.Handler,
 		AdmitRequest: func(request *http.Request) error {
 			if config.AdmitRequest == nil {
 				return nil
