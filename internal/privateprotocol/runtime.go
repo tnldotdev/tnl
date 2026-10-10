@@ -6,12 +6,17 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
 const Version = 1
 const MaxBytes = 64 << 10
+
+var ownerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 
 type Prepare struct {
 	Version   int    `json:"version"`

@@ -152,6 +152,14 @@ only this private socket when the app registers its bound target; it does not
 enter snapshots, diagnostics, or browser metadata. the native runtime can
 start without a project file for ad-hoc registrations.
 
+the same native socket accepts several ad-hoc invocations from one app process.
+`internal/clientruntime.AdHocManager` keeps them separate from configured
+services, checks the owner, pid, renewal, and invocation ID for each registration,
+and holds the runtime open until they drain. each worker calls
+`internal/adhoc.Run`; its local status becomes routable only on the ready event
+for that registration and publish run. ad-hoc readiness uses no public GET
+probe and cannot become a configured-service readiness observation.
+
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;
 listener replacement cancels and joins the previous publisher before starting
