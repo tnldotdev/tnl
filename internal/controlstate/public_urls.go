@@ -200,10 +200,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 	}
 	if request.GuestID != "" {
-		ingressPoolID, err = queries.GetTeamIngressPoolID(ctx, request.TeamID)
-		if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: read guest team ingress pool: %w", err)
-		}
 		guest, err := queries.LockGuestTrialByID(ctx, request.GuestID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PublicURL{}, ErrPublicURLAccess
@@ -211,6 +207,11 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err != nil {
 			return PublicURL{}, fmt.Errorf("controlstate: lock guest trial: %w", err)
 		}
+		if guest.TeamID != request.TeamID || guest.MembershipID != request.MembershipID {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+		// guest team IDs are trial-owned, not rows in control.teams.
+		ingressPoolID = primaryIngressPoolID
 		if !guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
 			return PublicURL{}, ErrGuestTrialSpent
 		}

@@ -8,6 +8,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
+const primaryIngressPoolID = "ingress-a"
+
 // IngressPool identifies one public ingress address group shared by ingress processes.
 type IngressPool struct {
 	ID          string

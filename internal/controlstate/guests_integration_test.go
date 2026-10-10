@@ -49,6 +49,10 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var ingressPoolID string
+	if err := database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.public_urls WHERE id = $1`, first.ID).Scan(&ingressPoolID); err != nil || ingressPoolID != primaryIngressPoolID {
+		t.Fatalf("guest public URL ingress pool = %q, %v", ingressPoolID, err)
+	}
 	if owned, err := database.GuestOwnsPublicURL(t.Context(), guest.ID, first.ID); err != nil || !owned {
 		t.Fatalf("guest route owned = %t, error = %v", owned, err)
 	}

@@ -448,17 +448,6 @@ func (q *Queries) GetPublicURLCreationContext(ctx context.Context, arg GetPublic
 	return i, err
 }
 
-const getTeamIngressPoolID = `-- name: GetTeamIngressPoolID :one
-SELECT ingress_pool_id FROM control.teams WHERE id = $1 AND deleted_at IS NULL
-`
-
-func (q *Queries) GetTeamIngressPoolID(ctx context.Context, teamID string) (string, error) {
-	row := q.db.QueryRow(ctx, getTeamIngressPoolID, teamID)
-	var ingress_pool_id string
-	err := row.Scan(&ingress_pool_id)
-	return ingress_pool_id, err
-}
-
 const insertExpiredEphemeralPublicURLDeleteAuditEvent = `-- name: InsertExpiredEphemeralPublicURLDeleteAuditEvent :exec
 INSERT INTO control.admin_audit_events (
     actor,

@@ -65,9 +65,6 @@ JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
 WHERE m.team_id = sqlc.arg(team_id)
   AND m.removed_at IS NULL;
 
--- name: GetTeamIngressPoolID :one
-SELECT ingress_pool_id FROM control.teams WHERE id = sqlc.arg(team_id) AND deleted_at IS NULL;
-
 -- name: InsertPublicURL :one
 INSERT INTO control.public_urls (
     id,

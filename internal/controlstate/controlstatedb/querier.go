@@ -177,7 +177,6 @@ type Querier interface {
 	GetShare(ctx context.Context, id string) (ControlShare, error)
 	GetShareCapablePublishRun(ctx context.Context, arg GetShareCapablePublishRunParams) (string, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
-	GetTeamIngressPoolID(ctx context.Context, teamID string) (string, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
 	GuestNamespaceReserved(ctx context.Context, label string) (bool, error)
