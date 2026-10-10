@@ -150,6 +150,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	policyRevision := int64(0)
 	namespace := ""
+	ingressPoolID := ""
 	if request.GuestID != "" {
 		policyRevision = positive(request.PolicyRevision)
 	}
@@ -206,6 +207,11 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err != nil {
 			return PublicURL{}, fmt.Errorf("controlstate: lock guest trial: %w", err)
 		}
+		if guest.TeamID != request.TeamID || guest.MembershipID != request.MembershipID {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+		// guest team IDs are trial-owned, not rows in control.teams.
+		ingressPoolID = primaryIngressPoolID
 		if !guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
 			return PublicURL{}, ErrGuestTrialSpent
 		}
@@ -252,6 +258,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err := authorizeRouteCreation(request, creation, labels); err != nil {
 			return PublicURL{}, err
 		}
+		ingressPoolID = creation.IngressPoolID
 		if request.PublicURLScope == PublicURLScopeShared {
 			namespace = creation.CanonicalDomain
 		} else {
@@ -316,7 +323,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
-		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
+		PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -141,7 +142,7 @@ func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
 func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
-		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
+		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", IngressPoolID: "ingress-a", DomainID: "domain_1",
 		CanonicalHostname: "api.tunnels.example.test", State: controlstate.PublicURLDNSPending,
 		DNSRevision: 1, Attempts: 1, AvailableAt: now,
 		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
@@ -165,7 +166,7 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 func TestNestedMemberURLUsesItsImmediateParentWildcard(t *testing.T) {
 	now := time.Now()
 	store := &dnsStoreStub{publicURLWork: controlstate.DNSPublicURLWork{
-		PublicURLID: "url_nested", DomainID: "domain_1", CanonicalHostname: "api.shop.member.tunnels.example.test",
+		PublicURLID: "url_nested", IngressPoolID: "ingress-a", DomainID: "domain_1", CanonicalHostname: "api.shop.member.tunnels.example.test",
 		Namespace: "member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember, State: controlstate.PublicURLDNSPending,
 		DNSRevision: 1, AvailableAt: now, WorkerID: "dns_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
 	}}
@@ -192,11 +193,38 @@ func TestWorkerUsesAuthorizedManagedWildcardRoots(t *testing.T) {
 		{"api.preview.alex.studio.routes.example.test", "alex.studio.routes.example.test", "*.preview.alex.studio.routes.example.test"},
 	} {
 		record, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
-			PublicURLID: "url_test", DomainID: "managed", CanonicalHostname: test.hostname, Namespace: test.namespace,
+			PublicURLID: "url_test", IngressPoolID: "ingress-a", DomainID: "managed", CanonicalHostname: test.hostname, Namespace: test.namespace,
 		})
 		if err != nil || !ready || record.WildcardHostname != test.wildcard || record.Namespace != test.namespace {
 			t.Errorf("record for %s = %#v, ready %t, error %v", test.hostname, record, ready, err)
 		}
+	}
+}
+
+func TestWorkerUsesPinnedIngressPoolForMemberWildcard(t *testing.T) {
+	now := time.Now()
+	store := &dnsStoreStub{pool: controlstate.IngressPool{
+		ID: "ingress-b", State: "enabled",
+		IPv4Address: netip.MustParseAddr("192.0.2.20"), IPv6Address: netip.MustParseAddr("2001:db8::20"),
+	}}
+	worker := testDNSWorker(t, store, &providerStub{}, &verifierStub{}, now)
+	worker.config.ManagedDomain, worker.config.ManagedZoneID = "tunnels.example.test", "ZMANAGED"
+	worker.config.IngressIPv4Addresses = []string{"192.0.2.10"}
+	record, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
+		PublicURLID: "url_second_pool", IngressPoolID: "ingress-b", DomainID: "domain_1",
+		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test",
+	})
+	if err != nil || !ready || record.WildcardHostname != "*.member.tunnels.example.test" ||
+		!reflect.DeepEqual(record.IngressIPv4Addresses, []string{"192.0.2.20"}) ||
+		!reflect.DeepEqual(record.IngressIPv6Addresses, []string{"2001:db8::20"}) {
+		t.Fatalf("member URL used another pool's ingress address: record=%#v ready=%t err=%v", record, ready, err)
+	}
+	store.pool.State = "disabled"
+	if _, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
+		PublicURLID: "url_second_pool", IngressPoolID: "ingress-b", DomainID: "domain_1",
+		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test",
+	}); err != nil || ready {
+		t.Fatalf("disabled secondary pool issued public URL DNS: ready=%t err=%v", ready, err)
 	}
 }
 
@@ -217,7 +245,7 @@ func TestWorkerUsesOrganizationNamespaceOnCustomDomain(t *testing.T) {
 func TestWorkerManagedMemberWildcardPersistsAcrossPublicURLRemoval(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	work := controlstate.DNSPublicURLWork{
-		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", DomainID: "domain_1",
+		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", IngressPoolID: "ingress-a", DomainID: "domain_1",
 		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
 		State: controlstate.PublicURLDNSPending, DNSRevision: 1, Attempts: 1, AvailableAt: now,
 		WorkerID: "dns_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute),
@@ -347,10 +375,18 @@ type dnsStoreStub struct {
 	publicURLSaved                    controlstate.DNSPublicURLWork
 	releaseReady                      bool
 	authority                         controlstate.DNSAuthority
+	pool                              controlstate.IngressPool
 	authorityReferences               []string
 	getErr, saveErr, publicURLSaveErr error
 	saves, publicURLSaves             int
 	savedAt, publicURLSavedAt         time.Time
+}
+
+func (s *dnsStoreStub) GetIngressPool(_ context.Context, id string) (controlstate.IngressPool, error) {
+	if s.pool.ID != "" {
+		return s.pool, nil
+	}
+	return controlstate.IngressPool{ID: id, State: "disabled"}, nil
 }
 
 func (s *dnsStoreStub) ClaimDNSAuthorityWork(
@@ -486,7 +522,7 @@ func (v *verifierStub) VerifyPublicURL(
 
 func claimedRouteWork(now time.Time) controlstate.DNSPublicURLWork {
 	return controlstate.DNSPublicURLWork{
-		PublicURLID: "public_url_claimed", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_0123456789abcdef0123456789abcdef",
+		PublicURLID: "public_url_claimed", IngressPoolID: "ingress-a", DomainID: "domain_1", DNSAuthorityReference: "dns_authority_0123456789abcdef0123456789abcdef",
 		CanonicalHostname: "api.claimed.example.test", State: controlstate.PublicURLDNSPending,
 		DNSRevision: 7, Attempts: 3, WorkerID: "dns_worker_test", WorkEpoch: 9, WorkExpiresAt: now.Add(time.Minute),
 	}
