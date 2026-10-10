@@ -2074,6 +2074,11 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
 	AllocateEphemeralPublicURL(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+	//
+	// Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
+	DeleteEphemeralPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListFeedbackThreads List feedback threads manageable in one team
 	//
 	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
@@ -2787,6 +2792,21 @@ func (c *Client) AllocateEphemeralPublicURLWithBody(ctx context.Context, content
 // Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
 func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAllocateEphemeralPublicURLRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+//
+// Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
+func (c *Client) DeleteEphemeralPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEphemeralPublicURLRequest(c.Server, publicUrlId)
 	if err != nil {
 		return nil, err
 	}
@@ -4525,6 +4545,40 @@ func NewAllocateEphemeralPublicURLRequestWithBody(server string, contentType str
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteEphemeralPublicURLRequest constructs an http.Request for the DeleteEphemeralPublicURL method
+func NewDeleteEphemeralPublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ephemeral-public-urls/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -6981,6 +7035,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
 	AllocateEphemeralPublicURLWithResponse(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error)
 
+	// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by an ad-hoc credential
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
+	DeleteEphemeralPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeleteEphemeralPublicURLResponse, error)
+
 	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8104,6 +8165,47 @@ func (r AllocateEphemeralPublicURLResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AllocateEphemeralPublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteEphemeralPublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteEphemeralPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteEphemeralPublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteEphemeralPublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteEphemeralPublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteEphemeralPublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10654,6 +10756,19 @@ func (c *ClientWithResponses) AllocateEphemeralPublicURLWithResponse(ctx context
 	return ParseAllocateEphemeralPublicURLResponse(rsp)
 }
 
+// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by an ad-hoc credential
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
+func (c *ClientWithResponses) DeleteEphemeralPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeleteEphemeralPublicURLResponse, error) {
+	rsp, err := c.DeleteEphemeralPublicURL(ctx, publicUrlId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteEphemeralPublicURLResponse(rsp)
+}
+
 // ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -12024,6 +12139,35 @@ func ParseAllocateEphemeralPublicURLResponse(rsp *http.Response) (*AllocateEphem
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteEphemeralPublicURLResponse parses an HTTP response from a DeleteEphemeralPublicURLWithResponse call
+func ParseDeleteEphemeralPublicURLResponse(rsp *http.Response) (*DeleteEphemeralPublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteEphemeralPublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -13707,6 +13851,9 @@ type ServerInterface interface {
 	// AllocateEphemeralPublicURL Create a temporary public URL for one ad-hoc publication
 	// (POST /v1/ephemeral-public-urls)
 	AllocateEphemeralPublicURL(w http.ResponseWriter, r *http.Request)
+	// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+	// (DELETE /v1/ephemeral-public-urls/{public_url_id})
+	DeleteEphemeralPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
 	// ListFeedbackThreads List feedback threads manageable in one team
 	// (GET /v1/feedback)
 	ListFeedbackThreads(w http.ResponseWriter, r *http.Request, params ListFeedbackThreadsParams)
@@ -14194,6 +14341,32 @@ func (siw *ServerInterfaceWrapper) AllocateEphemeralPublicURL(w http.ResponseWri
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AllocateEphemeralPublicURL(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteEphemeralPublicURL operation middleware
+func (siw *ServerInterfaceWrapper) DeleteEphemeralPublicURL(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteEphemeralPublicURL(w, r, publicUrlId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15969,6 +16142,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-credentials", wrapper.CreateEphemeralPublishCredential)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-credentials/{credential_id}", wrapper.RevokePublishCredentialByID)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ephemeral-public-urls", wrapper.AllocateEphemeralPublicURL)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/ephemeral-public-urls/{public_url_id}", wrapper.DeleteEphemeralPublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-access", wrapper.EnableShareAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-state", wrapper.GetPublishRunShareState)
