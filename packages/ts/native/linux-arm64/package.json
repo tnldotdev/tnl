@@ -6,7 +6,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tnldotdev/tnl.git",
-    "directory": "packages/tnl/native/linux-arm64"
+    "directory": "packages/ts/native/linux-arm64"
   },
   "files": [
     "bin",

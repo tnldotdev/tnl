@@ -20,7 +20,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tnldotdev/tnl.git",
-    "directory": "packages/tnl"
+    "directory": "packages/ts"
   },
   "bin": {
     "tnl": "dist/bin/tnl.js"

@@ -20,7 +20,7 @@ const entrypoints = [
 
 try {
   await run("npm", ["pack", "--ignore-scripts", "--pack-destination", directory], {
-    cwd: path.join(root, "packages", "tnl"),
+    cwd: path.join(root, "packages", "ts"),
   });
   const filename = (await readdir(directory)).find((entry) => entry.endsWith(".tgz"));
   if (!filename) {

@@ -12,9 +12,9 @@
   "include": [
     "internal/projectconfig/loader.ts",
     "packages/**/*.test.ts",
-    "packages/tnl/test-helper/**/*.ts",
-    "packages/tnl/fixtures/**/*.ts",
-    "packages/tnl/fixtures/**/*.tsx",
+    "packages/ts/test-helper/**/*.ts",
+    "packages/ts/fixtures/**/*.ts",
+    "packages/ts/fixtures/**/*.tsx",
     "scripts/**/*.ts",
     "vitest*.ts"
   ],

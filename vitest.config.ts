@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-const sourceDirectory = fileURLToPath(new URL("packages/tnl/src/", import.meta.url));
+const sourceDirectory = fileURLToPath(new URL("packages/ts/src/", import.meta.url));
 
 export default defineConfig(({ mode }) => ({
   ...(mode === "coverage"
@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     clearMocks: true,
     coverage: {
-      include: ["packages/tnl/src/**/*.ts"],
+      include: ["packages/ts/src/**/*.ts"],
       provider: "v8",
       reporter: ["text", "html", "lcov"],
       reportsDirectory: "coverage/typescript",
@@ -78,7 +78,7 @@ export default defineConfig(({ mode }) => ({
     mockReset: true,
     pool: "forks",
     restoreMocks: true,
-    setupFiles: ["packages/tnl/test-helper/environment-setup.ts"],
+    setupFiles: ["packages/ts/test-helper/environment-setup.ts"],
     testTimeout: 10_000,
     unstubEnvs: true,
     unstubGlobals: true,

@@ -146,7 +146,7 @@ jobs:
       - name: Test integration
         env:
           FRAMEWORK: ${{ matrix.framework }}
-        run: pnpm exec vitest run "packages/tnl/$FRAMEWORK.test.ts"
+        run: pnpm exec vitest run "packages/ts/$FRAMEWORK.test.ts"
 
   go-linux:
     name: Go (Linux)

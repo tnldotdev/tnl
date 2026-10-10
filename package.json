@@ -13,7 +13,7 @@
     "test:run": "vitest run",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project internal/feedbacktoolbar/tsconfig.json && tsc --project tsconfig.json"
+    "typecheck:run": "tsc --project packages/ts/type-test.tsconfig.json && tsc --project packages/ts/augmented-type-test.tsconfig.json && tsc --project internal/feedbacktoolbar/tsconfig.json && tsc --project tsconfig.json"
   },
   "devDependencies": {
     "@floating-ui/dom": "1.8.0",

@@ -1,5 +1,5 @@
 packages:
-  - packages/tnl
+  - packages/ts
 
 allowBuilds:
   esbuild: false

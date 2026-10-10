@@ -488,7 +488,7 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 | `internal/privateprotocol` | Bounded private SDK requests and assignments                                |
 | `internal/projectmeta`     | Generated browser-safe metadata and TypeScript augmentation                 |
 | `internal/clioutput`       | Shared ASCII rendering for the `tnl` client                                 |
-| `packages/tnl`             | Browser-safe runtime and Node framework integrations                        |
+| `packages/ts`              | Browser-safe runtime and Node framework integrations                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
 The private development socket is shipped implementation, not a public extension

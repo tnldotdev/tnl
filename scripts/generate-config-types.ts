@@ -87,7 +87,7 @@ export type TnlConfigFactory = (
 
 export type TnlConfigInput = TnlConfig | TnlConfigFactory;
 `;
-await writeFile(path.join(root, "packages", "tnl", "src", "config.gen.ts"), declarations);
+await writeFile(path.join(root, "packages", "ts", "src", "config.gen.ts"), declarations);
 
 function renameProperties(value: unknown, mappings: Readonly<Record<string, string>>): void {
   if (Array.isArray(value)) {
