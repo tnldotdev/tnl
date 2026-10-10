@@ -1,5 +1,5 @@
 -- +goose Up
--- retain ownership after the allocation response so only the issuing
+-- keep ownership after the allocation response so only the issuing
 -- credential can maintain the temporary public URL and its publish runs.
 CREATE TABLE control.ephemeral_public_url_allocations (
     public_url_id text PRIMARY KEY REFERENCES control.public_urls(id) ON DELETE RESTRICT,
