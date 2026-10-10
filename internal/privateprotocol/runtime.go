@@ -38,6 +38,43 @@ type Registration struct {
 	Target         string `json:"target,omitempty"`
 }
 
+// AdHocRegister binds one invocation to an already-listening local target.
+// the credential is sent only across the private socket and never enters status.
+type AdHocRegister struct {
+	Version        int          `json:"version"`
+	RegistrationID string       `json:"registration_id"`
+	Owner          string       `json:"owner"`
+	PID            int          `json:"pid"`
+	Target         string       `json:"target"`
+	ServerURL      string       `json:"server_url,omitempty"`
+	Credential     string       `json:"credential"`
+	AllowIP        []string     `json:"allow_ip,omitempty"`
+	AllowAllIPs    bool         `json:"allow_all_ips,omitempty"`
+	Limits         *AdHocLimits `json:"limits,omitempty"`
+}
+
+type AdHocLimits struct {
+	Requests    int             `json:"requests,omitempty"`
+	Rate        *AdHocRateLimit `json:"rate,omitempty"`
+	Concurrency int             `json:"concurrency,omitempty"`
+}
+
+type AdHocRateLimit struct {
+	Requests int    `json:"requests"`
+	Per      string `json:"per"`
+}
+
+// AdHocStatus never contains credentials, visitor requests, or browser metadata.
+type AdHocStatus struct {
+	Version          int    `json:"version"`
+	RegistrationID   string `json:"registration_id"`
+	State            string `json:"state"`
+	PublicURLID      string `json:"public_url_id,omitempty"`
+	PublicURL        string `json:"public_url,omitempty"`
+	PublishRunNumber uint64 `json:"publish_run_number,omitempty"`
+	FailureCode      string `json:"failure_code,omitempty"`
+}
+
 type Problem struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

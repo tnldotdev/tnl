@@ -60,3 +60,37 @@ func TestSharedSDKGoldenAssignments(t *testing.T) {
 		}
 	}
 }
+
+func TestAdHocSocketContractGolden(t *testing.T) {
+	data, err := os.ReadFile("testdata/adhoc.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	id, owner := "ivk_0123456789abcdefghijkl", "0123456789abcdef0123456789abcdef"
+	values := map[string]any{
+		"register": AdHocRegister{Version: 1, RegistrationID: id, Owner: owner, PID: 123,
+			Target: "http://127.0.0.1:3000", ServerURL: "https://control.example.test",
+			Credential: "tnl_eph_test-credential", AllowIP: []string{"198.51.100.9/32"},
+			Limits: &AdHocLimits{Requests: 20, Rate: &AdHocRateLimit{Requests: 5, Per: "1m"}, Concurrency: 3}},
+		"ready": AdHocStatus{Version: 1, RegistrationID: id, State: "routable", PublicURLID: "url_allocated",
+			PublicURL: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test", PublishRunNumber: 1},
+		"failed": AdHocStatus{Version: 1, RegistrationID: id, State: "failed", FailureCode: "runtime.publication_failed"},
+	}
+	for name, value := range values {
+		actual, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var expected bytes.Buffer
+		if err := json.Compact(&expected, fixtures[name]); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(actual, expected.Bytes()) {
+			t.Fatalf("%s wire shape differs from the shared SDK fixture", name)
+		}
+	}
+}

@@ -1,0 +1,31 @@
+{
+  "register": {
+    "version": 1,
+    "registration_id": "ivk_0123456789abcdefghijkl",
+    "owner": "0123456789abcdef0123456789abcdef",
+    "pid": 123,
+    "target": "http://127.0.0.1:3000",
+    "server_url": "https://control.example.test",
+    "credential": "tnl_eph_test-credential",
+    "allow_ip": ["198.51.100.9/32"],
+    "limits": {
+      "requests": 20,
+      "rate": { "requests": 5, "per": "1m" },
+      "concurrency": 3
+    }
+  },
+  "ready": {
+    "version": 1,
+    "registration_id": "ivk_0123456789abcdefghijkl",
+    "state": "routable",
+    "public_url_id": "url_allocated",
+    "public_url": "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test",
+    "publish_run_number": 1
+  },
+  "failed": {
+    "version": 1,
+    "registration_id": "ivk_0123456789abcdefghijkl",
+    "state": "failed",
+    "failure_code": "runtime.publication_failed"
+  }
+}
