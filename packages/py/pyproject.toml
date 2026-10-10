@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tnldotdev-tnl"
 version = "0.0.0.dev0"
-description = "public URLs for Python ASGI applications"
+description = "public urls for collaborative dev."
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = ["httpx>=0.28,<0.29", "starlette>=0.45,<1", "uvicorn>=0.40,<1", "websockets>=14,<17"]
