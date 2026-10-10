@@ -24,7 +24,7 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.framework != "" || plan.genericDev || plan.devPort != 0 || plan.serverPath != filepath.Join(root, "src", "index.ts") || !bytes.Equal(plan.serverBefore, []byte(test.source)) ||
+			if plan.framework != "" || plan.genericDev || plan.serverPath != filepath.Join(root, "src", "index.ts") || !bytes.Equal(plan.serverBefore, []byte(test.source)) ||
 				!strings.Contains(string(plan.serverAfter), test.result) || !strings.Contains(string(plan.serverAfter), "await publication?.register(") || !strings.Contains(string(plan.serverAfter), "tnl.prepare(") || !strings.Contains(string(plan.serverAfter), "import { tnl } from '@tnldotdev/tnl'") {
 				t.Fatalf("init plan: %#v", plan)
 			}
@@ -32,7 +32,7 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 				t.Fatal(err)
 			}
 			second, err := planInit(t.Context(), root)
-			if err != nil || len(second.serverAfter) != 0 || second.genericDev || second.devPort != 0 {
+			if err != nil || len(second.serverAfter) != 0 || second.genericDev {
 				t.Fatalf("second plan = %#v, %v", second, err)
 			}
 		})
@@ -91,23 +91,6 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	second, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
 	if err != nil || !bytes.Equal(second, entry) {
 		t.Fatalf("repeat init modified server: %s, %v", second, err)
-	}
-}
-
-func TestInitRemovesRecognizedFixedPortFromAPIServerConfig(t *testing.T) {
-	root := apiInitFixture(t, "hono", "bun --hot src/index.ts", "module", "import { Hono } from 'hono'\nconst app = new Hono()\nexport default app\n")
-	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, legacyInitConfigSource("app", []string{"pnpm", "dev"}, 3000), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	var output, diagnostics bytes.Buffer
-	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &diagnostics); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, initConfigSource("app", []string{"bun", "--hot", "src/index.ts"})) {
-		t.Fatalf("fixed-port project config = %s, %v", got, err)
 	}
 }
 

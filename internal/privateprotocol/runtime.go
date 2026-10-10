@@ -14,7 +14,7 @@ const Version = 1
 const MaxBytes = 64 << 10
 
 type Prepare struct {
-	Protocol  int    `json:"protocol"`
+	Version   int    `json:"version"`
 	Directory string `json:"directory"`
 	Service   string `json:"service,omitempty"`
 	Framework string `json:"framework"`
@@ -23,7 +23,7 @@ type Prepare struct {
 }
 
 type Assignment struct {
-	Protocol       int                        `json:"protocol"`
+	Version        int                        `json:"version"`
 	RegistrationID string                     `json:"registration_id"`
 	Service        string                     `json:"service"`
 	Hostname       string                     `json:"hostname"`
@@ -32,7 +32,7 @@ type Assignment struct {
 }
 
 type Registration struct {
-	Protocol       int    `json:"protocol"`
+	Version        int    `json:"version"`
 	RegistrationID string `json:"registration_id"`
 	Owner          string `json:"owner"`
 	Target         string `json:"target,omitempty"`

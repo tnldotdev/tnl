@@ -101,24 +101,20 @@ func TestTeamEnvironmentSelectsDomainCommand(t *testing.T) {
 }
 
 func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
-	for _, command := range []string{"dev", "publish"} {
-		t.Run(command, func(t *testing.T) {
-			var flags cli
-			var output bytes.Buffer
-			parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := parser.Parse([]string{command, "--help"}); err != nil {
-				t.Fatal(err)
-			}
-			text := strings.Join(strings.Fields(output.String()), " ")
-			for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
-				if !strings.Contains(text, want) {
-					t.Fatalf("%s help missing %q:\n%s", command, want, output.String())
-				}
-			}
-		})
+	var flags cli
+	var output bytes.Buffer
+	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "--help"}); err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(output.String()), " ")
+	for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("publish help missing %q:\n%s", want, output.String())
+		}
 	}
 }
 
@@ -345,7 +341,6 @@ func TestAuthenticationBrowserOpenerRequiresTTY(t *testing.T) {
 func TestCanonicalCommandTitle(t *testing.T) {
 	for command, want := range map[string]string{
 		"publish <service-or-target>":          "tnl publish",
-		"dev <service>":                        "tnl dev",
 		"team member set-role <membership-id>": "tnl team member set-role",
 		"status":                               "tnl status",
 	} {
@@ -357,7 +352,6 @@ func TestCanonicalCommandTitle(t *testing.T) {
 
 func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
 	for command, want := range map[string]string{
-		"dev":     "dev <service>",
 		"publish": "publish <service-or-target>",
 		"status":  "status",
 	} {
@@ -367,43 +361,26 @@ func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
 	}
 }
 
-func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
-	for _, test := range []struct {
-		command    string
-		wantErr    string
-		wantReason failure.Reason
-	}{
-		{command: "dev", wantErr: "start the app with its normal development command", wantReason: failure.AppStartCommandRetired},
-		{command: "publish", wantErr: "target is required as an argument or publish.target in project configuration", wantReason: failure.MissingTarget},
-	} {
-		t.Run(test.command, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			stateDir := filepath.Join(t.TempDir(), "state")
-			args := []string{"--no-config", test.command, "--state-dir", stateDir, "--server", "http://control.example"}
-			err := run(t.Context(), args, &stdout, &stderr)
-			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-				t.Fatalf("run error = %v, want %q", err, test.wantErr)
-			}
-			if reason, _, ok := failure.Describe(err); !ok || reason != test.wantReason {
-				t.Fatalf("run failure reason = %q, %t, want %q", reason, ok, test.wantReason)
-			}
-			var parseError *kong.ParseError
-			if errors.As(err, &parseError) {
-				t.Fatalf("bare %s returned parse error: %v", test.command, err)
-			}
-			wantCommand := "tnl " + test.command
-			if got, ok := clioutput.CommandOf(err); !ok || got != wantCommand {
-				t.Fatalf("command = %q, %t, want %q", got, ok, wantCommand)
-			}
-			writeCommandError(&stderr, err)
-			if got := stderr.String(); !strings.HasPrefix(got, "+--[ "+wantCommand+" ]-- command failed ") {
-				t.Fatalf("error output = %q", got)
-			}
-			if strings.Contains(stderr.String(), "clientstate: ") ||
-				(test.command == "dev" && !strings.Contains(stderr.String(), "tnl dev no longer starts applications")) {
-				t.Fatalf("CLI exposed an internal error prefix: %q", stderr.String())
-			}
-		})
+func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	stateDir := filepath.Join(t.TempDir(), "state")
+	err := run(t.Context(), []string{"--no-config", "publish", "--state-dir", stateDir, "--server", "http://control.example"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "target is required as an argument or publish.target in project configuration") {
+		t.Fatalf("run error = %v", err)
+	}
+	if reason, _, ok := failure.Describe(err); !ok || reason != failure.MissingTarget {
+		t.Fatalf("run failure reason = %q, %t", reason, ok)
+	}
+	var parseError *kong.ParseError
+	if errors.As(err, &parseError) {
+		t.Fatalf("bare publish returned parse error: %v", err)
+	}
+	if got, ok := clioutput.CommandOf(err); !ok || got != "tnl publish" {
+		t.Fatalf("command = %q, %t", got, ok)
+	}
+	writeCommandError(&stderr, err)
+	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- command failed ") || strings.Contains(got, "clientstate: ") {
+		t.Fatalf("error output = %q", got)
 	}
 }
 
@@ -526,16 +503,6 @@ func TestGuestCommandExplainsSignInAndDemoWithoutPrompting(t *testing.T) {
 		strings.Contains(stderr.String(), "authentication required") || stdout.Len() != 0 {
 		t.Fatalf("guest command output = %q, stdout = %q", stderr.String(), stdout.String())
 	}
-	stdout.Reset()
-	stderr.Reset()
-	err = run(t.Context(), []string{"--no-config", "dev", "--server=https://control.example", "--state-dir", root}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("guest dev without a configured child attempted to prompt for sign-in")
-	}
-	writeCommandError(&stderr, err)
-	if !strings.Contains(stderr.String(), "tnl dev no longer starts applications") || stdout.Len() != 0 {
-		t.Fatalf("guest dev output = %q, stdout = %q", stderr.String(), stdout.String())
-	}
 }
 
 func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
@@ -551,67 +518,6 @@ func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "absolute tunnel project path is required") ||
 		!strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("demo did not reach control discovery after registering its tunnel: %v", err)
-	}
-}
-
-func TestSplitDevPassthroughRequiresSeparator(t *testing.T) {
-	parsed, command, err := splitDevPassthrough([]string{"dev", "web", "--", "pnpm", "dev", "--host"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(parsed, " ") != "dev web" || strings.Join(command, " ") != "pnpm dev --host" {
-		t.Fatalf("parsed = %v, command = %v", parsed, command)
-	}
-	if _, _, err := splitDevPassthrough([]string{"dev", "--"}); err == nil {
-		t.Fatal("empty development command was accepted")
-	}
-}
-
-func TestSplitDevPassthroughAllowsGlobalOptionsBeforeDev(t *testing.T) {
-	parsed, command, err := splitDevPassthrough([]string{
-		"--config", "project/tnl.config.ts", "--no-telemetry", "dev", "api", "--", "pnpm", "dev", "--host", "127.0.0.1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(parsed, " ") != "--config project/tnl.config.ts --no-telemetry dev api" ||
-		strings.Join(command, " ") != "pnpm dev --host 127.0.0.1" {
-		t.Fatalf("parsed = %v, command = %v", parsed, command)
-	}
-}
-
-func TestSplitDevPassthroughAllowsExplicitGlobalBooleanValues(t *testing.T) {
-	parsed, command, err := splitDevPassthrough([]string{
-		"--no-telemetry=false", "--no-config=true", "dev", "api", "--", "node", "server.js",
-	})
-	if err != nil || strings.Join(parsed, " ") != "--no-telemetry=false --no-config=true dev api" ||
-		strings.Join(command, " ") != "node server.js" {
-		t.Fatalf("parsed = %v, command = %v, error = %v", parsed, command, err)
-	}
-}
-
-func TestDevRejectsExplicitZeroPortAndStartupTimeout(t *testing.T) {
-	for _, test := range []struct {
-		flag, want string
-	}{
-		{"--port=0", "port must be between 1 and 65535"},
-		{"--startup-timeout=0s", "startup timeout must be greater than zero"},
-	} {
-		t.Run(test.flag, func(t *testing.T) {
-			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			parsed, err := parser.Parse([]string{"dev", test.flag})
-			if err != nil {
-				t.Fatal(err)
-			}
-			applyTunnelCLIUnits(parsed, &flags)
-			if err := (projectConfiguration{}).applyDev(&flags.Dev); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("explicit %s: %v", test.flag, err)
-			}
-		})
 	}
 }
 
@@ -667,8 +573,6 @@ func TestTerminalResultUsesErrorLeaves(t *testing.T) {
 			),
 		},
 		{name: "cancellation with failure", err: errors.Join(context.Canceled, failure), wantCode: 1, wantRender: true},
-		{name: "child exit", err: fmt.Errorf("child: %w", &childExitError{code: 23}), wantCode: 23},
-		{name: "child exit with failure", err: errors.Join(&childExitError{code: 23}, failure), wantCode: 1, wantRender: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			code, render := terminalResult(test.err)

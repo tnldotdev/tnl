@@ -13,7 +13,7 @@ import (
 
 func TestRenderFrame(t *testing.T) {
 	got, err := Render(Frame{
-		Command: "tnl dev",
+		Command: "tnl wait",
 		State:   "ready",
 		Blocks: []Block{
 			Fields(Field{Label: "framework", Value: "vite"}),
@@ -28,7 +28,7 @@ func TestRenderFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "+--[ tnl dev ]-- ready ----------------------------------------+\n" +
+	want := "+--[ tnl wait ]-- ready ---------------------------------------+\n" +
 		"|                                                              |\n" +
 		"|  framework  vite                                             |\n" +
 		"|                                                              |\n" +
@@ -126,8 +126,8 @@ func TestRenderPreservesLongUniqueValueAcrossWrapping(t *testing.T) {
 
 func TestRenderRightBorderIsAligned(t *testing.T) {
 	tests := map[string]Frame{
-		"dev output": {
-			Command: "tnl dev",
+		"app output": {
+			Command: "tnl wait",
 			State:   "ready",
 			Blocks: []Block{
 				Fields(Field{Label: "framework", Value: "vite"}),
@@ -356,7 +356,7 @@ func FuzzRender(f *testing.F) {
 	f.Fuzz(func(t *testing.T, input []byte, widthOffset uint8) {
 		value := string(input)
 		got, err := Render(Frame{
-			Command: "tnl dev",
+			Command: "tnl wait",
 			State:   "result",
 			Blocks: []Block{
 				Text(value),

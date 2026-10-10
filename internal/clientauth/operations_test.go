@@ -369,7 +369,7 @@ func TestCancelAndLogoutFenceInFlightExchange(t *testing.T) {
 			requests := d.transport.snapshot()
 			last := requests[len(requests)-1]
 			if last.url != testControlOrigin+"/v1/auth/logout" || last.header.Get("Authorization") != "Bearer "+issued.AccessToken {
-				t.Fatal("issued credential was not revoked after fencing")
+				t.Fatal("issued credential was not revoked after cancellation")
 			}
 		})
 	}

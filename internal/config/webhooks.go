@@ -39,7 +39,7 @@ func (w Webhook) DeliveryMode() string {
 }
 
 // DefinitionBytes gives equivalent declarations the same fingerprint without
-// modifying the caller's slices. fingerprints fence local receiver selection.
+// modifying the caller's slices. fingerprints reject outdated receiver selections.
 func (w Webhook) DefinitionBytes() ([]byte, [32]byte, error) {
 	w.Delivery = w.DeliveryMode()
 	if len(w.Methods) == 0 {
