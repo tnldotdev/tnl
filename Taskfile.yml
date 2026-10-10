@@ -100,11 +100,11 @@ tasks:
 
   format:
     desc: Format all source files
-    deps: [go:format, js:format]
+    deps: [go:format, js:format, py:format]
 
   format-check:
     desc: Check formatting without changing files
-    deps: [go:format-check, js:format-check]
+    deps: [go:format-check, js:format-check, py:format-check]
 
   lint:
     desc: Run static analysis
@@ -113,13 +113,16 @@ tasks:
       - task: go:vulncheck
       - task: js:lint
       - task: js:typecheck
+      - task: py:lint
+      - task: py:typecheck
       - task: workflows:lint
 
   test:
-    desc: Run routine Go and JavaScript tests
+    desc: Run routine Go, JavaScript, and Python tests
     cmds:
       - task: go:test
       - task: js:test
+      - task: py:test
 
   coverage:
     desc: Produce diagnostic Go and TypeScript coverage reports
@@ -132,6 +135,44 @@ tasks:
     cmds:
       - task: go:build
       - task: js:build
+
+  py:format:
+    desc: Format the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py ruff format packages/py/src packages/py/tests
+
+  py:format-check:
+    desc: Check Python SDK formatting
+    cmds:
+      - uv run --frozen --project packages/py ruff format --check packages/py/src packages/py/tests
+
+  py:lint:
+    desc: Lint the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py ruff check packages/py/src packages/py/tests
+
+  py:typecheck:
+    desc: Typecheck the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py mypy packages/py/src packages/py/tests
+
+  py:test:
+    desc: Run Python ASGI and private-socket tests
+    cmds:
+      - uv run --frozen --project packages/py pytest -q packages/py/tests
+
+  py:build:
+    desc: Build the local Python SDK wheel
+    cmds:
+      - uv build --wheel --project packages/py --out-dir packages/py/dist
+
+  py:check:
+    desc: Run all Python SDK checks
+    cmds:
+      - task: py:format-check
+      - task: py:lint
+      - task: py:typecheck
+      - task: py:test
 
   package:
     desc: Build a local release snapshot

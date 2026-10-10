@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tnldotdev-tnl"
+version = "0.0.0.dev0"
+description = "public urls for collaborative dev."
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["httpx>=0.28,<0.29", "starlette>=0.45,<1", "uvicorn>=0.40,<1", "websockets>=14,<17"]
+
+[dependency-groups]
+dev = ["mypy>=1.18,<1.20", "pytest>=8.4,<9", "ruff>=0.14,<0.16"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tnl"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "packages/py/src"
+files = ["packages/py/src", "packages/py/tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/py/tests"]

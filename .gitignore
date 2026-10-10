@@ -7,6 +7,12 @@
 node_modules/
 coverage/
 dist/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.tsbuildinfo
 /tnl
 /tnld
