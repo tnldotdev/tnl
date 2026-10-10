@@ -41,6 +41,12 @@ its port across runs; deletion moves the claim into seven days of quarantine.
 Cleanup releases a bounded batch after the deadline, retaining the historical
 hostname-and-port pair so a new URL cannot take both values at once.
 
+Control may enable `ingress-a` after its public IPs and `TNLD_TCP_PORTS`
+inventory have been exposed by the ingress deployment. Repeated starts may
+add verified ports but cannot change an enabled pool's public IPs or disable
+ports that have saved claims. Ingress capacity and pool addresses are separate
+from the interchangeable ingress process leases.
+
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
 requires migration 12's queue table, including for storage-key rotation. The

@@ -95,6 +95,8 @@ type Querier interface {
 	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
+	EnableIngressPool(ctx context.Context, arg EnableIngressPoolParams) (ControlIngressPool, error)
+	EnableIngressPoolPorts(ctx context.Context, arg EnableIngressPoolPortsParams) (int64, error)
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
@@ -277,6 +279,7 @@ type Querier interface {
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (LockIdentityForTeamCreationRow, error)
 	LockIdentityPublicURLForDelete(ctx context.Context, arg LockIdentityPublicURLForDeleteParams) (LockIdentityPublicURLForDeleteRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
+	LockIngressPoolForProvision(ctx context.Context, id string) (ControlIngressPool, error)
 	LockIngressRoutingTableClock(ctx context.Context) (int64, error)
 	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlPublishRunConnectionSlot, error)
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
