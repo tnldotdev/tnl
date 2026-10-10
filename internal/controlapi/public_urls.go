@@ -258,7 +258,7 @@ func (h *handler) CreatePublishRun(
 	}
 	var credential controlstate.PublicURLPublishCredential
 	var retrySecret []byte
-	if strings.HasPrefix(token, "tnl_publish_") {
+	if credentials.IsPublicURLPublishCredential(token) {
 		var bound controlstate.PublicURL
 		var ok bool
 		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)
@@ -269,7 +269,7 @@ func (h *handler) CreatePublishRun(
 			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 			return
 		}
-	} else if strings.HasPrefix(token, "tnl_eph_") {
+	} else if credentials.IsEphemeralCredential(token) {
 		if h.publishCredentials == nil {
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "ad-hoc credentials are unavailable")
 			return

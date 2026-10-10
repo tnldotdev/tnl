@@ -31,7 +31,7 @@ func testEphemeralAllocationRequest(t *testing.T, fixture testEphemeralCredentia
 	}
 }
 
-func TestIntegrationEphemeralAllocationIsIdempotentAndFenced(t *testing.T) {
+func TestIntegrationEphemeralAllocationChecksCredentialAndInvocation(t *testing.T) {
 	fixture := issueTestEphemeralCredential(t)
 	request := testEphemeralAllocationRequest(t, fixture)
 	first, err := fixture.database.CreatePublicURL(t.Context(), request, fixture.now)
