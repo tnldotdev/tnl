@@ -435,6 +435,9 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
 		return PublicURL{}, ErrPublicURLNotEnabled
 	}
+	if request.Kept != nil && route.Ephemeral {
+		return PublicURL{}, ErrPublicURLInvalid
+	}
 	if request.Target == "" && (route.Target != "" || route.Purpose != string(PublicURLPurposeApp) ||
 		route.Ephemeral && route.ServiceProtocol == string(PublicURLServiceHTTP)) ||
 		request.Target != "" && route.ServiceProtocol != string(PublicURLServiceHTTP) {

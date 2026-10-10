@@ -110,7 +110,7 @@ When recovery ends, control deletes the URL through the usual DNS cleanup and
 quarantines any database port for seven days. `tnl url list` shows the recovery
 deadline; `tnl url update <id> --keep` exempts a URL, and `--auto-retire` resumes
 the idle policy with a new recovery window. Explicit ephemeral URLs retain
-their separate stop-and-delete behavior.
+their separate stop-and-delete behavior and cannot be marked kept.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
