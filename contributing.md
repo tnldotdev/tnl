@@ -38,6 +38,8 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 | Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages        |
 | Go races                         | `task go:test:race`                                          | No database                                                              |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                               |
+| PostgreSQL TLS channel binding   | `task go:test:integration:postgres-tls`                      | Docker and OpenSSL; Task manages PostgreSQL and its test certificate     |
+| MySQL TLS client login           | `task go:test:integration:mysql`                             | Docker and OpenSSL; Task manages MySQL and its test certificate          |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available |
 | Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers              |
 | Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in  |

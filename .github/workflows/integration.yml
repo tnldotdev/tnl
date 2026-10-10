@@ -52,6 +52,12 @@ jobs:
       - name: Run integration tests
         run: task go:test:integration
 
+      - name: Verify PostgreSQL TLS channel binding
+        run: task go:test:integration:postgres-tls
+
+      - name: Verify MySQL client login
+        run: task go:test:integration:mysql
+
   binary:
     name: Binary integration
     runs-on: ubuntu-latest
