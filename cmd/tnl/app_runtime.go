@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -108,6 +109,23 @@ func runtimeSocket(project, state string) (string, error) {
 	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
 }
 
+func privateRuntimeDirectoryAt(base string) (string, error) {
+	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
+	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", failure.Wrap("create local publisher runtime directory", failure.ClientStateUnavailable, err)
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return "", failure.Wrap("inspect local publisher runtime directory", failure.ClientStateUnavailable, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
+		return "", failure.Wrap("validate local publisher runtime directory", failure.ClientStateUnavailable,
+			errors.New("local publisher runtime directory must be user-owned with mode 0700"))
+	}
+	return directory, nil
+}
+
 func runtimeHTTP(socket string) *http.Client {
 	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -134,8 +152,8 @@ func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Wr
 		return err
 	}
 	return json.NewEncoder(output).Encode(struct {
-		Protocol int    `json:"protocol"`
-		Socket   string `json:"socket"`
+		Version int    `json:"version"`
+		Socket  string `json:"socket"`
 	}{privateprotocol.Version, socket})
 }
 
@@ -173,9 +191,6 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 		readiness := clientruntime.Readiness{Path: "/"}
 		if effective.Readiness != nil {
 			readiness.Path = effective.Readiness.Path
-			if effective.Readiness.Status != nil {
-				readiness.Status = *effective.Readiness.Status
-			}
 		}
 		services = append(services, clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], Readiness: readiness})
 	}
@@ -205,7 +220,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer lock.Close()
 	if info, err := os.Lstat(socket); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
-			return failure.Wrap("open local publisher socket", failure.DevSocketUnavailable, errors.New("local publisher socket path is occupied by a non-socket file"))
+			return failure.Wrap("open local publisher socket", failure.ClientStateUnavailable, errors.New("local publisher socket path is occupied by a non-socket file"))
 		}
 		if err := os.Remove(socket); err != nil {
 			return err
@@ -283,7 +298,7 @@ var appOwnerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (assignmentResult privateprotocol.Assignment, resultErr error) {
 	finishPreparation := a.manager.BeginPreparation()
 	defer finishPreparation()
-	if request.Protocol != privateprotocol.Version || !appOwnerPattern.MatchString(request.Owner) || request.PID <= 0 || !slices.Contains([]string{"node", "bun", "vite", "next"}, request.Framework) {
+	if request.Version != privateprotocol.Version || !appOwnerPattern.MatchString(request.Owner) || request.PID <= 0 || !slices.Contains([]string{"node", "bun", "vite", "next"}, request.Framework) {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
 	}
 	directory, err := filepath.EvalSymlinks(request.Directory)
@@ -364,7 +379,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	assignment := privateprotocol.Assignment{Protocol: privateprotocol.Version, RegistrationID: "reg_" + strings.Repeat("0", 32), Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	assignment := privateprotocol.Assignment{Version: privateprotocol.Version, RegistrationID: "reg_" + strings.Repeat("0", 32), Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	payload, err := json.Marshal(assignment)
 	if err != nil || len(payload) > privateprotocol.MaxBytes {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app metadata", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app metadata exceeds private protocol limit")))
@@ -429,7 +444,7 @@ func (a *appRuntime) handler() http.Handler {
 				runtimeProblem(w, err)
 				return
 			}
-			if request.Protocol != privateprotocol.Version {
+			if request.Version != privateprotocol.Version {
 				runtimeProblem(w, errors.New("unsupported protocol"))
 				return
 			}
@@ -509,6 +524,16 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		return err
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.requestLimit())
+	effective, err := project.EffectiveService(service.Name)
+	if err != nil {
+		return err
+	}
+	if effective.Publish != nil && effective.Publish.CAFile != nil {
+		configuration.TargetOptions, err = targetOptionsForCA(*effective.Publish.CAFile, project.Root)
+		if err != nil {
+			return err
+		}
+	}
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
@@ -545,7 +570,18 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		defer stop()
 	}
 	for prefix, mount := range project.Config.Services[service.Name].Paths {
-		configuration.Mounts = append(configuration.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, ResolveTarget: func() string {
+		options := localproxy.TargetOptions{}
+		mounted, err := project.EffectiveService(mount.Service)
+		if err != nil {
+			return err
+		}
+		if mounted.Publish != nil && mounted.Publish.CAFile != nil {
+			options, err = targetOptionsForCA(*mounted.Publish.CAFile, project.Root)
+			if err != nil {
+				return err
+			}
+		}
+		configuration.Mounts = append(configuration.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
 			for _, candidate := range a.manager.Snapshot().Services {
 				if candidate.Name == mount.Service && a.manager.Current(candidate.Name, candidate.RegistrationID, candidate.Target, 0) {
 					return candidate.Target

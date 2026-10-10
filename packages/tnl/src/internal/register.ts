@@ -1,12 +1,8 @@
 import { Server as HTTPSServer } from "node:https";
-import { TnlError, TnlCleanupError, classifyTnlError } from "../errors.js";
-import {
-  canonicalListenerTarget,
-  readDevelopmentContext,
-  registerLocalTarget,
-  registrationTimeoutMilliseconds,
-  requestTunnelAssignment,
-} from "./dev.js";
+import { TnlError } from "../errors.js";
+import { canonicalListenerTarget } from "./target.js";
+
+const registrationTimeoutMilliseconds = 10 * 60 * 1000;
 
 export interface BunHTTPServer {
   readonly hostname?: string | undefined;
@@ -34,28 +30,6 @@ export type LocalHTTPServer = NodeHTTPServer | BunHTTPServer;
 export interface RegistrationOptions {
   /** hostname used to reach the listener, including for HTTPS certificate verification. */
   readonly targetHostname?: string;
-}
-
-/** Registers a bound Node or Bun HTTP listener with this tnl dev invocation. */
-export async function registerServer(
-  server: LocalHTTPServer,
-  options: RegistrationOptions = {},
-): Promise<void> {
-  const { bootstrap } = readDevelopmentContext();
-  if (bootstrap === null) return;
-  try {
-    const target = await listeningTarget(server, options);
-    const framework = isBunServer(server) ? "bun" : "node";
-    const assignment = await requestTunnelAssignment(framework, bootstrap);
-    await registerLocalTarget(assignment, target);
-  } catch (error) {
-    try {
-      await closeServer(server);
-    } catch (closeError) {
-      throw new TnlCleanupError(error, closeError);
-    }
-    throw classifyTnlError(error, "sdk.listener_failed");
-  }
 }
 
 export async function listeningTarget(
@@ -124,19 +98,6 @@ export async function listeningTarget(
     address.port,
     server instanceof HTTPSServer ? "https" : "http",
   );
-}
-
-async function closeServer(server: LocalHTTPServer): Promise<void> {
-  if (isBunServer(server)) {
-    await server.stop(true);
-    return;
-  }
-  if (server.listening) {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-      server.closeAllConnections?.();
-    });
-  }
 }
 
 export function isBunServer(server: LocalHTTPServer): server is BunHTTPServer {

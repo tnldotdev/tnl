@@ -146,7 +146,7 @@ func (d *Database) AliasSelection(ctx context.Context, scope AliasScope) (AliasS
 
 // AliasCandidate reads selection and its current ready receiver in one snapshot.
 // a caller must compare its captured revision and tunnel/run identity before
-// admitting a request; election alone does not fence a changed selection.
+// admitting a request; election alone does not reject a changed selection.
 func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelection, TunnelInfo, error) {
 	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {

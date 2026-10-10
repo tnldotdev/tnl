@@ -1,6 +1,6 @@
 {
   "prepare": {
-    "protocol": 1,
+    "version": 1,
     "directory": "/project",
     "service": "web",
     "framework": "node",
@@ -8,13 +8,13 @@
     "pid": 123
   },
   "register": {
-    "protocol": 1,
+    "version": 1,
     "registration_id": "reg_0123456789abcdef0123456789abcdef",
     "owner": "0123456789abcdef0123456789abcdef",
     "target": "http://127.0.0.1:1234"
   },
   "assignment": {
-    "protocol": 1,
+    "version": 1,
     "registration_id": "reg_0123456789abcdef0123456789abcdef",
     "service": "web",
     "hostname": "web.member.example",

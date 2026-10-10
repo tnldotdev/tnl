@@ -45,8 +45,8 @@ func TestTelemetryBatchKeepsEventsUntilAcknowledged(t *testing.T) {
 		received = body
 		return &http.Response{StatusCode: status, Body: io.NopCloser(&emptyReader{}), Header: make(http.Header)}, nil
 	})
-	reporter.Report(newTelemetryStarted(telemetryDev))
-	reporter.Report(newTelemetryReady(telemetryDev, telemetryHosted, telemetryVite))
+	reporter.Report(newTelemetryStarted(telemetryPublish))
+	reporter.Report(newTelemetryReady(telemetryPublish, telemetryHosted, telemetryVite))
 	reporter.Wait(context.Background())
 	if received != nil {
 		t.Fatal("telemetry sent before the command boundary")
@@ -99,8 +99,8 @@ func TestReadyFlushesStartedAndReadyTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation.Report(newTelemetryStarted(telemetryDev))
-	observe := withTelemetryObserver(invocation, telemetryDev, defaultServerURL, nil, nil)
+	invocation.Report(newTelemetryStarted(telemetryPublish))
+	observe := withTelemetryObserver(invocation, telemetryPublish, defaultServerURL, nil, nil)
 	if err := observe(publisher.Event{Type: publisher.EventReady}); err != nil {
 		t.Fatal(err)
 	}

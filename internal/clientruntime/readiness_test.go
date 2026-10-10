@@ -40,7 +40,7 @@ func TestPublicReadinessUsesHeadersOnlyAndDoesNotFollowRedirects(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{"Location": []string{"https://other.example"}}, Body: body, Request: request}, nil
 			}))
-			want := status >= 200 && status <= 499 && status != 408 && status != 429
+			want := status >= 200 && status < 300
 			if observation.Ready != want || calls != 1 || !body.closed || observation.RegistrationID != "registration" || observation.PublishRunNumber != 7 {
 				t.Fatalf("readiness = %#v, calls = %d", observation, calls)
 			}
@@ -48,13 +48,13 @@ func TestPublicReadinessUsesHeadersOnlyAndDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsAlwaysFailAndExactStatusCanBeRequired(t *testing.T) {
+func TestDiagnosticsAlwaysFailAndReadinessUsesConfiguredPath(t *testing.T) {
 	for _, test := range []struct {
 		status     int
 		diagnostic string
 		want       bool
-	}{{204, "", true}, {200, "", false}, {204, "TNL_IP_POLICY_DENIED", false}, {403, "TNL_IP_POLICY_DENIED", false}} {
-		observation := Probe(context.Background(), Service{PublicURL: "https://app.example", Readiness: Readiness{Path: "/health", Status: 204}}, roundTrip(func(request *http.Request) (*http.Response, error) {
+	}{{204, "", true}, {200, "", true}, {204, "TNL_IP_POLICY_DENIED", false}, {403, "TNL_IP_POLICY_DENIED", false}} {
+		observation := Probe(context.Background(), Service{PublicURL: "https://app.example", Readiness: Readiness{Path: "/health"}}, roundTrip(func(request *http.Request) (*http.Response, error) {
 			if request.URL.Path != "/health" {
 				t.Fatal("wrong readiness path")
 			}

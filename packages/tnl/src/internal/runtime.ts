@@ -49,6 +49,27 @@ export interface ProjectRuntime extends ProjectMetadata {
   readonly dev: boolean;
 }
 
+/** returns the public hostnames that can reach this service. */
+export function serviceHostnames(assignment: {
+  readonly hostname: string;
+  readonly service: string;
+  readonly project: ProjectRuntime;
+}): string[] {
+  const hostnames = new Set([assignment.hostname]);
+  for (const alias of Object.values(assignment.project.aliases ?? {})) {
+    if (
+      alias !== undefined &&
+      (alias.service === assignment.service ||
+        Object.values(assignment.project.services[alias.service]?.paths ?? {}).some(
+          (mount) => mount?.service === assignment.service,
+        ))
+    ) {
+      hostnames.add(alias.hostname);
+    }
+  }
+  return [...hostnames];
+}
+
 /** Checks browser-safe project metadata and makes it read-only. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);

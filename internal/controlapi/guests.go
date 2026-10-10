@@ -30,7 +30,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 	if err := h.guests.GuestIssuanceAllowed(request.Context(), address, time.Now()); err != nil {
 		if errors.Is(err, controlstate.ErrGuestIssuance) {
 			response.Header().Set("Retry-After", "3600")
-			writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
+			writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl auth login to continue")
 		} else {
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "could not check guest demo access")
 		}
@@ -46,7 +46,7 @@ func (h *handler) CreateGuestDemo(response http.ResponseWriter, request *http.Re
 		if err != nil {
 			if errors.Is(err, controlstate.ErrGuestIssuance) {
 				response.Header().Set("Retry-After", "3600")
-				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl login to continue")
+				writeProblem(response, http.StatusTooManyRequests, controlv1.GuestIssuanceLimited, "guest demo creation is limited on this network; run tnl auth login to continue")
 				return
 			}
 			if errors.Is(err, controlstate.ErrGuestNamespace) {
@@ -86,7 +86,7 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 		return
 	}
 	if !guest.ExpiresAt.After(time.Now()) {
-		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl login to continue")
+		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo trial ended; run tnl auth login to continue")
 		return
 	}
 	address, err := guestRequestAddress(request)
@@ -101,12 +101,12 @@ func (h *handler) AllocateGuestDemoNumber(response http.ResponseWriter, request 
 		return
 	}
 	if !matched {
-		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl login to continue")
+		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl auth login to continue")
 		return
 	}
 	number, err := h.guests.AllocateGuestDemoNumber(request.Context(), guest.ID, time.Now())
 	if errors.Is(err, controlstate.ErrGuestTrialSpent) {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "guest trial is spent; run tnl login to keep publishing")
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "guest trial is spent; run tnl auth login to keep publishing")
 		return
 	}
 	if errors.Is(err, controlstate.ErrPublishRunOpen) {

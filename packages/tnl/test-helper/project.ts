@@ -51,11 +51,8 @@ export function testAliasAssignment() {
   const project = testPublicProject(true);
   return {
     hostname: "api.member.example",
-    namespace: "member.example",
-    protocol: 1,
     publicURL: "https://api.member.example",
     service: "api",
-    tunnelID: `tun_${"b".repeat(22)}`,
     project: {
       ...project,
       services: {

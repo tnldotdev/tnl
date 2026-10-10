@@ -4,7 +4,7 @@
 //
 // device login checkpoints live in server-scoped client state. private device
 // challenges, nonces, assertions, and issued sessions use its secret protector.
-// waiters share an operation lock; credential locks cover refresh, fencing, and
+// waiters share an operation lock; credential locks cover refresh, cancellation, and
 // installation, never browser approval. revisions reject cancelled work, and
 // installation commits the session, selected server, and completion together.
 //

@@ -37,7 +37,7 @@ a normal release.
    client before its initial release as an explained bootstrap state.
 4. Review `packages/tnl` source, all public subpath types, runtime and optional
    peer dependencies, README, tests, package verification, and framework
-   compatibility changes since the latest root tag. The private `tnl dev`
+   compatibility changes since the latest root tag. The private app-registration
    socket protocol and framework integrations ship in this package.
 5. Treat changes confined to tests or development tooling as evidence to
    review, not an automatic release. Confirm whether shipped artifacts changed.
