@@ -20,10 +20,6 @@ func (c *previewControlStub) CreatePreview(_ context.Context, teamID, key string
 	return controlv1.Preview{Id: c.id, TeamId: teamID}, nil
 }
 
-func (*previewControlStub) AddPreviewPublicURL(_ context.Context, _, _ string) (controlv1.Preview, error) {
-	panic("not called")
-}
-
 func TestEnsurePreviewPersistsServerIdentityForCheckout(t *testing.T) {
 	ctx := t.Context()
 	state, err := clientstate.Open(ctx, filepath.Join(t.TempDir(), "state"))

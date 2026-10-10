@@ -20,7 +20,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   requestInspection: "detailed",
   tunnel: {domain: "routes.example.test", requestLimit: 750},
   publish: {target: 3000},
-  readiness: {path: "/health", status: 204},
+  readiness: {path: "/health"},
   services: {
     api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label.fullLabel}, readiness: {path: "/status"}},
     site: {tunnel: {publicURL: "https://site.example.test", open: true}, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}},
@@ -46,7 +46,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["site"].Paths["/api"].Service != "api" || !value.Services["site"].Paths["/v1"].StripPrefix ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
-		value.Readiness == nil || value.Readiness.Path != "/health" || value.Readiness.Status == nil || *value.Readiness.Status != 204 ||
+		value.Readiness == nil || value.Readiness.Path != "/health" ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
 		value.Services["api"].Readiness == nil || value.Services["api"].Readiness.Path != "/status" {
 		t.Fatalf("config = %#v", value)
@@ -365,14 +365,14 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-  "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"readiness":{"path":"/health","status":204}}}
+   "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"readiness":{"path":"/health"}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Services["web"]
 	if service.Tunnel == nil || len(service.Tunnel.AllowIP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
-		service.Readiness == nil || service.Readiness.Path != "/health" || service.Readiness.Status == nil || *service.Readiness.Status != 204 {
+		service.Readiness == nil || service.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)
 	}
 	if _, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"dev":{"startup_timeout":"30s"}}}}`)); err == nil {

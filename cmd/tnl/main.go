@@ -28,7 +28,6 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Dev         devCommand       `cmd:"" hidden:""`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow ordered local app lifecycle events." group:"start"`
@@ -73,7 +72,7 @@ type tunnelFlags struct {
 }
 
 type remoteFlags struct {
-	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
+	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
 	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
 	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	ProjectTeam  string `kong:"-"`
@@ -169,8 +168,7 @@ func main() {
 }
 
 func terminalResult(err error) (int, error) {
-	var child *childExitError
-	children, failures, unowned := 0, 0, 0
+	failures, unowned := 0, 0
 	var visit func(error, bool)
 	visit = func(err error, owned bool) {
 		if err == nil {
@@ -199,28 +197,17 @@ func terminalResult(err error) (int, error) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		if exit, ok := err.(*childExitError); ok {
-			children++
-			child = exit
-			if !owned {
-				unowned++
-			}
-			return
-		}
 		failures++
 		if !owned {
 			unowned++
 		}
 	}
 	visit(err, false)
-	if failures != 0 || children > 1 {
+	if failures != 0 {
 		if unowned != 0 {
 			return 1, err
 		}
 		return 1, nil
-	}
-	if children == 1 {
-		return child.code, nil
 	}
 	return 0, nil
 }
@@ -314,10 +301,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			result = &machineCommandError{result}
 		}
 	}()
-	parseArgs, devCommand, err := splitDevPassthrough(args)
-	if err != nil {
-		return err
-	}
 	var flags cli
 	parser, err := kong.New(
 		&flags,
@@ -333,7 +316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if err != nil {
 		return err
 	}
-	parsed, err := parser.Parse(parseArgs)
+	parsed, err := parser.Parse(args)
 	if err != nil {
 		var parseError *kong.ParseError
 		if errors.As(err, &parseError) && parseError.Context != nil && parseError.Context.Command() != "" {
@@ -342,7 +325,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
-	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
 	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
@@ -378,7 +360,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		defer func() {
 			if result != nil {
 				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand != telemetryDev && telemetryCommand != telemetryPublish && !(telemetryCommand == "feedback" && telemetryAction == "watch") {
+			} else if telemetryCommand != telemetryPublish && !(telemetryCommand == "feedback" && telemetryAction == "watch") {
 				telemetry.Report(newTelemetryCompleted(telemetryCommand))
 			}
 		}()
@@ -392,7 +374,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
-	case "publish <service-or-target>", "dev <service>", "config check", "config generate":
+	case "publish <service-or-target>", "config check", "config generate":
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 			break
 		}
@@ -406,8 +388,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 		if parsedCommand == "publish <service-or-target>" {
 			err = project.applyPublish(&flags.Publish)
-		} else if parsedCommand == "dev <service>" && (flags.Dev.Service != "" || len(project.Config.Services) == 0) {
-			err = project.applyDev(&flags.Dev)
 		}
 		if err != nil {
 			return err
@@ -471,8 +451,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
-	case "dev <service>":
-		return failure.Wrap("start app", failure.AppStartCommandRetired, errors.New("start the app with its normal development command and tnl integration"))
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -608,7 +586,7 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.ClientStateUnavailable
 	case strings.HasPrefix(command, "tnl auth "):
 		return failure.Authentication
-	case strings.HasPrefix(command, "tnl publish"), strings.HasPrefix(command, "tnl dev"):
+	case strings.HasPrefix(command, "tnl publish"):
 		return failure.TunnelUnavailable
 	case strings.HasPrefix(command, "tnl team "):
 		return failure.TeamUnavailable
@@ -633,8 +611,6 @@ func canonicalParsedCommand(command string) string {
 	switch command {
 	case "auth login run":
 		return "auth login"
-	case "dev":
-		return "dev <service>"
 	case "publish":
 		return "publish <service-or-target>"
 	case "url credential create":
@@ -673,10 +649,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			allowAllIPs = true
 		case "ephemeral":
 			ephemeral = true
-		case "port":
-			flags.Dev.portFromCLI = true
-		case "startup-timeout":
-			flags.Dev.startupTimeoutFromCLI = true
 		case "request-inspection":
 			inspection = true
 		}
@@ -701,43 +673,5 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		apply(&flags.Publish.tunnelFlags)
 		flags.Publish.openFromCLI = open
 		flags.Publish.demoNameFromCLI = name
-	case "dev <service>":
-		apply(&flags.Dev.tunnelFlags)
-		flags.Dev.openFromCLI = open
 	}
-}
-
-func splitDevPassthrough(args []string) ([]string, []string, error) {
-	commandIndex := rootCommandIndex(args)
-	if commandIndex < 0 || args[commandIndex] != "dev" {
-		return args, nil, nil
-	}
-	for index := commandIndex + 1; index < len(args); index++ {
-		if args[index] != "--" {
-			continue
-		}
-		if index == len(args)-1 {
-			return nil, nil, errors.New("development command after -- must not be empty")
-		}
-		parsed := append([]string(nil), args[:index]...)
-		return parsed, append([]string(nil), args[index+1:]...), nil
-	}
-	return args, nil, nil
-}
-
-func rootCommandIndex(args []string) int {
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--config":
-			index++
-		case strings.HasPrefix(argument, "--config="), argument == "--no-config", argument == "--no-telemetry",
-			strings.HasPrefix(argument, "--no-config="), strings.HasPrefix(argument, "--no-telemetry="):
-		case strings.HasPrefix(argument, "-"):
-			return -1
-		default:
-			return index
-		}
-	}
-	return -1
 }

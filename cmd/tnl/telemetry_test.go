@@ -51,7 +51,7 @@ func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
 		t.Fatalf("disabled telemetry reporter = %#v", reporter)
 	}
 	observed := false
-	observer := withTelemetryObserver(reporter, telemetryDev, defaultServerURL, nil, func(publisher.Event) error {
+	observer := withTelemetryObserver(reporter, telemetryPublish, defaultServerURL, nil, func(publisher.Event) error {
 		observed = true
 		return nil
 	})
@@ -179,8 +179,8 @@ func TestTelemetryInvocationEmitsBoundedFailureOnceBeforeReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation.Report(newTelemetryStarted(telemetryDev))
-	invocation.failed(telemetryDev, telemetryCommandStage, diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
+	invocation.Report(newTelemetryStarted(telemetryPublish))
+	invocation.failed(telemetryPublish, telemetryCommandStage, diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
 	if len(events) != 2 || events[0].InvocationID != invocation.id || events[1].InvocationID != invocation.id ||
 		events[1].FailureStage != telemetryLocalServiceStage || events[1].DiagnosticCode != diagnostic.TargetUnavailable {
 		t.Fatalf("invocation events = %#v", events)
@@ -188,14 +188,14 @@ func TestTelemetryInvocationEmitsBoundedFailureOnceBeforeReady(t *testing.T) {
 	if events[1].Framework != "" || events[1].ServerKind != "" {
 		t.Fatalf("failure included a URL or target: %#v", events[1])
 	}
-	invocation.Report(newTelemetryReady(telemetryDev, telemetryHosted, telemetryVite))
-	invocation.failed(telemetryDev, telemetryCommandStage, io.EOF)
+	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, telemetryVite))
+	invocation.failed(telemetryPublish, telemetryCommandStage, io.EOF)
 	if len(events) != 3 {
 		t.Fatalf("failure after readiness = %#v", events)
 	}
 }
 
-func TestTelemetryReportsConfigurationFailureBeforeStartingDev(t *testing.T) {
+func TestTelemetryReportsConfigurationFailureBeforePublishing(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "tnl.json")
 	if err := os.WriteFile(config, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestTelemetryReportsConfigurationFailureBeforeStartingDev(t *testing.T) {
 	factory := func(string) telemetryReporter {
 		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
 	}
-	if err := run(t.Context(), []string{"--config", config, "dev"}, io.Discard, io.Discard, factory); err == nil {
+	if err := run(t.Context(), []string{"--config", config, "publish", "3000"}, io.Discard, io.Discard, factory); err == nil {
 		t.Fatal("invalid configuration was accepted")
 	}
 	if len(events) != 2 || events[0].Event != "command_started" || events[1].Event != "command_failed" ||
@@ -213,14 +213,14 @@ func TestTelemetryReportsConfigurationFailureBeforeStartingDev(t *testing.T) {
 		t.Fatalf("configuration telemetry = %#v", events)
 	}
 	events = nil
-	_ = run(t.Context(), []string{"--no-telemetry", "--config", config, "dev"}, io.Discard, io.Discard, factory)
+	_ = run(t.Context(), []string{"--no-telemetry", "--config", config, "publish", "3000"}, io.Discard, io.Discard, factory)
 	if len(events) != 0 {
 		t.Fatalf("disabled telemetry = %#v", events)
 	}
 }
 
 func TestTypedTelemetryKeepsWireValues(t *testing.T) {
-	ready := newTelemetryReady(telemetryDev, telemetryHosted, telemetryVite)
+	ready := newTelemetryReady(telemetryPublish, telemetryHosted, telemetryVite)
 	ready.InstallationID = "installation_0123456789abcdef0123456789abcdef"
 	ready.InvocationID = "invocation_0123456789abcdef0123456789abcdef"
 	body, err := json.Marshal(ready)
@@ -232,7 +232,7 @@ func TestTypedTelemetryKeepsWireValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	for field, want := range map[string]string{
-		"event": "publish_run_started", "command": "dev", "server_kind": "hosted", "framework": "vite",
+		"event": "publish_run_started", "command": "publish", "server_kind": "hosted", "framework": "vite",
 	} {
 		if wire[field] != want {
 			t.Errorf("%s = %v, want %q", field, wire[field], want)

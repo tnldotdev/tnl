@@ -77,13 +77,10 @@ func TestKnownCaseChangesGuidanceButNotDiagnosticIdentity(t *testing.T) {
 
 func TestActionableDiagnosticHelpURLsAreStable(t *testing.T) {
 	for code, want := range map[Code]string{
-		DevCommandRecursion:          "https://tnl.dev/e/dev-command-recursion",
-		FrameworkRegistrationTimeout: "https://tnl.dev/e/framework-registration-timeout",
-		TargetMismatch:               "https://tnl.dev/e/target-mismatch",
-		AuthenticationTimeout:        "https://tnl.dev/e/authentication-timeout",
-		ServiceAmbiguous:             "https://tnl.dev/e/ambiguous-service",
-		PublicURLConflict:            "https://tnl.dev/e/public-url-conflict",
-		ProvisioningStalled:          "https://tnl.dev/e/provisioning-stalled",
+		AuthenticationTimeout: "https://tnl.dev/e/authentication-timeout",
+		ServiceAmbiguous:      "https://tnl.dev/e/ambiguous-service",
+		PublicURLConflict:     "https://tnl.dev/e/public-url-conflict",
+		ProvisioningStalled:   "https://tnl.dev/e/provisioning-stalled",
 	} {
 		if got := HelpURL(code); got != want {
 			t.Fatalf("HelpURL(%q) = %q, want %q", code, got, want)

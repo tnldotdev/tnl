@@ -105,7 +105,7 @@ explicit selection back. `use` requires a ready entry service and preserves a
 different live owner unless takeover is forced. `release` returns an override
 to the primary checkout, even when its service is stopped. receiver readiness
 and selection are separate: restarting resumes the chosen worktree; an expired
-lease does not assign a different one. revision and tunnel/run identities fence
+lease does not assign a different one. revision and tunnel/run identities reject
 requests prepared against older selections.
 
 the alias publisher reuses the integration URL lifecycle and publishes only
@@ -118,7 +118,7 @@ alias runs do not inherit preview shares or feedback state.
 OAuth callback state records the initiating public URL/run separately from the
 destination app tunnel. an alias-origin callback returns to the alias hostname
 for its host-only cookies. a bounded, expiring single-use return record also
-fences the final browser hop, so a handoff between redirect and app admission
+checks the final browser hop, so a handoff between redirect and app admission
 cannot send that callback to a replacement alias run. app cookies on a stable
 alias hostname can remain in the browser across worktree changes; tnl does not
 rewrite them.
