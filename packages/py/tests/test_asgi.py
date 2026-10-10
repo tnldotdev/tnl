@@ -164,6 +164,32 @@ def test_strict_budget_fails_closed_if_native_manager_disappears(
     asyncio.run(scenario())
 
 
+def test_listener_exit_stops_reporting_a_routable_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        events: list[str] = []
+        monkeypatch.setattr(_asgi, "_native", FakeNative(events))
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "lifespan":
+                while True:
+                    message = await receive()
+                    if message["type"] == "lifespan.startup":
+                        await send({"type": "lifespan.startup.complete"})
+                    elif message["type"] == "lifespan.shutdown":
+                        await send({"type": "lifespan.shutdown.complete"})
+                        return
+
+        async with tnl.open(app, credential=_token) as tunnel:
+            tunnel._server.should_exit = True
+            await asyncio.wait_for(tunnel._serve_task, 2)
+            with pytest.raises(tnl.TnlError, match="ASGI listener stopped") as caught:
+                await asyncio.wait_for(tunnel.wait(), 2)
+            assert caught.value.code == "sdk.listener_failed"
+            assert "unregister" in events
+
+    asyncio.run(scenario())
+
+
 def test_asgi_setup_preserves_publication_and_cleanup_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
