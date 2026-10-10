@@ -40,6 +40,7 @@ type Querier interface {
 	// recheck the current projection and every live ingress immediately before
 	// asking the CA to validate, while the authorization is still presented.
 	CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error)
+	ChooseTCPPort(ctx context.Context, arg ChooseTCPPortParams) (int32, error)
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
@@ -138,6 +139,7 @@ type Querier interface {
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
+	GetHeldTCPPortClaim(ctx context.Context, publicUrlID string) (ControlTcpPortClaim, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityPublicURL(ctx context.Context, arg GetIdentityPublicURLParams) (GetIdentityPublicURLRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
@@ -213,6 +215,7 @@ type Querier interface {
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
+	InsertTCPPortClaim(ctx context.Context, arg InsertTCPPortClaimParams) (ControlTcpPortClaim, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
@@ -246,6 +249,7 @@ type Querier interface {
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
 	ListSharePublicURLs(ctx context.Context, shareID string) ([]string, error)
 	ListShares(ctx context.Context, arg ListSharesParams) ([]ControlShare, error)
+	ListTCPPortPoolCapacity(ctx context.Context) ([]ListTCPPortPoolCapacityRow, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
@@ -310,6 +314,7 @@ type Querier interface {
 	// take the assignment-total guard before relay-service guards and lease rows;
 	// lock all services before checking capacity or locking leases.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
+	LockTCPPortPublicURL(ctx context.Context, publicUrlID string) (LockTCPPortPublicURLRow, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
 	LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error)
@@ -340,6 +345,7 @@ type Querier interface {
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
+	QuarantineTCPPortClaim(ctx context.Context, arg QuarantineTCPPortClaimParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
@@ -352,6 +358,7 @@ type Querier interface {
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
+	ReleaseQuarantinedTCPPortClaims(ctx context.Context, now pgtype.Timestamptz) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)

@@ -517,6 +517,7 @@ type ControlPublicUrl struct {
 	Namespace                   string
 	Purpose                     string
 	IngressPoolID               string
+	ServiceProtocol             string
 }
 
 type ControlPublicUrlPublishCredential struct {
