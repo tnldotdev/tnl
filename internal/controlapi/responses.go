@@ -39,6 +39,9 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 		port := int(*route.PublicPort)
 		result.PublicPort = &port
 	}
+	kept := route.Kept
+	result.Kept = &kept
+	result.IdleRecoveryUntil = route.IdleRecoveryUntil
 	return result
 }
 

@@ -135,6 +135,11 @@ RETURNING *;
 -- name: UpdatePublicURL :one
 UPDATE control.public_urls
 SET target = sqlc.arg(target),
+    keep_saved = COALESCE(sqlc.narg(kept)::boolean, keep_saved),
+    idle_recovery_started_at = CASE
+        WHEN sqlc.narg(kept)::boolean IS NOT NULL THEN NULL
+        ELSE idle_recovery_started_at
+    END,
     policy_revision = sqlc.arg(policy_revision),
     ip_policy = sqlc.arg(ip_policy),
     allowed_ip_policy_ciphertext = sqlc.narg(allowed_ip_policy_ciphertext),
@@ -173,6 +178,37 @@ WHERE ephemeral
 ORDER BY expires_at, id
 LIMIT sqlc.arg(batch_size)
 FOR UPDATE SKIP LOCKED;
+
+-- name: LockDueSavedPublicURLRetirements :many
+SELECT routes.* FROM control.public_urls AS routes
+WHERE routes.lifecycle_state <> 'deleted'
+  AND NOT routes.ephemeral AND NOT routes.keep_saved
+  AND NOT EXISTS (
+      SELECT 1 FROM control.publish_runs AS sessions
+      WHERE sessions.public_url_id = routes.id AND sessions.closed_at IS NULL
+  )
+  AND (routes.idle_recovery_started_at <= sqlc.arg(recover_before)
+    OR routes.idle_recovery_started_at IS NULL AND
+      GREATEST(routes.created_at, COALESCE((
+          SELECT max(sessions.closed_at) FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
+      ), routes.created_at)) <= sqlc.arg(idle_before)
+    OR routes.idle_recovery_started_at IS NOT NULL AND
+      GREATEST(routes.created_at, COALESCE((
+          SELECT max(sessions.closed_at) FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
+      ), routes.created_at)) > routes.idle_recovery_started_at)
+ORDER BY routes.idle_recovery_started_at NULLS LAST, routes.created_at, routes.id
+LIMIT sqlc.arg(batch_size)
+FOR UPDATE OF routes SKIP LOCKED;
+
+-- name: LatestClosedPublicURLPublishRun :one
+SELECT closed_at FROM control.publish_runs WHERE public_url_id = sqlc.arg(public_url_id)
+  AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1;
+
+-- name: SetSavedPublicURLRecovery :execrows
+UPDATE control.public_urls SET idle_recovery_started_at = sqlc.narg(started_at)
+WHERE id = sqlc.arg(public_url_id) AND lifecycle_state <> 'deleted' AND NOT ephemeral AND NOT keep_saved;
 
 -- name: InsertPublicURLCreateAuditEvent :exec
 INSERT INTO control.admin_audit_events (
@@ -346,6 +382,10 @@ INSERT INTO control.admin_audit_events (
     sqlc.arg(public_url_id),
     sqlc.arg(occurred_at)
 );
+
+-- name: InsertIdlePublicURLDeleteAuditEvent :exec
+INSERT INTO control.admin_audit_events (actor, request_id, operation, target_kind, target_id, occurred_at)
+VALUES ('system', sqlc.arg(request_id), 'public_url.delete', 'public_url', sqlc.arg(public_url_id), sqlc.arg(occurred_at));
 
 -- name: ClosePublishRun :one
 UPDATE control.publish_runs

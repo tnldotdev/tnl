@@ -504,6 +504,22 @@ func (q *Queries) InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Co
 	return err
 }
 
+const insertIdlePublicURLDeleteAuditEvent = `-- name: InsertIdlePublicURLDeleteAuditEvent :exec
+INSERT INTO control.admin_audit_events (actor, request_id, operation, target_kind, target_id, occurred_at)
+VALUES ('system', $1, 'public_url.delete', 'public_url', $2, $3)
+`
+
+type InsertIdlePublicURLDeleteAuditEventParams struct {
+	RequestID   string
+	PublicURLID string
+	OccurredAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertIdlePublicURLDeleteAuditEvent(ctx context.Context, arg InsertIdlePublicURLDeleteAuditEventParams) error {
+	_, err := q.db.Exec(ctx, insertIdlePublicURLDeleteAuditEvent, arg.RequestID, arg.PublicURLID, arg.OccurredAt)
+	return err
+}
+
 const insertPublicURL = `-- name: InsertPublicURL :one
 INSERT INTO control.public_urls (
     id,
@@ -788,6 +804,18 @@ func (q *Queries) InsertPublicURLUpdateAuditEvent(ctx context.Context, arg Inser
 	return err
 }
 
+const latestClosedPublicURLPublishRun = `-- name: LatestClosedPublicURLPublishRun :one
+SELECT closed_at FROM control.publish_runs WHERE public_url_id = $1
+  AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1
+`
+
+func (q *Queries) LatestClosedPublicURLPublishRun(ctx context.Context, publicUrlID string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, latestClosedPublicURLPublishRun, publicUrlID)
+	var closed_at pgtype.Timestamptz
+	err := row.Scan(&closed_at)
+	return closed_at, err
+}
+
 const listIdentityPublicURLs = `-- name: ListIdentityPublicURLs :many
 SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.canonical_hostname, r.target, r.public_url_scope, r.policy_revision, r.ip_policy, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_publish_run_number, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, r.allowed_ip_policy_ciphertext, r.allowed_ip_policy_storage_key_id, r.allowed_ip_hashes, r.allowed_ip_hash_key_id, r.request_digest_ciphertext, r.request_digest_storage_key_id, r.namespace, r.purpose, r.ingress_pool_id, r.service_protocol, r.public_port, r.keep_saved, r.idle_recovery_started_at,
     COALESCE((
@@ -954,6 +982,101 @@ func (q *Queries) ListTeamNamespaceLabels(ctx context.Context, teamID string) ([
 	for rows.Next() {
 		var i ListTeamNamespaceLabelsRow
 		if err := rows.Scan(&i.ManagedLabel, &i.MemberSlug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDueSavedPublicURLRetirements = `-- name: LockDueSavedPublicURLRetirements :many
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.namespace, routes.purpose, routes.ingress_pool_id, routes.service_protocol, routes.public_port, routes.keep_saved, routes.idle_recovery_started_at FROM control.public_urls AS routes
+WHERE routes.lifecycle_state <> 'deleted'
+  AND NOT routes.ephemeral AND NOT routes.keep_saved
+  AND NOT EXISTS (
+      SELECT 1 FROM control.publish_runs AS sessions
+      WHERE sessions.public_url_id = routes.id AND sessions.closed_at IS NULL
+  )
+  AND (routes.idle_recovery_started_at <= $1
+    OR routes.idle_recovery_started_at IS NULL AND
+      GREATEST(routes.created_at, COALESCE((
+          SELECT max(sessions.closed_at) FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
+      ), routes.created_at)) <= $2
+    OR routes.idle_recovery_started_at IS NOT NULL AND
+      GREATEST(routes.created_at, COALESCE((
+          SELECT max(sessions.closed_at) FROM control.publish_runs AS sessions
+          WHERE sessions.public_url_id = routes.id
+      ), routes.created_at)) > routes.idle_recovery_started_at)
+ORDER BY routes.idle_recovery_started_at NULLS LAST, routes.created_at, routes.id
+LIMIT $3
+FOR UPDATE OF routes SKIP LOCKED
+`
+
+type LockDueSavedPublicURLRetirementsParams struct {
+	RecoverBefore pgtype.Timestamptz
+	IdleBefore    pgtype.Timestamptz
+	BatchSize     int32
+}
+
+func (q *Queries) LockDueSavedPublicURLRetirements(ctx context.Context, arg LockDueSavedPublicURLRetirementsParams) ([]ControlPublicUrl, error) {
+	rows, err := q.db.Query(ctx, lockDueSavedPublicURLRetirements, arg.RecoverBefore, arg.IdleBefore, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlPublicUrl
+	for rows.Next() {
+		var i ControlPublicUrl
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.PublicURLScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextPublishRunNumber,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+			&i.AllowedIpPolicyCiphertext,
+			&i.AllowedIpPolicyStorageKeyID,
+			&i.AllowedIpHashes,
+			&i.AllowedIpHashKeyID,
+			&i.RequestDigestCiphertext,
+			&i.RequestDigestStorageKeyID,
+			&i.Namespace,
+			&i.Purpose,
+			&i.IngressPoolID,
+			&i.ServiceProtocol,
+			&i.PublicPort,
+			&i.KeepSaved,
+			&i.IdleRecoveryStartedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1244,26 +1367,50 @@ func (q *Queries) RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEp
 	return expires_at, err
 }
 
+const setSavedPublicURLRecovery = `-- name: SetSavedPublicURLRecovery :execrows
+UPDATE control.public_urls SET idle_recovery_started_at = $1
+WHERE id = $2 AND lifecycle_state <> 'deleted' AND NOT ephemeral AND NOT keep_saved
+`
+
+type SetSavedPublicURLRecoveryParams struct {
+	StartedAt   pgtype.Timestamptz
+	PublicURLID string
+}
+
+func (q *Queries) SetSavedPublicURLRecovery(ctx context.Context, arg SetSavedPublicURLRecoveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSavedPublicURLRecovery, arg.StartedAt, arg.PublicURLID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updatePublicURL = `-- name: UpdatePublicURL :one
 UPDATE control.public_urls
 SET target = $1,
-    policy_revision = $2,
-    ip_policy = $3,
-    allowed_ip_policy_ciphertext = $4,
-    allowed_ip_policy_storage_key_id = $5,
-    allowed_ip_hashes = $6,
-    allowed_ip_hash_key_id = $7,
+    keep_saved = COALESCE($2::boolean, keep_saved),
+    idle_recovery_started_at = CASE
+        WHEN $2::boolean IS NOT NULL THEN NULL
+        ELSE idle_recovery_started_at
+    END,
+    policy_revision = $3,
+    ip_policy = $4,
+    allowed_ip_policy_ciphertext = $5,
+    allowed_ip_policy_storage_key_id = $6,
+    allowed_ip_hashes = $7,
+    allowed_ip_hash_key_id = $8,
     mutation_revision = mutation_revision + 1,
-    updated_at = $8
-WHERE id = $9
+    updated_at = $9
+WHERE id = $10
   AND lifecycle_state = 'enabled'
-  AND mutation_revision = $10
+  AND mutation_revision = $11
   AND mutation_revision < 9223372036854775807
 RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose, ingress_pool_id, service_protocol, public_port, keep_saved, idle_recovery_started_at
 `
 
 type UpdatePublicURLParams struct {
 	Target                      string
+	Kept                        pgtype.Bool
 	PolicyRevision              int64
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
@@ -1278,6 +1425,7 @@ type UpdatePublicURLParams struct {
 func (q *Queries) UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error) {
 	row := q.db.QueryRow(ctx, updatePublicURL,
 		arg.Target,
+		arg.Kept,
 		arg.PolicyRevision,
 		arg.IpPolicy,
 		arg.AllowedIpPolicyCiphertext,
