@@ -1,11 +1,12 @@
-import { canonicalLoopbackTarget, runtimePayload, serviceHostnames } from "./internal/dev.js";
+import { serviceHostnames, serializeRuntimePayload } from "./internal/runtime.js";
+import { canonicalLoopbackTarget } from "./internal/target.js";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
 import { prepareService, type PrepareOptions, type PreparedService } from "./internal/app.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
-/** Configures a Vite development server for `tnl dev` and adds project metadata. */
+/** registers a Vite development server and adds project metadata. */
 export default function tnl(options: PrepareOptions = {}): Plugin {
   let assignment: PreparedService | null = null;
   return {
@@ -22,7 +23,7 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
       validateAllowedHosts(server.allowedHosts);
       assignment = await prepareService(options, "vite");
       const result = {
-        ...runtimeDefine(runtimePayload(assignment, true)),
+        ...runtimeDefine(serializeRuntimePayload(assignment, true)),
         server: {
           allowedHosts: serviceHostnames({
             hostname: assignment.hostname,

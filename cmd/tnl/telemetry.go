@@ -45,7 +45,6 @@ type telemetryCommandAction string
 const (
 	telemetryInit     telemetryTrackedCommand = "init"
 	telemetryLogin    telemetryTrackedCommand = "login"
-	telemetryDev      telemetryTrackedCommand = "dev"
 	telemetryPublish  telemetryTrackedCommand = "publish"
 	telemetryRequests telemetryTrackedCommand = "requests"
 )
@@ -182,8 +181,7 @@ func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage tele
 			switch code {
 			case diagnostic.AuthenticationTimeout, diagnostic.AuthenticationRequired:
 				stage = telemetryAuthenticationStage
-			case diagnostic.TargetUnavailable, diagnostic.TargetInvalid, diagnostic.FrameworkRegistrationTimeout,
-				diagnostic.TargetMismatch, diagnostic.DevCommandRecursion:
+			case diagnostic.TargetUnavailable, diagnostic.TargetInvalid:
 				stage = telemetryLocalServiceStage
 			case diagnostic.PublicURLInvalid, diagnostic.PublicURLConflict, diagnostic.DNSSetupPending,
 				diagnostic.ProvisioningStalled:
@@ -374,7 +372,7 @@ func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, te
 	}
 	if len(command) == 1 {
 		switch command[0] {
-		case "init", "login", "logout", "dev", "publish", "status":
+		case "init", "login", "logout", "publish", "status":
 			return telemetryTrackedCommand(command[0]), "", true
 		default:
 			return "", "", false

@@ -10,11 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -41,11 +37,7 @@ type initPlan struct {
 	actions          []string
 	installBlocked   bool
 	generatedService bool
-	generatedConfig  []byte
 	genericDev       bool
-	apiDev           bool
-	devCommand       []string
-	devPort          int
 	scriptHint       string
 }
 
@@ -91,16 +83,6 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		}
 		created = true
 	}
-	configUpdated := false
-	if len(plan.generatedConfig) != 0 && (plan.genericDev || plan.apiDev || plan.framework != "") {
-		updated := initConfigSourceWithPort("app", plan.devCommand, plan.devPort)
-		if !bytes.Equal(updated, plan.generatedConfig) {
-			if err := replaceRecognizedInitFile(plan.configPath, plan.generatedConfig, updated); err != nil {
-				return err
-			}
-			configUpdated = true
-		}
-	}
 	frameworkUpdated := false
 	if len(plan.frameworkAfter) != 0 {
 		if err := createInitFile(plan.frameworkPath, plan.frameworkAfter); err != nil {
@@ -133,7 +115,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		plan.actions = append(plan.actions, typeActions...)
 	}
 	state := "already configured"
-	if created || configUpdated || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
+	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -142,8 +124,6 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	fields := []clioutput.Field{{Label: "project", Value: plan.root}}
 	if created {
 		fields = append(fields, clioutput.Field{Label: "created", Value: plan.configPath})
-	} else if configUpdated {
-		fields = append(fields, clioutput.Field{Label: "updated", Value: plan.configPath})
 	} else {
 		fields = append(fields, clioutput.Field{Label: "config", Value: plan.configPath})
 	}
@@ -210,8 +190,6 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	if len(existingConfigs) > 1 {
 		return initPlan{}, fmt.Errorf("multiple project configuration files found: %s", strings.Join(existingConfigs, ", "))
 	}
-	command := initDevCommand(plan.framework, plan.manager, packageConfig.Scripts)
-	plan.devCommand = command
 	if len(existingConfigs) == 1 {
 		plan.configPath = existingConfigs[0]
 		if filepath.Base(plan.configPath) == "tnl.config.ts" {
@@ -219,28 +197,15 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 			if readErr != nil {
 				return initPlan{}, readErr
 			}
-			if settings, ok := generatedInitDev(data); ok {
-				plan.generatedService = true
-				plan.generatedConfig = data
-				plan.devCommand, plan.devPort = settings.command, settings.port
-				if slices.Equal(settings.command, initDevScriptCommand(plan.manager)) {
-					plan.devCommand = command
-				}
-			}
+			plan.generatedService = bytes.Equal(data, initConfigSource("app"))
 		}
 	} else {
-		plan.configData = initConfigSource("app", command)
+		plan.configData = initConfigSource("app")
 		plan.generatedService = true
 	}
 	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
-	plan.apiDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind != "" && plan.generatedService
-	if scriptStartsTnlDev(packageConfig.Scripts["dev"]) {
-		plan.actions = append(plan.actions, "restore package.json scripts.dev to the command that starts your app; tnl integrations publish its bound listener.")
-	}
 	if plan.genericDev {
 		plan.actions = append(plan.actions, "prepare the app before startup with await tnl.prepare({ service: \"app\" }), then await the returned handle's register(server) after the HTTP listener binds.")
-	} else if plan.apiDev {
-		plan.devPort = 0
 	}
 
 	if packageFound {
@@ -264,67 +229,7 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 	return plan, nil
 }
 
-func parseInitPort(value string) (int, error) {
-	port, err := strconv.Atoi(value)
-	if err != nil || port < 1 || port > 65535 {
-		return 0, errors.New("port must be between 1 and 65535")
-	}
-	return port, nil
-}
-
-// parseInitCommand converts a command line to argv without shell expansion.
-func parseInitCommand(value string) ([]string, error) {
-	var args []string
-	var argument strings.Builder
-	quote := rune(0)
-	escaped, started := false, false
-	for _, character := range value {
-		switch {
-		case escaped:
-			argument.WriteRune(character)
-			escaped = false
-		case character == '\\' && quote != '\'':
-			escaped = true
-			started = true
-		case character == quote && quote != 0:
-			quote = 0
-		case quote == 0 && (character == '\'' || character == '"'):
-			quote = character
-			started = true
-		case quote == 0 && unicode.IsSpace(character):
-			if started {
-				if argument.Len() == 0 {
-					return nil, errors.New("dev command arguments must not be empty")
-				}
-				args = append(args, argument.String())
-				argument.Reset()
-				started = false
-			}
-		default:
-			argument.WriteRune(character)
-			started = true
-		}
-	}
-	if escaped || quote != 0 {
-		return nil, errors.New("dev command has an unfinished quote or escape")
-	}
-	if started {
-		if argument.Len() == 0 {
-			return nil, errors.New("dev command arguments must not be empty")
-		}
-		args = append(args, argument.String())
-	}
-	if len(args) == 0 {
-		return nil, errors.New("dev command is required")
-	}
-	return args, nil
-}
-
-func initConfigSource(service string, command []string) []byte {
-	return initConfigSourceWithPort(service, command, 0)
-}
-
-func initConfigSourceWithPort(service string, command []string, port int) []byte {
+func initConfigSource(service string) []byte {
 	return []byte(fmt.Sprintf(`import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
@@ -336,68 +241,6 @@ export default defineConfig({
   },
 });
 `, service))
-}
-
-func legacyInitConfigSource(service string, command []string, port int) []byte {
-	var fields []string
-	if len(command) != 0 {
-		encoded, _ := json.Marshal(command)
-		fields = append(fields, "command: "+string(encoded))
-	}
-	if port != 0 {
-		fields = append(fields, "port: "+strconv.Itoa(port))
-	}
-	devField := ""
-	if len(fields) != 0 {
-		devField = "      dev: { " + strings.Join(fields, ", ") + " },\n"
-	}
-	return []byte(fmt.Sprintf(`import { defineConfig } from "@tnldotdev/tnl/config";
-
-export default defineConfig({
-  feedback: true,
-  services: {
-    %s: {
-      directory: ".",
-%s    },
-  },
-});
-`, service, devField))
-}
-
-type initDevSettings struct {
-	command []string
-	port    int
-}
-
-var generatedInitDevField = regexp.MustCompile(`^      dev: \{ (?:command: (\[[^\n]*\])(?:, )?)?(?:port: ([0-9]+))? \},\n$`)
-
-func generatedInitDev(data []byte) (initDevSettings, bool) {
-	empty := initConfigSource("app", nil)
-	if bytes.Equal(data, empty) {
-		return initDevSettings{}, true
-	}
-	prefix, suffix, ok := bytes.Cut(empty, []byte("    },\n"))
-	suffix = append([]byte("    },\n"), suffix...)
-	if !ok || !bytes.HasPrefix(data, prefix) || !bytes.HasSuffix(data, suffix) {
-		return initDevSettings{}, false
-	}
-	field := data[len(prefix) : len(data)-len(suffix)]
-	parts := generatedInitDevField.FindSubmatch(field)
-	if parts == nil {
-		return initDevSettings{}, false
-	}
-	var settings initDevSettings
-	if len(parts[1]) != 0 && json.Unmarshal(parts[1], &settings.command) != nil {
-		return initDevSettings{}, false
-	}
-	if len(parts[2]) != 0 {
-		port, err := parseInitPort(string(parts[2]))
-		if err != nil {
-			return initDevSettings{}, false
-		}
-		settings.port = port
-	}
-	return settings, bytes.Equal(data, legacyInitConfigSource("app", settings.command, settings.port))
 }
 
 func frameworkConfigPaths(root, framework string) []string {

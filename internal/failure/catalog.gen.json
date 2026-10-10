@@ -41,7 +41,7 @@
       "slug": "app-cursor-expired",
       "class": "invalid",
       "message": "the local event cursor has expired",
-      "action": "run tnl status or tnl watch without --after to read a new snapshot watermark"
+      "action": "run tnl watch without --after to follow current events"
     },
     {
       "code": "TNL_CLIENT_APP_READINESS_TIMEOUT",
@@ -49,13 +49,6 @@
       "class": "unavailable",
       "message": "public readiness checks timed out",
       "action": "check tnl status and the app response, then run tnl wait again"
-    },
-    {
-      "code": "TNL_CLIENT_APP_START_COMMAND_RETIRED",
-      "slug": "app-start-command-retired",
-      "class": "invalid",
-      "message": "tnl dev no longer starts applications",
-      "action": "start the app with its normal development command and tnl integration, then run tnl wait"
     },
     {
       "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",
@@ -184,20 +177,6 @@
       "action": "remove --name or --public-url from tnl publish --demo"
     },
     {
-      "code": "TNL_CLIENT_DEV_PROCESS_FAILED",
-      "slug": "dev-process-failed",
-      "class": "unavailable",
-      "message": "the development server command could not start or stopped",
-      "action": "check the command and its child output, then restart tnl dev"
-    },
-    {
-      "code": "TNL_CLIENT_DEV_SOCKET_UNAVAILABLE",
-      "slug": "dev-socket-unavailable",
-      "class": "unavailable",
-      "message": "tnl could not use its development session socket",
-      "action": "check the local runtime directory and permissions, then restart tnl dev"
-    },
-    {
       "code": "TNL_CLIENT_DNS_PENDING",
       "slug": "dns-pending",
       "class": "unavailable",
@@ -237,42 +216,42 @@
       "slug": "guest-demo-only",
       "class": "forbidden",
       "message": "guest access only publishes the built-in demo",
-      "action": "run tnl login to publish your own app or change settings"
+      "action": "run tnl auth login to publish your own app or change settings"
     },
     {
       "code": "TNL_CLIENT_GUEST_IP_CHANGED",
       "slug": "guest-ip-changed",
       "class": "forbidden",
       "message": "your IP changed since this guest demo started",
-      "action": "run tnl login to publish your own app"
+      "action": "run tnl auth login to publish your own app"
     },
     {
       "code": "TNL_CLIENT_GUEST_ISSUANCE_LIMITED",
       "slug": "guest-issuance-limited",
       "class": "rate_limited",
       "message": "guest demo creation is limited on this network",
-      "action": "wait an hour or run tnl login to continue"
+      "action": "wait an hour or run tnl auth login to continue"
     },
     {
       "code": "TNL_CLIENT_GUEST_SESSION_INVALID",
       "slug": "guest-session-invalid",
       "class": "invalid",
       "message": "the saved guest demo state is invalid",
-      "action": "run tnl login or retry tnl publish --demo with a fresh --state-dir"
+      "action": "run tnl auth login or retry tnl publish --demo with a fresh --state-dir"
     },
     {
       "code": "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED",
       "slug": "guest-sign-in-required",
       "class": "unauthenticated",
       "message": "this command needs sign-in",
-      "action": "run tnl login to manage this server, or tnl publish --demo to try the built-in demo"
+      "action": "run tnl auth login to manage this server, or tnl publish --demo to try the built-in demo"
     },
     {
       "code": "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED",
       "slug": "guest-trial-exhausted",
       "class": "forbidden",
       "message": "this guest demo trial has ended",
-      "action": "run tnl login to publish your own app"
+      "action": "run tnl auth login to publish your own app"
     },
     {
       "code": "TNL_CLIENT_INIT_FAILED",
@@ -307,7 +286,7 @@
       "slug": "integration-url-not-ready",
       "class": "unavailable",
       "message": "the integration URL publisher is not ready",
-      "action": "keep a participating tnl dev or tnl publish tunnel running and wait for its publisher"
+      "action": "keep a participating app or tnl publish tunnel running and wait for its publisher"
     },
     {
       "code": "TNL_CLIENT_INVALID_AUTHORITY_URL",
@@ -352,13 +331,6 @@
       "action": "enter one of the shown values or press enter to skip"
     },
     {
-      "code": "TNL_CLIENT_INVALID_STARTUP_TIMEOUT",
-      "slug": "invalid-startup-timeout",
-      "class": "invalid",
-      "message": "startup timeout must be greater than zero and at most 10 minutes",
-      "action": "choose a startup timeout within that range"
-    },
-    {
       "code": "TNL_CLIENT_INVALID_TARGET",
       "slug": "invalid-target",
       "class": "invalid",
@@ -377,7 +349,7 @@
       "slug": "login-terminal-required",
       "class": "invalid",
       "message": "login-token authentication requires an interactive terminal",
-      "action": "run tnl login in a terminal or supply TNL_LOGIN_TOKEN"
+      "action": "run tnl auth login --login-token in a terminal or supply TNL_LOGIN_TOKEN"
     },
     {
       "code": "TNL_CLIENT_LOGIN_TOKEN_INVALID",
@@ -412,14 +384,14 @@
       "slug": "preview-not-saved",
       "class": "not_found",
       "message": "the project does not have a saved preview",
-      "action": "select the configured project and run tnl dev before sharing or reading its feedback"
+      "action": "start a configured app service before sharing or reading its feedback"
     },
     {
       "code": "TNL_CLIENT_PREVIEW_STATE_CONFLICT",
       "slug": "preview-state-conflict",
       "class": "conflict",
       "message": "the saved preview does not match the current project",
-      "action": "check the selected server, team, and project, then run tnl dev again"
+      "action": "check the selected server, team, and project, then restart the app"
     },
     {
       "code": "TNL_CLIENT_PROJECT_CONFIG_INVALID",

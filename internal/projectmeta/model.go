@@ -102,7 +102,7 @@ func (m Metadata) Validate() error {
 		return fmt.Errorf("project metadata version must be %d", Version)
 	}
 	if m.Dev {
-		return errors.New("generated project metadata cannot be marked as running under tnl dev")
+		return errors.New("generated project metadata cannot be marked as a running app")
 	}
 	if m.Worktree != nil {
 		label := m.Worktree.Label

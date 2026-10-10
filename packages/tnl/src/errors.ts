@@ -34,7 +34,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.authentication_required": {
     class: "unavailable",
     retry: "after_change",
-    message: "tnl needs a saved login; run tnl login, then start the app again",
+    message: "tnl needs a saved login; run tnl auth login, then start the app again",
   },
   "sdk.configuration_invalid": {
     class: "invalid",

@@ -8,7 +8,7 @@ it does not install the `tnld` server.
 ```console
 npm install -D @tnldotdev/tnl@next
 npx tnl init
-npx tnl login
+npx tnl auth login
 pnpm dev
 npx tnl wait
 ```

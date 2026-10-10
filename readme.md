@@ -36,7 +36,7 @@ match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
 at a time. Only your current IP can visit. A guest credential lasts 72 hours
 and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
-stops the demo and removes its public URL. Run `tnl login` to publish your own
+stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
 `tnl telemetry off` to disable it.
 
@@ -73,12 +73,12 @@ export default defineConfig({
 Then run:
 
 ```bash
-npx tnl login
+npx tnl auth login
 pnpm dev
 npx tnl wait
 ```
 
-Sign in once with `tnl login`. The integration prepares public metadata before
+Sign in once with `tnl auth login`. The integration prepares public metadata before
 framework startup, then reports the listener's actual bound port to a local
 `tnl` process. By default, only your current IP can visit the public URL.
 
@@ -217,7 +217,7 @@ Set `TNLD_MANAGED_DOMAIN=routes.example.com` on your server. After signing in
 with the built-in administrator's login token, publish directly beneath it:
 
 ```bash
-tnl login https://control.example.com --token
+tnl auth login --server https://control.example.com --login-token
 tnl publish 3000 --server https://control.example.com --name app
 # https://app.routes.example.com
 ```
@@ -261,7 +261,7 @@ Or install with curl:
 curl -fsSL https://tnl.dev/install | sh
 ```
 
-This works very similarly to `tnl dev`. [Read about `tnl publish`](https://tnl.dev/docs/publish).
+For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/publish).
 
 ## how much does it cost?
 

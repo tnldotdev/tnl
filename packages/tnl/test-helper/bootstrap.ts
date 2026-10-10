@@ -31,7 +31,7 @@ interface BootstrapOptions {
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
   const ownedDirectory =
-    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-dev-test-")) : null;
+    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-")) : null;
   const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
@@ -60,9 +60,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         response.statusCode = options.status ?? 200;
         if (response.statusCode !== 200) {
           response.end(options.responseBody ?? "registration failed");
-        } else if (
-          ["/v1/target", "/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")
-        ) {
+        } else if (["/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")) {
           if (request.url === "/v1/unregister") appOwner = undefined;
           response.writeHead(204).end();
         } else if (request.url === "/v1/prepare") {
@@ -90,7 +88,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           response.setHeader("Content-Type", "application/json");
           response.end(
             JSON.stringify({
-              protocol: 1,
+              version: 1,
               registration_id: `reg_${"b".repeat(32)}`,
               service: assignment.service,
               hostname: assignment.hostname,
@@ -99,19 +97,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
             }),
           );
         } else {
-          response.setHeader("Content-Type", "application/json");
-          response.end(
-            options.responseBody ??
-              JSON.stringify({
-                hostname: "api.member.example",
-                namespace: "member.example",
-                protocol: 1,
-                project: testPublicProject(true),
-                publicURL: "https://api.member.example",
-                service: "api",
-                tunnelID: `tun_${"b".repeat(22)}`,
-              }),
-          );
+          response.writeHead(404).end();
         }
       } catch (error) {
         failure ??= error;
@@ -165,7 +151,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   }
   return {
     socket,
-    environment: { TNL_DEV_PROTOCOL: "1", TNL_DEV_SOCKET: socket },
+    environment: { APP_TEST_SOCKET: socket },
     requests,
     assertHealthy,
     close,

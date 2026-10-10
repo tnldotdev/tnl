@@ -74,10 +74,10 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	var address struct {
-		Protocol int    `json:"protocol"`
-		Socket   string `json:"socket"`
+		Version int    `json:"version"`
+		Socket  string `json:"socket"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Protocol != 1 || address.Socket == "" {
+	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Version != 1 || address.Socket == "" {
 		t.Fatalf("runtime address = %s, error %v", output.String(), err)
 	}
 	if runtimeAvailable(t.Context(), address.Socket) {
@@ -153,7 +153,7 @@ func TestWaitDiscardsAResponseFromAReplacedRegistrationRun(t *testing.T) {
 	}
 }
 
-func TestWatchWatermarkResumeAndExpiredCursor(t *testing.T) {
+func TestWatchResumeAndExpiredCursor(t *testing.T) {
 	a, state, _ := testAppRuntime(t)
 	a.manager.RecordFailure("api", "runtime.preparation_failed")
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)

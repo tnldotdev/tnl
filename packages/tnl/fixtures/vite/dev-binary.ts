@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { renameSync, writeFileSync } from "node:fs";
 import { createServer } from "vite";
 
-// observe the real fixture without replacing either tnl development handshake.
+// observe the real Vite listener and app registration.
 const reportPath = process.argv[2];
 assert(reportPath, "report path is required");
 
@@ -13,8 +13,6 @@ interface FixtureReport {
   readonly hasRuntimeEnvironment: boolean;
   readonly environmentMetadata?: unknown;
   readonly pid: number;
-  readonly protocol: string | undefined;
-  readonly socket: string | undefined;
   runtime?: unknown;
   target?: string;
 }
@@ -22,8 +20,6 @@ interface FixtureReport {
 const report: FixtureReport = {
   pid: process.pid,
   cwd: process.cwd(),
-  protocol: process.env.TNL_DEV_PROTOCOL,
-  socket: process.env.TNL_DEV_SOCKET,
   hasAccessToken: Object.hasOwn(process.env, "TNL_ACCESS_TOKEN"),
   hasLoginToken: Object.hasOwn(process.env, "TNL_LOGIN_TOKEN"),
   hasRuntimeEnvironment: Object.hasOwn(process.env, "TNL_PROJECT_RUNTIME"),

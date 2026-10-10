@@ -59,7 +59,7 @@ test(
       waitForBootstrapRequest(a, 1, 20_000, first.assertRunning),
       waitForBootstrapRequest(b, 1, 20_000, second.assertRunning),
     ]);
-    expect(a.requests[0]?.body).toMatchObject({ protocol: 1, framework: "bun" });
+    expect(a.requests[0]?.body).toMatchObject({ version: 1, framework: "bun" });
     expect(firstTarget.path).toBe("/v1/register");
     const firstURL = (firstTarget.body as { target: string }).target;
     const secondURL = (secondTarget.body as { target: string }).target;

@@ -13,7 +13,7 @@ Log in to the selected server once, then preview a small workload without
 changing the server. For example, against staging:
 
 ```console
-mise exec -- go run ./cmd/tnl login --server=https://control.tnl.wtf
+mise exec -- go run ./cmd/tnl auth login --server=https://control.tnl.wtf
 BENCH_SERVER=https://control.tnl.wtf mise exec -- task go:bench:plan
 ```
 

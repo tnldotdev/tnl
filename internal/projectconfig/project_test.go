@@ -24,7 +24,6 @@ tnl:
     target: 3000
   readiness:
     path: /health
-    status: 204
   services:
     web:
       tunnel:
@@ -34,7 +33,6 @@ tnl:
         target: 4000
       readiness:
         path: /status
-        status: 200
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -56,7 +54,7 @@ tnl:
 		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
-		effective.Readiness == nil || effective.Readiness.Path != "/status" || effective.Readiness.Status == nil || *effective.Readiness.Status != 200 {
+		effective.Readiness == nil || effective.Readiness.Path != "/status" {
 		t.Fatalf("effective service = %#v", effective)
 	}
 	if _, err := project.EffectiveService("missing"); err == nil {

@@ -12,8 +12,7 @@ const ProbeHeader = localproxy.ReadinessProbeHeader
 const DiagnosticHeader = "Tnl-Error-Code"
 
 type Readiness struct {
-	Path   string `json:"path"`
-	Status int    `json:"status,omitempty"`
+	Path string `json:"path"`
 }
 
 type Observation struct {
@@ -52,10 +51,7 @@ func Probe(ctx context.Context, service Service, transport http.RoundTripper) Ob
 	}
 	defer response.Body.Close()
 	observation.Status = response.StatusCode
-	observation.Ready = response.Header.Get(DiagnosticHeader) == "" && response.StatusCode >= 200 && response.StatusCode <= 499 && response.StatusCode != 408 && response.StatusCode != 429
-	if service.Readiness.Status != 0 {
-		observation.Ready = observation.Ready && response.StatusCode == service.Readiness.Status
-	}
+	observation.Ready = response.Header.Get(DiagnosticHeader) == "" && response.StatusCode >= 200 && response.StatusCode < 300
 	if !observation.Ready {
 		observation.Reason = "runtime.probe_rejected"
 	}

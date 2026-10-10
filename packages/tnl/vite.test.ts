@@ -33,7 +33,7 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
       framework: string,
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => process.env.TNL_DEV_SOCKET ?? "",
+        start: async () => process.env.APP_TEST_SOCKET ?? "",
         request: actual.runtimeRequest,
       });
       onTestFinished(() => prepared.close());
@@ -115,7 +115,6 @@ describe("tnl", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({
         hostname: "override.example",
-        namespace: "member.example",
         project: {
           ...project,
           services: {
@@ -127,10 +126,9 @@ describe("tnl", () => {
             },
           },
         },
-        protocol: 1,
+        version: 1,
         publicURL: "https://override.example",
         service: "api",
-        tunnelID: `tun_${"b".repeat(22)}`,
       }),
     });
     await withProcessEnvironment(bootstrap.environment, async () => {
@@ -151,7 +149,7 @@ describe("tnl", () => {
       });
     });
     expect(bootstrap.requests[0]?.body).toMatchObject({
-      protocol: 1,
+      version: 1,
       framework: "vite",
       pid: process.pid,
     });
@@ -159,7 +157,7 @@ describe("tnl", () => {
 
   test("keeps the application responsible for its port", async () => {
     const bootstrap = await startTestBootstrap();
-    await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "5300" }, async () => {
+    await withProcessEnvironment(bootstrap.environment, async () => {
       await expect(runConfigHook(tnl(), { server: { port: 5200 } })).resolves.toMatchObject({
         define: runtimeDefine(true).define,
         server: { allowedHosts: ["api.member.example"] },
@@ -253,11 +251,11 @@ test(
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
-        body: { protocol: 1, framework: "vite" },
+        body: { version: 1, framework: "vite" },
         path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { protocol: 1, target: `http://127.0.0.1:${port}` },
+        body: { version: 1, target: `http://127.0.0.1:${port}` },
         path: "/v1/register",
       });
 
@@ -316,7 +314,7 @@ test("registers the actual next port selected by Vite", async () => {
 
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
-      body: { protocol: 1, framework: "vite" },
+      body: { version: 1, framework: "vite" },
       path: "/v1/prepare",
     });
     const target = await fixture.request(1);
@@ -330,36 +328,13 @@ test("registers the actual next port selected by Vite", async () => {
   });
 });
 
-test("reports a fallback listener for server-side forced-port validation", async () => {
-  const { port } = await holdLoopbackPort();
-  const fixture = await startViteFixture(
-    port,
-    {
-      TNL_DEV_PORT: String(port),
-    },
-    "127.0.0.1",
-  );
-
-  await fixture.diagnose(async () => {
-    expect(await fixture.request()).toMatchObject({
-      body: { protocol: 1, framework: "vite" },
-      path: "/v1/prepare",
-    });
-    const registration = await fixture.request(1);
-    expect(registration.path).toBe("/v1/register");
-    const selectedPort = Number(new URL((registration.body as { target: string }).target).port);
-    expect(selectedPort).toBeGreaterThan(port);
-    expect(fixture.output()).toContain(`Port ${port} is in use, trying another one`);
-  });
-});
-
 test("registers and serves an IPv6 localhost target", async () => {
   const port = await findAvailableLoopbackPort("::1");
   const fixture = await startViteFixture(port, {}, "::1");
 
   await fixture.diagnose(async () => {
     expect(await fixture.request(1)).toMatchObject({
-      body: { protocol: 1, target: `http://[::1]:${port}` },
+      body: { version: 1, target: `http://[::1]:${port}` },
       path: "/v1/register",
     });
     await expect(requestTestServer(port, { address: "::1" })).resolves.toMatchObject({
