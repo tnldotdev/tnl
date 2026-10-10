@@ -190,6 +190,13 @@ the runner passes the namespace credential only to authenticated control calls,
 observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
+the Python binding starts ASGI lifespan on a port-0 loopback listener before
+registering it over the same private socket used by TypeScript. its status
+poller waits for the exact registration and ready publish run, never a public
+GET probe. on exit, unregister joins native drain before ASGI shutdown; a
+process crash leaves the owner/pid lease and ephemeral expiry as cleanup
+boundaries. a single-request Python callable needs the explicit HTTP adapter,
+while ASGI apps and supplied TypeScript servers keep their normal WebSockets.
 
 ## maintain project integration urls
 
