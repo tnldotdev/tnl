@@ -10,7 +10,8 @@ metadata:
 # tnl releases
 
 Release the combined `tnl` and `tnld` product, including `@tnldotdev/tnl` and
-its framework integrations and four native packages, with root `v<version>`
+its framework integrations, four native npm packages, and the `tnldotdev-tnl`
+Python wheels, with root `v<version>`
 tags. GitHub Actions is the publisher; never publish artifacts manually during
 a normal release.
 
@@ -28,17 +29,20 @@ a normal release.
 
 1. Fetch `origin/main` and tags, then verify the branch, worktree, and tracking
    state.
-2. Assess `tnl`, `tnld`, and the npm client distribution as one product. Find
+2. Assess `tnl`, `tnld`, the npm client, and the Python binding as one product. Find
    the latest signed `v*` tag and inspect committed changes to Go code,
    protocols, deployment files, native npm packaging, the container, release
    configuration, and user documentation since that tag.
 3. Confirm the latest root release has the same published `@tnldotdev/tnl`
-   version and all four exact-version native dependencies. Treat an absent npm
-   client before its initial release as an explained bootstrap state.
+   version and all four exact-version native dependencies, plus the corresponding
+   PyPI version and four platform wheels. Treat absent npm or PyPI packages
+   before their initial release as explained bootstrap states.
 4. Review `packages/ts` source, all public subpath types, runtime and optional
    peer dependencies, README, tests, package verification, and framework
    compatibility changes since the latest root tag. The private app-registration
    socket protocol and framework integrations ship in this package.
+   Review `packages/py` and its ASGI lifecycle, lockfile, wheel metadata,
+   bundled native binary, legal files, and Python tests as part of the same product.
 5. Treat changes confined to tests or development tooling as evidence to
    review, not an automatic release. Confirm whether shipped artifacts changed.
 6. Present one concise row with the published version, relevant changes,
@@ -54,14 +58,16 @@ infer that a stable release is wanted.
    derives the npm client package versions from GoReleaser metadata; do not edit
    their `0.0.0-development` source placeholders.
 2. Run `task generate-check`, `task format-check`, `task lint`, `task test`,
-   `task go:test:race`, `task build`, and `task package`.
-3. Inspect all five tarballs produced by
+   `task py:check`, `task go:test:race`, `task build`, and `task package`.
+3. Inspect all five npm tarballs and four Python wheels produced by
    `task package`. Confirm that each native binary is executable and identical
    to its release archive, both npm and pnpm installations run `tnl version`,
    all four public exports import, no `tnld` executable is installed, and the
-   private socket implementation has no public export.
+   private socket implementation has no public export. Verify the Python wheel
+   tags, legal files, installation, import, binary version, and commit.
 4. Confirm the proposed tag is absent from Git and the proposed versions of all
-   five npm packages are absent from the registry.
+   five npm packages and the PEP 440 Python distribution are absent from their
+   registries.
 5. Show the user the final version, verification results, and exact diff.
 
 ## Commit and push
@@ -84,10 +90,10 @@ git push origin v<version>
 ```
 
 The root release workflow publishes the archives, image, Homebrew formula,
-`@tnldotdev/tnl` with its framework integrations, and the four native packages.
-Do not create separate npm tags. Verify all five npm versions and the package's
-public subpaths after the workflow completes. Diagnose a failed workflow instead
-of publishing manually.
+`@tnldotdev/tnl` with its framework integrations, four native npm packages,
+and four Python wheels. Do not create separate language tags. Verify all five
+npm versions, their public subpaths, and the PyPI wheels after the workflow
+completes. Diagnose a failed workflow instead of publishing manually.
 
 After verifying the release, use the `tnl-release-check` skill to qualify
 staging before production promotion and to check production after deployment.

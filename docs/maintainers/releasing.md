@@ -1,6 +1,7 @@
 # releasing tnl
 
-Audience: maintainers publishing `tnl`, `tnld`, or `@tnldotdev` packages. Users
+Audience: maintainers publishing `tnl`, `tnld`, `@tnldotdev` packages, or
+`tnldotdev-tnl` on PyPI. Users
 installing a release should follow [install and verify releases](https://tnl.dev/docs/releases).
 
 Use the `tnl-release` agent skill for the complete assessment, approval, and
@@ -17,8 +18,9 @@ Packages, and artifact attestations.
 
 ## publish one root release
 
-`tnl`, `tnld`, `@tnldotdev/tnl`, and the four native npm packages share one root
-`v<version>` tag.
+`tnl`, `tnld`, `@tnldotdev/tnl`, its four native npm packages, and
+`tnldotdev-tnl` on PyPI share one root `v<version>` tag. Python prereleases map
+`-rc.N` to PEP 440 `rcN` (for example `0.1.0-rc.40` to `0.1.0rc40`).
 
 From a clean, fully verified `main` commit:
 
@@ -39,6 +41,8 @@ The workflow then:
 - signs the checksum manifest and container image;
 - publishes GitHub provenance;
 - publishes all npm packages;
+- verifies and publishes four platform Python wheels with PyPI Trusted Publishing;
+- keeps the GitHub release draft unpublished until both npm and PyPI succeed;
 - attaches the image digest;
 - updates the Homebrew formula for stable releases.
 
@@ -70,6 +74,16 @@ manually after bootstrap.
 
 The workflow publishes native packages first and the launcher last. Prereleases
 receive the `next` dist-tag. Stable releases receive `latest`.
+
+## bootstrap pypi once
+
+Configure a pending Trusted Publisher for the `tnldotdev-tnl` project on PyPI,
+bound to this repository's `.github/workflows/release.yml`. No PyPI API token
+is needed. The root release workflow builds four wheel-only distributions for
+macOS and Linux on arm64 and x64 from the same verified GoReleaser binaries as
+the archives and npm packages. Each wheel includes the required license files.
+`task release:snapshot` followed by `task py:build` checks the four wheels and
+installs and runs the local platform wheel without publishing anything.
 
 Do not create an `npm/tnl/v<version>` tag. The private development socket and
 framework integrations ship with the same root release as the native client and

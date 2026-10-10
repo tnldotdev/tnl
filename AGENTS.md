@@ -353,4 +353,4 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
-- Release archives and native npm packages must retain all required dependency license and legal files; see [contributing.md](contributing.md).
+- Release archives, native npm packages, and platform Python wheels must retain all required dependency license and legal files; see [contributing.md](contributing.md).

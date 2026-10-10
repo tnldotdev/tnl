@@ -141,6 +141,31 @@ jobs:
           node scripts/pack-tnl.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
           node scripts/verify-tnl-install.ts "$RUNNER_TEMP/tnl-npm-packages"
 
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.13.9"
+
+      - name: Install pinned uv
+        run: python3 -m pip install uv==0.9.18
+
+      - name: Package and verify Python wheels
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          node scripts/pack-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels" "$VERSION"
+          node scripts/verify-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels"
+
+      - name: Upload Python wheels
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tnl-python-wheels
+          path: ${{ runner.temp }}/tnl-python-wheels
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+
       - name: Upload npm client packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -258,9 +283,40 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: node scripts/publish-tnl-packages.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
 
+  python:
+    name: Publish Python ASGI wheels
+    needs: [validate, archives]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.13.9"
+
+      - name: Install pinned uv
+        run: python3 -m pip install uv==0.9.18
+
+      - name: Download verified Python wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tnl-python-wheels
+          path: ${{ runner.temp }}/tnl-python-wheels
+
+      - name: Publish with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/tnldotdev-tnl/ "$RUNNER_TEMP/tnl-python-wheels/"*.whl
+
   publish:
     name: Publish release
-    needs: [archives, image, npm]
+    needs: [archives, image, npm, python]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

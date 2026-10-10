@@ -101,7 +101,8 @@ framework versions.
 
 Run `mise exec -- task py:check` for Ruff, mypy, and pytest. The Python
 distribution source is under `packages/py/`; uv uses its committed `uv.lock`.
-`task py:build` makes a local wheel for package checks. The ASGI tests cover
+After `task release:snapshot`, `task py:build` verifies four platform wheels
+against those artifacts. The ASGI tests cover
 lifespan startup, streamed responses, WebSockets, private Unix-socket bounds,
 and cleanup without a deployed server.
 
