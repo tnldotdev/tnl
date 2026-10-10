@@ -509,7 +509,7 @@ func (c Config) IngressHostname() string {
 	if !c.Role.RunsControl() || c.ServerDomain == "" {
 		return ""
 	}
-	return "ingress." + c.ServerDomain
+	return "ingress-a." + c.ServerDomain
 }
 
 func (c Config) StandaloneRelayHostname() string {

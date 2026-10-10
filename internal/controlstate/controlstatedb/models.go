@@ -347,6 +347,22 @@ type ControlIngressLease struct {
 	LeaseExpiresAt       pgtype.Timestamptz
 }
 
+type ControlIngressPool struct {
+	ID          string
+	Ipv4Address *netip.Addr
+	Ipv6Address *netip.Addr
+	State       string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ControlIngressPoolPort struct {
+	ID            int64
+	IngressPoolID string
+	Port          int32
+	Enabled       bool
+}
+
 type ControlIngressRoutingTableClock struct {
 	ID                    int16
 	CurrentRevision       int64
@@ -500,6 +516,7 @@ type ControlPublicUrl struct {
 	RequestDigestStorageKeyID   pgtype.Text
 	Namespace                   string
 	Purpose                     string
+	IngressPoolID               string
 }
 
 type ControlPublicUrlPublishCredential struct {
@@ -792,6 +809,18 @@ type ControlSharePublicUrl struct {
 	PublicURLID string
 }
 
+type ControlTcpPortClaim struct {
+	ID                string
+	PublicURLID       string
+	IngressPoolID     string
+	CanonicalHostname string
+	Port              int32
+	State             string
+	ClaimedAt         pgtype.Timestamptz
+	RetiredAt         pgtype.Timestamptz
+	ReusableAfter     pgtype.Timestamptz
+}
+
 type ControlTeam struct {
 	ID                     string
 	Kind                   string
@@ -805,6 +834,7 @@ type ControlTeam struct {
 	CreatedAt              pgtype.Timestamptz
 	UpdatedAt              pgtype.Timestamptz
 	DeletedAt              pgtype.Timestamptz
+	IngressPoolID          string
 }
 
 type ControlTeamInvitation struct {
