@@ -20,7 +20,7 @@ import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import * as z from "zod";
-import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
+import { nativeTargets } from "../packages/ts/src/internal/native-targets.ts";
 import { packageManifestSchema, type PackedPackage } from "./npm-artifacts.ts";
 import { assertReleaseVersion } from "./release-version.ts";
 import { parseJSON } from "./validation.ts";
@@ -75,7 +75,7 @@ const targets = nativeTargets.map(({ platform, architecture, packageName }) => (
   packageName,
   operatingSystem: platform,
   goArchitecture: architecture === "x64" ? "amd64" : architecture,
-  sourceDirectory: `tnl/native/${platform}-${architecture}`,
+  sourceDirectory: `ts/native/${platform}-${architecture}`,
 }));
 
 await rm(outputDirectory, { force: true, recursive: true });
@@ -164,7 +164,7 @@ try {
   }
 
   const launcherStage = path.join(stagingRoot, "tnl");
-  await copyTemplate("tnl", launcherStage, ["package.json", "readme.md", "dist"]);
+  await copyTemplate("ts", launcherStage, ["package.json", "readme.md", "dist"]);
   await copyLegalFiles(launcherStage);
   const launcherManifestPath = path.join(launcherStage, "package.json");
   const launcherManifest = await readJson(launcherManifestPath, packageManifestSchema);

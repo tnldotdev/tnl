@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
+import { nativeTargets } from "../packages/ts/src/internal/native-targets.ts";
 import { npmPackageMetadataSchema } from "./npm-artifacts.ts";
 import { parseJSON } from "./validation.ts";
 
