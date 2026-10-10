@@ -8,11 +8,12 @@ it does not install the `tnld` server.
 ```console
 npm install -D @tnldotdev/tnl@next
 npx tnl init
+npx tnl auth login
 npx tnl dev
 ```
 
 `tnl init` sets up missing project and framework configuration and lists any
-actions required for existing files. Sign in when prompted; hosted tnl.dev is
+actions required for existing files. Sign in explicitly; hosted tnl.dev is
 the default server. Each Git worktree gets its own HTTPS URL.
 
 Read the [quickstart](https://tnl.dev/docs),
