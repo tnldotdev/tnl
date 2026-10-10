@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -463,6 +466,44 @@ func TestPreflightRejectsUntrustedHTTPSTarget(t *testing.T) {
 		t.Fatal("Preflight accepted an untrusted HTTPS certificate")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
 		t.Fatalf("Preflight diagnostic = %q, %t", code, ok)
+	}
+}
+
+func TestProxyUsesVerifiedHTTPSTargetAndMountedService(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Host != "route.example" || request.Header.Get("X-Forwarded-Proto") != "https" {
+			http.Error(response, "incorrect forwarded request", http.StatusBadRequest)
+			return
+		}
+		_, _ = response.Write([]byte(request.URL.Path))
+	}))
+	t.Cleanup(upstream.Close)
+	path := filepath.Join(t.TempDir(), "target-ca.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: upstream.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := LoadTargetRootCAs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := TargetOptions{RootCAs: roots}
+	if err := PreflightWithOptions(proxyContext(t), upstream.URL, options); err != nil {
+		t.Fatalf("verified HTTPS preflight: %v", err)
+	}
+	handler, err := NewWithMountsHooksOptions(upstream.URL, "route.example", 0,
+		[]Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true, Options: options}}, ResponseHooks{}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"/hello": "/hello", "/api/hello": "/hello"} {
+		request := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, path, nil)
+		request.Host = "route.example"
+		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || response.Body.String() != want {
+			t.Fatalf("HTTPS target %s: %d %q", path, response.Code, response.Body.String())
+		}
 	}
 }
 

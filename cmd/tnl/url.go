@@ -2,16 +2,30 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publicURLCommand struct {
-	List   publicURLListCommand   `cmd:"" help:"List public URLs for the selected team."`
-	Delete publicURLDeleteCommand `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
+	List       publicURLListCommand       `cmd:"" help:"List public URLs for the selected team."`
+	Update     publicURLUpdateCommand     `cmd:"" help:"Change a saved public URL target or visitor policy."`
+	Delete     publicURLDeleteCommand     `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
+	Credential publicURLCredentialCommand `cmd:"" help:"Manage credentials scoped to publishing one public URL."`
+}
+
+type publicURLUpdateCommand struct {
+	scopedTeamFlags `embed:""`
+	PublicURLID     string   `arg:"" name:"public-url-id" required:""`
+	Target          string   `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
+	AllowIP         []string `name:"allow-ip" help:"Replace visitor addresses; repeat for each address or prefix."`
+	AllowAllIPs     bool     `name:"allow-all-ips" help:"Allow visitors from every IP."`
 }
 
 type publicURLListCommand struct {
@@ -74,4 +88,56 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 	}
 	return writeHumanTransition(output, "tnl url delete", "deleted", selected.CanonicalHostname, "", "public URL deleted", "",
 		clioutput.Field{Label: "id", Value: selected.Id})
+}
+
+func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, diagnostics io.Writer) error {
+	if flags.Target == "" && flags.AllowIP == nil && !flags.AllowAllIPs {
+		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("set --target, --allow-ip, or --allow-all-ips to update this public URL"))
+	}
+	if flags.AllowAllIPs && flags.AllowIP != nil {
+		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("--allow-all-ips cannot be combined with --allow-ip"))
+	}
+	session, err := openTeamSession(ctx, flags.selection(), "tnl url update", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.current(ctx)
+	if err != nil {
+		return err
+	}
+	route, err := session.authenticated.Control.GetPublicURL(ctx, flags.PublicURLID)
+	if err != nil {
+		return err
+	}
+	if route.TeamId != current.team.Id {
+		return controlclient.ErrNotFound
+	}
+	target := route.Target
+	if flags.Target != "" {
+		target, err = localproxy.NormalizeTarget(flags.Target)
+		if err != nil {
+			return err
+		}
+	}
+	allowed := []string{}
+	if route.AllowedIpPrefixes != nil {
+		allowed = *route.AllowedIpPrefixes
+	}
+	if flags.AllowIP != nil || flags.AllowAllIPs {
+		policy, policyErr := resolveIPPolicy(ctx, session.authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+		if policyErr != nil {
+			return policyErr
+		}
+		allowed = policy.prefixes
+	}
+	updated, err := session.authenticated.Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
+		Target: target, AllowedIpPrefixes: allowed,
+	})
+	if err != nil {
+		return err
+	}
+	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target or policy",
+		clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + updated.CanonicalHostname},
+			clioutput.Field{Label: "target", Value: updated.Target}))
 }

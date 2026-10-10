@@ -22,12 +22,13 @@ import (
 )
 
 type publishCommand struct {
-	openOptions `embed:""`
-	remoteFlags `embed:""`
-	tunnelFlags `embed:""`
-	Target      string            `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or HTTP or HTTPS target origin."`
-	Output      publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo        bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions       `embed:""`
+	remoteFlags       `embed:""`
+	tunnelFlags       `embed:""`
+	Target            string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, or HTTP or HTTPS target origin."`
+	PublishCredential string            `name:"publish-credential" env:"TNL_PUBLISH_CREDENTIAL" hidden:""`
+	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -45,6 +46,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	output.setRequestInspection(flags.RequestInspection)
 	defer func() { result = output.finish(ctx, result) }()
+	if flags.PublishCredential != "" {
+		if flags.Demo {
+			return failure.Wrap("validate demo options", failure.InvalidTunnelFlags, errors.New("a public URL publish credential cannot be used with --demo"))
+		}
+		return runScopedPublish(ctx, flags, output, telemetry)
+	}
 	var localDemo *demo.Server
 	if flags.Demo {
 		flags.projectRoot, err = currentProjectRoot(ctx)
@@ -64,6 +71,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		output.setDemo()
 	}
 	target, err := localproxy.NormalizeTarget(flags.Target)
+	if err != nil {
+		return err
+	}
+	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
 	if err != nil {
 		return err
 	}
@@ -94,7 +105,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	if err := localproxy.Preflight(ctx, target); err != nil {
+	if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
 		return err
 	}
 	var guest *clientstate.GuestSession
@@ -179,6 +190,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.requestLimit())
+	publisherConfig.TargetOptions = targetOptions
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
 		return err

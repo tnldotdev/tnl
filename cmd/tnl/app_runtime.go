@@ -524,6 +524,16 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		return err
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.requestLimit())
+	effective, err := project.EffectiveService(service.Name)
+	if err != nil {
+		return err
+	}
+	if effective.Publish != nil && effective.Publish.CAFile != nil {
+		configuration.TargetOptions, err = targetOptionsForCA(*effective.Publish.CAFile, project.Root)
+		if err != nil {
+			return err
+		}
+	}
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
@@ -560,7 +570,18 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		defer stop()
 	}
 	for prefix, mount := range project.Config.Services[service.Name].Paths {
-		configuration.Mounts = append(configuration.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, ResolveTarget: func() string {
+		options := localproxy.TargetOptions{}
+		mounted, err := project.EffectiveService(mount.Service)
+		if err != nil {
+			return err
+		}
+		if mounted.Publish != nil && mounted.Publish.CAFile != nil {
+			options, err = targetOptionsForCA(*mounted.Publish.CAFile, project.Root)
+			if err != nil {
+				return err
+			}
+		}
+		configuration.Mounts = append(configuration.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
 			for _, candidate := range a.manager.Snapshot().Services {
 				if candidate.Name == mount.Service && a.manager.Current(candidate.Name, candidate.RegistrationID, candidate.Target, 0) {
 					return candidate.Target

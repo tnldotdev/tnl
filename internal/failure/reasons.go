@@ -74,6 +74,8 @@ const (
 	AuthExpired                       Reason = "TNL_CLIENT_AUTH_EXPIRED"
 	AuthMethodUnavailable             Reason = "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE"
 	AuthProviderUnavailable           Reason = "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE"
+	PublishCredentialRejected         Reason = "TNL_CLIENT_PUBLISH_CREDENTIAL_REJECTED"
+	PublishCredentialMismatch         Reason = "TNL_CLIENT_PUBLISH_CREDENTIAL_MISMATCH"
 	ServerResourceNotFound            Reason = "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND"
 	ServerConflict                    Reason = "TNL_CLIENT_SERVER_CONFLICT"
 	ServerDenied                      Reason = "TNL_CLIENT_SERVER_DENIED"
@@ -404,6 +406,14 @@ var definitions = map[Reason]Definition{
 	AuthProviderUnavailable: {
 		Class: Unavailable, Message: "the sign-in provider could not be reached or its signing keys are unavailable",
 		Action: "check provider connectivity and resume with tnl auth login wait <operation-id>", Retry: RetryLater,
+	},
+	PublishCredentialRejected: {
+		Class: Unauthenticated, Message: "the public URL publish credential was rejected",
+		Action: "check TNL_PUBLISH_CREDENTIAL or issue a replacement with tnl url credential create", Retry: RetryAfterChange,
+	},
+	PublishCredentialMismatch: {
+		Class: Invalid, Message: "the saved public URL does not match this publication",
+		Action: "match TNL_PUBLIC_URL and TNL_TARGET to the saved URL, or update it with tnl url update", Retry: RetryAfterChange,
 	},
 	ServerResourceNotFound: {
 		Class: NotFound, Message: "the requested resource was not found on the selected server",

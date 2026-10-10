@@ -36,7 +36,15 @@ func resolveProjectMounts(project projectConfiguration, service string) ([]local
 		if err != nil {
 			return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
 		}
-		mounts = append(mounts, localproxy.Mount{Prefix: prefix, Target: normalized, StripPrefix: mount.StripPrefix})
+		caFile := ""
+		if effective.Publish != nil && effective.Publish.CAFile != nil {
+			caFile = *effective.Publish.CAFile
+		}
+		options, err := targetOptionsForCA(caFile, project.Root)
+		if err != nil {
+			return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
+		}
+		mounts = append(mounts, localproxy.Mount{Prefix: prefix, Target: normalized, StripPrefix: mount.StripPrefix, Options: options})
 	}
 	return mounts, nil
 }

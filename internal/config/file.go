@@ -280,6 +280,9 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 			return fmt.Errorf("publish.target: %w", err)
 		}
 	}
+	if publish != nil && publish.CAFile != nil && (strings.TrimSpace(*publish.CAFile) != *publish.CAFile || *publish.CAFile == "") {
+		return errors.New("publish.ca_file must be a nonempty path without surrounding whitespace")
+	}
 	return nil
 }
 

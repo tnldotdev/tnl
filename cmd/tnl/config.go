@@ -104,8 +104,12 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 			return err
 		}
 	}
-	if flags.Target == "" && effective.Publish != nil && effective.Publish.Target != nil {
+	usingConfiguredTarget := flags.Target == ""
+	if usingConfiguredTarget && effective.Publish != nil && effective.Publish.Target != nil {
 		flags.Target = string(*effective.Publish.Target)
+	}
+	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.CAFile != nil {
+		flags.TargetCAFile = *effective.Publish.CAFile
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
 	applyRequestInspection(&flags.tunnelFlags, effective)
@@ -333,8 +337,16 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Domain.Release.remoteFlags, true)
 	case "url list":
 		apply(&flags.URL.List.remoteFlags, true)
+	case "url update <public-url-id>":
+		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
+	case "url credential create <public-url-id>":
+		apply(&flags.URL.Credential.Create.remoteFlags, true)
+	case "url credential list <public-url-id>":
+		apply(&flags.URL.Credential.List.remoteFlags, true)
+	case "url credential revoke <public-url-id> <credential-id>":
+		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share list <url>":

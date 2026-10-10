@@ -216,6 +216,10 @@ export interface Publish {
    * HTTP or HTTPS origin reachable by the publisher, or a local port.
    */
   target?: string | number;
+  /**
+   * Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root.
+   */
+  ca_file?: string;
 }
 export interface Readiness {
   path: string;

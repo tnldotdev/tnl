@@ -29,6 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
     -o /out/tnl ./cmd/tnl && \
     setcap cap_net_bind_service=+ep /out/tnld
+RUN install -d -m 0700 /out/client-state
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 
@@ -36,7 +37,7 @@ ARG VERSION
 ARG COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
-      org.opencontainers.image.description="tnl self-hosted server daemon" \
+      org.opencontainers.image.description="tnl client and self-hosted server daemon" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$COMMIT
@@ -44,6 +45,7 @@ LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
 # Changing ownership during COPY would clear the file capability.
 COPY --from=build /out/tnld /usr/local/bin/tnld
 COPY --from=build --chown=65532:65532 /out/tnl /usr/local/bin/tnl
+COPY --from=build --chown=65532:65532 --chmod=0700 /out/client-state /state
 COPY --chown=65532:65532 LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/
 
 USER 65532:65532

@@ -482,3 +482,19 @@ func TestPublishRejectsProjectSelectedExplicitToken(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
+	target := config.Target("https://api.internal:443")
+	caFile := "/run/secrets/target_ca"
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Publish: &config.Publish{Target: &target, CAFile: &caFile},
+	}}}
+	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
+	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != caFile {
+		t.Fatalf("configured target trust = %#v, %v", configured, err)
+	}
+	override := publishCommand{Target: "http://other:3000", tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
+	if err := project.applyPublish(&override); err != nil || override.TargetCAFile != "" {
+		t.Fatalf("explicit target inherited trust = %#v, %v", override, err)
+	}
+}

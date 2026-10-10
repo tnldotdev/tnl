@@ -57,6 +57,7 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
 	AdmitRequest             func(*http.Request, PublishRunIdentity) error
 	ObserveResponse          ResponseObserver
@@ -149,7 +150,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	if config.Handler == nil {
-		if err := localproxy.Preflight(ctx, config.Target); err != nil {
+		if err := localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions); err != nil {
 			return err
 		}
 	}

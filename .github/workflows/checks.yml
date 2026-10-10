@@ -375,6 +375,7 @@ jobs:
         run: |
           test "$(docker run --rm tnl:ci version)" = "tnld ci (ci)"
           test "$(docker run --rm --entrypoint tnl tnl:ci --no-telemetry version)" = "tnl ci (ci)"
+          docker run --rm --entrypoint tnl tnl:ci status --state-dir /state --all > /dev/null
           test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = MIT
           container="$(docker create tnl:ci)"
           trap 'docker rm "$container" >/dev/null' EXIT
