@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -165,6 +164,7 @@ type appPreparation struct {
 
 type appRuntime struct {
 	manager   *clientruntime.Manager
+	adhoc     *clientruntime.AdHocManager
 	project   projectConfiguration
 	state     *clientstate.Database
 	mu        sync.Mutex
@@ -246,6 +246,8 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	}
 	runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	defer runtime.manager.Close()
+	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
+	defer runtime.adhoc.Close()
 	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
@@ -273,6 +275,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 			if runtime.manager.Sweep(runtime.manager.Alive) {
 				return nil
 			}
+			runtime.adhoc.Sweep()
 			runtime.mu.Lock()
 			live := map[string]bool{}
 			for _, service := range runtime.manager.Snapshot().Services {
@@ -290,12 +293,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	}
 }
 
-var appOwnerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
-
 func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (assignmentResult privateprotocol.Assignment, resultErr error) {
 	finishPreparation := a.manager.BeginPreparation()
 	defer finishPreparation()
-	if request.Version != privateprotocol.Version || !appOwnerPattern.MatchString(request.Owner) || request.PID <= 0 || !slices.Contains([]string{"node", "bun", "vite", "next"}, request.Framework) {
+	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !slices.Contains([]string{"node", "bun", "vite", "next"}, request.Framework) {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
 	}
 	directory, err := filepath.EvalSymlinks(request.Directory)
@@ -408,6 +409,47 @@ func valueOrEmpty(value *string) string {
 func (a *appRuntime) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
+		var request privateprotocol.AdHocRegister
+		if err := privateprotocol.Decode(w, r, &request); err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		status, err := a.adhoc.Register(request)
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		privateprotocol.Write(w, http.StatusOK, status)
+	})
+	for _, operation := range []string{"status", "renew", "unregister"} {
+		mux.HandleFunc("POST /v1/ad-hoc/"+operation, func(w http.ResponseWriter, r *http.Request) {
+			var request privateprotocol.Registration
+			if err := privateprotocol.Decode(w, r, &request); err != nil || request.Version != privateprotocol.Version {
+				runtimeProblem(w, err)
+				return
+			}
+			var err error
+			switch operation {
+			case "status":
+				status, statusErr := a.adhoc.Status(request.RegistrationID, request.Owner)
+				if statusErr == nil {
+					privateprotocol.Write(w, http.StatusOK, status)
+					return
+				}
+				err = statusErr
+			case "renew":
+				err = a.adhoc.Renew(request.RegistrationID, request.Owner)
+			case "unregister":
+				err = a.adhoc.Unregister(request.RegistrationID, request.Owner)
+			}
+			if err != nil {
+				runtimeProblem(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { privateprotocol.Write(w, 200, a.manager.Snapshot()) })
 	mux.HandleFunc("POST /v1/observe", func(w http.ResponseWriter, r *http.Request) {
 		var observation clientruntime.Observation

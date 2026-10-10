@@ -16,7 +16,10 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -100,6 +103,74 @@ func TestRuntimeAddressWorksWithoutProjectConfiguration(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Version != 1 || address.Socket == "" || runtimeAvailable(t.Context(), address.Socket) {
 		t.Fatalf("unconfigured runtime address = %#v, %v", address, err)
 	}
+}
+
+func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
+	a, state, _ := testAppRuntime(t)
+	started := make(chan struct{})
+	a.adhoc = clientruntime.NewAdHocManager(t.Context(), func(ctx context.Context, request privateprotocol.AdHocRegister, update func(privateprotocol.AdHocStatus)) error {
+		update(privateprotocol.AdHocStatus{Version: 1, RegistrationID: request.RegistrationID, State: "publishing",
+			PublicURLID: "url_allocated", PublicURL: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test"})
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}, func(int) bool { return true }, a.manager.BeginPreparation)
+	t.Cleanup(a.adhoc.Close)
+	socket, err := runtimeSocket(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := runtimeHTTP(socket)
+	token, _, _, err := credentials.NewEphemeralCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := opaqueid.New(opaqueid.InvocationPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "0123456789abcdef0123456789abcdef"
+	call := func(operation string, payload any) (*http.Response, error) {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/v1/ad-hoc/"+operation, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		return client.Do(request)
+	}
+	response, err := call("register", privateprotocol.AdHocRegister{Version: 1, RegistrationID: id, Owner: owner,
+		PID: os.Getpid(), Target: "http://127.0.0.1:3000", Credential: token.String()})
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("register = %v, %v", response, err)
+	}
+	response.Body.Close()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("ad-hoc registration did not start its worker")
+	}
+	registration := privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: owner}
+	response, err = call("status", registration)
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %v, %v", response, err)
+	}
+	var status privateprotocol.AdHocStatus
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if status.State != "publishing" || status.PublicURLID != "url_allocated" || status.PublishRunNumber != 0 {
+		t.Fatalf("register acknowledgement incorrectly reported readiness: %#v", status)
+	}
+	response, err = call("unregister", registration)
+	if err != nil || response.StatusCode != http.StatusNoContent {
+		t.Fatalf("unregister = %v, %v", response, err)
+	}
+	response.Body.Close()
 }
 
 func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *testing.T) {
