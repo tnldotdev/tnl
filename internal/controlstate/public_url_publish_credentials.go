@@ -17,8 +17,17 @@ import (
 
 const maximumPublishCredentialLifetime = 90 * 24 * time.Hour
 
+type PublishCredentialKind string
+
+const (
+	PublishCredentialSavedURL  PublishCredentialKind = "saved_url"
+	PublishCredentialEphemeral PublishCredentialKind = "ephemeral"
+)
+
 type PublicURLPublishCredential struct {
 	ID, PublicURLID, MembershipID, IdentityID, Target string
+	Kind                                              PublishCredentialKind
+	TeamID, DomainID, Namespace, IssuedRole           string
 	PolicyRevision                                    uint64
 	CertificatePlan                                   authorization.CertificatePlan
 	CreatedAt, ExpiresAt                              time.Time
@@ -93,7 +102,7 @@ func (d *Database) CreatePublicURLPublishCredential(ctx context.Context, request
 		return result, "", err
 	}
 	row, err := queries.InsertPublicURLPublishCredential(ctx, controlstatedb.InsertPublicURLPublishCredentialParams{
-		ID: id, PublicURLID: request.PublicURLID, TokenID: tokenID.String(), TokenDigest: digest[:],
+		ID: id, PublicURLID: nullableText(request.PublicURLID), TokenID: tokenID.String(), TokenDigest: digest[:],
 		IssuedByIdentityID: request.IdentityID, MembershipID: request.MembershipID,
 		PolicyRevision: int64(request.PolicyRevision), Target: request.Target,
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope,
@@ -125,7 +134,7 @@ func (d *Database) AuthenticatePublicURLPublishCredential(ctx context.Context, t
 	if err != nil {
 		return PublicURLPublishCredential{}, nil, err
 	}
-	if subtle.ConstantTimeCompare(row.TokenDigest, hash[:]) != 1 || row.RevokedAt.Valid || !row.ExpiresAt.Time.After(now) {
+	if row.Kind != string(PublishCredentialSavedURL) || subtle.ConstantTimeCompare(row.TokenDigest, hash[:]) != 1 || row.RevokedAt.Valid || !row.ExpiresAt.Time.After(now) {
 		return PublicURLPublishCredential{}, nil, ErrPublicURLPublishCredential
 	}
 	return publicURLPublishCredentialFromRow(row), retrySecret, nil
@@ -133,7 +142,7 @@ func (d *Database) AuthenticatePublicURLPublishCredential(ctx context.Context, t
 
 // ValidatePublicURLPublishCredential rechecks current URL and team membership state.
 func (d *Database) ValidatePublicURLPublishCredential(ctx context.Context, credential PublicURLPublishCredential, route PublicURL) error {
-	if credential.PublicURLID != route.ID || credential.Target != route.Target || route.LifecycleState != PublicURLLifecycleEnabled ||
+	if credential.Kind != PublishCredentialSavedURL || credential.PublicURLID != route.ID || credential.Target != route.Target || route.LifecycleState != PublicURLLifecycleEnabled ||
 		route.Ephemeral || route.Purpose != PublicURLPurposeApp {
 		return ErrPublicURLPublishCredential
 	}
@@ -155,7 +164,7 @@ func (d *Database) ValidatePublicURLPublishCredential(ctx context.Context, crede
 }
 
 func (d *Database) ListPublicURLPublishCredentials(ctx context.Context, publicURLID string) ([]PublicURLPublishCredential, error) {
-	rows, err := controlstatedb.New(d.pool).ListPublicURLPublishCredentials(ctx, publicURLID)
+	rows, err := controlstatedb.New(d.pool).ListPublicURLPublishCredentials(ctx, nullableText(publicURLID))
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +191,7 @@ func (d *Database) ListTeamPublicURLPublishCredentials(ctx context.Context, team
 	page := PublicURLPublishCredentialPage{Credentials: make([]PublicURLPublishCredentialSummary, 0, min(len(rows), 100))}
 	for _, row := range rows[:min(len(rows), 100)] {
 		entry := PublicURLPublishCredentialSummary{
-			ID: row.ID, PublicURLID: row.PublicURLID, PublicURL: "https://" + row.CanonicalHostname,
+			ID: row.ID, PublicURLID: row.PublicURLID.String, PublicURL: "https://" + row.CanonicalHostname,
 			CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time,
 		}
 		if row.RevokedAt.Valid {
@@ -215,7 +224,7 @@ func (d *Database) PublicURLPublishCredentialByID(ctx context.Context, id string
 
 func (d *Database) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string, now time.Time) (PublicURLPublishCredential, error) {
 	row, err := controlstatedb.New(d.pool).RevokePublicURLPublishCredential(ctx, controlstatedb.RevokePublicURLPublishCredentialParams{
-		PublicURLID: publicURLID, ID: credentialID, RevokedAt: timestamptz(now),
+		PublicURLID: nullableText(publicURLID), ID: credentialID, RevokedAt: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicURLPublishCredential{}, ErrPublicURLNotFound
@@ -228,7 +237,8 @@ func (d *Database) RevokePublicURLPublishCredential(ctx context.Context, publicU
 
 func publicURLPublishCredentialFromRow(row controlstatedb.ControlPublicUrlPublishCredential) PublicURLPublishCredential {
 	result := PublicURLPublishCredential{
-		ID: row.ID, PublicURLID: row.PublicURLID, MembershipID: row.MembershipID,
+		ID: row.ID, PublicURLID: row.PublicURLID.String, MembershipID: row.MembershipID, Kind: PublishCredentialKind(row.Kind),
+		TeamID: row.TeamID.String, DomainID: row.DomainID.String, Namespace: row.Namespace.String, IssuedRole: row.IssuedRole.String,
 		IdentityID: row.IssuedByIdentityID, Target: row.Target, PolicyRevision: uint64(row.PolicyRevision),
 		CertificatePlan: authorization.CertificatePlan{
 			CacheKey: row.CertificateCacheKey, Scope: row.CertificateScope,

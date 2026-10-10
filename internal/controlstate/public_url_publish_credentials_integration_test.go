@@ -133,11 +133,43 @@ func TestIntegrationTeamPublishCredentialPagesAndLookup(t *testing.T) {
 		seen[entry.ID] = true
 	}
 	byID, err := database.PublicURLPublishCredentialByID(t.Context(), last.ID)
-	if err != nil || byID.ID != last.ID || byID.PublicURLID != route.ID {
+	if err != nil || byID.ID != last.ID || byID.PublicURLID != route.ID || byID.Kind != PublishCredentialSavedURL {
 		t.Fatalf("credential lookup = %#v, %v", byID, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_url_publish_credentials SET kind = 'ephemeral' WHERE id = $1`, last.ID); err == nil {
+		t.Fatal("the schema accepted an ad-hoc credential bound to a saved URL")
 	}
 	otherTeam, err := database.ListTeamPublicURLPublishCredentials(t.Context(), "team_other", "")
 	if err != nil || len(otherTeam.Credentials) != 0 {
 		t.Fatalf("cross-team list = %#v, %v", otherTeam, err)
+	}
+}
+
+func TestIntegrationSavedTokenCannotAuthenticateAnAdHocScope(t *testing.T) {
+	database, now, run, _ := newPublishRunPrerequisites(t)
+	route, err := database.GetPublicURLForAuthorization(t.Context(), run.PublicURLID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, token, err := database.CreatePublicURLPublishCredential(t.Context(), CreatePublicURLPublishCredentialRequest{
+		PublicURLID: route.ID, TeamID: run.TeamID, IdentityID: run.ActingIdentityID, MembershipID: run.MembershipID,
+		PolicyRevision: run.PolicyRevision, Target: route.Target,
+		CertificatePlan: authorization.CertificatePlan{
+			CacheKey: run.CertificateCacheKey, Scope: run.CertificateScope,
+			Identifiers: run.CertificateIdentifiers, ChallengeMethod: run.CertificateChallenge,
+		}, Now: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.pool.Exec(t.Context(), `UPDATE control.public_url_publish_credentials
+SET kind = 'ephemeral', public_url_id = NULL, target = '', team_id = $2, domain_id = $3,
+    namespace = 'member.example.test', issued_role = 'member', certificate_challenge_method = 'dns-01'
+WHERE id = $1`, credential.ID, run.TeamID, route.DomainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.AuthenticatePublicURLPublishCredential(t.Context(), token, now); !errors.Is(err, ErrPublicURLPublishCredential) {
+		t.Fatalf("saved-URL token authenticated an ad-hoc scope: %v", err)
 	}
 }

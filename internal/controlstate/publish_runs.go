@@ -170,7 +170,7 @@ func (d *Database) createPublishRun(
 	}
 	if request.PublishCredentialID != "" {
 		credential, credentialErr := queries.GetPublicURLPublishCredentialByID(ctx, request.PublishCredentialID)
-		if credentialErr != nil || credential.PublicURLID != route.ID || credential.Target != route.Target ||
+		if credentialErr != nil || credential.Kind != string(PublishCredentialSavedURL) || !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target ||
 			credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
 			credential.IssuedByIdentityID != request.ActingIdentityID || credential.MembershipID != request.MembershipID ||
 			credential.PolicyRevision != int64(request.PolicyRevision) {

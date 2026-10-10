@@ -498,7 +498,7 @@ type ControlPublicUrl struct {
 
 type ControlPublicUrlPublishCredential struct {
 	ID                         string
-	PublicURLID                string
+	PublicURLID                pgtype.Text
 	TokenID                    string
 	TokenDigest                []byte
 	IssuedByIdentityID         string
@@ -512,6 +512,11 @@ type ControlPublicUrlPublishCredential struct {
 	CreatedAt                  pgtype.Timestamptz
 	ExpiresAt                  pgtype.Timestamptz
 	RevokedAt                  pgtype.Timestamptz
+	Kind                       string
+	TeamID                     pgtype.Text
+	DomainID                   pgtype.Text
+	Namespace                  pgtype.Text
+	IssuedRole                 pgtype.Text
 }
 
 type ControlPublicUrlRecoveryEpisode struct {

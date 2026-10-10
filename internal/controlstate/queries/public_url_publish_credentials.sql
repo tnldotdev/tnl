@@ -47,7 +47,7 @@ FROM control.public_url_publish_credentials AS credentials
 WHERE credentials.id = sqlc.arg(credential_id) AND credentials.public_url_id = sqlc.arg(public_url_id);
 
 -- name: GetPublishRunCredentialState :one
-SELECT credentials.id, credentials.revoked_at, credentials.expires_at,
+SELECT credentials.id, credentials.kind, credentials.revoked_at, credentials.expires_at,
     credentials.membership_id, credentials.issued_by_identity_id,
     credentials.policy_revision, credentials.target, credentials.public_url_id
 FROM control.publish_run_publish_credentials AS runs
