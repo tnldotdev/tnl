@@ -36,7 +36,7 @@ func TestRunCleansAllocatedURLWhenRegistrationCannotContinue(t *testing.T) {
 		case "POST /v1/ephemeral-public-urls":
 			allocations.Add(1)
 			var body controlv1.AllocateEphemeralPublicURLRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.InvocationId != invocation || body.Target != "http://127.0.0.1:3000" ||
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.InvocationId != invocation || body.Target != "http://app.internal:3000" ||
 				body.Limits == nil || body.Limits.Requests == nil || *body.Limits.Requests != 1 {
 				http.Error(w, "invalid allocation", http.StatusBadRequest)
 				return
@@ -56,7 +56,7 @@ func TestRunCleansAllocatedURLWhenRegistrationCannotContinue(t *testing.T) {
 	defer server.Close()
 	registrationErr := errors.New("registration is no longer current")
 	err = Run(context.Background(), Options{ControlURL: server.URL, HTTPClient: server.Client(), State: &clientstate.Store{},
-		Credential: credential, InvocationID: invocation, Target: "http://127.0.0.1:3000",
+		Credential: credential, InvocationID: invocation, Target: "http://app.internal:3000",
 		Limits: publisher.ApplicationLimits{Requests: 1}, OnAllocated: func(_ controlv1.PublicURL) error { return registrationErr },
 	})
 	if !errors.Is(err, registrationErr) || allocations.Load() != 1 || deletions.Load() != 1 {

@@ -1777,6 +1777,7 @@ components:
           $ref: "#/components/schemas/ResourceID"
         target:
           type: string
+          description: Local service address, such as http://app.internal:3000.
         allow_ip:
           type: array
           maxItems: 32

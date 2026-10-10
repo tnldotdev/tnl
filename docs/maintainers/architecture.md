@@ -159,6 +159,8 @@ and holds the runtime open until they drain. each worker calls
 `internal/adhoc.Run`; its local status becomes routable only on the ready event
 for that registration and publish run. ad-hoc readiness uses no public GET
 probe and cannot become a configured-service readiness observation.
+ad-hoc URLs can reach local services by hostname, such as
+`http://app.internal:3000`.
 
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;
