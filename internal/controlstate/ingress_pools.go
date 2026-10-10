@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const primaryIngressPoolID = "ingress-a"
@@ -48,7 +49,7 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 	}
 	seen := make(map[int32]struct{}, len(ports))
 	for _, port := range ports {
-		if port < 1024 || port > 65535 {
+		if !tcpport.Valid(int(port)) {
 			return ErrPublicURLInvalid
 		}
 		if _, found := seen[port]; found {

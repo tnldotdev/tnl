@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/storagekey"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const defaultACMEDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
@@ -347,14 +348,14 @@ func (c Config) ConfiguredTCPPorts() ([]int32, error) {
 	ports := make([]int32, 0)
 	seen := make(map[int32]bool)
 	for _, part := range strings.Split(c.TCPPorts, ",") {
-		first, last := part, part
-		if left, right, found := strings.Cut(part, "-"); found {
-			first, last = left, right
+		first, last, rangeSpecified := strings.Cut(part, "-")
+		if !rangeSpecified {
+			last = first
 		}
 		start, startErr := strconv.Atoi(first)
 		end, endErr := strconv.Atoi(last)
-		if startErr != nil || endErr != nil || start < 1024 || end > 65535 || start > end {
-			return nil, errors.New("TCP ports must be comma-separated ports or ranges from 1024 through 65535")
+		if startErr != nil || endErr != nil || !tcpport.Valid(start) || !tcpport.Valid(end) || start > end {
+			return nil, fmt.Errorf("TCP ports must be comma-separated ports or ranges from %d through %d", tcpport.Min, tcpport.Max)
 		}
 		for value := start; value <= end; value++ {
 			port := int32(value)

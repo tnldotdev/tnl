@@ -122,6 +122,11 @@ func TestIntegrationPrimaryIngressPoolProvisioningIsAdditive(t *testing.T) {
 	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 5432}, now); err == nil {
 		t.Fatal("duplicate operator port inventory accepted")
 	}
+	for _, port := range []int32{1023, 65536} {
+		if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{port}, now); err == nil {
+			t.Fatalf("out-of-range operator port %d accepted", port)
+		}
+	}
 	capacities, err = database.TCPPortPoolCapacities(ctx)
 	if err != nil || len(capacities) != 1 || capacities[0].ConfiguredPorts != 3 {
 		t.Fatalf("failed configuration changed inventory = %#v, %v", capacities, err)
