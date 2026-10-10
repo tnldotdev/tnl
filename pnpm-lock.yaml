@@ -87,7 +87,7 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/tnl:
+  packages/ts:
     devDependencies:
       '@hono/node-server':
         specifier: 2.1.1
@@ -3247,7 +3247,7 @@ snapshots:
 
   browserslist@4.29.1:
     dependencies:
-      baseline-browser-mapping: 2.11.26
+      baseline-browser-mapping: 2.11.20
       caniuse-lite: 1.0.30001810
       electron-to-chromium: 1.5.439
       node-releases: 2.0.57
@@ -3704,7 +3704,7 @@ snapshots:
     dependencies:
       '@next/env': 16.3.6
       '@swc/helpers': 0.5.23
-      baseline-browser-mapping: 2.11.20
+      baseline-browser-mapping: 2.11.26
       caniuse-lite: 1.0.30001810
       postcss: 8.5.23
       react: 19.3.0
