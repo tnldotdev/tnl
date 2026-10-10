@@ -788,6 +788,27 @@ paths:
                 $ref: "#/components/schemas/PublicURLPublishCredential"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publish-credentials/allocate:
+    post:
+      operationId: allocateEphemeralPublicURL
+      summary: Allocate one ad-hoc public URL for an invocation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllocateEphemeralPublicURLRequest"
+      responses:
+        "201":
+          description: New or idempotently allocated ad-hoc public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURL"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
       operationId: heartbeatPublishRun
@@ -1734,6 +1755,45 @@ components:
           format: int64
           minimum: 1
           maximum: 7776000
+    AllocateEphemeralPublicURLRequest:
+      type: object
+      additionalProperties: false
+      required: [invocation_id, target]
+      properties:
+        invocation_id:
+          $ref: "#/components/schemas/ResourceID"
+        target:
+          type: string
+        allow_ip:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+        allow_all_ips:
+          type: boolean
+        limits:
+          $ref: "#/components/schemas/PublisherApplicationLimits"
+    PublisherApplicationLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        requests:
+          type: integer
+          minimum: 1
+        concurrency:
+          type: integer
+          minimum: 1
+        rate:
+          type: object
+          additionalProperties: false
+          required: [requests, per]
+          properties:
+            requests:
+              type: integer
+              minimum: 1
+            per:
+              type: string
     IssuedEphemeralPublishCredential:
       type: object
       additionalProperties: false

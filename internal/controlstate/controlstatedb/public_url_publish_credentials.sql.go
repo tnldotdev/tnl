@@ -135,7 +135,7 @@ func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID
 }
 
 const getReadyEphemeralCredentialDomain = `-- name: GetReadyEphemeralCredentialDomain :one
-SELECT id, canonical_domain, kind
+SELECT id, canonical_domain, kind, dns_authority_reference
 FROM control.domains
 WHERE id = $1 AND state = 'ready' AND released_at IS NULL
     AND (kind = 'managed' OR team_id = $2)
@@ -148,15 +148,21 @@ type GetReadyEphemeralCredentialDomainParams struct {
 }
 
 type GetReadyEphemeralCredentialDomainRow struct {
-	ID              string
-	CanonicalDomain string
-	Kind            string
+	ID                    string
+	CanonicalDomain       string
+	Kind                  string
+	DnsAuthorityReference pgtype.Text
 }
 
 func (q *Queries) GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error) {
 	row := q.db.QueryRow(ctx, getReadyEphemeralCredentialDomain, arg.DomainID, arg.TeamID)
 	var i GetReadyEphemeralCredentialDomainRow
-	err := row.Scan(&i.ID, &i.CanonicalDomain, &i.Kind)
+	err := row.Scan(
+		&i.ID,
+		&i.CanonicalDomain,
+		&i.Kind,
+		&i.DnsAuthorityReference,
+	)
 	return i, err
 }
 

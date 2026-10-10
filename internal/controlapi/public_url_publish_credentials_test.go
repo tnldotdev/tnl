@@ -44,6 +44,10 @@ func (s *scopedCredentialStoreStub) RevokeEphemeralCredential(_ context.Context,
 	return s.credential, nil
 }
 
+func (s *scopedCredentialStoreStub) AuthenticateEphemeralCredential(_ context.Context, _ credentials.EphemeralCredential, _ time.Time) (controlstate.PublicURLPublishCredential, error) {
+	return s.credential, nil
+}
+
 func (s *scopedCredentialStoreStub) ListPublicURLPublishCredentials(_ context.Context, _ string) ([]controlstate.PublicURLPublishCredential, error) {
 	return []controlstate.PublicURLPublishCredential{s.credential}, nil
 }
