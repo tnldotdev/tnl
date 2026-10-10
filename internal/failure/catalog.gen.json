@@ -44,6 +44,62 @@
       "action": "log in again or check the supplied access token"
     },
     {
+      "code": "TNL_CLIENT_AUTH_CANCELLED",
+      "slug": "auth-cancelled",
+      "class": "conflict",
+      "message": "the login operation was cancelled",
+      "action": "start a new login with tnl auth login"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_DENIED",
+      "slug": "auth-denied",
+      "class": "forbidden",
+      "message": "login approval was denied",
+      "action": "start a new login with tnl auth login"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_EXPIRED",
+      "slug": "auth-expired",
+      "class": "unauthenticated",
+      "message": "the login approval code expired",
+      "action": "start a new login with tnl auth login"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE",
+      "slug": "auth-method-unavailable",
+      "class": "invalid",
+      "message": "the selected server does not support this login method",
+      "action": "use tnl auth login with a method supported by this server"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_OPERATION_NOT_FOUND",
+      "slug": "auth-operation-not-found",
+      "class": "not_found",
+      "message": "the login operation was not found for the selected server",
+      "action": "check the operation ID, server, and state directory"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE",
+      "slug": "auth-provider-unavailable",
+      "class": "unavailable",
+      "message": "the sign-in provider could not be reached or its signing keys are unavailable",
+      "action": "check provider connectivity and resume with tnl auth login wait \u003coperation-id\u003e"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_RECOVERY_REQUIRED",
+      "slug": "auth-recovery-required",
+      "class": "conflict",
+      "message": "login credential redemption has an uncertain outcome",
+      "action": "start a new login with tnl auth login; this operation cannot be replayed"
+    },
+    {
+      "code": "TNL_CLIENT_AUTH_WAIT_TIMEOUT",
+      "slug": "auth-wait-timeout",
+      "class": "unavailable",
+      "message": "login is still waiting for approval",
+      "action": "resume with tnl auth login wait \u003coperation-id\u003e"
+    },
+    {
       "code": "TNL_CLIENT_BROWSER_OPEN_FAILED",
       "slug": "browser-open-failed",
       "class": "unavailable",

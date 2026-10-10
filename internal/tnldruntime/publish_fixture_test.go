@@ -153,7 +153,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 		t.Fatal(err)
 	}
 	owner.cleanupResource(t, func() { _ = stateDatabase.Close() })
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+	authenticated, err := clientauth.Login(ctx, clientauth.Config{
 		ServerEndpoint: controlOrigin, State: stateDatabase, HTTPClient: controlHTTP, Diagnostics: io.Discard,
 		ForceLoginToken: true, LoginToken: func() (credentials.LoginToken, error) { return credentials.LoginToken(testLoginToken), nil },
 	})

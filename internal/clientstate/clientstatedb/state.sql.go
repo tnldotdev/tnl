@@ -140,7 +140,7 @@ func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificate
 }
 
 const getControlSession = `-- name: GetControlSession :one
-SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at
+SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at, refresh_pending
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -157,6 +157,7 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 		&i.StoredRefreshToken,
 		&i.RefreshExpiresAt,
 		&i.UpdatedAt,
+		&i.RefreshPending,
 	)
 	return i, err
 }
@@ -415,6 +416,21 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 		return nil, err
 	}
 	return items, nil
+}
+
+const setControlSessionRefreshPending = `-- name: SetControlSessionRefreshPending :exec
+UPDATE control_sessions SET refresh_pending = ?1
+WHERE server_origin = ?2
+`
+
+type SetControlSessionRefreshPendingParams struct {
+	Pending      int64
+	ServerOrigin string
+}
+
+func (q *Queries) SetControlSessionRefreshPending(ctx context.Context, arg SetControlSessionRefreshPendingParams) error {
+	_, err := q.db.ExecContext(ctx, setControlSessionRefreshPending, arg.Pending, arg.ServerOrigin)
+	return err
 }
 
 const setInstallationID = `-- name: SetInstallationID :exec
@@ -696,6 +712,7 @@ ON CONFLICT (server_origin) DO UPDATE SET
     access_expires_at = excluded.access_expires_at,
     stored_refresh_token = excluded.stored_refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
+    refresh_pending = 0,
     updated_at = excluded.updated_at
 `
 

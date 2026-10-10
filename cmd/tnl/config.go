@@ -312,7 +312,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return command == "login" || command == "logout" || strings.HasPrefix(command, "admin ") ||
+	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
 
@@ -368,12 +368,14 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Alias.Use.remoteFlags, true)
 	case "alias release <name>":
 		apply(&flags.Alias.Release.remoteFlags, true)
-	case "login":
-		if flags.Login.Server == "" {
-			flags.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Login.ServerURL, project.Config.Server, "")
-		}
-	case "logout":
-		flags.Logout.ServerURL, _, contextErr = resolveProjectServer(flags.Logout.ServerURL, project.Config.Server, "")
+	case "auth status":
+		apply(&flags.Auth.Status.remoteFlags, false)
+	case "auth login", "auth login run", "auth login start":
+		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, os.Getenv("TNL_LOGIN_TOKEN"))
+	case "auth login wait <operation-id>", "auth login inspect <operation-id>", "auth login cancel <operation-id>":
+		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
+	case "auth logout":
+		flags.Auth.Logout.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Logout.ServerURL, project.Config.Server, "")
 	case "team current":
 		apply(&flags.Team.Current.remoteFlags, true)
 	case "team list":

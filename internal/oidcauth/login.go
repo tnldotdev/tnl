@@ -25,13 +25,14 @@ const (
 )
 
 type Config struct {
-	Issuer     string
-	ClientID   string
-	LoginFlow  string
-	Scopes     []string
-	HTTPClient *http.Client
-	OpenURL    func(string) error
-	Prompt     func(Prompt) error
+	Issuer       string
+	ClientID     string
+	LoginFlow    string
+	Scopes       []string
+	HTTPClient   *http.Client
+	OpenURL      func(string) error
+	Prompt       func(Prompt) error
+	BeforeRedeem func() error
 }
 
 // Prompt contains the user action needed to continue authentication.
@@ -76,7 +77,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	case LoginFlowDeviceCode:
 		token, err = deviceLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt)
 	case LoginFlowAuthorizationCodePKCE:
-		token, err = authorizationCodeLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt)
+		token, err = authorizationCodeLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt, config.BeforeRedeem)
 	}
 	if err != nil {
 		return Result{}, err
@@ -126,6 +127,7 @@ func authorizationCodeLogin(
 	output io.Writer,
 	openURL func(string) error,
 	prompt func(Prompt) error,
+	beforeRedeem func() error,
 ) (*oauth2.Token, error) {
 	if oauthConfig.Endpoint.AuthURL == "" || oauthConfig.Endpoint.TokenURL == "" {
 		return nil, errors.New("oidcauth: provider does not support authorization-code login")
@@ -157,7 +159,7 @@ func authorizationCodeLogin(
 		if request.URL.Query().Get("error") != "" || request.URL.Query().Get("code") == "" {
 			http.Error(response, "OIDC login failed", http.StatusBadRequest)
 			select {
-			case callbackError <- errors.New("oidcauth: invalid authorization response"):
+			case callbackError <- &oauth2.RetrieveError{ErrorCode: request.URL.Query().Get("error")}:
 			default:
 			}
 			return
@@ -199,6 +201,11 @@ func authorizationCodeLogin(
 		return nil, err
 	case authorizationCode = <-code:
 	}
+	if beforeRedeem != nil {
+		if err := beforeRedeem(); err != nil {
+			return nil, err
+		}
+	}
 	token, err := oauthConfig.Exchange(ctx, authorizationCode, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("oidcauth: exchange authorization code: %w", err)
@@ -226,7 +233,7 @@ func verifiedResult(
 ) (Result, error) {
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" || len(rawIDToken) > 16384 {
-		return Result{}, errors.New("oidcauth: provider did not return an ID token")
+		return Result{}, fmt.Errorf("%w: provider did not return an ID token", ErrUnauthenticated)
 	}
 	identity, err := verifyToken(ctx, provider, clientID, rawIDToken)
 	if err != nil {
@@ -234,7 +241,7 @@ func verifiedResult(
 	}
 	if identity.Nonce != nonce &&
 		(loginFlow == LoginFlowAuthorizationCodePKCE || identity.Nonce != "") {
-		return Result{}, errors.New("oidcauth: invalid ID token nonce")
+		return Result{}, fmt.Errorf("%w: invalid ID token nonce", ErrUnauthenticated)
 	}
 	return Result{IDToken: rawIDToken, Identity: identity}, nil
 }

@@ -117,13 +117,24 @@ function run(
   allowFailure = false,
 ): Promise<number> {
   return new Promise<number>((resolve, reject) => {
-    const child = spawn(executable, arguments_, { stdio: inherited ? "inherit" : "ignore" });
+    const child = spawn(executable, arguments_, {
+      stdio: inherited ? "inherit" : ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8").on("data", (data: string) => {
+      stderr = (stderr + data).slice(-4096);
+    });
     if (inherited) testProcess = child;
     child.once("error", reject);
     child.once("close", (code, signal) => {
       if (inherited) testProcess = undefined;
       if (code === 0 || allowFailure) resolve(code ?? 1);
-      else reject(new Error(`${executable} exited with ${signal ?? code}`));
+      else
+        reject(
+          new Error(
+            `${executable} exited with ${signal ?? code}${stderr.trim() === "" ? "" : `: ${stderr.trim()}`}`,
+          ),
+        );
     });
   });
 }

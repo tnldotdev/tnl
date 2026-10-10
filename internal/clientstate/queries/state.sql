@@ -83,10 +83,15 @@ ON CONFLICT (server_origin) DO UPDATE SET
     access_expires_at = excluded.access_expires_at,
     stored_refresh_token = excluded.stored_refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
+    refresh_pending = 0,
     updated_at = excluded.updated_at;
 
 -- name: DeleteControlSession :exec
 DELETE FROM control_sessions
+WHERE server_origin = sqlc.arg(server_origin);
+
+-- name: SetControlSessionRefreshPending :exec
+UPDATE control_sessions SET refresh_pending = sqlc.arg(pending)
 WHERE server_origin = sqlc.arg(server_origin);
 
 -- name: GetCertificateMaterial :one

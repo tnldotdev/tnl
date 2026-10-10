@@ -58,7 +58,7 @@ func TestBinaryIntegrationControlSessionRefreshAndLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runIntegrationBinaryCommand(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath, "logout")
+	runIntegrationBinaryCommand(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath, "auth", "logout")
 	state, err = clientstate.Open(integrationOperationContext(t), fixture.stateDirectory)
 	if err != nil {
 		t.Fatal(err)

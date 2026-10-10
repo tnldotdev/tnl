@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -119,9 +118,6 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		authConfig.ForceLoginToken = true
 		authConfig.LoginToken = func() (credentials.LoginToken, error) { return credentials.LoginToken(config.LoginToken), nil }
 	} else {
-		authConfig.AuthenticationPrompt = func(oidcauth.Prompt) error {
-			return fmt.Errorf("saved login needs renewal; run tnl login --server=%s", config.Server)
-		}
 		store, err := database.Server(ctx, config.Server)
 		if err != nil {
 			return nil, err
@@ -129,14 +125,18 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		if session, found, err := store.ControlSession(ctx); err != nil {
 			return nil, err
 		} else if !found || !session.RefreshExpiresAt.After(time.Now().Add(time.Minute)) {
-			return nil, fmt.Errorf("no usable saved login for %s; run tnl login --server=%s", config.Server, config.Server)
+			return nil, fmt.Errorf("no usable saved login for %s; run tnl auth login --server=%s", config.Server, config.Server)
 		}
+	}
+	authenticate := clientauth.Authenticate
+	if config.LoginToken != "" {
+		authenticate = clientauth.Login
 	}
 	var auth *clientauth.Client
 	authCtx, cancelAuth := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelAuth()
 	for {
-		auth, err = clientauth.Authenticate(authCtx, authConfig)
+		auth, err = authenticate(authCtx, authConfig)
 		if !errors.Is(err, controlclient.ErrUnavailable) {
 			break
 		}

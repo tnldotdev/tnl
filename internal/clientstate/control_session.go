@@ -24,6 +24,7 @@ type ControlSession struct {
 	AccessExpiresAt  time.Time
 	RefreshToken     string
 	RefreshExpiresAt time.Time
+	RefreshPending   bool
 }
 
 func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error) {
@@ -52,6 +53,7 @@ func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error
 		SessionID: stored.SessionID, AccessToken: string(accessToken),
 		AccessExpiresAt: unixNanoTime(stored.AccessExpiresAt), RefreshToken: string(refreshToken),
 		RefreshExpiresAt: unixNanoTime(stored.RefreshExpiresAt),
+		RefreshPending:   stored.RefreshPending != 0,
 	}
 	if err := s.validateControlSession(session); err != nil {
 		return ControlSession{}, true, err
@@ -123,6 +125,14 @@ func (s *Store) RemoveControlSession(ctx context.Context) error {
 		return fmt.Errorf("clientstate: remove control session: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) SetControlSessionRefreshPending(ctx context.Context, pending bool) error {
+	var value int64
+	if pending {
+		value = 1
+	}
+	return s.database.queries.SetControlSessionRefreshPending(ctx, clientstatedb.SetControlSessionRefreshPendingParams{ServerOrigin: s.controlEndpoint, Pending: value})
 }
 
 func controlSessionContext(sessionID, credential string) string {

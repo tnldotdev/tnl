@@ -483,8 +483,8 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	if flags.URL.Delete.ProjectTeam != "" {
 		t.Fatalf("cross-server url delete kept project team: %#v", flags.URL.Delete)
 	}
-	if err := applyProjectCommandContext("login", project, &flags); err != nil || flags.Login.ServerURL != server {
-		t.Fatalf("login server = %q, %v", flags.Login.ServerURL, err)
+	if err := applyProjectCommandContext("auth login", project, &flags); err != nil || flags.Auth.Login.ServerURL != server {
+		t.Fatalf("login server = %q, %v", flags.Auth.Login.ServerURL, err)
 	}
 	if err := applyProjectCommandContext("admin maintenance block <name>", project, &flags); err != nil || flags.Admin.Maintenance.Block.ServerURL != server {
 		t.Fatalf("admin server = %q, %v", flags.Admin.Maintenance.Block.ServerURL, err)

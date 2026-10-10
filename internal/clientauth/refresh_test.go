@@ -238,6 +238,9 @@ func TestForcedRefreshFailureNeverPromptsOrChangesSession(t *testing.T) {
 			if token != "" || err == nil || test.want != nil && !errors.Is(err, test.want) || prompts != 0 {
 				t.Fatalf("refresh: token returned=%v prompts=%d error=%v", token != "", prompts, err)
 			}
+			if test.invalid {
+				old.RefreshPending = true
+			}
 			f.assertSession(t, old)
 			if len(f.transport.snapshot()) != 2 {
 				t.Fatal("unexpected retry or login")
