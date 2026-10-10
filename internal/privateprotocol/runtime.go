@@ -41,7 +41,7 @@ type Registration struct {
 // AdHocRegister binds one invocation to an already-listening local target.
 // the credential is sent only across the private socket and never enters status.
 type AdHocRegister struct {
-	Protocol       int          `json:"protocol"`
+	Version        int          `json:"version"`
 	RegistrationID string       `json:"registration_id"`
 	Owner          string       `json:"owner"`
 	PID            int          `json:"pid"`
@@ -66,7 +66,7 @@ type AdHocRateLimit struct {
 
 // AdHocStatus never contains credentials, visitor requests, or browser metadata.
 type AdHocStatus struct {
-	Protocol         int    `json:"protocol"`
+	Version          int    `json:"version"`
 	RegistrationID   string `json:"registration_id"`
 	State            string `json:"state"`
 	PublicURLID      string `json:"public_url_id,omitempty"`

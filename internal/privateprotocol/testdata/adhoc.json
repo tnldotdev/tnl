@@ -1,6 +1,6 @@
 {
   "register": {
-    "protocol": 1,
+    "version": 1,
     "registration_id": "ivk_0123456789abcdefghijkl",
     "owner": "0123456789abcdef0123456789abcdef",
     "pid": 123,
@@ -15,7 +15,7 @@
     }
   },
   "ready": {
-    "protocol": 1,
+    "version": 1,
     "registration_id": "ivk_0123456789abcdefghijkl",
     "state": "routable",
     "public_url_id": "url_allocated",
@@ -23,7 +23,7 @@
     "publish_run_number": 1
   },
   "failed": {
-    "protocol": 1,
+    "version": 1,
     "registration_id": "ivk_0123456789abcdefghijkl",
     "state": "failed",
     "failure_code": "runtime.publication_failed"
