@@ -64,6 +64,7 @@ type Config struct {
 	ObserveResponse          ResponseObserver
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
+	Limits                   ApplicationLimits
 	ObserveRequest           func(RequestObservation)
 	RequestInspection        projectconfig.RequestInspectionMode
 	AllowedIPPrefixes        []string

@@ -14,6 +14,8 @@ const (
 	RequestRejected             Code = "TNL_REQUEST_REJECTED"
 	RequestMisdirected          Code = "TNL_REQUEST_MISDIRECTED"
 	RequestLimitReached         Code = "TNL_REQUEST_LIMIT_REACHED"
+	RequestRateLimited          Code = "TNL_REQUEST_RATE_LIMITED"
+	RequestBudgetExhausted      Code = "TNL_REQUEST_BUDGET_EXHAUSTED"
 	IPPolicyDenied              Code = "TNL_IP_POLICY_DENIED"
 	AuthenticationTimeout       Code = "TNL_AUTHENTICATION_TIMEOUT"
 	AuthenticationRequired      Code = "TNL_AUTHENTICATION_REQUIRED"

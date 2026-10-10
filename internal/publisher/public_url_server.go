@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,7 @@ type PublicURLServerConfig struct {
 	BrowserAccess     *browserAccess
 	Feedback          *feedbackRuntime
 	RequestLimit      int // zero selects localproxy.DefaultRequestLimit.
+	Limits            ApplicationLimits
 	OnTargetFailure   func()
 	ObserveRequest    func(RequestObservation)
 	RequestInspection projectconfig.RequestInspectionMode
@@ -72,6 +74,7 @@ type PublicURLServer struct {
 	httpDone           chan error
 	closeOnce          sync.Once
 	closeErr           error
+	admission          *applicationAdmission
 
 	// certificate transactions retain challenge identity across lost control responses.
 	challengeIssuanceID string
@@ -133,6 +136,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.RequestLimit < 0 {
 		return nil, errors.New("publisher: request limit cannot be negative")
 	}
+	if config.Limits.Concurrency == 0 {
+		config.Limits.Concurrency = config.RequestLimit
+	}
+	admission, err := newApplicationAdmission(config.Limits)
+	if err != nil {
+		return nil, err
+	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
@@ -148,7 +158,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.RequestLimit, config.Mounts,
+		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts,
 			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
 				if request != nil {
 					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
@@ -160,15 +170,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			return nil, err
 		}
 	}
-	limit := config.RequestLimit
-	if limit == 0 {
-		limit = localproxy.DefaultRequestLimit
-	}
-	active := make(chan struct{}, limit)
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
 		hostname:        hostname,
+		admission:       admission,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
 		tls: &tls.Config{
@@ -338,18 +344,27 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if config.ShareAccess != nil || config.Feedback != nil || config.BrowserAccess != nil {
 					request = stripTnlCookies(request)
 				}
-				select {
-				case active <- struct{}{}:
-					defer func() { <-active }()
-				default:
+				if status, retryAfter := admission.enter(time.Now()); status != 0 {
 					if request.ProtoMajor == 1 {
 						// avoid draining an unread body before sending the rejection.
 						response.Header().Set("Connection", "close")
 					}
-					response.Header().Set("Retry-After", "1")
-					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
+					if retryAfter > 0 {
+						response.Header().Set("Retry-After", strconv.FormatInt(int64((retryAfter+time.Second-1)/time.Second), 10))
+					}
+					switch status {
+					case http.StatusTooManyRequests:
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestRateLimited)
+					case http.StatusServiceUnavailable:
+						if retryAfter == 0 {
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestBudgetExhausted)
+						} else {
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
+						}
+					}
 					return
 				}
+				defer admission.leave()
 				handler.ServeHTTP(response, request)
 			}),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
