@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -26,6 +27,8 @@ type publicURLUpdateCommand struct {
 	Target          string   `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
 	AllowIP         []string `name:"allow-ip" help:"Replace visitor addresses; repeat for each address or prefix."`
 	AllowAllIPs     bool     `name:"allow-all-ips" help:"Allow visitors from every IP."`
+	Keep            bool     `name:"keep" help:"Keep this saved public URL indefinitely instead of retiring it when idle."`
+	AutoRetire      bool     `name:"auto-retire" help:"Resume retirement after 180 idle days and a 30-day recovery window."`
 }
 
 type publicURLListCommand struct {
@@ -70,6 +73,11 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(route.ServiceProtocol)},
 				clioutput.Field{Label: "public URL", Value: address})
 		}
+		if route.Kept != nil && *route.Kept {
+			fields = append(fields, clioutput.Field{Label: "retirement", Value: "kept"})
+		} else if route.IdleRecoveryUntil != nil {
+			fields = append(fields, clioutput.Field{Label: "recovery until", Value: route.IdleRecoveryUntil.UTC().Format(time.RFC3339)})
+		}
 		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(output, "tnl url list", countState(len(routes), "public URL", "public URLs"), "", blocks...)
@@ -100,11 +108,14 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 }
 
 func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, diagnostics io.Writer) error {
-	if flags.Target == "" && flags.AllowIP == nil && !flags.AllowAllIPs {
-		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("set --target, --allow-ip, or --allow-all-ips to update this public URL"))
+	if flags.Target == "" && flags.AllowIP == nil && !flags.AllowAllIPs && !flags.Keep && !flags.AutoRetire {
+		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("set --target, --allow-ip, --allow-all-ips, --keep, or --auto-retire"))
 	}
 	if flags.AllowAllIPs && flags.AllowIP != nil {
 		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("--allow-all-ips cannot be combined with --allow-ip"))
+	}
+	if flags.Keep && flags.AutoRetire {
+		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("--keep and --auto-retire cannot be combined"))
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl url update", diagnostics)
 	if err != nil {
@@ -144,9 +155,12 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		}
 		allowed = policy.prefixes
 	}
-	updated, err := session.authenticated.Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
-		Target: target, AllowedIpPrefixes: allowed,
-	})
+	body := controlv1.UpdatePublicURLRequest{Target: target, AllowedIpPrefixes: allowed}
+	if flags.Keep || flags.AutoRetire {
+		kept := flags.Keep
+		body.Kept = &kept
+	}
+	updated, err := session.authenticated.Control.UpdatePublicURL(ctx, flags.PublicURLID, body)
 	if err != nil {
 		return err
 	}
@@ -158,6 +172,10 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if updated.Target != "" {
 		fields = append(fields, clioutput.Field{Label: "target", Value: updated.Target})
 	}
-	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target or policy",
+	footer := "restart the publisher to use the new target or policy"
+	if flags.Keep || flags.AutoRetire {
+		footer = "idle retirement setting saved"
+	}
+	return writeHumanFrame(output, "tnl url update", "updated", footer,
 		clioutput.Fields(fields...))
 }
