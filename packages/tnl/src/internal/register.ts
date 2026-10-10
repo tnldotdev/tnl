@@ -100,6 +100,19 @@ export async function listeningTarget(
   );
 }
 
+export async function closeServer(server: LocalHTTPServer): Promise<void> {
+  if (isBunServer(server)) {
+    await server.stop(true);
+    return;
+  }
+  if (server.listening) {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+      server.closeAllConnections?.();
+    });
+  }
+}
+
 export function isBunServer(server: LocalHTTPServer): server is BunHTTPServer {
   return "stop" in server && typeof server.stop === "function";
 }
