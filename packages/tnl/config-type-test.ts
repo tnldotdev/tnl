@@ -6,6 +6,18 @@ import {
   type TnlConfigForServices,
   type TnlRatePeriod,
 } from "@tnldotdev/tnl/config";
+import type { OpenOptions } from "@tnldotdev/tnl";
+
+({ limits: { rate: { requests: 2, per: "1h30m" } } }) satisfies OpenOptions;
+({
+  limits: {
+    rate: {
+      requests: 2,
+      // @ts-expect-error ad-hoc rate periods use the generated duration-literal type.
+      per: "minute",
+    },
+  },
+}) satisfies OpenOptions;
 
 const staticConfig = {
   tunnel: {

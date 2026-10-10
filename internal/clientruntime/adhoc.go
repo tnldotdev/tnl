@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
@@ -104,7 +105,9 @@ func (m *AdHocManager) publish(ctx context.Context, request privateprotocol.AdHo
 	entry.status.State = "stopped"
 	if err != nil && ctx.Err() == nil {
 		entry.status.State, entry.status.FailureCode = "failed", "runtime.publication_failed"
-		if reason, _, ok := failure.Describe(err); ok {
+		if errors.Is(err, controlclient.ErrUnauthenticated) {
+			entry.status.FailureCode = "runtime.credential_rejected"
+		} else if reason, _, ok := failure.Describe(err); ok {
 			entry.status.FailureCode = string(reason)
 		}
 	}

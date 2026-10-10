@@ -1,4 +1,7 @@
 export type TnlErrorCode =
+  | "sdk.credential_required"
+  | "sdk.credential_rejected"
+  | "sdk.publication_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
   | "sdk.authentication_required"
@@ -21,6 +24,22 @@ export type TnlErrorCode =
 type FailureClass = "invalid" | "internal" | "unavailable" | "conflict";
 type Retry = "never" | "later" | "after_change";
 const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; message: string }> = {
+  "sdk.credential_required": {
+    class: "invalid",
+    retry: "after_change",
+    message: "set TNL_CREDENTIAL or pass an ad-hoc credential to tnl.open",
+  },
+  "sdk.credential_rejected": {
+    class: "invalid",
+    retry: "after_change",
+    message: "ad-hoc credential is invalid or no longer authorized; issue a replacement",
+  },
+  "sdk.publication_failed": {
+    class: "unavailable",
+    retry: "later",
+    message:
+      "the ad-hoc public URL did not become available; check tnl status and the local listener",
+  },
   "sdk.owner_conflict": {
     class: "conflict",
     retry: "after_change",
