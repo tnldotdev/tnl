@@ -36,7 +36,7 @@ describe("test resource ownership", () => {
 
   test("surfaces malformed bootstrap requests through the waiter instead of throwing in an event handler", async () => {
     const bootstrap = await startTestBootstrap();
-    const socket = bootstrap.environment.TNL_DEV_SOCKET;
+    const socket = bootstrap.environment.APP_TEST_SOCKET;
     expect(socket).toBeDefined();
     if (socket === undefined) throw new Error("test bootstrap did not provide a socket");
     expect(await socketRequest(socket, "{")).toBe(400);
@@ -131,9 +131,8 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   vi.stubEnv("NODE_OPTIONS", "--invalid-inherited-option");
   const inherited = { ...process.env };
   await expect(
-    withProcessEnvironment({ TNL_DEV_PORT: "4321" }, () => {
-      expect(process.env.TNL_DEV_PORT).toBe("4321");
-      expect(process.env.TNL_DEV_SOCKET).toBeUndefined();
+    withProcessEnvironment({ APP_TEST_SOCKET: "isolated" }, () => {
+      expect(process.env.APP_TEST_SOCKET).toBe("isolated");
       expect(process.env.TNL_PROJECT_RUNTIME).toBeUndefined();
       throw new Error("callback failed");
     }),
@@ -142,9 +141,9 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   const sanitized = subprocessEnvironment({
     TEST_SAFE_OVERRIDE: "preserved",
     TNL_ACCESS_TOKEN: "explicit-secret",
-    TNL_DEV_PORT: "4321",
+    APP_TEST_SOCKET: "isolated",
   });
-  expect(sanitized.TNL_DEV_PORT).toBe("4321");
+  expect(sanitized.APP_TEST_SOCKET).toBe("isolated");
   expect(sanitized.TEST_SAFE_OVERRIDE).toBe("preserved");
   expect(sanitized.NODE_OPTIONS).toBeUndefined();
   expect(sanitized.NODE_ENV).toBe("development");
@@ -158,7 +157,7 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
     expect(Object.hasOwn(sanitized, name)).toBe(false);
   }
   for (const name of Object.keys(environmentBaseline).filter(
-    (name) => name !== "TNL_DEV_PORT" && name !== "NODE_ENV",
+    (name) => name !== "APP_TEST_SOCKET" && name !== "NODE_ENV",
   )) {
     expect(sanitized[name]).toBeUndefined();
   }
@@ -167,7 +166,7 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
 async function socketRequest(socketPath: string, body: string): Promise<number | undefined> {
   return await new Promise((resolve, reject) => {
     const request = http.request(
-      { socketPath, method: "POST", path: "/v1/configure" },
+      { socketPath, method: "POST", path: "/v1/prepare" },
       (response) => {
         response.on("error", reject);
         response.on("end", () => resolve(response.statusCode));

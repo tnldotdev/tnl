@@ -9,7 +9,7 @@ import {
 const staticConfig = {
   tunnel: { allowIP: ["192.0.2.0/24"], domain: "example.test", requestLimit: 750 },
   publish: { target: 3000 },
-  dev: { command: ["pnpm", "dev"], startupTimeout: "30s" },
+  readiness: { path: "/health" },
 } satisfies TnlConfigInput;
 
 const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
@@ -42,7 +42,7 @@ const projectScopedSettings = {
   team: "studio",
   feedback: true,
   services: {
-    web: { dev: { port: 4173 } },
+    web: { readiness: { path: "/health" } },
   },
 } satisfies TnlConfig;
 const mountedServices = {
@@ -163,10 +163,10 @@ defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": { service: "m
 ({ team: "studio" }) satisfies NonNullable<TnlConfig["services"]>[string];
 
 const literalConfig = defineConfig({
-  dev: { port: 4173 },
+  readiness: { path: "/health" },
   tunnel: { name: "api" },
 } as const);
-literalConfig.dev.port satisfies 4173;
+literalConfig.readiness.path satisfies "/health";
 literalConfig.tunnel.name satisfies "api";
 
 const exactConfig = defineConfig({ tunnel: { publicURL: "https://api.example.test" } } as const);

@@ -82,6 +82,7 @@ type EventType string
 const (
 	EventPublicURLAssigned   EventType = "route" // preserve the existing internal event value.
 	EventProvisioning        EventType = "provisioning"
+	EventProvisioningStep    EventType = "provisioning_step"
 	EventProvisioningStalled EventType = "provisioning_stalled"
 	EventReady               EventType = "ready"
 	EventDraining            EventType = "draining"
@@ -91,13 +92,14 @@ const (
 )
 
 type Event struct {
-	Type             EventType
-	PublicURLID      string
-	Hostname         string
-	PublicURL        string
-	PublishRunNumber uint64
-	Transport        tunnel.Transport
-	PolicyDenials    uint64
+	Type              EventType
+	PublicURLID       string
+	Hostname          string
+	PublicURL         string
+	PublishRunNumber  uint64
+	ProvisioningStage string
+	Transport         tunnel.Transport
+	PolicyDenials     uint64
 }
 
 // PublishRunIdentity binds a response observer to the run that served it.

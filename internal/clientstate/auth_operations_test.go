@@ -62,7 +62,7 @@ func TestAuthOperationPrivateCheckpointAndFence(t *testing.T) {
 	}
 	got, err = store.AuthOperation(t.Context(), id)
 	if err != nil || got.Phase != AuthCancelled || len(got.Private) != 0 {
-		t.Fatalf("fence = %s, %v", got.Phase, err)
+		t.Fatalf("cancelled operation = %s, %v", got.Phase, err)
 	}
 	other, err := db.Server(t.Context(), "https://other.example")
 	if err != nil {

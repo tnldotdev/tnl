@@ -36,6 +36,9 @@ type Database struct {
 	heartbeatInterval time.Duration
 }
 
+// Root returns the canonical, validated directory used by this client state.
+func (d *Database) Root() string { return d.root }
+
 // Store scopes credentials, certificates, and locks to one server profile.
 type Store struct {
 	database        *Database

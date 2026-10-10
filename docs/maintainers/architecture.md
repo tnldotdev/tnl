@@ -105,7 +105,7 @@ explicit selection back. `use` requires a ready entry service and preserves a
 different live owner unless takeover is forced. `release` returns an override
 to the primary checkout, even when its service is stopped. receiver readiness
 and selection are separate: restarting resumes the chosen worktree; an expired
-lease does not assign a different one. revision and tunnel/run identities fence
+lease does not assign a different one. revision and tunnel/run identities reject
 requests prepared against older selections.
 
 the alias publisher reuses the integration URL lifecycle and publishes only
@@ -118,7 +118,7 @@ alias runs do not inherit preview shares or feedback state.
 OAuth callback state records the initiating public URL/run separately from the
 destination app tunnel. an alias-origin callback returns to the alias hostname
 for its host-only cookies. a bounded, expiring single-use return record also
-fences the final browser hop, so a handoff between redirect and app admission
+checks the final browser hop, so a handoff between redirect and app admission
 cannot send that callback to a replacement alias run. app cookies on a stable
 alias hostname can remain in the browser across worktree changes; tnl does not
 rewrite them.
@@ -129,6 +129,48 @@ name leaves the previous owner intact. generated alias metadata is declarative,
 not a readiness claim; framework integrations admit only aliases that reach
 their entry or mounted service. alias workers join before the parent tunnel
 reports completion and closes client state.
+
+## own the app-led lifecycle
+
+the application starts with its normal development command. Vite and Next
+integrations prepare browser-safe project metadata, then register the bound
+listener. Node and Bun applications call `await tnl.prepare({service: "api"})`
+before startup and `await publication.register(server)` after binding, including
+listeners that request port 0. directory inference requires a unique configured
+service. builds and production previews do not prepare registrations.
+
+`internal/clientruntime` owns registration leases, publisher observations,
+readiness, and a bounded durable local event journal. the private native command
+`tnl runtime address` locates one Unix socket per canonical
+project/worktree/client-state identity. the app starts `tnl runtime serve` to
+maintain it. the socket is user-owned
+and mode 0600 beneath a stable, short mode-0700 directory under `/tmp`.
+`internal/privateprotocol` bounds and
+validates requests; golden fixtures describe its wire shape. control credentials
+remain in the native process and never cross the socket or browser metadata.
+
+preparation reserves a live owner without claiming a listener. registration
+acknowledges the bound target, not provisioning. duplicate live owners fail;
+listener replacement cancels and joins the previous publisher before starting
+another run. request admission and readiness observations check registration and
+publish-run identities. an SDK reconnects after a manager crash. unregistering,
+app exit, or an expired renewal stops publication. the manager joins integration
+workers and drains publishers, then exits after the last registration's cleanup
+grace. it never launches or terminates application processes.
+
+registered, routable, and ready are separate facts. routable means the existing
+publisher has reported control readiness. ready additionally requires a fresh
+public GET: by default `/` accepts app statuses 200 through 499 except 408 and 429. tnl diagnostic responses always fail. service readiness can select a path
+and exact status. checks use normal DNS/TLS, send no app credentials, follow no
+redirects, and read headers only with a five-second deadline. retries start at
+500 milliseconds and double to two seconds for up to two minutes. each new run
+gets an automatic check; `tnl wait` checks again. a failed check leaves the
+publication running. `tnl status` only reads observations.
+
+`tnl watch` resumes after an ordered journal cursor. a status or initial watch
+snapshot includes the watermark from the same journal snapshot. cursors older
+than retained events fail with an authored diagnostic. the journal survives a
+manager restart and contains no credentials, request bodies, or OAuth state.
 
 ## maintain project integration urls
 
@@ -254,9 +296,9 @@ in the calling worktree. Already-dispatched requests may finish at the old one.
 Source/path/method admission runs before delivery in either mode. A selected
 handler's status and bounded body are returned directly to the provider.
 
-`tnl status` reads app tunnels, saved integration URL hostnames, publisher
-readiness leases, webhook declarations, and selected ownership in one SQLite
-snapshot. The version-3 JSON result includes ready receivers from linked
+`tnl status` combines the app registration journal with saved integration URL
+hostnames, publisher readiness leases, webhook declarations, and selected
+ownership from one SQLite snapshot. the JSON result includes ready receivers from linked
 worktrees even when the command selects just the current checkout's tunnels.
 An expired publisher lease is stale; a live selected owner in provisioning
 remains selected but is not a ready receiver. Status includes only saved
@@ -274,7 +316,7 @@ public URL
                   next number for this public URL
 ```
 
-One local `tnl publish` or `tnl dev` invocation is a tunnel. Starting a new
+One app service publication or local `tnl publish` invocation is a tunnel. Starting a new
 publish run increments its public URL's publish run number. Stopping a normal
 tunnel ends the publish run but leaves the public URL available for a later run.
 
@@ -377,15 +419,17 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 
 ## keep local packages focused
 
-| Package                  | Responsibility                                                              |
-| ------------------------ | --------------------------------------------------------------------------- |
-| `internal/config`        | Versioned static configuration and schema validation                        |
-| `internal/projectconfig` | Project discovery, TypeScript evaluation, worktrees, and effective services |
-| `internal/tnldconfig`    | Server-role settings and environment resolution                             |
-| `internal/clientstate`   | Client SQLite state and local ownership locks                               |
-| `internal/projectmeta`   | Generated browser-safe metadata and TypeScript augmentation                 |
-| `internal/clioutput`     | Shared ASCII rendering for the `tnl` client                                 |
-| `packages/tnl`           | Browser-safe runtime and Node framework integrations                        |
+| Package                    | Responsibility                                                              |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `internal/config`          | Versioned static configuration and schema validation                        |
+| `internal/projectconfig`   | Project discovery, TypeScript evaluation, worktrees, and effective services |
+| `internal/tnldconfig`      | Server-role settings and environment resolution                             |
+| `internal/clientstate`     | Client SQLite state and local ownership locks                               |
+| `internal/clientruntime`   | App registrations, public readiness, and local lifecycle events             |
+| `internal/privateprotocol` | Bounded private SDK requests and assignments                                |
+| `internal/projectmeta`     | Generated browser-safe metadata and TypeScript augmentation                 |
+| `internal/clioutput`       | Shared ASCII rendering for the `tnl` client                                 |
+| `packages/tnl`             | Browser-safe runtime and Node framework integrations                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
 The private development socket is shipped implementation, not a public extension
@@ -396,14 +440,14 @@ They never receive control access tokens. They remain inactive during builds and
 previews.
 
 Go validates project metadata before writing `.tnl/project.json`. The TypeScript
-package validates it again when reading it or receiving a `tnl dev` assignment.
+package validates it again when reading it or receiving an app assignment.
 Both validators use the shared hostname and project metadata fixtures under
-`api/fixtures/`; the `tnl dev` wire fixture covers requests and assignments.
+`api/fixtures/`; private protocol golden fixtures cover requests and assignments.
 
 Go also owns default public URL naming. It combines the primary Git checkout
 name (and any project path below it), the linked worktree directory when present,
 and a six-character, client-state-salted ID. Branch names are not part of the
-label. Publish, dev, and project metadata use the same composition.
+label. publishing, app preparation, and project metadata use the same composition.
 
 ## preserve the core invariants
 

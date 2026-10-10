@@ -51,7 +51,7 @@ func guestForDemoWithControl(
 		return nil, err
 	}
 	if flags.Team != "" || flags.Domain != "" || flags.AllowAllIPs || len(flags.AllowIP) != 0 {
-		return nil, failure.Wrap("validate guest demo options", failure.GuestDemoOnly, errors.New("guest demos use your current IP and assigned namespace; run tnl login to change these settings"))
+		return nil, failure.Wrap("validate guest demo options", failure.GuestDemoOnly, errors.New("guest demos use your current IP and assigned namespace; run tnl auth login to change these settings"))
 	}
 	guest, found, err := store.GuestSession(ctx)
 	if err != nil {

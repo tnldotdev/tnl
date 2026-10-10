@@ -20,7 +20,7 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.manager != "pnpm" || plan.framework != "next" || !slices.Equal(plan.packages, []string{"@tnldotdev/tnl"}) || len(plan.frameworkAfter) != 0 || !slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	for _, fragment := range []string{"app:", `directory: "."`, `["next","dev"]`, "defineConfig"} {
+	for _, fragment := range []string{"app:", `directory: "."`, "defineConfig"} {
 		if !strings.Contains(string(plan.configData), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.configData)
 		}
@@ -88,12 +88,12 @@ func TestInitCreatesAbsentKnownNextConfig(t *testing.T) {
 	}
 }
 
-func TestInitPlansGenericDevSettings(t *testing.T) {
+func TestInitPlansGenericAppIntegration(t *testing.T) {
 	for _, test := range []struct {
-		name, script, manager, command, action string
+		name, script, manager string
 	}{
-		{"dev script", "node server.js", "pnpm", `["node","server.js"]`, "set services.app.dev.port in tnl.config.ts to your app's listening port."},
-		{"no dev script", "", "npm", "", "set services.app.dev.command and services.app.dev.port in tnl.config.ts."},
+		{"dev script", "node server.js", "pnpm"},
+		{"no dev script", "", "npm"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := genericInitFixture(t, test.script, test.manager)
@@ -101,15 +101,11 @@ func TestInitPlansGenericDevSettings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.framework != "" || !plan.genericDev || !slices.Equal(plan.actions, []string{test.action}) {
+			if plan.framework != "" || !plan.genericDev || len(plan.actions) != 1 || !strings.Contains(plan.actions[0], "tnl.prepare") {
 				t.Fatalf("plan = %#v", plan)
 			}
-			if test.command == "" {
-				if strings.Contains(string(plan.configData), "dev:") {
-					t.Fatalf("planned a dev command without a script: %s", plan.configData)
-				}
-			} else if !strings.Contains(string(plan.configData), test.command) {
-				t.Fatalf("planned config is missing command %q: %s", test.command, plan.configData)
+			if strings.Contains(string(plan.configData), "dev:") {
+				t.Fatalf("planned an application command: %s", plan.configData)
 			}
 			if strings.Contains(string(plan.configData), "port:") {
 				t.Fatalf("planned an unrequested port: %s", plan.configData)
@@ -118,12 +114,12 @@ func TestInitPlansGenericDevSettings(t *testing.T) {
 	}
 }
 
-func TestInitFrameworkWithoutDevScriptUsesDefaultCommand(t *testing.T) {
+func TestInitFrameworkWithoutDevScriptUsesAppStartup(t *testing.T) {
 	for _, test := range []struct {
-		framework, dependencies, command string
+		framework, dependencies string
 	}{
-		{"next", `"next":"16.3.4"`, `["next","dev"]`},
-		{"vite", `"vite":"6.0.9"`, `["vite"]`},
+		{"next", `"next":"16.3.4"`},
+		{"vite", `"vite":"6.0.9"`},
 	} {
 		t.Run(test.framework, func(t *testing.T) {
 			root := copyInitFixture(t, test.framework)
@@ -135,7 +131,7 @@ func TestInitFrameworkWithoutDevScriptUsesDefaultCommand(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.framework != test.framework || plan.genericDev || !strings.Contains(string(plan.configData), test.command) || strings.Contains(string(plan.configData), "port:") {
+			if plan.framework != test.framework || plan.genericDev || strings.Contains(string(plan.configData), "command:") || strings.Contains(string(plan.configData), "port:") {
 				t.Fatalf("plan = %#v, config = %s", plan, plan.configData)
 			}
 		})

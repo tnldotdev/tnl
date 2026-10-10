@@ -54,8 +54,8 @@ Initialize with the helper:
 npx tnl init
 ```
 
-`tnl init` walks you through creating a `tnl.config.ts` with the command
-that starts your app. For example, in a Vite project:
+`tnl init` creates project configuration and helps connect your framework's
+development listener. Your usual development script still starts the app:
 
 ```ts
 // tnl.config.ts
@@ -65,7 +65,6 @@ export default defineConfig({
   services: {
     app: {
       directory: ".",
-      dev: { command: ["vite", "dev"] },
     },
   },
 });
@@ -75,28 +74,17 @@ Then run:
 
 ```bash
 npx tnl auth login
-npx tnl dev
+pnpm dev
+npx tnl wait
 ```
 
-Sign in with `tnl auth login` first. Your app will start on the next available port,
-and `tnl` publishes to its unique URL, with only your current IP whitelisted:
+Sign in once with `tnl auth login`. The integration prepares public metadata before
+framework startup, then reports the listener's actual bound port to a local
+`tnl` process. By default, only your current IP can visit the public URL.
 
-```text
-+--[ tnl dev ]-- ready ----------------------------------------+
-|                                                              |
-|  https://app-example-abcd1234.ecstatic-penguin.tnl.dev       |
-|     |                                                        |
-|     v                                                        |
-|    tnl                                                       |
-|     |                                                        |
-|     v                                                        |
-|  http://127.0.0.1:5173                                       |
-|                                                              |
-|  framework                 vite                              |
-|  automatically allowed IP  122.151.3.101                     |
-|                                                              |
-+-- ctrl+c to stop --------------------------------------------+
-```
+`tnl wait` checks a fresh public response. `tnl status` shows every configured
+service, including apps that have not started, without sending a request to the
+app. `tnl watch --output ndjson` follows ordered local lifecycle events.
 
 Hot reloading works automatically, as well as SSE/websockets/streaming responses.
 
@@ -109,8 +97,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has multiple separate services, you can put both startup commands
-in `tnl.config.ts`:
+If your project has several services, give each its own directory in
+`tnl.config.ts`:
 
 ```ts
 // tnl.config.ts
@@ -120,23 +108,20 @@ export default defineConfig({
   services: {
     web: {
       directory: "apps/web",
-      dev: { command: ["vite", "dev"] },
     },
     api: {
       directory: "apps/api",
-      dev: { command: ["pnpm", "dev"] },
     },
   },
 });
 ```
 
-Start both services either together or individually:
+Start each service with its normal development command:
 
 ```bash
-npx tnl dev
-# or
-npx tnl dev web
-npx tnl dev api
+pnpm --dir apps/web dev
+pnpm --dir apps/api dev
+npx tnl wait
 ```
 
 These will have separate URLs:
@@ -157,8 +142,21 @@ const apiURL = tnl.services?.api?.url;
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
 [framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
-For a Node or Bun API, use `tnl.port` and `tnl.register(server)` so worktrees
-can listen on different ports. See [API server setup](https://tnl.dev/docs/frameworks#api-servers).
+For a Node or Bun API, prepare its service before startup and register the bound
+listener. Port 0 lets the application choose an available port:
+
+```ts
+import { createServer } from "node:http";
+import { tnl } from "@tnldotdev/tnl";
+
+const publication = await tnl.prepare({ service: "api" });
+const server = createServer((_request, response) => response.end("hello"));
+server.listen(0, "127.0.0.1");
+await publication.register(server);
+```
+
+Registration acknowledges the listener; `tnl wait` checks public readiness.
+See [API server setup](https://tnl.dev/docs/frameworks#api-servers).
 
 ## open changes side by side
 
@@ -171,10 +169,8 @@ git worktree add -b perf ../perf
 Then start the two services:
 
 ```bash
-npx tnl dev
-# or
-npx tnl dev web
-npx tnl dev api
+pnpm --dir apps/web dev
+pnpm --dir apps/api dev
 ```
 
 The same frontend is now running from two checkouts:
@@ -265,7 +261,7 @@ Or install with curl:
 curl -fsSL https://tnl.dev/install | sh
 ```
 
-This works very similarly to `tnl dev`. [Read about `tnl publish`](https://tnl.dev/docs/publish).
+For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/publish).
 
 ## how much does it cost?
 

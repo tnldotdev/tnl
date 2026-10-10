@@ -14,7 +14,7 @@ export const tnl: TnlRuntime = Object.freeze({
   ...runtime,
   port: 3000,
   dev: runtime?.dev ?? false,
-  async register(): Promise<void> {
+  async prepare(): Promise<never> {
     throw new TnlError("sdk.configuration_invalid");
   },
 });

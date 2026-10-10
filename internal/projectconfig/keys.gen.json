@@ -5,6 +5,5 @@
   "request_inspection": "requestInspection",
   "request_limit": "requestLimit",
   "source_ips": "sourceIPs",
-  "startup_timeout": "startupTimeout",
   "strip_prefix": "stripPrefix"
 }

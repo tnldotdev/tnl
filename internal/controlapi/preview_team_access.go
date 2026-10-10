@@ -37,7 +37,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 	}
 	if body.Enabled {
 		if len(preview.PublicURLIDs) == 0 || len(preview.PublicURLIDs) > 32 {
-			writeProblem(response, http.StatusConflict, controlv1.Conflict, "run tnl dev to add public URLs to this preview")
+			writeProblem(response, http.StatusConflict, controlv1.Conflict, "start a configured app service to add public URLs to this preview")
 			return
 		}
 		token, _ := requestBearerToken(request)

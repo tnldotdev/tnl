@@ -111,7 +111,7 @@ func servicesSchema() *jsonschema.Schema {
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
 	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
-	properties.Set("dev", &jsonschema.Schema{Ref: "#/$defs/Dev"})
+	properties.Set("readiness", &jsonschema.Schema{Ref: "#/$defs/Readiness"})
 	mountProperties := jsonschema.NewProperties()
 	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
 	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})

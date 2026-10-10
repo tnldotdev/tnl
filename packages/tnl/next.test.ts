@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createProjectFixture,
@@ -21,6 +21,24 @@ import { withProcessEnvironment } from "./test-helper/environment.js";
 import { startFrameworkFixture } from "./test-helper/framework.js";
 import { withTnl, type NextConfigContext } from "@tnldotdev/tnl/next";
 import { testAliasAssignment } from "./test-helper/project.js";
+
+vi.mock("./dist/internal/app.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./dist/internal/app.js")>();
+  return {
+    ...actual,
+    prepareService: async (
+      options: import("./dist/internal/app.js").PrepareOptions,
+      framework: string,
+    ) => {
+      const prepared = await actual.createPreparedService(options, framework, {
+        start: async () => process.env.APP_TEST_SOCKET ?? "",
+        request: actual.runtimeRequest,
+      });
+      onTestFinished(() => prepared.close());
+      return prepared;
+    },
+  };
+});
 
 const productionPhase = "phase-production-build";
 const developmentPhase = "phase-development-server";
@@ -65,39 +83,45 @@ describe("withTnl", () => {
   test("preserves builds and development without generated metadata", async () => {
     const config = { reactStrictMode: true };
     const wrapped = withTnl(config);
-    expect(() => withTnl({}, {} as never)).toThrow(/framework configuration is invalid/);
     await expect(wrapped(productionPhase, context)).resolves.toBe(config);
 
     const directory = await temporaryDirectory("tnl-next-empty-");
     await withCurrentDirectory(directory, async () => {
-      await expect(wrapped(developmentPhase, context)).resolves.toBe(config);
+      await expect(wrapped(developmentPhase, context)).rejects.toMatchObject({
+        code: "sdk.target_invalid",
+      });
     });
   });
 
   test("injects generated project metadata only during plain development", async () => {
     const project = await createProjectFixture("tnl-next-project-");
     const config = { reactStrictMode: true };
-    await withCurrentDirectory(project.serviceDirectory, async () => {
-      const local = await withTnl(config)(developmentPhase, context);
-      expect(local).toMatchObject({ reactStrictMode: true });
-      expect(JSON.parse(local.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
-        namespace: "member.example",
-        dev: false,
-        services: {
-          api: {
-            hostname: "api.member.example",
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+      async () =>
+        withCurrentDirectory(project.serviceDirectory, async () => {
+          const local = await withTnl(config)(developmentPhase, context);
+          expect(local).toMatchObject({ reactStrictMode: true });
+          expect(JSON.parse(local.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
             namespace: "member.example",
-            url: "https://api.member.example",
-          },
-          web: {
-            hostname: "web.member.example",
-            namespace: "member.example",
-            url: "https://web.member.example",
-          },
-        },
-      });
-      await expect(withTnl(config)(productionPhase, context)).resolves.toBe(config);
-    });
+            dev: true,
+            services: {
+              api: {
+                hostname: "api.member.example",
+                namespace: "member.example",
+                url: "https://api.member.example",
+              },
+              web: {
+                hostname: "web.member.example",
+                namespace: "member.example",
+                url: "https://web.member.example",
+              },
+            },
+          });
+          await expect(withTnl(config)(productionPhase, context)).resolves.toBe(config);
+        }),
+    );
   });
 
   test("uses an invocation hostname override for Next.js coordination only", async () => {
@@ -116,12 +140,10 @@ describe("withTnl", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({
         hostname: "override.example",
-        namespace: "member.example",
         project: runtimeProject,
-        protocol: 1,
+        version: 1,
         publicURL: "https://override.example",
         service: "api",
-        tunnelID: `tun_${"b".repeat(22)}`,
       }),
     });
     const originalContext: NextConfigContext = { defaultConfig: { reactStrictMode: false } };
@@ -133,7 +155,6 @@ describe("withTnl", () => {
         ...bootstrap.environment,
         __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200",
         PORT: "3200",
-        TNL_DEV_PORT: "3200",
       },
       async () => {
         const wrapped = withTnl(async (phase, factoryContext) => {
@@ -160,11 +181,11 @@ describe("withTnl", () => {
     expect(receivedContext).toBe(originalContext);
     expect(
       bootstrap.requests.map(({ body, path: requestPath }) => ({ body, path: requestPath })),
-    ).toEqual([
-      { body: { protocol: 1, framework: "next" }, path: "/v1/configure" },
+    ).toMatchObject([
+      { body: { version: 1, framework: "next" }, path: "/v1/prepare" },
       {
-        body: { protocol: 1, framework: "next", target: "http://127.0.0.1:3200" },
-        path: "/v1/target",
+        body: { version: 1, target: "http://127.0.0.1:3200" },
+        path: "/v1/register",
       },
     ]);
   });
@@ -208,13 +229,11 @@ describe("withTnl", () => {
         ...bootstrap.environment,
         __NEXT_PRIVATE_ORIGIN: origin,
         PORT: port,
-        TNL_DEV_PORT: undefined,
       },
       async () => await withTnl()(developmentPhase, context),
     );
-    expect(bootstrap.requests[1]?.body).toEqual({
-      protocol: 1,
-      framework: "next",
+    expect(bootstrap.requests[1]?.body).toMatchObject({
+      version: 1,
       target: expected,
     });
   });
@@ -233,31 +252,13 @@ describe("withTnl", () => {
   ])("rejects $name before networking", async ({ environment }) => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(
-      { ...bootstrap.environment, TNL_DEV_PORT: undefined, ...environment },
+      { ...bootstrap.environment, ...environment },
       async () =>
         await expect(withTnl()(developmentPhase, context)).rejects.toMatchObject({
           code: "sdk.target_invalid",
         }),
     );
     expect(bootstrap.requests).toHaveLength(0);
-  });
-
-  test("preserves a local host when tnl dev forces only the port", async () => {
-    const bootstrap = await startTestBootstrap();
-    await withProcessEnvironment(
-      {
-        ...bootstrap.environment,
-        __NEXT_PRIVATE_ORIGIN: "http://[::1]:3200",
-        PORT: "3200",
-        TNL_DEV_PORT: "3200",
-      },
-      async () => await withTnl()(developmentPhase, context),
-    );
-    expect(bootstrap.requests[1]?.body).toEqual({
-      protocol: 1,
-      framework: "next",
-      target: "http://[::1]:3200",
-    });
   });
 });
 
@@ -272,12 +273,12 @@ test(
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
-        body: { protocol: 1, framework: "next" },
-        path: "/v1/configure",
+        body: { version: 1, framework: "next" },
+        path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { protocol: 1, framework: "next", target: `http://127.0.0.1:${port}` },
-        path: "/v1/target",
+        body: { version: 1, target: `http://127.0.0.1:${port}` },
+        path: "/v1/register",
       });
 
       const page = await requestTestServer(port);
@@ -356,11 +357,11 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
 
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
-      body: { protocol: 1, framework: "next" },
-      path: "/v1/configure",
+      body: { version: 1, framework: "next" },
+      path: "/v1/prepare",
     });
     const registration = await fixture.request(1);
-    expect(registration.path).toBe("/v1/target");
+    expect(registration.path).toBe("/v1/register");
     const target = z.object({ target: z.string() }).parse(registration.body).target;
     expect(target).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(target).port);

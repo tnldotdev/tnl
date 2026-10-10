@@ -1,0 +1,34 @@
+{
+  "prepare": {
+    "version": 1,
+    "directory": "/project",
+    "service": "web",
+    "framework": "node",
+    "owner": "0123456789abcdef0123456789abcdef",
+    "pid": 123
+  },
+  "register": {
+    "version": 1,
+    "registration_id": "reg_0123456789abcdef0123456789abcdef",
+    "owner": "0123456789abcdef0123456789abcdef",
+    "target": "http://127.0.0.1:1234"
+  },
+  "assignment": {
+    "version": 1,
+    "registration_id": "reg_0123456789abcdef0123456789abcdef",
+    "service": "web",
+    "hostname": "web.member.example",
+    "public_url": "https://web.member.example",
+    "project": {
+      "namespace": "member.example",
+      "services": {
+        "web": {
+          "namespace": "member.example",
+          "hostname": "web.member.example",
+          "url": "https://web.member.example"
+        }
+      },
+      "dev": true
+    }
+  }
+}

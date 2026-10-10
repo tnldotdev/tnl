@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { onTestFinished } from "vitest";
+import * as z from "zod";
 import { testPublicProject } from "./project.js";
 
 export interface BootstrapRequest {
@@ -15,6 +16,7 @@ export interface BootstrapRequest {
 }
 
 export interface TestBootstrap {
+  readonly socket: string;
   readonly environment: Record<string, string>;
   readonly requests: BootstrapRequest[];
   assertHealthy(): void;
@@ -29,10 +31,11 @@ interface BootstrapOptions {
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
   const ownedDirectory =
-    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-dev-test-")) : null;
+    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-")) : null;
   const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
+  let appOwner: string | undefined;
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("error", (error) => {
@@ -41,6 +44,11 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
+        if (request.method === "GET" && request.url === "/v1/health") {
+          // readiness probes are not registration messages.
+          response.writeHead(204).end();
+          return;
+        }
         const body = Buffer.concat(chunks).toString("utf8");
         requests.push({
           authorization: request.headers.authorization,
@@ -52,22 +60,44 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         response.statusCode = options.status ?? 200;
         if (response.statusCode !== 200) {
           response.end(options.responseBody ?? "registration failed");
-        } else if (request.url === "/v1/target") {
+        } else if (["/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")) {
+          if (request.url === "/v1/unregister") appOwner = undefined;
           response.writeHead(204).end();
-        } else {
+        } else if (request.url === "/v1/prepare") {
+          const preparation = z.object({ owner: z.string() }).parse(JSON.parse(body));
+          if (appOwner !== undefined && appOwner !== preparation.owner) {
+            response.setHeader("Content-Type", "application/json");
+            response.writeHead(409).end(
+              JSON.stringify({
+                code: "runtime.owner_conflict",
+                message: "another live app owns this service",
+              }),
+            );
+            return;
+          }
+          appOwner = preparation.owner;
+          const assignment =
+            options.responseBody === undefined
+              ? {
+                  hostname: "api.member.example",
+                  project: testPublicProject(true),
+                  publicURL: "https://api.member.example",
+                  service: "api",
+                }
+              : JSON.parse(options.responseBody);
           response.setHeader("Content-Type", "application/json");
           response.end(
-            options.responseBody ??
-              JSON.stringify({
-                hostname: "api.member.example",
-                namespace: "member.example",
-                protocol: 1,
-                project: testPublicProject(true),
-                publicURL: "https://api.member.example",
-                service: "api",
-                tunnelID: `tun_${"b".repeat(22)}`,
-              }),
+            JSON.stringify({
+              version: 1,
+              registration_id: `reg_${"b".repeat(32)}`,
+              service: assignment.service,
+              hostname: assignment.hostname,
+              public_url: assignment.publicURL,
+              project: assignment.project,
+            }),
           );
+        } else {
+          response.writeHead(404).end();
         }
       } catch (error) {
         failure ??= error;
@@ -120,7 +150,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     throw error;
   }
   return {
-    environment: { TNL_DEV_PROTOCOL: "1", TNL_DEV_SOCKET: socket },
+    socket,
+    environment: { APP_TEST_SOCKET: socket },
     requests,
     assertHealthy,
     close,
@@ -139,7 +170,7 @@ export async function waitForBootstrapRequest(
     const request = bootstrap.requests[index];
     if (request !== undefined) return request;
     assertRunning();
-    if (Date.now() >= deadline) throw new Error("framework did not register with tnl dev");
+    if (Date.now() >= deadline) throw new Error("framework did not register with tnl");
     await delay(50);
   }
 }

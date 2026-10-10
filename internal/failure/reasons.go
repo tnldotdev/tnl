@@ -12,6 +12,8 @@ const (
 	InvalidTarget                     Reason = "TNL_CLIENT_INVALID_TARGET"
 	MissingTarget                     Reason = "TNL_CLIENT_MISSING_TARGET"
 	InvalidCommand                    Reason = "TNL_CLIENT_INVALID_COMMAND"
+	AppReadinessTimeout               Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
+	AppCursorExpired                  Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
 	OutputUnavailable                 Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
 	InitFailed                        Reason = "TNL_CLIENT_INIT_FAILED"
 	TunnelUnavailable                 Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
@@ -25,7 +27,6 @@ const (
 	DemoURLManaged                    Reason = "TNL_CLIENT_DEMO_URL_MANAGED"
 	DemoMustBeEphemeral               Reason = "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL"
 	DemoLocalServiceUnavailable       Reason = "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE"
-	InvalidStartupTimeout             Reason = "TNL_CLIENT_INVALID_STARTUP_TIMEOUT"
 	ProjectConfigMissing              Reason = "TNL_CLIENT_PROJECT_CONFIG_MISSING"
 	ClientStateLocked                 Reason = "TNL_CLIENT_STATE_LOCKED"
 	ClientStateUnavailable            Reason = "TNL_CLIENT_STATE_UNAVAILABLE"
@@ -61,8 +62,6 @@ const (
 	ShareInputInvalid                 Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
 	PreviewNotSaved                   Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
 	PreviewStateConflict              Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
-	DevProcessFailed                  Reason = "TNL_CLIENT_DEV_PROCESS_FAILED"
-	DevSocketUnavailable              Reason = "TNL_CLIENT_DEV_SOCKET_UNAVAILABLE"
 	BrowserOpenFailed                 Reason = "TNL_CLIENT_BROWSER_OPEN_FAILED"
 	TransportUnavailable              Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
 	TransportFallback                 Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
@@ -138,6 +137,8 @@ const (
 )
 
 var definitions = map[Reason]Definition{
+	AppReadinessTimeout: {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
+	AppCursorExpired:    {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl watch without --after to follow current events", Retry: RetryAfterChange},
 	InvalidControlURL: {
 		Class: Invalid, Message: "server must be an HTTPS origin",
 		Action: "use an HTTPS control URL with --server or TNL_SERVER", Retry: RetryAfterChange,
@@ -214,10 +215,6 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "tnl could not start the local demo",
 		Action: "check that loopback networking is available, then retry", Retry: RetryLater,
 	},
-	InvalidStartupTimeout: {
-		Class: Invalid, Message: "startup timeout must be greater than zero and at most 10 minutes",
-		Action: "choose a startup timeout within that range", Retry: RetryAfterChange,
-	},
 	ProjectConfigMissing: {
 		Class: NotFound, Message: "no project configuration file was found",
 		Action: "run tnl init or select a config file with --config", Retry: RetryAfterChange,
@@ -234,7 +231,7 @@ var definitions = map[Reason]Definition{
 	},
 	GuestSessionInvalid: {
 		Class: Invalid, Message: "the saved guest demo state is invalid",
-		Action: "run tnl login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
+		Action: "run tnl auth login or retry tnl publish --demo with a fresh --state-dir", Retry: RetryAfterChange,
 	},
 	CurrentDirectoryUnavailable: {
 		Class: Unavailable, Message: "tnl could not read the working directory",
@@ -274,7 +271,7 @@ var definitions = map[Reason]Definition{
 	},
 	LoginTerminalRequired: {
 		Class: Invalid, Message: "login-token authentication requires an interactive terminal",
-		Action: "run tnl login in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
+		Action: "run tnl auth login --login-token in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
@@ -310,7 +307,7 @@ var definitions = map[Reason]Definition{
 	},
 	IntegrationURLNotReady: {
 		Class: Unavailable, Message: "the integration URL publisher is not ready",
-		Action: "keep a participating tnl dev or tnl publish tunnel running and wait for its publisher", Retry: RetryLater,
+		Action: "keep a participating app or tnl publish tunnel running and wait for its publisher", Retry: RetryLater,
 	},
 	IntegrationURLLeaseExpired: {
 		Class: Stale, Message: "the integration URL publisher stopped renewing its readiness",
@@ -354,19 +351,11 @@ var definitions = map[Reason]Definition{
 	},
 	PreviewNotSaved: {
 		Class: NotFound, Message: "the project does not have a saved preview",
-		Action: "select the configured project and run tnl dev before sharing or reading its feedback", Retry: RetryAfterChange,
+		Action: "start a configured app service before sharing or reading its feedback", Retry: RetryAfterChange,
 	},
 	PreviewStateConflict: {
 		Class: Conflict, Message: "the saved preview does not match the current project",
-		Action: "check the selected server, team, and project, then run tnl dev again", Retry: RetryAfterChange,
-	},
-	DevProcessFailed: {
-		Class: Unavailable, Message: "the development server command could not start or stopped",
-		Action: "check the command and its child output, then restart tnl dev", Retry: RetryAfterChange,
-	},
-	DevSocketUnavailable: {
-		Class: Unavailable, Message: "tnl could not use its development session socket",
-		Action: "check the local runtime directory and permissions, then restart tnl dev", Retry: RetryAfterChange,
+		Action: "check the selected server, team, and project, then restart the app", Retry: RetryAfterChange,
 	},
 	BrowserOpenFailed: {
 		Class: Unavailable, Message: "tnl could not open the public URL in a browser",
@@ -444,23 +433,23 @@ var definitions = map[Reason]Definition{
 	},
 	GuestTrialExhausted: {
 		Class: Forbidden, Message: "this guest demo trial has ended",
-		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app", Retry: RetryAfterChange,
 	},
 	GuestDemoOnly: {
 		Class: Forbidden, Message: "guest access only publishes the built-in demo",
-		Action: "run tnl login to publish your own app or change settings", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app or change settings", Retry: RetryAfterChange,
 	},
 	GuestIssuanceLimited: {
 		Class: RateLimited, Message: "guest demo creation is limited on this network",
-		Action: "wait an hour or run tnl login to continue", Retry: RetryLater,
+		Action: "wait an hour or run tnl auth login to continue", Retry: RetryLater,
 	},
 	GuestSignInRequired: {
 		Class: Unauthenticated, Message: "this command needs sign-in",
-		Action: "run tnl login to manage this server, or tnl publish --demo to try the built-in demo", Retry: RetryAfterChange,
+		Action: "run tnl auth login to manage this server, or tnl publish --demo to try the built-in demo", Retry: RetryAfterChange,
 	},
 	GuestIPChanged: {
 		Class: Forbidden, Message: "your IP changed since this guest demo started",
-		Action: "run tnl login to publish your own app", Retry: RetryAfterChange,
+		Action: "run tnl auth login to publish your own app", Retry: RetryAfterChange,
 	},
 	ServerResponseInvalid: {
 		Class: Internal, Message: "the server sent a response tnl could not use",

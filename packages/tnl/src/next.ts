@@ -1,14 +1,8 @@
-import {
-  canonicalLoopbackTarget,
-  parseListenerPort,
-  readDevelopmentContext,
-  registerLocalTarget,
-  requestTunnelAssignment,
-  runtimePayload,
-  serviceHostnames,
-} from "./internal/dev.js";
+import { serviceHostnames, serializeRuntimePayload } from "./internal/runtime.js";
+import { canonicalLoopbackTarget, parseListenerPort } from "./internal/target.js";
 import type { NextConfig } from "next";
 import { TnlError } from "./errors.js";
+import { prepareService, reportFrameworkTarget, type PrepareOptions } from "./internal/app.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
@@ -26,24 +20,16 @@ export type NextConfigFactory = (
 
 export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
 
-/** Configures a Next.js development server for `tnl dev` and adds project metadata. */
-export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextConfigFactory {
-  if (extra.length !== 0) {
-    throw new TnlError("sdk.configuration_invalid");
-  }
+/** registers a Next.js development server and adds project metadata. */
+export function withTnl(
+  config: NextConfigInput = {},
+  options: PrepareOptions = {},
+): NextConfigFactory {
   return async function tnlNextConfig(phase, context) {
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
     const nextConfig = resolved ?? {};
     if (phase !== developmentServerPhase) {
       return nextConfig;
-    }
-
-    const development = readDevelopmentContext();
-    if (development.bootstrap === null) {
-      if (development.localProject === null) {
-        return nextConfig;
-      }
-      return injectRuntime(nextConfig, runtimePayload(development.localProject, false));
     }
 
     const allowedDevOrigins = nextConfig.allowedDevOrigins ?? [];
@@ -54,15 +40,24 @@ export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextCo
       throw new TnlError("sdk.configuration_invalid");
     }
     const target = nextTarget(process.env);
-    const assignment = await requestTunnelAssignment("next", development.bootstrap);
-    await registerLocalTarget(assignment, target);
+    const assignment = await prepareService(options, "next");
+    // supported Next versions set this origin from their bound HTTP listener
+    // before loading configuration. PORT alone is never a registration.
+    await reportFrameworkTarget(assignment, target);
 
     return injectRuntime(
       {
         ...nextConfig,
-        allowedDevOrigins: unique([...allowedDevOrigins, ...serviceHostnames(assignment)]),
+        allowedDevOrigins: unique([
+          ...allowedDevOrigins,
+          ...serviceHostnames({
+            hostname: assignment.hostname,
+            project: assignment,
+            service: assignment.service,
+          }),
+        ]),
       },
-      runtimePayload(assignment.project, true),
+      serializeRuntimePayload(assignment, true),
     );
   };
 }
@@ -100,9 +95,9 @@ function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
   } catch (error) {
     throw new TnlError("sdk.target_invalid", { cause: error });
   }
-  const port = parseListenerPort(origin.port, "Next.js listener");
+  const port = parseListenerPort(origin.port);
   const reportedPort = environment.PORT;
-  if (reportedPort !== undefined && parseListenerPort(reportedPort, "PORT") !== port) {
+  if (reportedPort !== undefined && parseListenerPort(reportedPort) !== port) {
     throw new TnlError("sdk.target_invalid");
   }
   return canonicalLoopbackTarget(origin.hostname, port);

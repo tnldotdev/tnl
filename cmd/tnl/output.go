@@ -72,7 +72,6 @@ type publishOutput struct {
 	command               string
 	target                string
 	current               string
-	framework             string
 	inspection            config.RequestInspectionMode
 	demo                  bool
 	guestDemo             bool
@@ -205,7 +204,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			o.printed = true
 			footer := "ctrl+c to stop"
 			if o.guestDemo {
-				footer = "tnl login to publish your app; ctrl+c to stop"
+				footer = "tnl auth login to publish your app; ctrl+c to stop"
 			}
 			var openErr error
 			if o.openURL != nil && !o.opened && !o.demo {
@@ -223,9 +222,6 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			}
 			if o.guestDemo {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
-			}
-			if o.framework != "" {
-				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
 			if o.inspection == config.RequestInspectionDetailed {
 				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
@@ -297,12 +293,6 @@ func (o *publishOutput) currentIP(ip string) error {
 		return nil
 	}
 	return o.emit(publishEvent{Type: publishEventCurrentIP, IP: ip})
-}
-
-func (o *publishOutput) setFramework(framework string) {
-	o.mu.Lock()
-	o.framework = framework
-	o.mu.Unlock()
 }
 
 func (o *publishOutput) setRequestInspection(mode config.RequestInspectionMode) {

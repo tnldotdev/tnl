@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 )
@@ -23,9 +22,8 @@ tnl:
     ephemeral: true
   publish:
     target: 3000
-  dev:
-    command: [pnpm, dev]
-    startup_timeout: 30s
+  readiness:
+    path: /health
   services:
     web:
       tunnel:
@@ -33,8 +31,8 @@ tnl:
         allow_all_ips: true
       publish:
         target: 4000
-      dev:
-        startup_timeout: 45s
+      readiness:
+        path: /status
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -56,8 +54,7 @@ tnl:
 		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
-		effective.Dev == nil || effective.Dev.StartupTimeout == nil || effective.Dev.StartupTimeout.Value() != 45*time.Second ||
-		len(effective.Dev.Command) != 2 {
+		effective.Readiness == nil || effective.Readiness.Path != "/status" {
 		t.Fatalf("effective service = %#v", effective)
 	}
 	if _, err := project.EffectiveService("missing"); err == nil {

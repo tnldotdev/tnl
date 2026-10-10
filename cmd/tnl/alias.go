@@ -220,6 +220,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		config := services.config(base.Target, slices.Clone(prefixes), base.RequestLimit)
 		config.Purpose = controlv1.Alias
 		config.Mounts, config.ObserveResponse = base.Mounts, base.ObserveResponse
+		config.AdmitRequest = base.AdmitRequest
 		var mu sync.Mutex
 		lastReport := time.Time{}
 		worker := integrationurls.AliasPublisher(state, services.state, selection, tunnel.ID(), config, func(event publisher.Event, err error) {

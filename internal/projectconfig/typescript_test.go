@@ -20,9 +20,9 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   requestInspection: "detailed",
   tunnel: {domain: "routes.example.test", requestLimit: 750},
   publish: {target: 3000},
-  dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
+  readiness: {path: "/health"},
   services: {
-    api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label.fullLabel}, dev: {startupTimeout: "45s"}},
+    api: {directory: "apps/api", requestInspection: "summary", tunnel: {name: worktree.label.fullLabel}, readiness: {path: "/status"}},
     site: {tunnel: {publicURL: "https://site.example.test", open: true}, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}},
   },
 });`
@@ -46,10 +46,9 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["site"].Paths["/api"].Service != "api" || !value.Services["site"].Paths["/v1"].StripPrefix ||
 		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
-		value.Dev == nil || value.Dev.StartupTimeout == nil || value.Dev.StartupTimeout.Value() != 30*time.Second ||
+		value.Readiness == nil || value.Readiness.Path != "/health" ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
-		value.Services["api"].Dev == nil || value.Services["api"].Dev.StartupTimeout == nil ||
-		value.Services["api"].Dev.StartupTimeout.Value() != 45*time.Second {
+		value.Services["api"].Readiness == nil || value.Services["api"].Readiness.Path != "/status" {
 		t.Fatalf("config = %#v", value)
 	}
 }
@@ -181,7 +180,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"service team":       {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
 		"request limit":      {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
 		"request inspection": {`export default {services: {api: {requestInspection: "all"}}};`, "services.api.request_inspection: must be summary or detailed"},
-		"duration":           {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
+		"retired dev":        {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":             {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
 		"ip":                 {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
 		"duplicate":          {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
@@ -348,14 +347,14 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-  "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"dev":{"startupTimeout":"30s"}}}
+   "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"readiness":{"path":"/health"}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Services["web"]
 	if service.Tunnel == nil || len(service.Tunnel.AllowIP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
-		service.Dev == nil || service.Dev.StartupTimeout == nil || service.Dev.StartupTimeout.Value() != 30*time.Second {
+		service.Readiness == nil || service.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)
 	}
 	if _, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"dev":{"startup_timeout":"30s"}}}}`)); err == nil {

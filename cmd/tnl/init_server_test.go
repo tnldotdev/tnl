@@ -13,10 +13,10 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 	for _, test := range []struct {
 		name, dependency, script, moduleType, source, result string
 	}{
-		{"hono_node", "hono", "tsx watch src/index.ts", "module", "import { serve } from '@hono/node-server'\nimport { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nserve(app)\n", "const server = serve({ fetch: app.fetch, port: tnl.port })"},
-		{"hono_bun", "hono", "bun --hot src/index.ts", "", "import { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nexport default app\n", "const server = Bun.serve({ fetch: app.fetch, port: tnl.port })"},
-		{"express", "express", "tsx watch src/index.ts", "module", "import express from 'express'\nconst app = express()\napp.get('/', (_req, res) => res.send('ok'))\napp.listen(3000)\n", "const server = app.listen(tnl.port)"},
-		{"fastify", "fastify", "tsx watch src/index.ts", "module", "import fastify from 'fastify'\nconst app = fastify()\napp.get('/', () => 'ok')\napp.listen({ port: 3000 })\n", "await app.listen({ port: tnl.port })"},
+		{"hono_node", "hono", "tsx watch src/index.ts", "module", "import { serve } from '@hono/node-server'\nimport { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nserve(app)\n", "const server = serve({ fetch: app.fetch, port: 3000 })"},
+		{"hono_bun", "hono", "bun --hot src/index.ts", "", "import { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nexport default app\n", "const server = Bun.serve({ fetch: app.fetch, port: 3000 })"},
+		{"express", "express", "tsx watch src/index.ts", "module", "import express from 'express'\nconst app = express()\napp.get('/', (_req, res) => res.send('ok'))\napp.listen(3000)\n", "const server = app.listen(3000)"},
+		{"fastify", "fastify", "tsx watch src/index.ts", "module", "import fastify from 'fastify'\nconst app = fastify()\napp.get('/', () => 'ok')\napp.listen({ port: 3000 })\n", "await app.listen({ port: 3000 })"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := apiInitFixture(t, test.dependency, test.script, test.moduleType, test.source)
@@ -24,15 +24,15 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.framework != "" || plan.genericDev || plan.devPort != 0 || plan.serverPath != filepath.Join(root, "src", "index.ts") || !bytes.Equal(plan.serverBefore, []byte(test.source)) ||
-				!strings.Contains(string(plan.serverAfter), test.result) || !strings.Contains(string(plan.serverAfter), "await tnl.register(") || !strings.Contains(string(plan.serverAfter), "import { tnl } from '@tnldotdev/tnl'") {
+			if plan.framework != "" || plan.genericDev || plan.serverPath != filepath.Join(root, "src", "index.ts") || !bytes.Equal(plan.serverBefore, []byte(test.source)) ||
+				!strings.Contains(string(plan.serverAfter), test.result) || !strings.Contains(string(plan.serverAfter), "await publication?.register(") || !strings.Contains(string(plan.serverAfter), "tnl.prepare(") || !strings.Contains(string(plan.serverAfter), "import { tnl } from '@tnldotdev/tnl'") {
 				t.Fatalf("init plan: %#v", plan)
 			}
 			if err := replaceRecognizedInitFile(plan.serverPath, plan.serverBefore, plan.serverAfter); err != nil {
 				t.Fatal(err)
 			}
 			second, err := planInit(t.Context(), root)
-			if err != nil || len(second.serverAfter) != 0 || second.genericDev || second.devPort != 0 {
+			if err != nil || len(second.serverAfter) != 0 || second.genericDev {
 				t.Fatalf("second plan = %#v, %v", second, err)
 			}
 		})
@@ -46,7 +46,7 @@ func TestInitPreservesCustomAPIServerSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.serverAfter) != 0 || len(plan.actions) != 1 || !strings.Contains(plan.actions[0], "tnl.register") {
+	if len(plan.serverAfter) != 0 || len(plan.actions) != 1 || !strings.Contains(plan.actions[0], "tnl.prepare") {
 		t.Fatalf("custom server plan = %#v", plan)
 	}
 	contents, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
@@ -62,7 +62,7 @@ func TestInitDoesNotTurnANodeHonoExportIntoABunListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.serverAfter) != 0 || len(plan.actions) != 1 || !strings.Contains(plan.actions[0], "tnl.register") {
+	if len(plan.serverAfter) != 0 || len(plan.actions) != 1 || !strings.Contains(plan.actions[0], "tnl.prepare") {
 		t.Fatalf("Node Hono export plan = %#v", plan)
 	}
 }
@@ -75,11 +75,11 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
-	if err != nil || !bytes.Contains(entry, []byte("await tnl.register(server)")) {
+	if err != nil || !bytes.Contains(entry, []byte("await publication?.register(server)")) {
 		t.Fatalf("Hono Bun entrypoint = %s, %v", entry, err)
 	}
 	config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
-	if err != nil || !bytes.Contains(config, []byte(`command: ["bun","--hot","src/index.ts"]`)) || bytes.Contains(config, []byte("port:")) {
+	if err != nil || bytes.Contains(config, []byte("command:")) || bytes.Contains(config, []byte("port:")) {
 		t.Fatalf("generated config = %s, %v", config, err)
 	}
 	if !strings.Contains(output.String(), "src/index.ts") {
@@ -91,23 +91,6 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	second, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
 	if err != nil || !bytes.Equal(second, entry) {
 		t.Fatalf("repeat init modified server: %s, %v", second, err)
-	}
-}
-
-func TestInitRemovesRecognizedFixedPortFromAPIServerConfig(t *testing.T) {
-	root := apiInitFixture(t, "hono", "bun --hot src/index.ts", "module", "import { Hono } from 'hono'\nconst app = new Hono()\nexport default app\n")
-	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, initConfigSourceWithPort("app", []string{"pnpm", "dev"}, 3000), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	var output, diagnostics bytes.Buffer
-	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &diagnostics); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, initConfigSource("app", []string{"bun", "--hot", "src/index.ts"})) {
-		t.Fatalf("fixed-port project config = %s, %v", got, err)
 	}
 }
 
