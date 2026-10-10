@@ -198,7 +198,7 @@ func TestPublishHostnameOptions(t *testing.T) {
 func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 	t.Setenv("TNL_TARGET", "")
 	t.Setenv("TNL_PUBLIC_URL", "")
-	t.Setenv("TNL_CREDENTIAL", "tnl_url_example")
+	t.Setenv("TNL_CREDENTIAL", "tnl_publish_example")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "" ||
-		flags.Publish.PublicURL != "" || flags.Publish.PublishCredential != "tnl_url_example" {
+		flags.Publish.PublicURL != "" || flags.Publish.PublishCredential != "tnl_publish_example" {
 		t.Fatalf("environment publish command %q = %#v", parsed.Command(), flags.Publish)
 	}
 	if err := (projectConfiguration{}).applyPublish(&flags.Publish); err != nil || flags.Publish.Name != "" {

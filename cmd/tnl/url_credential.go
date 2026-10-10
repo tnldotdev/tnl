@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -149,12 +147,11 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 
 func parseCredentialLifetime(value string) (time.Duration, error) {
 	var duration time.Duration
-	if days, found := strings.CutSuffix(value, "d"); found {
-		count, err := strconv.ParseInt(days, 10, 64)
-		if err != nil || count < 1 || count > 90 {
+	if days, found, err := parseWholeDayDuration(value, 90); found {
+		if err != nil {
 			return 0, errors.New("credential lifetime must be greater than zero and at most 90d")
 		}
-		duration = time.Duration(count) * 24 * time.Hour
+		duration = days
 	} else {
 		parsed, err := time.ParseDuration(value)
 		if err != nil {

@@ -103,7 +103,7 @@ func TestCredentialManagementOutputShowsMetadataWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "upc_current") || !strings.Contains(output.String(), "upc_old") ||
-		!strings.Contains(output.String(), "https://app.example.test") || strings.Contains(output.String(), "tnl_url_") {
+		!strings.Contains(output.String(), "https://app.example.test") || strings.Contains(output.String(), "tnl_publish_") {
 		t.Fatalf("list output = %q", output.String())
 	}
 	output.Reset()
@@ -111,7 +111,7 @@ func TestCredentialManagementOutputShowsMetadataWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decoded publicURLCredentialListResult
-	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || decoded.SchemaVersion != 1 || len(decoded.Credentials) != 2 || strings.Contains(output.String(), "tnl_url_") {
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || decoded.SchemaVersion != 1 || len(decoded.Credentials) != 2 || strings.Contains(output.String(), "tnl_publish_") {
 		t.Fatalf("JSON list output = %q, %v", output.String(), err)
 	}
 	output.Reset()

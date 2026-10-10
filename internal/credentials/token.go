@@ -19,7 +19,7 @@ const (
 	invitationPrefix          = "tnl_invitation_"
 	sessionPrefix             = "tnl_session_"
 	connectionPrefix          = "tnl_connection_"
-	publishCredentialPrefix   = "tnl_url_"
+	publishCredentialPrefix   = "tnl_publish_"
 	ephemeralCredentialPrefix = "tnl_eph_"
 	lookupBytes               = 16
 	secretBytes               = 32

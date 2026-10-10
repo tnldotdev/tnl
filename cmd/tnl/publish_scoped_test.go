@@ -17,7 +17,7 @@ import (
 func TestScopedPublishingUsesCredentialOnlyForItsURLAndRun(t *testing.T) {
 	requests := make([]string, 0, 2)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer tnl_url_example" {
+		if request.Header.Get("Authorization") != "Bearer tnl_publish_example" {
 			http.Error(response, "missing scoped credential", http.StatusUnauthorized)
 			return
 		}
@@ -38,7 +38,7 @@ func TestScopedPublishingUsesCredentialOnlyForItsURLAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := &scopedPublishControl{Client: client, credential: credentials.PublicURLPublishCredential("tnl_url_example"), urlID: "public_url_1"}
+	control := &scopedPublishControl{Client: client, credential: credentials.PublicURLPublishCredential("tnl_publish_example"), urlID: "public_url_1"}
 	route, err := control.GetPublicURLByHostname(t.Context(), "team_1", "app.example")
 	if err != nil || route.Id != "public_url_1" {
 		t.Fatalf("bound route = %#v, %v", route, err)

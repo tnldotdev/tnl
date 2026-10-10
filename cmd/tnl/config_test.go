@@ -133,7 +133,7 @@ func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{Concurrency: &limit}},
 		Services: config.Services{"api": {}, "web": {}},
 	}}}
-	flags := publishCommand{PublishCredential: "tnl_url_example"}
+	flags := publishCommand{PublishCredential: "tnl_publish_example"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
