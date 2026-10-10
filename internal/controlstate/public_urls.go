@@ -521,6 +521,9 @@ func (d *Database) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now tim
 		if hasOpenSession {
 			continue
 		}
+		if err := quarantineTCPPortClaim(ctx, queries, route.ID, now); err != nil {
+			return 0, fmt.Errorf("controlstate: quarantine ephemeral public URL port: %w", err)
+		}
 		updated, err := queries.DeletePublicURL(ctx, controlstatedb.DeletePublicURLParams{
 			DeletedAt: timestamptz(now), PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
 		})
@@ -753,6 +756,9 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	}
 	if err := closeOpenPublishRun(ctx, queries, &pendingEvents, route, now, "public_url_deleted"); err != nil {
 		return err
+	}
+	if err := quarantineTCPPortClaim(ctx, queries, publicURLID, now); err != nil {
+		return fmt.Errorf("controlstate: quarantine public URL port: %w", err)
 	}
 	updated, err := queries.DeletePublicURL(ctx, controlstatedb.DeletePublicURLParams{
 		DeletedAt: timestamptz(now), PublicURLID: publicURLID, ExpectedMutationRevision: expectedMutationRevision,
