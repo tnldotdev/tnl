@@ -130,7 +130,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	}
 	start := httptest.NewRecorder()
 	h.BeginPreviewBrowserLogin(start, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: "pv_0123456789abcdefghijkl", PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/settings?tab=profile",
+		PreviewId: new("pv_0123456789abcdefghijkl"), PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/settings?tab=profile",
 	})
 	if start.Code != http.StatusFound {
 		t.Fatalf("browser login = %d %s", start.Code, start.Body.String())
@@ -177,8 +177,11 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	store.consumed = false
 	secondStart := httptest.NewRecorder()
 	h.BeginPreviewBrowserLogin(secondStart, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: "pv_0123456789abcdefghijkl", PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
+		PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
 	})
+	if secondStart.Code != http.StatusFound || store.login.PreviewID != "" {
+		t.Fatalf("URL-only login = %d preview=%q", secondStart.Code, store.login.PreviewID)
+	}
 	wrongNonce := signer.Token(t, "browser-test", map[string]any{
 		"iss": provider.URL, "aud": "tnl-browser", "sub": "identity_1", "name": "Sam",
 		"nonce": "incorrect-nonce-for-this-login", "iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix(),
@@ -228,7 +231,7 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 	} {
 		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserVerifier: failingBrowserVerifier{}, browserAuthority: &authorityclient.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
 		response := httptest.NewRecorder()
-		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: "pv_example", PublicUrlId: "url_example", ReturnPath: "/"})
+		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: new("pv_example"), PublicUrlId: "url_example", ReturnPath: "/"})
 		var body struct {
 			Code      string `json:"code"`
 			RequestID string `json:"request_id"`
@@ -268,17 +271,22 @@ func (browserSessionStoreStub) BrowserSession(context.Context, string, string, t
 
 type browserAuthorizationStoreStub struct {
 	BrowserAccessStore
-	publicURLID string
-	cookie      string
+	auth   controlstate.PublishRunAuthentication
+	cookie string
+	err    error
 }
 
 func (s *browserAuthorizationStoreStub) BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error) {
 	return controlstate.BrowserAccessSession{IdentityID: "identity_1", AccessExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
-func (s *browserAuthorizationStoreStub) BrowserAuthorization(_ context.Context, publicURLID, cookie string, _ time.Time) (controlstate.BrowserAuthorization, error) {
-	s.publicURLID, s.cookie = publicURLID, cookie
-	return controlstate.BrowserAuthorization{Identity: controlstate.BrowserIdentity{IdentityID: "identity_1", DisplayName: "current saved name"}}, nil
+func (*browserAuthorizationStoreStub) RequireBrowserAccess(context.Context, controlstate.PublishRunAuthentication, time.Time) error {
+	return nil
+}
+
+func (s *browserAuthorizationStoreStub) BrowserAuthorizationForRun(_ context.Context, auth controlstate.PublishRunAuthentication, cookie string, _ time.Time) (controlstate.BrowserAuthorization, error) {
+	s.auth, s.cookie = auth, cookie
+	return controlstate.BrowserAuthorization{Identity: controlstate.BrowserIdentity{IdentityID: "identity_1", DisplayName: "current saved name"}}, s.err
 }
 
 func TestBrowserAccessResponseKeepsIdentityWithoutVisitPermission(t *testing.T) {
@@ -287,7 +295,7 @@ func TestBrowserAccessResponseKeepsIdentityWithoutVisitPermission(t *testing.T) 
 	authorizer := &recordingAuthorizer{principal: publicURLReadPrincipal{
 		identityID: "identity_1", displayName: "older name", teamIDs: map[string]struct{}{"team_1": {}},
 	}}
-	h := &handler{browserAccess: store, authorizer: authorizer, store: &feedbackAuthStoreStub{auth: controlstate.PublishRunAuthentication{
+	h := &handler{browserAccess: store, browserAuthority: &authorityclient.Client{}, authorizer: authorizer, store: &feedbackAuthStoreStub{auth: controlstate.PublishRunAuthentication{
 		PublicURLID: "url_1", PublishRunID: "pr_1", PublishRunNumber: 1,
 	}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_1/browser-access",
@@ -301,7 +309,118 @@ func TestBrowserAccessResponseKeepsIdentityWithoutVisitPermission(t *testing.T) 
 	}
 	if response.Code != http.StatusOK || body.IdentityId != "identity_1" || body.DisplayName != "current saved name" || body.VisitAllowed ||
 		!strings.Contains(response.Body.String(), `"visit_allowed":false`) || strings.Contains(response.Body.String(), "team_member") ||
-		store.publicURLID != "url_1" || store.cookie != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" || len(authorizer.requests) != 0 {
+		store.auth.PublicURLID != "url_1" || store.auth.PublishRunID != "pr_1" || store.auth.PublishRunNumber != 1 || store.cookie != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" || len(authorizer.requests) != 0 {
 		t.Fatalf("browser identity/visit response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+type pausedBrowserAuthorizer struct {
+	publicURLAuthorizer
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (a pausedBrowserAuthorizer) AuthorizePublicURLReads(ctx context.Context, _ string) (publicURLReadPrincipal, error) {
+	close(a.entered)
+	select {
+	case <-a.resume:
+		return publicURLReadPrincipal{identityID: "identity_1"}, nil
+	case <-ctx.Done():
+		return publicURLReadPrincipal{}, ctx.Err()
+	}
+}
+
+func TestBrowserAccessResponseRejectsRunChangedDuringAuthorityIO(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	store := &browserAuthorizationStoreStub{}
+	auth := controlstate.PublishRunAuthentication{PublicURLID: "url_1", PublishRunID: "pr_1", PublishRunNumber: 7, PublishRunToken: "publisher-token"}
+	authorizer := pausedBrowserAuthorizer{entered: make(chan struct{}), resume: make(chan struct{})}
+	h := &handler{browserAccess: store, browserAuthority: &authorityclient.Client{}, authorizer: authorizer, store: &feedbackAuthStoreStub{auth: auth}}
+	request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_1/browser/access", strings.NewReader(`{"publish_run_number":7,"cookie_secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`)).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer publisher-token")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { defer close(done); h.CheckPreviewBrowserAccess(response, request, "pr_1") }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-authorizer.entered:
+	case <-ctx.Done():
+		t.Fatal("browser request did not reach authority I/O")
+	}
+	// the capability preflight succeeded, but its run is stale at the final check.
+	store.err = controlstate.ErrPublishRunStale
+	close(authorizer.resume)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("browser request did not finish")
+	}
+	if response.Code != http.StatusConflict || store.auth != auth || strings.Contains(response.Body.String(), "visit_allowed") {
+		t.Fatalf("stale run browser response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+type browserCapabilityStoreStub struct {
+	BrowserAccessStore
+	auth controlstate.PublishRunAuthentication
+	err  error
+}
+
+func (s *browserCapabilityStoreStub) EnableBrowserAccess(_ context.Context, auth controlstate.PublishRunAuthentication, _ time.Time) error {
+	s.auth = auth
+	return s.err
+}
+
+type browserRunAuthStoreStub struct {
+	PublicURLStore
+	auth   controlstate.PublishRunAuthentication
+	err    error
+	id     string
+	number uint64
+	token  credentials.PublishRunToken
+}
+
+func (s *browserRunAuthStoreStub) PublishRunAuthentication(_ context.Context, id string, number uint64, token credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error) {
+	s.id, s.number, s.token = id, number, token
+	return s.auth, s.err
+}
+
+func TestBrowserCapabilityEndpointAuthenticatesExactRunBeforeRegistration(t *testing.T) {
+	for _, test := range []struct {
+		name                     string
+		authErr, registrationErr error
+		available                bool
+		status                   int
+	}{
+		{name: "registered", available: true, status: http.StatusNoContent},
+		{name: "invalid token", available: true, authErr: controlstate.ErrPublishRunCredential, status: http.StatusUnauthorized},
+		{name: "stale run", available: true, registrationErr: controlstate.ErrPublishRunStale, status: http.StatusConflict},
+		{name: "specialized URL", available: true, registrationErr: controlstate.ErrPreviewAccess, status: http.StatusForbidden},
+		{name: "browser login disabled", status: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			auth := controlstate.PublishRunAuthentication{PublishRunID: "pr_current", PublicURLID: "url_current", PublishRunNumber: 7, PublishRunToken: "current-token"}
+			store := &browserRunAuthStoreStub{auth: auth, err: test.authErr}
+			capability := &browserCapabilityStoreStub{err: test.registrationErr}
+			h := &handler{store: store, browserAccess: capability, config: Config{ServerDomain: "example.test"}}
+			if test.available {
+				h.browserAuthority, h.browserVerifier = &authorityclient.Client{}, failingBrowserVerifier{}
+			}
+			request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_current/browser/capability", strings.NewReader(`{"publish_run_number":7}`))
+			request.Header.Set("Authorization", "Bearer current-token")
+			response := httptest.NewRecorder()
+			h.EnableBrowserAccess(response, request, "pr_current")
+			if response.Code != test.status || store.id != "pr_current" || store.number != 7 || store.token != auth.PublishRunToken {
+				t.Fatalf("capability authentication = %d %s", response.Code, response.Body.String())
+			}
+			if test.available && test.authErr == nil {
+				if capability.auth != auth {
+					t.Fatal("registration did not receive authenticated run association")
+				}
+			} else if capability.auth.PublishRunID != "" {
+				t.Fatal("registration preceded authentication or browser login setup")
+			}
+		})
 	}
 }

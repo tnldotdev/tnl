@@ -31,6 +31,7 @@ type Querier interface {
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
+	BrowserLoginPublicURL(ctx context.Context, arg BrowserLoginPublicURLParams) (BrowserLoginPublicURLRow, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
@@ -93,6 +94,7 @@ type Querier interface {
 	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
+	EnablePublishRunBrowserAccess(ctx context.Context, publishRunID string) error
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
@@ -390,6 +392,7 @@ type Querier interface {
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error)
 	ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error)
+	ShareBrowserPreviewPublicURL(ctx context.Context, arg ShareBrowserPreviewPublicURLParams) (string, error)
 	ShareBrowserPublicURL(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)

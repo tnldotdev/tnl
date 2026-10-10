@@ -193,6 +193,13 @@ func (c *Client) EnableShareAccess(ctx context.Context, runID string, version ui
 	return err
 }
 
+func (c *Client) EnableBrowserAccess(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.EnableBrowserAccess(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)
+	})
+	return err
+}
+
 func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}, editors...)

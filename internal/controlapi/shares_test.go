@@ -41,7 +41,7 @@ func (*shareRoutesStub) GetPublicURLForAuthorization(_ context.Context, id strin
 	return controlstate.PublicURL{
 		ID: id, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
+		PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 3,
 		LifecycleState: controlstate.PublicURLLifecycleEnabled,
 	}, nil
 }

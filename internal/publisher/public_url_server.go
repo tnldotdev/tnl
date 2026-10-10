@@ -290,7 +290,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 							_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
 							defer connection.SetDeadline(time.Time{})
 						}
-						if config.BrowserAccess.handle(response, request, !denied || sharePermitted) {
+						if config.BrowserAccess.handle(response, request) {
 							return
 						}
 					}
@@ -298,13 +298,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				browser := controlv1.BrowserAccessResponse{}
 				browserSignedIn := false
 				if config.BrowserAccess != nil {
-					browser, browserSignedIn = config.BrowserAccess.check(request)
+					var err error
+					browser, browserSignedIn, err = config.BrowserAccess.check(request)
+					if err != nil {
+						http.Error(response, "browser access is unavailable", http.StatusServiceUnavailable)
+						return
+					}
 				}
 				if browserSignedIn {
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
 				if denied && !sharePermitted && (!browserSignedIn || !browser.VisitAllowed) {
-					if !browserSignedIn && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
+					if !browserSignedIn && config.BrowserAccess != nil && config.BrowserAccess.shares != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
 						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
 						response.Header().Set("Cache-Control", "no-store")
 						response.Header().Set("Referrer-Policy", "no-referrer")

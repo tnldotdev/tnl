@@ -1,11 +1,13 @@
 package controlstate
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -63,6 +65,84 @@ type BrowserHandoff struct {
 	ReturnPath  string
 }
 
+// the encrypted handoff binds installation to the run that advertised support.
+type browserHandoffCredential struct {
+	CookieSecret     string `json:"cookie_secret"`
+	PublishRunID     string `json:"publish_run_id"`
+	PublishRunNumber int64  `json:"publish_run_number"`
+}
+
+func lockBrowserRun(ctx context.Context, queries *controlstatedb.Queries, auth PublishRunAuthentication, now time.Time) (controlstatedb.ControlPublishRun, error) {
+	candidate, err := queries.GetFeedbackPublicURL(ctx, auth.PublicURLID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return controlstatedb.ControlPublishRun{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return controlstatedb.ControlPublishRun{}, fmt.Errorf("read browser public URL: %w", err)
+	}
+	if err := queries.LockReviewerTeam(ctx, candidate.TeamID); err != nil {
+		return controlstatedb.ControlPublishRun{}, fmt.Errorf("lock browser team: %w", err)
+	}
+	publicURL, run, err := lockAuthenticatedPublishRun(ctx, queries, auth, now)
+	if err != nil {
+		return controlstatedb.ControlPublishRun{}, err
+	}
+	if publicURL.TeamID != candidate.TeamID || publicURL.Purpose != "app" {
+		return controlstatedb.ControlPublishRun{}, ErrPreviewAccess
+	}
+	return run, nil
+}
+
+func (d *Database) EnableBrowserAccess(ctx context.Context, auth PublishRunAuthentication, now time.Time) (retErr error) {
+	if err := validatePublishRunAuthentication(auth); err != nil {
+		return err
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("enable browser access: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "enable browser access", &retErr)()
+	queries := controlstatedb.New(tx)
+	run, err := lockBrowserRun(ctx, queries, auth, now)
+	if err != nil {
+		return err
+	}
+	if run.State != "starting" {
+		return ErrPublishRunStale
+	}
+	if err := queries.EnablePublishRunBrowserAccess(ctx, run.ID); err != nil {
+		return fmt.Errorf("register browser capability: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// check capability before authority refresh, without holding a team guard during
+// the network call. admission and handoff redemption recheck in their transactions.
+func (d *Database) RequireBrowserAccess(ctx context.Context, auth PublishRunAuthentication, now time.Time) (retErr error) {
+	if err := validatePublishRunAuthentication(auth); err != nil {
+		return err
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("check browser capability: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "check browser capability", &retErr)()
+	run, err := lockBrowserRun(ctx, controlstatedb.New(tx), auth, now)
+	if err != nil {
+		return err
+	}
+	if !run.BrowserCapable || run.State != "ready" {
+		return ErrPreviewAccess
+	}
+	return tx.Commit(ctx)
+}
+
 func randomBrowserSecret() (string, []byte, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -83,7 +163,7 @@ func browserDigest(token string) ([]byte, error) {
 func browserContext(digest []byte) string { return "browser-access:" + hex.EncodeToString(digest) }
 
 func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID, path, nonce, verifier string, browserBinding []byte, now time.Time) (string, error) {
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) ||
+	if previewID != "" && !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) ||
 		!validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(browserBinding) != 32 {
 		return "", ErrPreviewAccess
 	}
@@ -101,6 +181,13 @@ func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID
 		return "", err
 	}
 	queries := controlstatedb.New(d.pool)
+	if _, err := queries.BrowserLoginPublicURL(ctx, controlstatedb.BrowserLoginPublicURLParams{
+		PreviewID: nullableText(previewID), PublicURLID: publicURLID, Now: timestamptz(now),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrPreviewAccess
+	} else if err != nil {
+		return "", fmt.Errorf("read browser login scope: %w", err)
+	}
 	if err := queries.CleanupBrowserAccess(ctx, timestamptz(now)); err != nil {
 		return "", fmt.Errorf("controlstate: expire browser logins: %w", err)
 	}
@@ -140,7 +227,7 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
 	if d.storageKey == nil || session.IdentityID == "" || session.DisplayName == "" || session.AccessToken == "" ||
 		session.RefreshToken == "" || !session.AccessExpiresAt.After(now) || !session.ExpiresAt.After(now) ||
-		attempt.PreviewID == "" || attempt.PublicURLID == "" {
+		attempt.PublicURLID == "" || !validBrowserLoginScope(attempt) {
 		return BrowserHandoff{}, ErrPreviewAccess
 	}
 	cookie, _, err := randomBrowserSecret()
@@ -166,6 +253,15 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	}
 	defer tx.Rollback(ctx)
 	queries := controlstatedb.New(tx)
+	landing, err := queries.BrowserLoginPublicURL(ctx, controlstatedb.BrowserLoginPublicURLParams{
+		PreviewID: nullableText(attempt.PreviewID), PublicURLID: attempt.PublicURLID, Now: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BrowserHandoff{}, ErrPreviewAccess
+	}
+	if err != nil {
+		return BrowserHandoff{}, fmt.Errorf("read browser landing scope: %w", err)
+	}
 	if err := queries.InsertBrowserAccessSession(ctx, controlstatedb.InsertBrowserAccessSessionParams{
 		TokenDigest: cookieDigest, PreviewID: nullableText(attempt.PreviewID), PublicURLID: attempt.PublicURLID,
 		IdentityID: session.IdentityID, DisplayName: session.DisplayName,
@@ -174,24 +270,24 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	}); err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: save browser session: %w", err)
 	}
-	publicURL, err := queries.GetFeedbackPublicURL(ctx, attempt.PublicURLID)
-	if err != nil {
-		return BrowserHandoff{}, fmt.Errorf("controlstate: read preview landing URL: %w", err)
-	}
-	next := "https://" + publicURL.CanonicalHostname + attempt.ReturnPath
+	next := "https://" + landing.CanonicalHostname + attempt.ReturnPath
 	hosts, err := queries.ListReadyPreviewBrowserHostnames(ctx, controlstatedb.ListReadyPreviewBrowserHostnamesParams{
 		PreviewID: attempt.PreviewID, Now: timestamptz(now),
 	})
 	if err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: list ready preview hostnames: %w", err)
 	}
-	issue := func(publicURLID, nextURL string, bridge bool) (string, error) {
+	issue := func(publicURLID, runID string, runNumber int64, nextURL string, bridge bool) (string, error) {
 		ticket, _, err := randomBrowserSecret()
 		if err != nil {
 			return "", err
 		}
 		digest, _ := browserDigest(ticket)
-		ciphertext, err := d.storageKey.Seal(browserContext(digest), []byte(cookie))
+		credential, err := json.Marshal(browserHandoffCredential{CookieSecret: cookie, PublishRunID: runID, PublishRunNumber: runNumber})
+		if err != nil {
+			return "", err
+		}
+		ciphertext, err := d.storageKey.Seal(browserContext(digest), credential)
 		if err != nil {
 			return "", err
 		}
@@ -208,13 +304,13 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		if host.PublicURLID == attempt.PublicURLID {
 			continue
 		}
-		ticket, err := issue(host.PublicURLID, next, index%8 == 7)
+		ticket, err := issue(host.PublicURLID, host.PublishRunID, host.PublishRunNumber, next, index%8 == 7)
 		if err != nil {
 			return BrowserHandoff{}, fmt.Errorf("controlstate: save other-host browser handoff: %w", err)
 		}
 		next = "https://" + host.CanonicalHostname + "/__tnl/team/handoff/" + ticket
 	}
-	firstToken, err := issue(attempt.PublicURLID, next, false)
+	firstToken, err := issue(attempt.PublicURLID, landing.PublishRunID, landing.PublishRunNumber, next, false)
 	if err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: save browser handoff: %w", err)
 	}
@@ -224,13 +320,34 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath}, nil
 }
 
-func (d *Database) RedeemBrowserHandoff(ctx context.Context, publicURLID, token string, now time.Time) (string, string, string, bool, time.Time, error) {
+func validBrowserLoginScope(attempt BrowserLoginAttempt) bool {
+	return (attempt.PreviewID == "" || opaqueid.Valid(attempt.PreviewID, opaqueid.PreviewPrefix)) &&
+		validFeedbackPath(attempt.ReturnPath) && len(attempt.ReturnPath) <= 2048
+}
+
+func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (string, string, string, bool, time.Time, error) {
+	if err := validatePublishRunAuthentication(auth); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
 	digest, err := browserDigest(token)
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	row, err := controlstatedb.New(d.pool).ConsumeBrowserAccessHandoff(ctx, controlstatedb.ConsumeBrowserAccessHandoffParams{
-		Now: timestamptz(now), TokenDigest: digest, PublicURLID: publicURLID,
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+	queries := controlstatedb.New(tx)
+	run, err := lockBrowserRun(ctx, queries, auth, now)
+	if err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	if !run.BrowserCapable || run.State != "ready" {
+		return "", "", "", false, time.Time{}, ErrPreviewAccess
+	}
+	row, err := queries.ConsumeBrowserAccessHandoff(ctx, controlstatedb.ConsumeBrowserAccessHandoffParams{
+		Now: timestamptz(now), TokenDigest: digest, PublicURLID: auth.PublicURLID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", false, time.Time{}, ErrPreviewAccess
@@ -238,11 +355,22 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, publicURLID, token 
 	if err != nil {
 		return "", "", "", false, time.Time{}, fmt.Errorf("controlstate: redeem browser access: %w", err)
 	}
-	cookie, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.CookieCiphertext)
+	plaintext, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.CookieCiphertext)
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	return string(cookie), row.ReturnPath, row.NextUrl, row.Bridge, row.ExpiresAt.Time, nil
+	var credential browserHandoffCredential
+	if err := json.Unmarshal(plaintext, &credential); err != nil || credential.PublishRunID != run.ID || credential.PublishRunNumber != run.PublishRunNumber {
+		return "", "", "", false, time.Time{}, ErrPreviewAccess
+	}
+	cookieDigest, err := browserDigest(credential.CookieSecret)
+	if err != nil || !bytes.Equal(cookieDigest, row.SessionDigest) {
+		return "", "", "", false, time.Time{}, ErrPreviewAccess
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	return credential.CookieSecret, row.ReturnPath, row.NextUrl, row.Bridge, row.ExpiresAt.Time, nil
 }
 
 func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAccessSession, error) {
@@ -322,7 +450,10 @@ func (d *Database) RefreshBrowserSession(ctx context.Context, publicURLID, token
 	if _, err := queries.BrowserSessionPublicURLIncluded(ctx, controlstatedb.BrowserSessionPublicURLIncludedParams{
 		TokenDigest: digest, PublicURLID: publicURLID,
 	}); err != nil {
-		return BrowserAccessSession{}, ErrPreviewAccess
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BrowserAccessSession{}, ErrPreviewAccess
+		}
+		return BrowserAccessSession{}, fmt.Errorf("check browser refresh scope: %w", err)
 	}
 	context := browserContext(digest)
 	access, _, err := d.storageKey.Open(row.StorageKeyID, context, row.AccessCiphertext)
@@ -390,7 +521,20 @@ func (d *Database) PreviewTeamAccessForPublicURL(ctx context.Context, publicURLI
 
 // browser authorization rechecks identity and visit permission in one transaction.
 // refresh, when needed, happens before this operation and never under a team lock.
-func (d *Database) BrowserAuthorization(ctx context.Context, publicURLID, token string, now time.Time) (result BrowserAuthorization, retErr error) {
+func (d *Database) BrowserAuthorization(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAuthorization, error) {
+	return d.browserAuthorization(ctx, publicURLID, nil, token, now)
+}
+
+// browser admission validates the exact receiving run in the same transaction
+// as identity and visit permission. authority I/O has already completed.
+func (d *Database) BrowserAuthorizationForRun(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (BrowserAuthorization, error) {
+	if err := validatePublishRunAuthentication(auth); err != nil {
+		return BrowserAuthorization{}, err
+	}
+	return d.browserAuthorization(ctx, auth.PublicURLID, &auth, token, now)
+}
+
+func (d *Database) browserAuthorization(ctx context.Context, publicURLID string, auth *PublishRunAuthentication, token string, now time.Time) (result BrowserAuthorization, retErr error) {
 	digest, err := browserDigest(token)
 	if err != nil {
 		return BrowserAuthorization{}, err
@@ -414,12 +558,27 @@ func (d *Database) BrowserAuthorization(ctx context.Context, publicURLID, token 
 	if err := queries.LockReviewerTeam(ctx, candidate.TeamID); err != nil {
 		return BrowserAuthorization{}, fmt.Errorf("lock browser team: %w", err)
 	}
-	publicURL, err := queries.ShareBrowserPublicURL(ctx, publicURLID)
+	var publicURL controlstatedb.ControlPublicUrl
+	if auth == nil {
+		publicURL, err = queries.ShareBrowserPublicURL(ctx, publicURLID)
+	} else {
+		var run controlstatedb.ControlPublishRun
+		publicURL, run, err = lockAuthenticatedPublishRun(ctx, queries, *auth, now)
+		if err != nil {
+			return BrowserAuthorization{}, err
+		}
+		if !run.BrowserCapable || run.State != "ready" {
+			return BrowserAuthorization{}, ErrPreviewAccess
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && publicURL.TeamID != candidate.TeamID {
 		return BrowserAuthorization{}, ErrPreviewAccess
 	}
 	if err != nil {
 		return BrowserAuthorization{}, fmt.Errorf("lock browser public URL: %w", err)
+	}
+	if publicURL.Purpose != "app" {
+		return BrowserAuthorization{}, ErrPreviewAccess
 	}
 	identity, err := d.browserIdentity(ctx, queries, publicURL.ID, digest, now)
 	if err != nil {
@@ -447,6 +606,15 @@ func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.
 	if err != nil {
 		return BrowserIdentity{}, fmt.Errorf("lock browser identity session: %w", err)
 	}
+	if row.PreviewID.Valid {
+		if _, err := queries.ShareBrowserPreviewPublicURL(ctx, controlstatedb.ShareBrowserPreviewPublicURLParams{
+			PreviewID: row.PreviewID.String, PublicURLID: publicURLID,
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return BrowserIdentity{}, ErrPreviewAccess
+		} else if err != nil {
+			return BrowserIdentity{}, fmt.Errorf("lock browser preview inclusion: %w", err)
+		}
+	}
 	access, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.AccessCiphertext)
 	if err != nil {
 		return BrowserIdentity{}, fmt.Errorf("open browser identity credential: %w", err)
@@ -467,10 +635,26 @@ func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.
 	return BrowserIdentity{IdentityID: identity.IdentityID, DisplayName: identity.DisplayName, PreviewID: row.PreviewID.String}, nil
 }
 
-// browserVisitAllowed owns the team-grant decision. callers have already locked
-// the team before the public URL; a verified identity is not itself permission.
+// browserVisitAllowed owns current ownership and team-grant decisions. callers
+// have already locked the team before the public URL; identity alone is not permission.
 func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, publicURL controlstatedb.ControlPublicUrl, identity BrowserIdentity) (bool, error) {
-	if identity.IdentityID == "" || publicURL.LifecycleState != string(PublicURLLifecycleEnabled) {
+	if identity.IdentityID == "" || publicURL.LifecycleState != string(PublicURLLifecycleEnabled) || publicURL.Purpose != "app" {
+		return false, nil
+	}
+	membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
+		TeamID: publicURL.TeamID, IdentityID: identity.IdentityID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read browser membership: %w", err)
+	}
+	if publicURL.PublicURLScope == "member" && publicURL.MembershipID.Valid && publicURL.MembershipID.String == membership.ID ||
+		publicURL.PublicURLScope == "shared" && (membership.Role == "admin" || membership.Role == "owner") {
+		return true, nil
+	}
+	if identity.PreviewID == "" {
 		return false, nil
 	}
 	preview, err := queries.GetPreview(ctx, identity.PreviewID)
@@ -482,15 +666,6 @@ func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, p
 	}
 	if preview.TeamID != publicURL.TeamID || !preview.TeamAccessEnabled {
 		return false, nil
-	}
-	_, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-		TeamID: publicURL.TeamID, IdentityID: identity.IdentityID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read browser membership: %w", err)
 	}
 	return true, nil
 }

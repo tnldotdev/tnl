@@ -108,12 +108,15 @@ type PreviewTeamAccessStore interface {
 }
 
 type BrowserAccessStore interface {
+	EnableBrowserAccess(context.Context, controlstate.PublishRunAuthentication, time.Time) error
+	RequireBrowserAccess(context.Context, controlstate.PublishRunAuthentication, time.Time) error
 	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
-	RedeemBrowserHandoff(context.Context, string, string, time.Time) (string, string, string, bool, time.Time, error)
+	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
 	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
 	BrowserAuthorization(context.Context, string, string, time.Time) (controlstate.BrowserAuthorization, error)
+	BrowserAuthorizationForRun(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (controlstate.BrowserAuthorization, error)
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error
 	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
 	RevokeBrowserSession(context.Context, string, string, time.Time) error

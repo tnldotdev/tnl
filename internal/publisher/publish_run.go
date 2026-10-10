@@ -164,8 +164,14 @@ func runSession(
 	if err != nil {
 		return err
 	}
+	browserRuntime := browserAccessForRun(config, setup, publishRunToken, shareRuntime)
+	if browserRuntime != nil {
+		if err := browserRuntime.client.EnableBrowserAccess(ctx, setup.PublishRun.Id, version, publishRunToken); err != nil {
+			return fmt.Errorf("publisher: register browser capability: %w", err)
+		}
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
+		BrowserAccess: browserRuntime,
 		Hostname:      setup.PublicUrl.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
 		Mounts:            config.Mounts,
 		ShareAccess:       shareRuntime,
