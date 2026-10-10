@@ -101,6 +101,7 @@ type Config struct {
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
 	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned public URL records; repeat for each address."`
 	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned public URL records; repeat for each address."`
+	TCPPorts             string   `name:"tcp-ports" env:"TNLD_TCP_PORTS" help:"TCP ports verified on the public ingress address, as comma-separated numbers or ranges."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
@@ -148,6 +149,9 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	} else {
+		if c.TCPPorts != "" {
+			return errors.New("TCP port inventory is valid only for control and standalone")
+		}
 		if c.CustomDomainsEnabled || c.ManagedDomainMaxMemberChildLabels != 0 {
 			return errors.New("domain policy settings are valid only for control and standalone")
 		}
@@ -325,7 +329,43 @@ func (c Config) validateControl() error {
 	if c.RefreshTokenLifetime < c.AccessTokenLifetime || c.RefreshTokenLifetime > maximumRefreshTokenLifetime {
 		return fmt.Errorf("refresh token lifetime must be between the access token lifetime and %s", maximumRefreshTokenLifetime)
 	}
+	if _, err := c.ConfiguredTCPPorts(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ConfiguredTCPPorts expands the verified operator inventory, not a public URL claim.
+func (c Config) ConfiguredTCPPorts() ([]int32, error) {
+	if c.TCPPorts == "" {
+		return nil, nil
+	}
+	if len(c.IngressIPv4Addresses) > 1 || len(c.IngressIPv6Addresses) > 1 ||
+		len(c.IngressIPv4Addresses)+len(c.IngressIPv6Addresses) == 0 {
+		return nil, errors.New("TCP ports require exactly one public address per configured IP family")
+	}
+	ports := make([]int32, 0)
+	seen := make(map[int32]bool)
+	for _, part := range strings.Split(c.TCPPorts, ",") {
+		first, last := part, part
+		if left, right, found := strings.Cut(part, "-"); found {
+			first, last = left, right
+		}
+		start, startErr := strconv.Atoi(first)
+		end, endErr := strconv.Atoi(last)
+		if startErr != nil || endErr != nil || start < 1024 || end > 65535 || start > end {
+			return nil, errors.New("TCP ports must be comma-separated ports or ranges from 1024 through 65535")
+		}
+		for value := start; value <= end; value++ {
+			port := int32(value)
+			if seen[port] {
+				return nil, errors.New("TCP port ranges must not overlap")
+			}
+			seen[port] = true
+			ports = append(ports, port)
+		}
+	}
+	return ports, nil
 }
 
 func (c Config) validateACME() (retErr error) {
