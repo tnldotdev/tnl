@@ -178,9 +178,6 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 		if err != nil {
 			return flags, failure.Wrap("select project service", failure.ServiceNotConfigured, err)
 		}
-		if flags.Target == "" && effective.Publish != nil && effective.Publish.Target != nil {
-			flags.Target = string(*effective.Publish.Target)
-		}
 		if effective.Tunnel != nil {
 			if flags.PublicURL == "" && flags.Name == "" {
 				if effective.Tunnel.PublicURL != nil {
@@ -202,8 +199,6 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 		if flags.PublicURL == "" && flags.Name == "" {
 			flags.Name = projectconfig.ServiceWorktreeLabel(service, project.Worktree)
 		}
-	} else if flags.Target == "" && flags.PublicURL == "" && flags.Name == "" && project.Found() && project.Config.Publish != nil && project.Config.Publish.Target != nil {
-		flags.Target = string(*project.Config.Publish.Target)
 	}
 	if flags.Name != "" && flags.PublicURL != "" {
 		return flags, failure.Wrap("validate public URL options", failure.InvalidTunnelFlags, errors.New("--name and --public-url are mutually exclusive"))

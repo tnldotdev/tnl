@@ -62,7 +62,7 @@ func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
 		Config: config.TNL{Services: config.Services{"api": {Publish: &config.Publish{Target: &target}}}},
 	}}
 	selected, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{Selector: "api"}, project)
-	if err != nil || selected.Target != string(target) || selected.Name != projectconfig.ServiceWorktreeLabel("api", worktree) {
+	if err != nil || selected.Target != "" || selected.Name != projectconfig.ServiceWorktreeLabel("api", worktree) {
 		t.Fatalf("configured service = %#v, %v", selected, err)
 	}
 	adHoc, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{Target: "http://app:3000"}, project)
@@ -70,7 +70,7 @@ func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
 		t.Fatalf("ad hoc URL inherited project identity = %#v, %v", adHoc, err)
 	}
 	implicit, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{}, project)
-	if err != nil || implicit.Name != selected.Name || implicit.Target != selected.Target {
+	if err != nil || implicit.Name != selected.Name || implicit.Target != "" {
 		t.Fatalf("single project service = %#v, %v", implicit, err)
 	}
 	exact, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{PublicURL: "https://app.example.test"}, project)
