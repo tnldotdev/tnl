@@ -27,7 +27,7 @@ func TestOpenWaitsForRoutabilityAndCleansUpOnCancellation(t *testing.T) {
 			return
 		}
 		switch r.Method + " " + r.URL.Path {
-		case "POST /v1/publish-credentials/allocate":
+		case "POST /v1/ephemeral-public-urls":
 			allocations.Add(1)
 			var body controlv1.AllocateEphemeralPublicURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -43,7 +43,7 @@ func TestOpenWaitsForRoutabilityAndCleansUpOnCancellation(t *testing.T) {
 		case "POST /v1/public-urls/url_allocated/publish-runs":
 			publishRuns.Add(1)
 			<-r.Context().Done()
-		case "DELETE /v1/publish-credentials/public-urls/url_allocated":
+		case "DELETE /v1/ephemeral-public-urls/url_allocated":
 			deletions.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 		default:
