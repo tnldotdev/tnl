@@ -33,7 +33,7 @@ func TestRunCleansAllocatedURLWhenRegistrationCannotContinue(t *testing.T) {
 			return
 		}
 		switch r.Method + " " + r.URL.Path {
-		case "POST /v1/publish-credentials/allocate":
+		case "POST /v1/ephemeral-public-urls":
 			allocations.Add(1)
 			var body controlv1.AllocateEphemeralPublicURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.InvocationId != invocation || body.Target != "http://127.0.0.1:3000" ||
@@ -46,7 +46,7 @@ func TestRunCleansAllocatedURLWhenRegistrationCannotContinue(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(controlv1.PublicURL{Id: "url_allocated", TeamId: "team_1", DomainId: "domain_1",
 				CanonicalHostname: "eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test", Target: body.Target,
 				Ephemeral: true, Purpose: controlv1.App, LifecycleState: controlv1.Enabled, PolicyRevision: 1})
-		case "DELETE /v1/publish-credentials/public-urls/url_allocated":
+		case "DELETE /v1/ephemeral-public-urls/url_allocated":
 			deletions.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -54,7 +54,7 @@ func TestRunCleansAllocatedURLWhenRegistrationCannotContinue(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	registrationErr := errors.New("registration was fenced")
+	registrationErr := errors.New("registration is no longer current")
 	err = Run(context.Background(), Options{ControlURL: server.URL, HTTPClient: server.Client(), State: &clientstate.Store{},
 		Credential: credential, InvocationID: invocation, Target: "http://127.0.0.1:3000",
 		Limits: publisher.ApplicationLimits{Requests: 1}, OnAllocated: func(_ controlv1.PublicURL) error { return registrationErr },
