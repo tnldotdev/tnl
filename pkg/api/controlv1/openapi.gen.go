@@ -692,6 +692,21 @@ func (e WebhookProviderSourceResponseSource1Kind) Valid() bool {
 	}
 }
 
+// Defines values for BeginPreviewBrowserLoginParamsPrompt.
+const (
+	SelectAccount BeginPreviewBrowserLoginParamsPrompt = "select_account"
+)
+
+// Valid indicates whether the value is a known member of the BeginPreviewBrowserLoginParamsPrompt enum.
+func (e BeginPreviewBrowserLoginParamsPrompt) Valid() bool {
+	switch e {
+	case SelectAccount:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
 type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
@@ -1557,7 +1572,13 @@ type BeginPreviewBrowserLoginParams struct {
 	PreviewId   *PreviewID  `form:"preview_id,omitempty" json:"preview_id,omitempty"`
 	PublicUrlId PublicURLID `form:"public_url_id" json:"public_url_id"`
 	ReturnPath  string      `form:"return_path" json:"return_path"`
+
+	// Prompt Ask the identity provider to let the visitor select another account.
+	Prompt *BeginPreviewBrowserLoginParamsPrompt `form:"prompt,omitempty" json:"prompt,omitempty"`
 }
+
+// BeginPreviewBrowserLoginParamsPrompt defines parameters for BeginPreviewBrowserLogin.
+type BeginPreviewBrowserLoginParamsPrompt string
 
 // ListFeedbackThreadsParams defines parameters for ListFeedbackThreads.
 type ListFeedbackThreadsParams struct {
@@ -3993,6 +4014,18 @@ func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrows
 			for _, qp := range strings.Split(queryFrag, "&") {
 				rawQueryFragments = append(rawQueryFragments, qp)
 			}
+		}
+
+		if params.Prompt != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prompt", *params.Prompt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -12669,6 +12702,19 @@ func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWrite
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return_path"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return_path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "prompt" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "prompt", r.URL.Query(), &params.Prompt, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "prompt"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "prompt", Err: err})
 		}
 		return
 	}

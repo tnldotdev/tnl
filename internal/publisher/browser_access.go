@@ -35,12 +35,11 @@ type browserAccess struct {
 	previewID, publicURLID, runID, controlURL string
 	version                                   uint64
 	token                                     credentials.PublishRunToken
-	shares                                    *shareAccess
 }
 
 type browserIdentityKey struct{}
 
-func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken, shares *shareAccess) *browserAccess {
+func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) *browserAccess {
 	if config.Demo || config.Purpose != controlv1.App || setup.PublicUrl.Purpose != controlv1.App || !config.BrowserLoginAvailable {
 		return nil
 	}
@@ -54,7 +53,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	}
 	return &browserAccess{client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
-		controlURL: config.ControlURL, shares: shares}
+		controlURL: config.ControlURL}
 }
 
 func browserCookie(response http.ResponseWriter, secret string, expires time.Time) {
@@ -116,6 +115,13 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		}
 		query.Set("public_url_id", a.publicURLID)
 		query.Set("return_path", path)
+		if prompt := request.URL.Query().Get("prompt"); prompt != "" {
+			if prompt != "select_account" {
+				http.Error(response, "invalid browser sign-in prompt", http.StatusBadRequest)
+				return true
+			}
+			query.Set("prompt", prompt)
+		}
 		endpoint.RawQuery = query.Encode()
 		http.Redirect(response, request, endpoint.String(), http.StatusSeeOther)
 		return true
@@ -127,11 +133,20 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			return true
 		}
 		result, err := a.client.RedeemBrowserHandoff(request.Context(), a.runID, a.version, ticket, a.token)
-		if err != nil || !validBrowserPath(result.ReturnPath) {
-			http.Error(response, "browser sign-in expired", http.StatusForbidden)
+		if err != nil {
+			var rejected *controlclient.ProblemError
+			if errors.Is(err, controlclient.ErrNotFound) || errors.As(err, &rejected) && rejected.Status == http.StatusForbidden && rejected.Problem.Code == controlv1.Forbidden {
+				http.Error(response, "browser sign-in expired", http.StatusForbidden)
+			} else {
+				http.Error(response, "browser sign-in is unavailable", http.StatusServiceUnavailable)
+			}
 			return true
 		}
-		browserCookie(response, result.CookieSecret, result.ExpiresAt)
+		secret, err := base64.RawURLEncoding.DecodeString(result.CookieSecret)
+		if err != nil || len(secret) != 32 || base64.RawURLEncoding.EncodeToString(secret) != result.CookieSecret || !validBrowserPath(result.ReturnPath) || !result.ExpiresAt.After(time.Now()) {
+			http.Error(response, "invalid browser handoff", http.StatusServiceUnavailable)
+			return true
+		}
 		next := result.ReturnPath
 		if result.NextUrl != nil {
 			parsed, err := url.Parse(*result.NextUrl)
@@ -141,6 +156,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			}
 			next = *result.NextUrl
 		}
+		browserCookie(response, result.CookieSecret, result.ExpiresAt)
 		if result.Bridge != nil && *result.Bridge {
 			response.Header().Set("Content-Type", "text/html; charset=utf-8")
 			response.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'")
@@ -169,9 +185,14 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			VisitAllowed bool   `json:"visit_allowed"`
 		}{SignedIn: true, DisplayName: result.DisplayName, VisitAllowed: result.VisitAllowed})
 		return true
-	case request.URL.Path == root+"logout" && request.Method == http.MethodPost:
+	case (request.URL.Path == root+"logout" || request.URL.Path == root+"switch-account") && request.Method == http.MethodPost:
 		if request.Header.Get("Origin") != "https://"+request.Host {
 			http.Error(response, "invalid logout origin", http.StatusForbidden)
+			return true
+		}
+		path := request.URL.Query().Get("return")
+		if request.URL.Path == root+"switch-account" && !validBrowserPath(path) {
+			http.Error(response, "invalid return path", http.StatusBadRequest)
 			return true
 		}
 		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
@@ -181,6 +202,10 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			}
 		}
 		http.SetCookie(response, &http.Cookie{Name: browserAccessCookieName, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+		if request.URL.Path == root+"switch-account" {
+			http.Redirect(response, request, root+"login?prompt=select_account&return="+url.QueryEscape(path), http.StatusSeeOther)
+			return true
+		}
 		response.WriteHeader(http.StatusNoContent)
 		return true
 	default:
@@ -190,5 +215,9 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 }
 
 func validBrowserPath(path string) bool {
-	return path != "" && len(path) <= 2048 && strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "\\\r\n#")
+	if path == "" || len(path) > 2048 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n# \t") {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(path)
+	return err == nil && !parsed.IsAbs() && parsed.Host == "" && !strings.HasPrefix(parsed.Path, "//") && !strings.ContainsAny(parsed.Path, "\\\r\n")
 }

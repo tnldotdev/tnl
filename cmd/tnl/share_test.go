@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"path/filepath"
@@ -64,6 +65,27 @@ func TestTeamShareCommandsSelectAConfiguredPreviewBeforeAuthentication(t *testin
 		err := run(t.Context(), arguments, io.Discard, io.Discard)
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PreviewNotSaved {
 			t.Fatalf("team share command %v selected a preview: %v", arguments, err)
+		}
+	}
+}
+
+func TestTeamShareCreatedExplainsSelectedTeamAndPreviewScope(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeTeamShareCreated(&output, "acme", controlv1.Preview{Id: "pv_private", PublicUrlIds: []string{"url_web", "url_api"}}, controlv1.PublicURL{CanonicalHostname: "web.acme.example"}); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{"+--[ tnl share team create ]-- shared", "team", "acme", "current team members; all 2 public URLs", "entry URL", "https://web.acme.example/", "tnl share team revoke --team acme", "team access applies to this whole preview"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("share output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "pv_private") || strings.Contains(text, "/__tnl/team/login") {
+		t.Fatalf("share output exposed internal scope or entry sign-in: %s", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if len(line) > 72 || strings.ContainsRune(line, '\x1b') {
+			t.Fatalf("invalid share frame line: %q", line)
 		}
 	}
 }

@@ -175,7 +175,7 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 	ready, joined := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(joined)
-		h.done <- runSession(sessionCtx, config, control.setup, func() error { close(ready); return nil })
+		h.done <- runSession(sessionCtx, config, control.setup, func(AccessInfo) error { close(ready); return nil })
 	}()
 	t.Cleanup(func() {
 		cancel()

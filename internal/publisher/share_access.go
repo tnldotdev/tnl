@@ -88,10 +88,13 @@ func (a *shareAccess) refresh(ctx context.Context) error {
 	return nil
 }
 
-func (a *shareAccess) permitsTeamLogin() bool {
+func (a *shareAccess) currentTeamAccess() *bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.teamAccessEnabled && !a.confirmed.IsZero() && time.Since(a.confirmed) <= shareStateFreshness
+	if a.confirmed.IsZero() || time.Since(a.confirmed) > shareStateFreshness {
+		return nil
+	}
+	return new(a.teamAccessEnabled)
 }
 
 func (a *shareAccess) permits(request *http.Request) bool {

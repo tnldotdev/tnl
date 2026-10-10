@@ -33,6 +33,13 @@ paths:
             type: string
             pattern: "^/"
             maxLength: 2048
+        - name: prompt
+          in: query
+          description: Ask the identity provider to let the visitor select another account.
+          required: false
+          schema:
+            type: string
+            enum: [select_account]
       responses:
         "302":
           description: Redirect to the configured identity provider

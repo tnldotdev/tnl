@@ -110,7 +110,7 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	reachedReady := errors.New("test reached ready")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	err := runSession(ctx, config, control.setup, func() error { return reachedReady })
+	err := runSession(ctx, config, control.setup, func(AccessInfo) error { return reachedReady })
 	if !errors.Is(err, reachedReady) || readyAttempts != 2 {
 		t.Fatalf("readiness attempts = %d, session error = %v", readyAttempts, err)
 	}
@@ -130,7 +130,7 @@ func TestRunSessionDoesNotRetryReadyCallbackAfterControlAccepts(t *testing.T) {
 	callbackAttempts := 0
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	err := runSession(ctx, config, control.setup, func() error {
+	err := runSession(ctx, config, control.setup, func(AccessInfo) error {
 		callbackAttempts++
 		return controlclient.ErrStatusConflict
 	})
@@ -371,7 +371,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					}
 				}()
 				for slot, control := range controls {
-					go func() { done <- runSession(ctx, configs[slot], control.setup, func() error { return nil }) }()
+					go func() { done <- runSession(ctx, configs[slot], control.setup, func(AccessInfo) error { return nil }) }()
 					synctest.Wait()
 				}
 				if renew {

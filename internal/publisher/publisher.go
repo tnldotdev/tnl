@@ -98,6 +98,7 @@ type Event struct {
 	PublishRunNumber uint64
 	Transport        tunnel.Transport
 	PolicyDenials    uint64
+	AccessInfo       *AccessInfo
 }
 
 // PublishRunIdentity binds a response observer to the run that served it.
@@ -179,10 +180,11 @@ func Run(ctx context.Context, config Config) (result error) {
 		if err != nil {
 			return err
 		}
-		err = runPublishRun(ctx, config, setup, func() error {
+		err = runPublishRun(ctx, config, setup, func(access AccessInfo) error {
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
 				PublicURL: "https://" + setup.PublicUrl.CanonicalHostname, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
+				AccessInfo: &access,
 			})
 		})
 		if ctx.Err() != nil {
@@ -195,7 +197,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 }
 
-func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
+func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func(AccessInfo) error) (result error) {
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

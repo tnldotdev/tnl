@@ -254,6 +254,8 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 				(selectedID == "" || slices.Contains(preview.PublicUrlIds, selectedID)) {
 				teamGrant = true
 				blocks = append(blocks, clioutput.Section("team", clioutput.Fields(
+					clioutput.Field{Label: "team", Value: current.team.DisplayName},
+					clioutput.Field{Label: "scope", Value: "current team members; preview-wide"},
 					clioutput.Field{Label: "preview ID", Value: preview.Id},
 					clioutput.Field{Label: "public URLs", Value: strconv.Itoa(len(preview.PublicUrlIds))},
 				)))
@@ -293,15 +295,29 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	if session.authenticated.Discovery.BrowserLoginAvailable == nil || !*session.authenticated.Discovery.BrowserLoginAvailable {
 		return failure.Wrap("enable team browser access", failure.ServerOIDCInvalid, errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team"))
 	}
+	team, err := session.api.GetTeam(ctx, preview.TeamId)
+	if err != nil {
+		return err
+	}
+	if team.Id != preview.TeamId || team.DisplayName == "" {
+		return failure.Wrap("read sharing team", failure.ServerResponseInvalid, errors.New("server returned a different sharing team"))
+	}
 	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, preview.Id, true)
 	if err != nil {
 		return err
 	}
-	if updated.Id != preview.Id || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
+	if updated.Id != preview.Id || updated.TeamId != preview.TeamId || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
 		return failure.Wrap("enable team browser access", failure.ServerResponseInvalid, errors.New("server did not enable this preview's team access"))
 	}
-	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
-		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
+	return writeTeamShareCreated(output, team.DisplayName, updated, selected)
+}
+
+func writeTeamShareCreated(output io.Writer, teamName string, preview controlv1.Preview, entry controlv1.PublicURL) error {
+	return writeHumanFrame(output, "tnl share team create", "shared", "team access applies to this whole preview", clioutput.Fields(
+		clioutput.Field{Label: "team", Value: teamName},
+		clioutput.Field{Label: "scope", Value: "current team members; all " + strconv.Itoa(len(preview.PublicUrlIds)) + " public URLs in this preview"},
+		clioutput.Field{Label: "entry URL", Value: "https://" + entry.CanonicalHostname + "/"},
+		clioutput.Field{Label: "revoke", Value: "tnl share team revoke --team " + teamName},
 	))
 }
 
@@ -329,10 +345,13 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 	if err != nil {
 		return err
 	}
-	if updated.Id != id || updated.TeamAccessEnabled == nil || *updated.TeamAccessEnabled {
+	if updated.Id != id || updated.TeamId != current.team.Id || updated.TeamAccessEnabled == nil || *updated.TeamAccessEnabled {
 		return failure.Wrap("revoke team browser access", failure.ServerResponseInvalid, errors.New("server did not revoke this preview's team access"))
 	}
-	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
+	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(
+		clioutput.Field{Label: "team", Value: current.team.DisplayName},
+		clioutput.Field{Label: "scope", Value: "all " + strconv.Itoa(len(updated.PublicUrlIds)) + " public URLs in this preview"},
+	))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {

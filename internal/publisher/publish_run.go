@@ -43,7 +43,7 @@ func runSession(
 	ctx context.Context,
 	config Config,
 	setup controlv1.PublishRunSetup,
-	ready func() error,
+	ready func(AccessInfo) error,
 ) (result error) {
 	if setup.PublicUrl.Id == "" || setup.PublishRun.Id == "" || setup.PublishRun.PublishRunNumber <= 0 || setup.PublishRunToken == "" {
 		return errors.New("publisher: server returned incomplete publish run setup")
@@ -164,7 +164,7 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	browserRuntime := browserAccessForRun(config, setup, publishRunToken, shareRuntime)
+	browserRuntime := browserAccessForRun(config, setup, publishRunToken)
 	if browserRuntime != nil {
 		if err := browserRuntime.client.EnableBrowserAccess(ctx, setup.PublishRun.Id, version, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: register browser capability: %w", err)
@@ -299,7 +299,9 @@ func runSession(
 		}
 	default:
 	}
-	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, ready); err != nil {
+	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, func() error {
+		return ready(readyAccessInfo(setup, browserRuntime, shareRuntime))
+	}); err != nil {
 		return err
 	}
 	cancelProvisioning()

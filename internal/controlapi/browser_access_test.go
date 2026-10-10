@@ -137,7 +137,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	}
 	authorize, err := url.Parse(start.Header().Get("Location"))
 	if err != nil || authorize.Host != newURLHost(t, provider.URL) || authorize.Query().Get("code_challenge_method") != "S256" ||
-		authorize.Query().Get("nonce") != store.login.Nonce || authorize.Query().Get("redirect_uri") != "https://control.example.test/v1/browser/callback" {
+		authorize.Query().Get("nonce") != store.login.Nonce || authorize.Query().Get("redirect_uri") != "https://control.example.test/v1/browser/callback" || authorize.Query().Has("prompt") {
 		t.Fatalf("OIDC redirect does not bind the browser state: %q, %v", start.Header().Get("Location"), err)
 	}
 	nonce = authorize.Query().Get("nonce")
@@ -177,10 +177,14 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	store.consumed = false
 	secondStart := httptest.NewRecorder()
 	h.BeginPreviewBrowserLogin(secondStart, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
+		PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/", Prompt: new(controlv1.SelectAccount),
 	})
 	if secondStart.Code != http.StatusFound || store.login.PreviewID != "" {
 		t.Fatalf("URL-only login = %d preview=%q", secondStart.Code, store.login.PreviewID)
+	}
+	switchAuthorization, err := url.Parse(secondStart.Header().Get("Location"))
+	if err != nil || switchAuthorization.Query().Get("prompt") != "select_account" || switchAuthorization.Query().Get("code_challenge_method") != "S256" || switchAuthorization.Query().Get("nonce") != store.login.Nonce {
+		t.Fatalf("account switch authorization = %q, %v", secondStart.Header().Get("Location"), err)
 	}
 	wrongNonce := signer.Token(t, "browser-test", map[string]any{
 		"iss": provider.URL, "aud": "tnl-browser", "sub": "identity_1", "name": "Sam",
@@ -422,5 +426,26 @@ func TestBrowserCapabilityEndpointAuthenticatesExactRunBeforeRegistration(t *tes
 				t.Fatal("registration preceded authentication or browser login setup")
 			}
 		})
+	}
+}
+
+func TestBrowserLoginRejectsUnsafeReturnOrUnsupportedPromptBeforeProviderIO(t *testing.T) {
+	for _, test := range []struct {
+		path   string
+		prompt *controlv1.BeginPreviewBrowserLoginParamsPrompt
+	}{
+		{path: "//other.example"}, {path: "/%2Fother.example"}, {path: "/%5Cother.example"}, {path: "/%0D%0Aheader"}, {path: "/bad path"},
+		{path: "/", prompt: new(controlv1.BeginPreviewBrowserLoginParamsPrompt("login"))},
+		{path: "/", prompt: new(controlv1.BeginPreviewBrowserLoginParamsPrompt(""))},
+	} {
+		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserVerifier: failingBrowserVerifier{}, browserAuthority: &authorityclient.Client{}}
+		response := httptest.NewRecorder()
+		h.BeginPreviewBrowserLogin(response, httptest.NewRequest("GET", "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PublicUrlId: "url_app", ReturnPath: test.path, Prompt: test.prompt})
+		if response.Code != http.StatusBadRequest || response.Header().Get("Location") != "" {
+			t.Fatalf("unsafe browser login reached identity provider: %d %s", response.Code, response.Body.String())
+		}
+	}
+	if !validBrowserReturnPath("/settings?next=%2Ffoo%3Fa%3D1&tab=profile%26name") {
+		t.Fatal("control rejected a safe encoded return query")
 	}
 }
