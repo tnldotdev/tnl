@@ -21,9 +21,8 @@ afterEach(() => {
 });
 
 describe("root runtime", () => {
-  test("exposes a normal port and optional metadata outside tnl dev", async () => {
+  test("exposes the configured port and optional metadata", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
-    vi.stubEnv("TNL_DEV_PROTOCOL", undefined);
     vi.stubEnv("PORT", undefined);
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
@@ -37,7 +36,7 @@ describe("root runtime", () => {
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
     expect(runtime.tnl).toMatchObject({ ...project, dev: running });
-    expect(runtime.tnl.register).toBeTypeOf("function");
+    expect(runtime.tnl.prepare).toBeTypeOf("function");
   });
 
   test("imports the built root runtime with no process global", async () => {
@@ -97,18 +96,7 @@ describe("root runtime", () => {
     expect(runtime?.services.constructor).toBeUndefined();
   });
 
-  test("uses an ephemeral listener under tnl dev and honors a forced port", async () => {
-    vi.stubEnv("TNL_DEV_PROTOCOL", "1");
-    vi.stubEnv("TNL_DEV_PORT", undefined);
-    vi.resetModules();
-    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(0);
-    vi.stubEnv("TNL_DEV_PORT", "5173");
-    vi.resetModules();
-    expect((await import("@tnldotdev/tnl")).tnl.port).toBe(5173);
-  });
-
-  test("respects normal Node and Bun port settings outside tnl dev", async () => {
-    vi.stubEnv("TNL_DEV_PROTOCOL", undefined);
+  test("respects Node and Bun port settings", async () => {
     vi.stubEnv("PORT", "4300");
     vi.resetModules();
     expect((await import("@tnldotdev/tnl")).tnl.port).toBe(4300);

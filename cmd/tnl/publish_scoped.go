@@ -149,7 +149,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = requestObservation(recorder)
-	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service, nil)
+	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
 	}

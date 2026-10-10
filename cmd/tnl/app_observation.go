@@ -26,7 +26,7 @@ type waitCommand struct {
 }
 type watchCommand struct {
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	After    string `name:"after" help:"Resume after this local event cursor. Defaults to a new snapshot watermark."`
+	After    string `name:"after" help:"Resume after this local event cursor. Without it, show current services before following new events."`
 	Output   string `name:"output" enum:"human,ndjson" default:"human"`
 }
 

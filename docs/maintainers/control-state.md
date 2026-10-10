@@ -145,7 +145,7 @@ comparing listed records or pagination cursors, while retaining the returned
 record set for an exact delete during custom-domain release.
 
 For every DNS-managed public URL, publish run readiness waits for the DNS
-worker's authoritative verification. `tnl dev` and `tnl publish --open` also
+worker's authoritative verification. `tnl publish --open` also
 wait up to two minutes for the local resolver before opening a browser. URLs
 whose DNS tnl does not manage do not wait for this verification.
 
