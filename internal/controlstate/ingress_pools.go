@@ -66,13 +66,13 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 	}
 	defer rollback(ctx, tx, "provision ingress pool", &retErr)()
 	queries := controlstatedb.New(tx)
-	pool, err := queries.LockIngressPoolForProvision(ctx, "ingress-a")
+	pool, err := queries.LockIngressPoolForProvision(ctx, primaryIngressPoolID)
 	if err != nil {
 		return fmt.Errorf("controlstate: lock ingress-a: %w", err)
 	}
 	if pool.State == "disabled" {
 		if _, err := queries.EnableIngressPool(ctx, controlstatedb.EnableIngressPoolParams{
-			ID: "ingress-a", Ipv4Address: v4, Ipv6Address: v6, UpdatedAt: timestamptz(now),
+			ID: primaryIngressPoolID, Ipv4Address: v4, Ipv6Address: v6, UpdatedAt: timestamptz(now),
 		}); err != nil {
 			return fmt.Errorf("controlstate: enable ingress-a: %w", err)
 		}
@@ -80,7 +80,7 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 		return errors.New("controlstate: ingress-a address differs from the enabled pool")
 	}
 	if _, err := queries.EnableIngressPoolPorts(ctx, controlstatedb.EnableIngressPoolPortsParams{
-		IngressPoolID: "ingress-a", Ports: ports,
+		IngressPoolID: primaryIngressPoolID, Ports: ports,
 	}); err != nil {
 		return fmt.Errorf("controlstate: enable ingress-a ports: %w", err)
 	}
