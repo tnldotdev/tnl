@@ -24,6 +24,12 @@ an empty DNS authority reference that the old constraint rejected. Email deliver
 requires migration 12's queue table, including for storage-key rotation. The
 authority cleanup requires migration 13's renamed guest retry-key columns.
 
+Migration 18 prepares nullable browser preview references, the publish run's
+`browser_capable` flag, and the team's `feedback_require_sign_in` policy. Both
+flags default to false; current browser writers still require a preview. Generated
+reads require schema 18. Deploy the migration and compatible serving processes
+before enabling preview-independent browser writers or sign-in policy enforcement.
+
 The two publisher connection slots are stored in
 `control.publish_run_connection_slots`. A slot keeps its `id` and
 `(publish_run_id, connection_slot)` identity when its connection assignment is
@@ -67,6 +73,33 @@ Session creation shares the team authorization guard before locking its route.
 Authority mutations take a conflicting guard. A keyed transaction advisory lock
 comes before the team row so new readers cannot starve a waiting authority
 writer.
+
+Browser admission and reviewer feedback writes share that keyed team guard before
+locking a public URL, publish run, or feedback thread. Guest previews use the
+same advisory guard without a local team row. Browser-session refresh happens
+before admission and outside the team guard.
+
+## separate browser identity from visit permission
+
+`browserIdentity` validates the host's preview inclusion, browser-session expiry
+and revocation, and its saved OIDC control credential inside the caller's
+transaction. It shares the browser session, control session, and identity rows
+through commit, so logout, rotation, and identity disable cannot cross a write's
+authorization boundary. Attribution uses the identity's current saved name,
+not a publisher-supplied name or the browser session's older name snapshot.
+
+`browserVisitAllowed` makes the separate visit decision from the enabled public
+URL, the preview's current team access grant, and a current membership in that
+team. The control response calls this decision `visit_allowed`; a signed-in
+identity without that permission may still visit through IP policy or a share.
+
+`reviewerAccess` in `reviewer_access.go` composes those decisions for feedback.
+An allowed IP or current share admits a signed-in nonmember with verified
+attribution. Identity alone never admits a reviewer. Report creation and event
+writes revalidate these boundaries under their write transaction; no caller
+membership flag participates in authorization.
+
+## coordinate publisher connections
 
 Publisher-connection claim and readiness operations share a keyed advisory guard
 and relay-service row guard. Claims use `NO KEY UPDATE` on the selected relay

@@ -296,15 +296,15 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 				}
 				browser := controlv1.BrowserAccessResponse{}
-				browserPermitted := false
+				browserSignedIn := false
 				if config.BrowserAccess != nil {
-					browser, browserPermitted = config.BrowserAccess.check(request)
+					browser, browserSignedIn = config.BrowserAccess.check(request)
 				}
-				if browserPermitted {
+				if browserSignedIn {
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
-				if denied && !sharePermitted && (!browserPermitted || !browser.TeamMember) {
-					if !browserPermitted && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
+				if denied && !sharePermitted && (!browserSignedIn || !browser.VisitAllowed) {
+					if !browserSignedIn && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
 						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
 						response.Header().Set("Cache-Control", "no-store")
 						response.Header().Set("Referrer-Policy", "no-referrer")

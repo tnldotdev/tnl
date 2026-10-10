@@ -96,7 +96,7 @@ type ConsumeBrowserLoginAttemptParams struct {
 }
 
 type ConsumeBrowserLoginAttemptRow struct {
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
 	ReturnPath           string
 	Nonce                string
@@ -184,7 +184,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 
 type InsertBrowserAccessSessionParams struct {
 	TokenDigest       []byte
-	PreviewID         string
+	PreviewID         pgtype.Text
 	PublicURLID       string
 	IdentityID        string
 	DisplayName       string
@@ -220,7 +220,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 type InsertBrowserLoginAttemptParams struct {
 	StateDigest          []byte
 	BindingDigest        []byte
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
 	ReturnPath           string
 	Nonce                string
@@ -354,4 +354,120 @@ func (q *Queries) RotateBrowserAccessSession(ctx context.Context, arg RotateBrow
 		arg.TokenDigest,
 	)
 	return err
+}
+
+const shareBrowserAccessSession = `-- name: ShareBrowserAccessSession :one
+SELECT session.token_digest, session.preview_id, session.public_url_id, session.identity_id, session.display_name, session.access_ciphertext, session.refresh_ciphertext, session.storage_key_id, session.access_expires_at, session.expires_at, session.revoked_at
+FROM control.browser_access_sessions AS session
+JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
+WHERE session.token_digest = $1
+  AND included.public_url_id = $2
+FOR SHARE OF session, included
+`
+
+type ShareBrowserAccessSessionParams struct {
+	TokenDigest []byte
+	PublicURLID string
+}
+
+func (q *Queries) ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error) {
+	row := q.db.QueryRow(ctx, shareBrowserAccessSession, arg.TokenDigest, arg.PublicURLID)
+	var i ControlBrowserAccessSession
+	err := row.Scan(
+		&i.TokenDigest,
+		&i.PreviewID,
+		&i.PublicURLID,
+		&i.IdentityID,
+		&i.DisplayName,
+		&i.AccessCiphertext,
+		&i.RefreshCiphertext,
+		&i.StorageKeyID,
+		&i.AccessExpiresAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const shareBrowserControlIdentity = `-- name: ShareBrowserControlIdentity :one
+SELECT session.identity_id, identity.display_name, session.access_token_digest,
+       session.access_expires_at, session.refresh_expires_at
+FROM control.control_sessions AS session
+JOIN control.identities AS identity ON identity.id = session.identity_id
+WHERE session.access_token_id = $1
+  AND session.authentication_method = 'oidc'
+  AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
+FOR SHARE OF session, identity
+`
+
+type ShareBrowserControlIdentityRow struct {
+	IdentityID        string
+	DisplayName       string
+	AccessTokenDigest []byte
+	AccessExpiresAt   pgtype.Timestamptz
+	RefreshExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error) {
+	row := q.db.QueryRow(ctx, shareBrowserControlIdentity, accessTokenID)
+	var i ShareBrowserControlIdentityRow
+	err := row.Scan(
+		&i.IdentityID,
+		&i.DisplayName,
+		&i.AccessTokenDigest,
+		&i.AccessExpiresAt,
+		&i.RefreshExpiresAt,
+	)
+	return i, err
+}
+
+const shareBrowserPublicURL = `-- name: ShareBrowserPublicURL :one
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose FROM control.public_urls WHERE id = $1 FOR SHARE
+`
+
+func (q *Queries) ShareBrowserPublicURL(ctx context.Context, publicUrlID string) (ControlPublicUrl, error) {
+	row := q.db.QueryRow(ctx, shareBrowserPublicURL, publicUrlID)
+	var i ControlPublicUrl
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.DomainID,
+		&i.MembershipID,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.CanonicalHostname,
+		&i.Target,
+		&i.PublicURLScope,
+		&i.PolicyRevision,
+		&i.IpPolicy,
+		&i.LifecycleState,
+		&i.DnsAuthorityReference,
+		&i.DnsState,
+		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
+		&i.NextPublishRunNumber,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
+		&i.SuspensionRevision,
+		&i.SuspensionReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.AllowedIpPolicyCiphertext,
+		&i.AllowedIpPolicyStorageKeyID,
+		&i.AllowedIpHashes,
+		&i.AllowedIpHashKeyID,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.Namespace,
+		&i.Purpose,
+	)
+	return i, err
 }

@@ -245,11 +245,11 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	writeJSON(response, http.StatusOK, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: path, NextUrl: &next, Bridge: &bridge, ExpiresAt: expires})
 }
 
-func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
+func (h *handler) browserSessionIdentity(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, error) {
 	now := time.Now()
 	session, err := h.browserAccess.BrowserSession(ctxRequest.Context(), auth.PublicURLID, token, now)
 	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, err
 	}
 	if !session.AccessExpiresAt.After(now.Add(30 * time.Second)) {
 		session, err = h.browserAccess.RefreshBrowserSession(ctxRequest.Context(), auth.PublicURLID, token, now,
@@ -268,51 +268,17 @@ func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlsta
 				}, nil
 			})
 		if err != nil {
-			return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+			return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, err
 		}
 	}
 	principal, err := h.authorizer.AuthorizePublicURLReads(ctxRequest.Context(), session.AccessToken)
 	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, err
 	}
 	if principal.identityID != session.IdentityID {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, authorization.ErrUnauthenticated
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, authorization.ErrUnauthenticated
 	}
-	preview, err := h.previews.GetPreview(ctxRequest.Context(), session.PreviewID)
-	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
-	}
-	if !slices.Contains(preview.PublicURLIDs, auth.PublicURLID) {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, controlstate.ErrPreviewAccess
-	}
-	if !preview.TeamAccessEnabled {
-		return session, principal, false, nil
-	}
-	publicURL, err := h.store.GetPublicURLForAuthorization(ctxRequest.Context(), auth.PublicURLID)
-	if err != nil {
-		return session, principal, false, err
-	}
-	if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
-		return session, principal, false, nil
-	}
-	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
-	for index, prefix := range publicURL.AllowedIPPrefixes {
-		prefixes[index] = prefix.String()
-	}
-	decision, err := h.authorizer.Authorize(ctxRequest.Context(), authorization.Request{
-		AccessToken: session.AccessToken, Operation: authorization.OperationPreviewVisit,
-		TeamID: publicURL.TeamID, PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
-		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
-		Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
-		PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
-	})
-	if errors.Is(err, authorization.ErrForbidden) {
-		return session, principal, false, nil
-	}
-	if err != nil {
-		return session, principal, false, err
-	}
-	return session, principal, decision.IdentityID == session.IdentityID && decision.TeamID == preview.TeamID, nil
+	return session, principal, nil
 }
 
 func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
@@ -325,7 +291,14 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 	if !ok {
 		return
 	}
-	session, principal, member, err := h.browserSessionAccess(request, auth, body.CookieSecret)
+	_, principal, err := h.browserSessionIdentity(request, auth, body.CookieSecret)
+	var access controlstate.BrowserAuthorization
+	if err == nil {
+		access, err = h.browserAccess.BrowserAuthorization(request.Context(), auth.PublicURLID, body.CookieSecret, time.Now())
+		if err == nil && access.Identity.IdentityID != principal.identityID {
+			err = authorization.ErrUnauthenticated
+		}
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, authorization.ErrUnauthenticated), errors.Is(err, authorityclient.ErrUnauthenticated):
@@ -338,7 +311,7 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.BrowserAccessResponse{
-		IdentityId: session.IdentityID, DisplayName: principal.displayName, TeamMember: member,
+		IdentityId: access.Identity.IdentityID, DisplayName: access.Identity.DisplayName, VisitAllowed: access.VisitAllowed,
 	})
 }
 

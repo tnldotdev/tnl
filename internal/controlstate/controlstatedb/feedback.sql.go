@@ -186,16 +186,18 @@ JOIN control.public_urls AS url ON url.id = run.public_url_id
 JOIN control.preview_public_urls AS included ON included.public_url_id = url.id
 JOIN control.previews AS preview ON preview.id = included.preview_id
 WHERE run.id = $1
-  AND preview.id = $2
-  AND run.publish_run_number = $3
-  AND run.publisher_expires_at > $4
+  AND run.public_url_id = $2
+  AND preview.id = $3 AND preview.team_id = url.team_id
+  AND run.publish_run_number = $4
+  AND run.publisher_expires_at > $5
   AND run.state IN ('starting', 'ready')
-   AND url.lifecycle_state = 'enabled'
+  AND url.lifecycle_state = 'enabled'
 FOR UPDATE OF run
 `
 
 type FeedbackRunScopeParams struct {
 	PublishRunID     string
+	PublicURLID      string
 	PreviewID        string
 	PublishRunNumber int64
 	Now              pgtype.Timestamptz
@@ -212,6 +214,7 @@ type FeedbackRunScopeRow struct {
 func (q *Queries) FeedbackRunScope(ctx context.Context, arg FeedbackRunScopeParams) (FeedbackRunScopeRow, error) {
 	row := q.db.QueryRow(ctx, feedbackRunScope,
 		arg.PublishRunID,
+		arg.PublicURLID,
 		arg.PreviewID,
 		arg.PublishRunNumber,
 		arg.Now,
@@ -734,6 +737,7 @@ WHERE share.id = $1
   AND cookie.expires_at > $4
   AND share.expires_at > $4
   AND share.revoked_at IS NULL
+FOR SHARE OF share, cookie, included
 `
 
 type ReviewerShareCookieValidParams struct {
