@@ -19,6 +19,7 @@ type TestTier string
 const (
 	TestTierRoutine      TestTier = "routine"
 	TestTierIntegration  TestTier = "integration"
+	TestTierMySQL        TestTier = "mysql"
 	TestTierBinary       TestTier = "binary"
 	TestTierDNS          TestTier = "dns"
 	TestTierRoute53      TestTier = "route53"
@@ -107,7 +108,7 @@ func selectedTestTier(t testing.TB) TestTier {
 	t.Helper()
 	tier := TestTier(*testTier)
 	switch tier {
-	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierRoute53, TestTierDatabaseLoad, TestTierRuntimeLoad:
+	case TestTierRoutine, TestTierIntegration, TestTierMySQL, TestTierBinary, TestTierDNS, TestTierRoute53, TestTierDatabaseLoad, TestTierRuntimeLoad:
 		return tier
 	default:
 		t.Fatalf("unknown tnl test tier %q", tier)

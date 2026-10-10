@@ -235,7 +235,17 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+
+  go:test:integration:mysql:
+    desc: Run real MySQL client forwarding tests with a disposable MySQL server
+    cmds:
+      - node scripts/run-go-tests-with-mysql.ts -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=mysql
+
+  go:test:integration:postgres-tls:
+    desc: Verify PostgreSQL TLS channel binding with a disposable PostgreSQL server
+    cmds:
+      - node scripts/run-go-tests-with-postgres.ts --tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresChannelBinding$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
