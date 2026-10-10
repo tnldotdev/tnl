@@ -1,9 +1,10 @@
 import { randomBytes, randomInt } from "node:crypto";
 import * as path from "node:path";
 import type { TnlRatePeriod } from "../config.gen.js";
+import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
 import { startRuntime, runtimeRequest } from "./app.js";
-import { listeningTarget, type LocalHTTPServer } from "./register.js";
+import { closeServer, listeningTarget, type LocalHTTPServer } from "./register.js";
 import { record, requiredHostname } from "./runtime.js";
 
 export interface OpenOptions {
@@ -391,4 +392,68 @@ function validateOptions(options: OpenOptions): void {
 
 function aborted(): DOMException {
   return new DOMException("ad-hoc publication was aborted", "AbortError");
+}
+
+// inline Fetch handlers own their Node listener; a supplied server is never closed.
+export async function openFetch(
+  handler: FetchHandler,
+  options: OpenOptions = {},
+  runtime: Dependencies = dependencies,
+): Promise<AdHocTunnel> {
+  validateOptions(options);
+  const { createFetchServer } = await import("./fetch.js");
+  const server = await createFetchServer(handler);
+  let base: AdHocTunnel;
+  try {
+    base = await openServer(server, options, runtime);
+  } catch (cause) {
+    try {
+      await closeServer(server);
+    } catch (cleanupError) {
+      throw new TnlCleanupError(cause, cleanupError);
+    }
+    throw cause;
+  }
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closing !== undefined) return closing;
+    closing = (async () => {
+      let publicationError: unknown;
+      try {
+        await base.close();
+      } catch (cause) {
+        publicationError = cause;
+      }
+      try {
+        await closeServer(server);
+      } catch (cause) {
+        if (publicationError !== undefined) throw new TnlCleanupError(publicationError, cause);
+        throw cause;
+      }
+      if (publicationError !== undefined) throw publicationError;
+    })();
+    return closing;
+  };
+  return Object.freeze({
+    get url(): `https://${string}` {
+      return base.url;
+    },
+    close,
+    async wait(): Promise<void> {
+      let failure: unknown;
+      try {
+        await base.wait();
+      } catch (cause) {
+        failure = cause;
+      }
+      try {
+        await close();
+      } catch (cause) {
+        if (failure !== undefined) throw new TnlCleanupError(failure, cause);
+        throw cause;
+      }
+      if (failure !== undefined) throw failure;
+    },
+    [Symbol.asyncDispose]: close,
+  });
 }
