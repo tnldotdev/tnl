@@ -26,6 +26,7 @@ type Querier interface {
 	// delta, and update denials atomically. reject any missing required step and
 	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
+	AttachPublishRunCredential(ctx context.Context, arg AttachPublishRunCredentialParams) (int64, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
@@ -149,11 +150,14 @@ type Querier interface {
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
 	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
+	GetPublicURLPublishCredentialByID(ctx context.Context, id string) (ControlPublicUrlPublishCredential, error)
+	GetPublicURLPublishCredentialByTokenID(ctx context.Context, tokenID string) (ControlPublicUrlPublishCredential, error)
 	GetPublicURLUsageBucketByID(ctx context.Context, bucketID int64) (ControlPublicUrlUsageBucket, error)
 	GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetPublicURLUsageBucketForUpdateParams) (ControlPublicUrlUsageBucket, error)
 	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
+	GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnectionSlot, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
@@ -194,6 +198,7 @@ type Querier interface {
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
 	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
+	InsertPublicURLPublishCredential(ctx context.Context, arg InsertPublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	InsertPublicURLUpdateAuditEvent(ctx context.Context, arg InsertPublicURLUpdateAuditEventParams) error
 	InsertPublicURLUsageDelivery(ctx context.Context, arg InsertPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error)
@@ -227,6 +232,7 @@ type Querier interface {
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
+	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID string) ([]ControlPublicUrlPublishCredential, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
@@ -360,6 +366,7 @@ type Querier interface {
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
+	RevokePublicURLPublishCredential(ctx context.Context, arg RevokePublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error

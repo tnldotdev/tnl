@@ -73,6 +73,14 @@ type PublicURLStore interface {
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
 }
 
+type PublicURLPublishCredentialStore interface {
+	CreatePublicURLPublishCredential(context.Context, controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error)
+	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
+	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
+	ListPublicURLPublishCredentials(context.Context, string) ([]controlstate.PublicURLPublishCredential, error)
+	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
+}
+
 // CertificateStore owns publish run certificate issuance state.
 type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
@@ -153,19 +161,20 @@ type AuthorizationStore interface {
 }
 
 type handler struct {
-	config            Config
-	store             PublicURLStore
-	certificates      CertificateStore
-	admin             AdminStore
-	previews          PreviewStore
-	previewTeamAccess PreviewTeamAccessStore
-	browserAccess     BrowserAccessStore
-	browserVerifier   oidcauth.Verifier
-	browserAuthority  *authorityclient.Client
-	shares            ShareStore
-	shareAccess       ShareAccessStore
-	feedback          FeedbackStore
-	guests            interface {
+	config             Config
+	store              PublicURLStore
+	publishCredentials PublicURLPublishCredentialStore
+	certificates       CertificateStore
+	admin              AdminStore
+	previews           PreviewStore
+	previewTeamAccess  PreviewTeamAccessStore
+	browserAccess      BrowserAccessStore
+	browserVerifier    oidcauth.Verifier
+	browserAuthority   *authorityclient.Client
+	shares             ShareStore
+	shareAccess        ShareAccessStore
+	feedback           FeedbackStore
+	guests             interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -188,6 +197,9 @@ func NewHandler(
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
+	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
+		h.publishCredentials = credentials
+	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
 		h.webhookCatalog = webhookcatalog.New(cfg.HTTPClient)

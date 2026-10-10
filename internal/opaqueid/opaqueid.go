@@ -35,6 +35,7 @@ const (
 	IssuancePrefix                   = "iss_"
 	MembershipPrefix                 = "mem_"
 	PublicURLPrefix                  = "url_"
+	PublicURLPublishCredentialPrefix = "upc_"
 	PublishRunPrefix                 = "pr_"
 	PublicURLCertificateWorkerPrefix = "ucw_"
 	PublicURLUsageWorkerPrefix       = "uuw_"

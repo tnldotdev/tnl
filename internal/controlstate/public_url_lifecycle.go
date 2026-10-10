@@ -338,6 +338,36 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
+	credential, credentialErr := queries.GetPublishRunCredentialState(ctx, session.ID)
+	if credentialErr != nil && !errors.Is(credentialErr, pgx.ErrNoRows) {
+		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
+	}
+	credentialRevoked := credentialErr == nil && (credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
+		credential.PublicURLID != route.ID || credential.Target != route.Target)
+	if credentialErr == nil && !credentialRevoked {
+		membership, memberErr := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
+			TeamID: route.TeamID, IdentityID: credential.IssuedByIdentityID,
+		})
+		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential membership: %w", memberErr)
+		}
+		credentialRevoked = errors.Is(memberErr, pgx.ErrNoRows) || membership.ID != credential.MembershipID ||
+			membership.PolicyRevision != credential.PolicyRevision ||
+			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
+			route.PublicURLScope == "shared" && membership.Role != "admin" && membership.Role != "owner"
+	}
+	if credentialRevoked {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publish_credential_revoked"); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PublishRunSetup{}, err
+		}
+		return PublishRunSetup{}, ErrPublicURLCredential
+	}
 	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),
 	})

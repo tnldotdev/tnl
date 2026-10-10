@@ -55,6 +55,7 @@ type PublishRunRequest struct {
 	CertificateIdentifiers   []string
 	CertificateChallenge     certificateidentity.ChallengeMethod
 	ExpectedMutationRevision uint64
+	PublishCredentialID      string
 }
 
 // ConnectionAssignment is one of the two independently assigned publisher
@@ -166,6 +167,15 @@ func (d *Database) createPublishRun(
 	}
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
+	}
+	if request.PublishCredentialID != "" {
+		credential, credentialErr := queries.GetPublicURLPublishCredentialByID(ctx, request.PublishCredentialID)
+		if credentialErr != nil || credential.PublicURLID != route.ID || credential.Target != route.Target ||
+			credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
+			credential.IssuedByIdentityID != request.ActingIdentityID || credential.MembershipID != request.MembershipID ||
+			credential.PolicyRevision != int64(request.PolicyRevision) {
+			return PublishRunSetup{}, ErrPublicURLCredential
+		}
 	}
 	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
 		return PublishRunSetup{}, ErrPublicURLNotEnabled
@@ -283,6 +293,14 @@ func (d *Database) createPublishRun(
 	}
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
+	}
+	if request.PublishCredentialID != "" {
+		attached, err := queries.AttachPublishRunCredential(ctx, controlstatedb.AttachPublishRunCredentialParams{
+			PublishRunID: publishRunID, PublicURLID: route.ID, CredentialID: request.PublishCredentialID,
+		})
+		if err != nil || attached != 1 {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: attach publish credential: %w", err)
+		}
 	}
 	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
 		reserved, err := queries.BeginGuestPublishRun(ctx, controlstatedb.BeginGuestPublishRunParams{

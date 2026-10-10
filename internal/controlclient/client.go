@@ -303,6 +303,40 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 	return err
 }
 
+// CreatePublicURLPublishCredential returns the secret only on creation.
+func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURLID string) (controlv1.IssuedPublicURLPublishCredential, error) {
+	return requestWithAccess[controlv1.IssuedPublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublicURLPublishCredential(ctx, publicURLID, editors...)
+	})
+}
+
+func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicURLID string) ([]controlv1.PublicURLPublishCredential, error) {
+	page, err := requestWithAccess[struct {
+		Credentials []controlv1.PublicURLPublishCredential `json:"credentials"`
+	}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListPublicURLPublishCredentials(ctx, publicURLID, editors...)
+	})
+	return page.Credentials, err
+}
+
+func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokePublicURLPublishCredential(ctx, publicURLID, credentialID, editors...)
+	})
+	return err
+}
+
+func (c *Client) PublicURLForPublishCredential(ctx context.Context, credential credentials.PublicURLPublishCredential) (controlv1.PublicURL, error) {
+	return request[controlv1.PublicURL](ctx, c, credential.String(), c.api.GetPublicURLForPublishCredential)
+}
+
+func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
+	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
+	return request[controlv1.PublishRunSetup](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
+	})
+}
+
 func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

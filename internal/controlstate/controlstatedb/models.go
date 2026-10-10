@@ -496,6 +496,24 @@ type ControlPublicUrl struct {
 	Purpose                     string
 }
 
+type ControlPublicUrlPublishCredential struct {
+	ID                         string
+	PublicURLID                string
+	TokenID                    string
+	TokenDigest                []byte
+	IssuedByIdentityID         string
+	MembershipID               string
+	PolicyRevision             int64
+	Target                     string
+	CertificateCacheKey        string
+	CertificateScope           string
+	CertificateIdentifiers     []string
+	CertificateChallengeMethod string
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	RevokedAt                  pgtype.Timestamptz
+}
+
 type ControlPublicUrlRecoveryEpisode struct {
 	ID               int64
 	PublicURLID      string
@@ -630,6 +648,12 @@ type ControlPublishRunConnectionSlot struct {
 	DisconnectedAt                         pgtype.Timestamptz
 	ClosedAt                               pgtype.Timestamptz
 	SessionOpen                            bool
+}
+
+type ControlPublishRunPublishCredential struct {
+	PublishRunID string
+	PublicURLID  string
+	CredentialID string
 }
 
 type ControlRelayCertificateOrder struct {
