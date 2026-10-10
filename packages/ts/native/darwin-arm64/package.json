@@ -1,12 +1,12 @@
 {
-  "name": "@tnldotdev/tnl-linux-x64",
+  "name": "@tnldotdev/tnl-darwin-arm64",
   "version": "0.0.0-development",
-  "description": "The Linux x64 binary for tnl.",
+  "description": "The macOS arm64 binary for tnl.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tnldotdev/tnl.git",
-    "directory": "packages/tnl/native/linux-x64"
+    "directory": "packages/ts/native/darwin-arm64"
   },
   "files": [
     "bin",
@@ -14,10 +14,10 @@
     "THIRD_PARTY_LICENSES.txt"
   ],
   "os": [
-    "linux"
+    "darwin"
   ],
   "cpu": [
-    "x64"
+    "arm64"
   ],
   "publishConfig": {
     "access": "public"

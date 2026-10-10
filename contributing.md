@@ -79,7 +79,7 @@ focused test:
 
 ```console
 mise exec -- pnpm --filter @tnldotdev/tnl build
-mise exec -- pnpm exec vitest run packages/tnl/vite.test.ts
+mise exec -- pnpm exec vitest run packages/ts/vite.test.ts
 ```
 
 Run `mise exec -- task js:check` to build once and run the JavaScript checks
@@ -91,7 +91,7 @@ Install Chromium with `mise exec -- pnpm exec playwright install chromium`, then
 run `mise exec -- task js:test:browser` to test that bundle under browser CSP.
 
 Keep the package root safe to import in a browser. The public exports live in
-`packages/tnl/package.json`; the private development socket is not an extension
+`packages/ts/package.json`; the private development socket is not an extension
 API. Write npm runtime code and tooling in TypeScript. Validate external data
 before treating it as a known type. The
 [compatibility workflow](.github/workflows/checks.yml) checks supported
@@ -116,17 +116,17 @@ file without reading or importing the old one. Goose versions within one file
 still track compatible migrations. The server's current PostgreSQL baseline
 requires a fresh database rather than an upgrade from an older schema.
 
-| Source                                                                                    | Generated output                                                                           |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                    |
-| PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                     |
-| SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                       |
-| `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/tnl/src/config.gen.ts` |
-| `internal/projectconfig/loader.ts`                                                        | `internal/projectconfig/loader.mjs`, embedded by Go                                        |
-| `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                        |
-| `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                     |
+| Source                                                                                    | Generated output                                                                          |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
+| PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                    |
+| SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
+| `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |
+| `internal/projectconfig/loader.ts`                                                        | `internal/projectconfig/loader.mjs`, embedded by Go                                       |
+| `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                       |
+| `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
 
-`packages/tnl/dist` is disposable build output. The CLI generates project-local
+`packages/ts/dist` is disposable build output. The CLI generates project-local
 `.tnl/project.json` and `.tnl/project.d.ts`; see the
 [framework guide](https://tnl.dev/docs/frameworks) for their use.
 

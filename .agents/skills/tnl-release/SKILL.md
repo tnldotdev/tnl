@@ -35,7 +35,7 @@ a normal release.
 3. Confirm the latest root release has the same published `@tnldotdev/tnl`
    version and all four exact-version native dependencies. Treat an absent npm
    client before its initial release as an explained bootstrap state.
-4. Review `packages/tnl` source, all public subpath types, runtime and optional
+4. Review `packages/ts` source, all public subpath types, runtime and optional
    peer dependencies, README, tests, package verification, and framework
    compatibility changes since the latest root tag. The private app-registration
    socket protocol and framework integrations ship in this package.
