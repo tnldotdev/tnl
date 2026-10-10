@@ -60,6 +60,7 @@ type Store interface {
 	SaveDNSAuthorityWork(context.Context, controlstate.DNSAuthorityWork, time.Time) (controlstate.DNSAuthorityWork, error)
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
+	GetIngressPool(context.Context, string) (controlstate.IngressPool, error)
 	ClaimDNSPublicURLWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSPublicURLWork, bool, error)
 	SaveDNSPublicURLWork(context.Context, controlstate.DNSPublicURLWork, time.Time) (controlstate.DNSPublicURLWork, error)
 }

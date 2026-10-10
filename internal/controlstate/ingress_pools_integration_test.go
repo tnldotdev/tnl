@@ -62,3 +62,39 @@ func TestIntegrationIngressPoolClaimsKeepTheirAddressAndHistory(t *testing.T) {
 		t.Fatalf("port could not be reused by a different hostname: %v", err)
 	}
 }
+
+func TestIntegrationPublicURLPinsTeamIngressPoolAtCreation(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "ingress_pool_placement")
+	request := builtinRouteRequest(t, database, now)
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_pools
+		(id, ipv4_address, state, created_at, updated_at)
+		VALUES ('ingress-b', '203.0.113.20', 'enabled', $1, $1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET ingress_pool_id = 'ingress-b' WHERE id = $1`, request.TeamID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET ingress_pool_id = 'ingress-a' WHERE id = $1`, request.TeamID); err == nil {
+		t.Fatal("team moved to another ingress pool while its member wildcard was saved")
+	}
+	secondRequest := request
+	secondRequest.IdempotencyKey = "second-ingress-pool"
+	secondRequest.CanonicalHostname = "another." + request.CanonicalHostname
+	second, err := database.CreatePublicURL(t.Context(), secondRequest, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct{ id, want string }{{first.ID, "ingress-b"}, {second.ID, "ingress-b"}} {
+		var poolID string
+		if err := database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.public_urls WHERE id = $1`, entry.id).Scan(&poolID); err != nil {
+			t.Fatal(err)
+		}
+		if poolID != entry.want {
+			t.Errorf("url %s pool = %q, want %q", entry.id, poolID, entry.want)
+		}
+	}
+}

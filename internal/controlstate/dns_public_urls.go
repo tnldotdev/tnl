@@ -20,6 +20,7 @@ var (
 
 type DNSPublicURLWork struct {
 	PublicURLID           string
+	IngressPoolID         string
 	DomainID              string
 	DNSAuthorityReference string
 	CanonicalHostname     string
@@ -93,7 +94,7 @@ func dnsRouteWork(row controlstatedb.ControlPublicUrl, requireLease bool) (DNSPu
 		return DNSPublicURLWork{}, errors.New("controlstate: invalid DNS route work row")
 	}
 	return DNSPublicURLWork{
-		PublicURLID: row.ID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference.String,
+		PublicURLID: row.ID, IngressPoolID: row.IngressPoolID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference.String,
 		CanonicalHostname: row.CanonicalHostname, Namespace: row.Namespace, PublicURLScope: PublicURLScope(row.PublicURLScope),
 		State: state, DNSRevision: uint64(row.DnsRevision),
 		Attempts: uint64(row.DnsAttempts), AvailableAt: row.DnsAvailableAt.Time, LastError: row.DnsLastError.String,
@@ -103,7 +104,7 @@ func dnsRouteWork(row controlstatedb.ControlPublicUrl, requireLease bool) (DNSPu
 
 func validateDNSPublicURLWork(work DNSPublicURLWork) error {
 	canonical, err := naming.CanonicalizeHostname(work.CanonicalHostname)
-	if !opaqueid.Valid(work.PublicURLID, opaqueid.PublicURLPrefix) || !validStateText(work.DomainID) || err != nil || canonical != work.CanonicalHostname ||
+	if !opaqueid.Valid(work.PublicURLID, opaqueid.PublicURLPrefix) || !validStateText(work.IngressPoolID) || !validStateText(work.DomainID) || err != nil || canonical != work.CanonicalHostname ||
 		work.DNSAuthorityReference != "" && !validStateText(work.DNSAuthorityReference) ||
 		work.State != PublicURLDNSPending && work.State != PublicURLDNSPublished && work.State != PublicURLDNSRemoving &&
 			work.State != PublicURLDNSRemoved && work.State != PublicURLDNSFailed ||
