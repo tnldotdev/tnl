@@ -421,6 +421,13 @@ func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (
 	return entry, ""
 }
 
+func (c *Controller) LookupPortWithReason(pool string, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+	if !c.Ready(now) {
+		return ingressv1.IngressRoutingTableEntry{}, "ingress_unavailable"
+	}
+	return c.routingTable.LookupPortWithReason(pool, port, now)
+}
+
 func (c *Controller) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
 	entry, reason := c.LookupChallengeWithReason(canonicalHostname, now)
 	return entry, reason == ""

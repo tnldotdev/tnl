@@ -79,6 +79,7 @@ type ingressSettings struct {
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
 	visitorConnectionLimit           int64
+	ingressPoolID                    string
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
@@ -93,6 +94,7 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
+		ingressPoolID:                    cfg.IngressPoolID,
 		requireProxyHeader:               cfg.RequireProxyHeader,
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
@@ -177,9 +179,31 @@ func (d *daemon) startIngressRuntime(
 			if reason != "" {
 				return ingress.PublicURL{}, reason
 			}
+			if entry.PublicPort != nil {
+				return ingress.PublicURL{}, "invalid_projection"
+			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
 				logOperationalError("read ingress public URL", failure.ServerIngressFailed, err)
+				return ingress.PublicURL{}, "invalid_projection"
+			}
+			return route, ""
+		},
+		LookupPort: func(port uint16) (ingress.PublicURL, string) {
+			pool := settings.ingressPoolID
+			if pool == "" {
+				pool = "ingress-a"
+			}
+			entry, reason := controller.LookupPortWithReason(pool, port, time.Now())
+			if reason != "" {
+				return ingress.PublicURL{}, reason
+			}
+			if entry.PublicPort == nil || *entry.PublicPort != int(port) {
+				return ingress.PublicURL{}, "invalid_projection"
+			}
+			route, err := forwarder.PublicURL(entry)
+			if err != nil {
+				logOperationalError("read ingress database public URL", failure.ServerIngressFailed, err)
 				return ingress.PublicURL{}, "invalid_projection"
 			}
 			return route, ""

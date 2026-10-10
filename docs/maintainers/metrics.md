@@ -52,7 +52,7 @@ publisher connections are not the same as database claims.
 | `tnl_control_dns_work_duration_seconds{kind,phase,outcome}`            | DNS work and verification.                                            |
 | `tnl_control_public_url_usage_items_total{result}`                     | Finalized, delivered, or retried items.                               |
 | `tnl_control_cleanup_last_success_timestamp_seconds{kind}`             | Last successful cleanup.                                              |
-| `tnl_control_tcp_port_pool_ports{pool,state}`                           | Available, claimed, quarantined, and configured TCP ports per pool.   |
+| `tnl_control_tcp_port_pool_ports{pool,state}`                          | Available, claimed, quarantined, and configured TCP ports per pool.   |
 | `tnl_control_guest_trials_last_24h{stage}`                             | Issued, allocated, ready, or ended guest trials from committed state. |
 | `tnl_control_public_url_recovery_duration_seconds`                     | Newly observed recovery durations.                                    |
 

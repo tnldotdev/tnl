@@ -31,11 +31,19 @@ var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
 // challenges use their own lookup and capacity; denied visitors retain their
 // bounded publisher path for an HTTPS 403.
 func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) error {
+	return s.forwardSelected(public, source, destination, hello, false)
+}
+
+func (s *Server) forwardPort(public net.Conn, source, destination netip.AddrPort, reader io.Reader) error {
+	return s.forwardSelected(public, source, destination, router.ClientHello{Remainder: reader}, true)
+}
+
+func (s *Server) forwardSelected(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello, byPort bool) error {
 	var route PublicURL
 	var backends []routebackend.Backend
 	var ok bool
 	var challengeReason string
-	challenge := hello.ACMETLSALPN
+	challenge := !byPort && hello.ACMETLSALPN
 	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
 	if !challenge && s.config.Metrics != nil {
@@ -53,7 +61,14 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
 	} else {
 		var reason string
-		route, reason = s.config.Lookup(hello.ServerName)
+		if byPort {
+			route, reason = s.config.LookupPort(destination.Port())
+		} else {
+			route, reason = s.config.Lookup(hello.ServerName)
+		}
+		if reason == "" && (byPort && route.PublicPort != destination.Port() || !byPort && route.PublicPort != 0) {
+			reason = "invalid_projection"
+		}
 		ok = reason == ""
 		switch reason {
 		case "ingress_unavailable":
@@ -87,6 +102,11 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		visitorOutcome = "policy_denied"
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
+		}
+		// database visitors have no HTTPS denial response. do not send their
+		// startup bytes to the publisher when ingress has denied the source.
+		if byPort {
+			return nil
 		}
 	}
 	kind, key := visitorConnection, route.ID
@@ -173,7 +193,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 			visitorOutcome = "committed_failed"
 		}
 		s.reportForwardingFailure(challenge, route, visitorID, "committed_write", len(backends))
-		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", opened.bytes, opened.setupErr)
+		return fmt.Errorf("ingress: write visitor setup after %d bytes: %w", opened.bytes, opened.setupErr)
 	}
 	if challenge {
 		if err := opened.connection.SetDeadline(challengeDeadline); err != nil {

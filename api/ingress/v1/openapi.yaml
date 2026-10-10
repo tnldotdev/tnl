@@ -403,6 +403,15 @@ components:
           type: string
           minLength: 1
           maxLength: 253
+        ingress_pool_id:
+          $ref: "#/components/schemas/Identifier"
+        service_protocol:
+          type: string
+          enum: [http, postgres, mysql]
+        public_port:
+          type: integer
+          minimum: 1024
+          maximum: 65535
         policy_revision:
           type: integer
           format: int64
