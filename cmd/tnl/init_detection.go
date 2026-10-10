@@ -175,66 +175,6 @@ func initDependencies() []string {
 	return []string{"@tnldotdev/tnl"}
 }
 
-func initDevCommand(framework, manager string, scripts map[string]string) []string {
-	script := scripts["dev"]
-	parsed, simple := simpleInitScript(script)
-	switch framework {
-	case "next":
-		if simple && len(parsed) >= 2 && parsed[0] == "next" && parsed[1] == "dev" {
-			return parsed
-		}
-		return []string{"next", "dev"}
-	case "vite":
-		if simple && len(parsed) != 0 && parsed[0] == "vite" {
-			return parsed
-		}
-		return []string{"vite"}
-	}
-	if script != "" {
-		if simple && (scriptStartsTnlDev(script) || packageDevCommandLabel(parsed) != "") {
-			return nil
-		}
-		if simple {
-			return parsed
-		}
-		return initDevScriptCommand(manager)
-	}
-	return nil
-}
-
-func simpleInitScript(script string) ([]string, bool) {
-	// shell operators and assignments need the original script runner or a manual command.
-	if script == "" || strings.ContainsAny(script, "$`|&;<>\n") {
-		return nil, false
-	}
-	command, err := parseInitCommand(script)
-	return command, err == nil && !strings.Contains(command[0], "=")
-}
-
-func scriptStartsTnlDev(script string) bool {
-	command, ok := simpleInitScript(script)
-	if !ok || len(command) < 2 {
-		return false
-	}
-	if command[0] == "tnl" && command[1] == "dev" {
-		return true
-	}
-	return len(command) >= 3 && (command[0] == "npx" || command[0] == "bunx") && command[1] == "tnl" && command[2] == "dev" ||
-		len(command) >= 4 && (command[0] == "pnpm" || command[0] == "npm" || command[0] == "yarn" || command[0] == "bun") &&
-			(command[1] == "exec" || command[1] == "run") && command[2] == "tnl" && command[3] == "dev"
-}
-
-func initDevScriptCommand(manager string) []string {
-	switch manager {
-	case "pnpm", "yarn":
-		return []string{manager, "dev"}
-	case "bun":
-		return []string{"bun", "run", "dev"}
-	default:
-		return []string{"npm", "run", "dev"}
-	}
-}
-
 func packageTypeConfigExists(root string) bool {
 	info, err := os.Stat(filepath.Join(root, "tsconfig.json"))
 	return err == nil && !info.IsDir()

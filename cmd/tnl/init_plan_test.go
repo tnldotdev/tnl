@@ -88,12 +88,12 @@ func TestInitCreatesAbsentKnownNextConfig(t *testing.T) {
 	}
 }
 
-func TestInitPlansGenericDevSettings(t *testing.T) {
+func TestInitPlansGenericAppIntegration(t *testing.T) {
 	for _, test := range []struct {
-		name, script, manager, command, action string
+		name, script, manager string
 	}{
-		{"dev script", "node server.js", "pnpm", `["node","server.js"]`, "set services.app.dev.port in tnl.config.ts to your app's listening port."},
-		{"no dev script", "", "npm", "", "set services.app.dev.command and services.app.dev.port in tnl.config.ts."},
+		{"dev script", "node server.js", "pnpm"},
+		{"no dev script", "", "npm"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := genericInitFixture(t, test.script, test.manager)
@@ -114,12 +114,12 @@ func TestInitPlansGenericDevSettings(t *testing.T) {
 	}
 }
 
-func TestInitFrameworkWithoutDevScriptUsesDefaultCommand(t *testing.T) {
+func TestInitFrameworkWithoutDevScriptUsesAppStartup(t *testing.T) {
 	for _, test := range []struct {
-		framework, dependencies, command string
+		framework, dependencies string
 	}{
-		{"next", `"next":"16.3.4"`, `["next","dev"]`},
-		{"vite", `"vite":"6.0.9"`, `["vite"]`},
+		{"next", `"next":"16.3.4"`},
+		{"vite", `"vite":"6.0.9"`},
 	} {
 		t.Run(test.framework, func(t *testing.T) {
 			root := copyInitFixture(t, test.framework)

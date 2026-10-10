@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -145,7 +144,7 @@ func ValidateTNL(config TNL) error {
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
-	if err := validateServiceValues(config.Tunnel, config.Publish, config.Dev); err != nil {
+	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
 		return err
 	}
 	if err := validateRatePair(config.Tunnel, nil); err != nil {
@@ -184,7 +183,7 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceDirectory(service.Directory); err != nil {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
-		if err := validateServiceValues(service.Tunnel, service.Publish, service.Dev); err != nil {
+		if err := validateServiceValues(service.Tunnel, service.Publish); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
@@ -218,9 +217,6 @@ func validateReadiness(value *Readiness) error {
 	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
 		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
 	}
-	if value.Status != nil && (*value.Status < 200 || *value.Status > 499 || *value.Status == 408 || *value.Status == 429) {
-		return errors.New("readiness.status must be between 200 and 499 except 408 and 429")
-	}
 	return nil
 }
 
@@ -246,7 +242,7 @@ func validateServerAndTeam(server, team *string) error {
 	return nil
 }
 
-func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
+func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
 		if limits := tunnel.Limits; limits != nil {
 			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
@@ -298,27 +294,6 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish, dev *Dev) error {
 	}
 	if publish != nil && publish.CAFile != nil && (strings.TrimSpace(*publish.CAFile) != *publish.CAFile || *publish.CAFile == "") {
 		return errors.New("publish.ca_file must be a nonempty path without surrounding whitespace")
-	}
-	if dev != nil {
-		if dev.Command != nil {
-			if len(dev.Command) == 0 {
-				return errors.New("dev.command must not be empty")
-			}
-			for _, argument := range dev.Command {
-				if argument == "" {
-					return errors.New("dev.command arguments must not be empty")
-				}
-			}
-		}
-		if dev.Port != nil && (*dev.Port < 1 || *dev.Port > 65535) {
-			return errors.New("dev.port must be between 1 and 65535")
-		}
-		if dev.StartupTimeout != nil {
-			value := dev.StartupTimeout.Value()
-			if value <= 0 || value > 10*time.Minute {
-				return errors.New("dev.startup_timeout must be greater than zero and at most 10 minutes")
-			}
-		}
 	}
 	return nil
 }

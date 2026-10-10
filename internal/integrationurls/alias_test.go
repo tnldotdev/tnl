@@ -184,6 +184,6 @@ func TestAliasFinalOAuthHopRejectsReplacementRun(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
 	err = snapshot.Config.AdmitRequest(request, publisher.PublishRunIdentity{Hostname: selection.Hostname, PublicURLID: id, Number: 2})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.OAuthCallbackExpired {
-		t.Fatalf("final-hop fence = %v", err)
+		t.Fatalf("final-hop selection check = %v", err)
 	}
 }

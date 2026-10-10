@@ -10,13 +10,13 @@ import (
 
 func TestAuthenticationPromptUsesCommandFrame(t *testing.T) {
 	var output bytes.Buffer
-	prompt := authenticationPrompt(&output, "tnl login")
+	prompt := authenticationPrompt(&output, "tnl auth login")
 	if err := prompt(oidcauth.Prompt{URL: "https://account.example/device", Code: "ABCD-EFGH"}); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
 	for _, fragment := range []string{
-		"+--[ tnl login ]-- authentication required ",
+		"+--[ tnl auth login ]-- authentication required ",
 		"https://account.example/device",
 		"ABCD-EFGH",
 		"+-- waiting for authentication ",

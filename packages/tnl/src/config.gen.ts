@@ -252,7 +252,6 @@ export interface Publish {
 }
 export interface Readiness {
   path: string;
-  status?: number;
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

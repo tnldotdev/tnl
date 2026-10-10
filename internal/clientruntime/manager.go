@@ -462,7 +462,7 @@ func (m *Manager) unregister(id, owner string) error {
 }
 
 // sweep uses both SDK renewal and process liveness; a TCP listener alone never
-// grants ownership. expiration fences observations before joining cleanup.
+// grants ownership. expiration rejects old observations before cleanup.
 func (m *Manager) Sweep(alive func(int) bool) bool {
 	m.mu.Lock()
 	type expired struct{ id, owner string }

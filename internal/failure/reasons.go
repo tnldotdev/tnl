@@ -14,7 +14,6 @@ const (
 	InvalidCommand                    Reason = "TNL_CLIENT_INVALID_COMMAND"
 	AppReadinessTimeout               Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
 	AppCursorExpired                  Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
-	AppStartCommandRetired            Reason = "TNL_CLIENT_APP_START_COMMAND_RETIRED"
 	OutputUnavailable                 Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
 	InitFailed                        Reason = "TNL_CLIENT_INIT_FAILED"
 	TunnelUnavailable                 Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
@@ -28,7 +27,6 @@ const (
 	DemoURLManaged                    Reason = "TNL_CLIENT_DEMO_URL_MANAGED"
 	DemoMustBeEphemeral               Reason = "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL"
 	DemoLocalServiceUnavailable       Reason = "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE"
-	InvalidStartupTimeout             Reason = "TNL_CLIENT_INVALID_STARTUP_TIMEOUT"
 	ProjectConfigMissing              Reason = "TNL_CLIENT_PROJECT_CONFIG_MISSING"
 	ClientStateLocked                 Reason = "TNL_CLIENT_STATE_LOCKED"
 	ClientStateUnavailable            Reason = "TNL_CLIENT_STATE_UNAVAILABLE"
@@ -64,8 +62,6 @@ const (
 	ShareInputInvalid                 Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
 	PreviewNotSaved                   Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
 	PreviewStateConflict              Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
-	DevProcessFailed                  Reason = "TNL_CLIENT_DEV_PROCESS_FAILED"
-	DevSocketUnavailable              Reason = "TNL_CLIENT_DEV_SOCKET_UNAVAILABLE"
 	BrowserOpenFailed                 Reason = "TNL_CLIENT_BROWSER_OPEN_FAILED"
 	TransportUnavailable              Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
 	TransportFallback                 Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
@@ -143,9 +139,8 @@ const (
 )
 
 var definitions = map[Reason]Definition{
-	AppStartCommandRetired: {Class: Invalid, Message: "tnl dev no longer starts applications", Action: "start the app with its normal development command and tnl integration, then run tnl wait", Retry: RetryAfterChange},
-	AppReadinessTimeout:    {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
-	AppCursorExpired:       {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl status or tnl watch without --after to read a new snapshot watermark", Retry: RetryAfterChange},
+	AppReadinessTimeout: {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
+	AppCursorExpired:    {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl watch without --after to follow current events", Retry: RetryAfterChange},
 	InvalidControlURL: {
 		Class: Invalid, Message: "server must be an HTTPS origin",
 		Action: "use an HTTPS control URL with --server or TNL_SERVER", Retry: RetryAfterChange,
@@ -222,10 +217,6 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "tnl could not start the local demo",
 		Action: "check that loopback networking is available, then retry", Retry: RetryLater,
 	},
-	InvalidStartupTimeout: {
-		Class: Invalid, Message: "startup timeout must be greater than zero and at most 10 minutes",
-		Action: "choose a startup timeout within that range", Retry: RetryAfterChange,
-	},
 	ProjectConfigMissing: {
 		Class: NotFound, Message: "no project configuration file was found",
 		Action: "run tnl init or select a config file with --config", Retry: RetryAfterChange,
@@ -282,7 +273,7 @@ var definitions = map[Reason]Definition{
 	},
 	LoginTerminalRequired: {
 		Class: Invalid, Message: "login-token authentication requires an interactive terminal",
-		Action: "run tnl auth login --token in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
+		Action: "run tnl auth login --login-token in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
@@ -362,19 +353,11 @@ var definitions = map[Reason]Definition{
 	},
 	PreviewNotSaved: {
 		Class: NotFound, Message: "the project does not have a saved preview",
-		Action: "select the configured project and start an integrated app before sharing or reading its feedback", Retry: RetryAfterChange,
+		Action: "start a configured app service before sharing or reading its feedback", Retry: RetryAfterChange,
 	},
 	PreviewStateConflict: {
 		Class: Conflict, Message: "the saved preview does not match the current project",
-		Action: "check the selected server, team, and project, then restart its integrated app", Retry: RetryAfterChange,
-	},
-	DevProcessFailed: {
-		Class: Unavailable, Message: "the development server command could not start or stopped",
-		Action: "check the app's development command and output, then restart it", Retry: RetryAfterChange,
-	},
-	DevSocketUnavailable: {
-		Class: Unavailable, Message: "tnl could not use its development session socket",
-		Action: "check the local runtime directory and permissions, then restart the app", Retry: RetryAfterChange,
+		Action: "check the selected server, team, and project, then restart the app", Retry: RetryAfterChange,
 	},
 	BrowserOpenFailed: {
 		Class: Unavailable, Message: "tnl could not open the public URL in a browser",

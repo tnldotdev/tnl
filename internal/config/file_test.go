@@ -82,7 +82,6 @@ tnl:
     target: 3000
   readiness:
     path: /health
-    status: 204
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,7 +93,7 @@ tnl:
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
-		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" || document.TNL.Readiness.Status == nil || *document.TNL.Readiness.Status != 204 ||
+		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
 		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
 		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
@@ -250,8 +249,8 @@ func TestRequestInspectionModeValid(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health","status":204}}}`,
-		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n    status: 204\n",
+		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
+		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)

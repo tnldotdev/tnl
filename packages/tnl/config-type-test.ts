@@ -14,7 +14,7 @@ const staticConfig = {
     limits: { requests: 20, rate: { requests: 5, per: "1m" }, concurrency: 750 },
   },
   publish: { target: 3000 },
-  readiness: { path: "/health", status: 204 },
+  readiness: { path: "/health" },
 } satisfies TnlConfigInput;
 
 "1m" satisfies TnlRatePeriod;
@@ -78,7 +78,7 @@ const projectScopedSettings = {
   team: "studio",
   feedback: true,
   services: {
-    web: { readiness: { path: "/health", status: 204 } },
+    web: { readiness: { path: "/health" } },
   },
 } satisfies TnlConfig;
 const mountedServices = {
@@ -199,10 +199,10 @@ defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": { service: "m
 ({ team: "studio" }) satisfies NonNullable<TnlConfig["services"]>[string];
 
 const literalConfig = defineConfig({
-  readiness: { path: "/health", status: 204 },
+  readiness: { path: "/health" },
   tunnel: { name: "api" },
 } as const);
-literalConfig.readiness.status satisfies 204;
+literalConfig.readiness.path satisfies "/health";
 literalConfig.tunnel.name satisfies "api";
 
 const exactConfig = defineConfig({ tunnel: { publicURL: "https://api.example.test" } } as const);

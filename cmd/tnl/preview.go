@@ -16,7 +16,6 @@ import (
 
 type previewControl interface {
 	CreatePreview(context.Context, string, string) (controlv1.Preview, error)
-	AddPreviewPublicURL(context.Context, string, string) (controlv1.Preview, error)
 }
 
 func ensurePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control previewControl, server, teamID, projectRoot string) (string, error) {

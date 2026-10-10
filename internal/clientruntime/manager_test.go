@@ -214,7 +214,7 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 	}
 	<-started
 	manager.Observe(Observation{RegistrationID: id, PublishRunNumber: 1, Ready: true, Readiness: Readiness{Path: "/"}})
-	if err := manager.Configure([]Service{{Name: "api", Readiness: Readiness{Path: "/health", Status: 204}}, {Name: "worker"}}); err != nil {
+	if err := manager.Configure([]Service{{Name: "api", Readiness: Readiness{Path: "/health"}}, {Name: "worker"}}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := manager.Snapshot()

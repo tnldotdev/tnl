@@ -46,7 +46,12 @@ func newApplicationAdmission(limits ApplicationLimits) (*applicationAdmission, e
 	return &applicationAdmission{limits: limits, tokens: float64(limits.RateRequests), completed: make(chan struct{})}, nil
 }
 
-// enter returns a status and retry delay on rejection, or zero on admission.
+// enter checks all limits under one lock. the lifetime request budget counts
+// admitted requests and never refills; active requests hold a concurrency slot
+// until leave. the token bucket starts full, refills by elapsed time at the
+// configured requests-per-period rate, and cannot exceed one period's supply.
+// rejection spends no request budget or token. rate rejection returns the time
+// until another token is available, rounded up to at least one second.
 func (a *applicationAdmission) enter(now time.Time) (int, time.Duration) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -73,6 +78,8 @@ func (a *applicationAdmission) enter(now time.Time) (int, time.Duration) {
 	return 0, 0
 }
 
+// leave frees a concurrency slot and signals completion after the final
+// admitted request finishes when the lifetime budget is spent.
 func (a *applicationAdmission) leave() {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -30,11 +30,6 @@
       "properties": {
         "path": {
           "type": "string"
-        },
-        "status": {
-          "type": "integer",
-          "maximum": 499,
-          "minimum": 200
         }
       },
       "additionalProperties": false,

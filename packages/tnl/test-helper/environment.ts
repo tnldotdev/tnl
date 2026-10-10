@@ -1,9 +1,7 @@
 // both in-process tests and child frameworks start outside any inherited tnl invocation.
 export const environmentBaseline = {
   TNL_ACCESS_TOKEN: undefined,
-  TNL_DEV_PROTOCOL: undefined,
-  TNL_DEV_SOCKET: undefined,
-  TNL_DEV_PORT: undefined,
+  APP_TEST_SOCKET: undefined,
   TNL_LOGIN_TOKEN: undefined,
   TNL_PROJECT_RUNTIME: undefined,
   TNL_PUBLIC_HOSTNAME: undefined,
