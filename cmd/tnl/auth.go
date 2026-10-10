@@ -16,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"golang.org/x/term"
 )
 
@@ -33,12 +32,10 @@ type authStatusCommand struct {
 }
 
 type loginCommand struct {
-	ServerURL  string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
+	ServerURL  string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
 	StateDir   string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	Token      bool             `name:"token" help:"Explicitly authenticate with a self-hosted login token."`
-	PKCE       bool             `name:"pkce" help:"Explicitly use browser authorization-code login with PKCE."`
-	LoginToken string           `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
-	NoOpen     bool             `name:"no-open" help:"Print the approval URL without opening a browser."`
+	LoginToken bool             `name:"login-token" help:"Log in with a login token; prompt unless TNL_LOGIN_TOKEN is set."`
+	Open       bool             `name:"open" help:"Open the approval URL in a browser."`
 	Timeout    time.Duration    `name:"timeout" default:"10m" help:"Maximum wait; a device login operation can be resumed after timeout."`
 	Output     statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
@@ -48,8 +45,8 @@ type authLoginCommand struct {
 	Run          struct{}             `cmd:"" default:"1" hidden:""`
 	Start        struct{}             `cmd:"" help:"Return a pending device login operation immediately."`
 	Wait         authOperationCommand `cmd:"" help:"Wait for approval and save credentials for this operation."`
-	Inspect      authOperationCommand `cmd:"" help:"Show a locally saved login operation."`
-	Cancel       authOperationCommand `cmd:"" help:"Cancel this operation and fence credential installation."`
+	Inspect      authOperationCommand `cmd:"" help:"Show the current state of a saved login attempt."`
+	Cancel       authOperationCommand `cmd:"" help:"Cancel this login attempt so it cannot save a session."`
 }
 
 type authOperationCommand struct {
@@ -57,33 +54,28 @@ type authOperationCommand struct {
 }
 
 type logoutCommand struct {
-	ServerURL string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project server, selected server, or https://control.tnl.dev."`
+	ServerURL string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
 	StateDir  string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) (clientauth.Config, error) {
-	if flags.PKCE && (flags.Token || flags.LoginToken != "") {
-		return clientauth.Config{}, failure.Wrap("select login method", failure.InvalidCommand, errors.New("select one login method"))
-	}
+	loginToken := os.Getenv("TNL_LOGIN_TOKEN")
 	prompt := loginTokenPrompt(input, diagnostics)
-	if flags.LoginToken != "" {
-		token, err := parseLoginInput([]byte(flags.LoginToken))
+	if loginToken != "" {
+		token, err := parseLoginInput([]byte(loginToken))
 		if err != nil {
 			return clientauth.Config{}, err
 		}
 		prompt = func() (credentials.LoginToken, error) { return token, nil }
 	}
 	config := clientauth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
-		LoginToken: prompt, ForceLoginToken: flags.Token || flags.LoginToken != "", LoginTimeout: flags.Timeout,
+		LoginToken: prompt, ForceLoginToken: flags.LoginToken || loginToken != "", LoginTimeout: flags.Timeout,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
 	config.ObserveLogin = func(op clientstate.AuthOperation) error {
 		return writeAuthOperation(diagnostics, "tnl auth login", op, flags.Output)
 	}
-	if flags.PKCE {
-		config.LoginFlow = oidcauth.LoginFlowAuthorizationCodePKCE
-	}
-	if !flags.NoOpen && flags.Output != statusOutputJSON {
+	if flags.Open && flags.Output != statusOutputJSON {
 		config.OpenURL = interactiveBrowserOpener(input)
 	}
 	return config, nil
@@ -127,9 +119,6 @@ func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader,
 	if err != nil {
 		return err
 	}
-	if flags.PKCE {
-		return failure.Wrap("start device login", failure.AuthMethodUnavailable, errors.New("PKCE requires auth login"))
-	}
 	op, err := clientauth.StartLogin(ctx, config)
 	if err != nil {
 		return err
@@ -156,7 +145,7 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 				if err := writeAuthOperation(diagnostics, "tnl auth login wait", pending, statusOutputHuman); err != nil {
 					return err
 				}
-				if !flags.NoOpen {
+				if flags.Open {
 					if open := interactiveBrowserOpener(os.Stdin); open != nil {
 						_ = open(pending.ApprovalURL)
 					}
