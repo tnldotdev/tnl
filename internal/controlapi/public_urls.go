@@ -182,6 +182,10 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeControlStateProblem(response, "read public URL for update", err)
 		return
 	}
+	if body.Kept != nil && route.Ephemeral {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "ephemeral public URLs cannot be kept")
+		return
+	}
 	httpProtocol := route.ServiceProtocol == "" || route.ServiceProtocol == controlstate.PublicURLServiceHTTP
 	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp ||
 		route.Ephemeral && httpProtocol) ||
