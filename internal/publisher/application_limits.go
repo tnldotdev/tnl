@@ -19,7 +19,8 @@ type ApplicationLimits struct {
 	Concurrency  int
 }
 
-func (limits ApplicationLimits) validate() error {
+// Validate checks the shared request budget before a public URL is allocated.
+func (limits ApplicationLimits) Validate() error {
 	if !applicationlimits.Valid(limits.Requests, limits.RateRequests, limits.Concurrency, limits.RatePer) {
 		return errors.New("publisher: application limits must be positive and rate requires both requests and period")
 	}
@@ -37,7 +38,7 @@ type applicationAdmission struct {
 }
 
 func newApplicationAdmission(limits ApplicationLimits) (*applicationAdmission, error) {
-	if err := limits.validate(); err != nil {
+	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
 	if limits.Concurrency == 0 {

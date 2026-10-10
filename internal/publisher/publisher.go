@@ -69,6 +69,7 @@ type Config struct {
 	RequestInspection        projectconfig.RequestInspectionMode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
+	AllocatedPublicURL       *controlv1.PublicURL
 	State                    *clientstate.Store
 	QUICConnector            muxsession.Connector
 	TCPConnector             muxsession.Connector
@@ -219,6 +220,17 @@ func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRu
 }
 
 func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
+	if config.AllocatedPublicURL != nil {
+		route := *config.AllocatedPublicURL
+		if !config.Ephemeral || !route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
+			route.Target != config.Target || route.Purpose != controlv1.App {
+			return controlv1.PublicURL{}, false, errors.New("publisher: allocated ad-hoc public URL does not match its target")
+		}
+		if err := validateRouteIdentity(route, config); err != nil {
+			return controlv1.PublicURL{}, false, err
+		}
+		return route, false, nil
+	}
 	if !config.Purpose.Valid() {
 		return controlv1.PublicURL{}, false, errors.New("publisher: public URL purpose is required")
 	}
