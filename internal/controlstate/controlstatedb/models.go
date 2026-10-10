@@ -519,6 +519,8 @@ type ControlPublicUrl struct {
 	IngressPoolID               string
 	ServiceProtocol             string
 	PublicPort                  pgtype.Int4
+	KeepSaved                   bool
+	IdleRecoveryStartedAt       pgtype.Timestamptz
 }
 
 type ControlPublicUrlPublishCredential struct {
