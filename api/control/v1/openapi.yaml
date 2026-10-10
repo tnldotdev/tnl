@@ -658,6 +658,12 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
+      requestBody:
+        description: Optional control-calculated credential lifetime; defaults to 90 days
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePublicURLPublishCredentialRequest"
       responses:
         "201":
           description: One-time credential and its public metadata
@@ -1674,6 +1680,15 @@ components:
             $ref: "#/components/schemas/PublicURLPublishCredential"
         next_cursor:
           $ref: "#/components/schemas/ResourceID"
+    CreatePublicURLPublishCredentialRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 7776000
     IssuedPublicURLPublishCredential:
       type: object
       additionalProperties: false

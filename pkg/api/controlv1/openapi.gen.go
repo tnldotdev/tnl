@@ -928,6 +928,11 @@ type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
 }
 
+// CreatePublicURLPublishCredentialRequest defines model for CreatePublicURLPublishCredentialRequest.
+type CreatePublicURLPublishCredentialRequest struct {
+	ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
+}
+
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
 	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
@@ -1702,6 +1707,9 @@ type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
 // UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
 type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 
+// CreatePublicURLPublishCredentialJSONRequestBody defines body for CreatePublicURLPublishCredential for application/json ContentType.
+type CreatePublicURLPublishCredentialJSONRequestBody = CreatePublicURLPublishCredentialRequest
+
 // CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
 type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
 
@@ -2127,10 +2135,19 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
 	ListPublicURLPublishCredentials(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
+	// CreatePublicURLPublishCredentialWithBody Issue one public URL-scoped publish credential
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreatePublicURLPublishCredentialWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
+	CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokePublicURLPublishCredential Revoke one public URL publish credential
 	//
@@ -3063,11 +3080,30 @@ func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicUrlI
 	return c.Client.Do(req)
 }
 
-// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
+// CreatePublicURLPublishCredentialWithBody Issue one public URL-scoped publish credential
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublicURLPublishCredentialRequest(c.Server, publicUrlId)
+func (c *Client) CreatePublicURLPublishCredentialWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLPublishCredentialRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
+func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLPublishCredentialRequest(c.Server, publicUrlId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5207,8 +5243,19 @@ func NewListPublicURLPublishCredentialsRequest(server string, publicUrlId Public
 	return req, nil
 }
 
-// NewCreatePublicURLPublishCredentialRequest constructs an http.Request for the CreatePublicURLPublishCredential method
-func NewCreatePublicURLPublishCredentialRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
+// NewCreatePublicURLPublishCredentialRequest calls the generic CreatePublicURLPublishCredential builder with application/json body
+func NewCreatePublicURLPublishCredentialRequest(server string, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublicURLPublishCredentialRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+}
+
+// NewCreatePublicURLPublishCredentialRequestWithBody constructs an http.Request for the CreatePublicURLPublishCredential method, with any body, and a specified content type
+func NewCreatePublicURLPublishCredentialRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5233,10 +5280,12 @@ func NewCreatePublicURLPublishCredentialRequest(server string, publicUrlId Publi
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6843,12 +6892,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
 	ListPublicURLPublishCredentialsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListPublicURLPublishCredentialsResponse, error)
 
-	// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
+	// CreatePublicURLPublishCredentialWithBodyWithResponse Issue one public URL-scoped publish credential
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error)
+	CreatePublicURLPublishCredentialWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error)
+
+	// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
+	CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error)
 
 	// RevokePublicURLPublishCredentialWithResponse Revoke one public URL publish credential
 	//
@@ -10535,13 +10591,26 @@ func (c *ClientWithResponses) ListPublicURLPublishCredentialsWithResponse(ctx co
 	return ParseListPublicURLPublishCredentialsResponse(rsp)
 }
 
-// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
+// CreatePublicURLPublishCredentialWithBodyWithResponse Issue one public URL-scoped publish credential
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *ClientWithResponses) CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error) {
-	rsp, err := c.CreatePublicURLPublishCredential(ctx, publicUrlId, reqEditors...)
+func (c *ClientWithResponses) CreatePublicURLPublishCredentialWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error) {
+	rsp, err := c.CreatePublicURLPublishCredentialWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublicURLPublishCredentialResponse(rsp)
+}
+
+// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
+func (c *ClientWithResponses) CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error) {
+	rsp, err := c.CreatePublicURLPublishCredential(ctx, publicUrlId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

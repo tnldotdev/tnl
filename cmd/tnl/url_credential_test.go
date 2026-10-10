@@ -49,6 +49,19 @@ func TestCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
 	}
 }
 
+func TestCredentialLifetimeAcceptsPositiveDurationsUpToNinetyDays(t *testing.T) {
+	for _, value := range []string{"1s", "24h", "7d", "90d"} {
+		if got, err := parseCredentialLifetime(value); err != nil || got <= 0 || got > 90*24*time.Hour {
+			t.Fatalf("lifetime %q = %s, %v", value, got, err)
+		}
+	}
+	for _, value := range []string{"0s", "100ms", "1.5s", "-1s", "91d", "1w", "999999999999999999999d"} {
+		if _, err := parseCredentialLifetime(value); err == nil {
+			t.Fatalf("invalid lifetime %q was accepted", value)
+		}
+	}
+}
+
 func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
 	target := config.Target("http://app:3000")
 	root := t.TempDir()
@@ -90,7 +103,7 @@ func TestCredentialManagementOutputShowsMetadataWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "upc_current") || !strings.Contains(output.String(), "upc_old") ||
-		!strings.Contains(output.String(), "https://app.example.test") || strings.Contains(output.String(), "tnl_publish_") {
+		!strings.Contains(output.String(), "https://app.example.test") || strings.Contains(output.String(), "tnl_url_") {
 		t.Fatalf("list output = %q", output.String())
 	}
 	output.Reset()
@@ -98,7 +111,7 @@ func TestCredentialManagementOutputShowsMetadataWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decoded publicURLCredentialListResult
-	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || decoded.SchemaVersion != 1 || len(decoded.Credentials) != 2 || strings.Contains(output.String(), "tnl_publish_") {
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || decoded.SchemaVersion != 1 || len(decoded.Credentials) != 2 || strings.Contains(output.String(), "tnl_url_") {
 		t.Fatalf("JSON list output = %q, %v", output.String(), err)
 	}
 	output.Reset()

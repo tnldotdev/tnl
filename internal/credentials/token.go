@@ -13,15 +13,16 @@ import (
 )
 
 const (
-	accessPrefix            = "tnl_access_"
-	loginPrefix             = "tnl_login_"
-	refreshPrefix           = "tnl_refresh_"
-	invitationPrefix        = "tnl_invitation_"
-	sessionPrefix           = "tnl_session_"
-	connectionPrefix        = "tnl_connection_"
-	publishCredentialPrefix = "tnl_publish_"
-	lookupBytes             = 16
-	secretBytes             = 32
+	accessPrefix              = "tnl_access_"
+	loginPrefix               = "tnl_login_"
+	refreshPrefix             = "tnl_refresh_"
+	invitationPrefix          = "tnl_invitation_"
+	sessionPrefix             = "tnl_session_"
+	connectionPrefix          = "tnl_connection_"
+	publishCredentialPrefix   = "tnl_url_"
+	ephemeralCredentialPrefix = "tnl_eph_"
+	lookupBytes               = 16
+	secretBytes               = 32
 )
 
 var (
@@ -38,6 +39,7 @@ var (
 	// ErrInvalidPublisherConnectionCredential is returned for malformed publisher connection credentials.
 	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
 	ErrInvalidPublicURLPublishCredential    = errors.New("invalid public URL publish credential")
+	ErrInvalidEphemeralCredential           = errors.New("invalid ephemeral public URL credential")
 )
 
 // AccessToken authenticates an identity to the tnl server API.
@@ -60,6 +62,9 @@ type PublisherConnectionCredential string
 
 // PublicURLPublishCredential authorizes starting publish runs for one saved public URL.
 type PublicURLPublishCredential string
+
+// EphemeralCredential authorizes allocating and publishing ad-hoc public URLs.
+type EphemeralCredential string
 
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
@@ -190,6 +195,21 @@ func ParsePublicURLPublishCredential(token PublicURLPublishCredential) (Credenti
 	return id, hash, validatedTokenSecret(string(token), publishCredentialPrefix), nil
 }
 
+// NewEphemeralCredential creates a revocable ad-hoc public URL credential.
+func NewEphemeralCredential() (EphemeralCredential, CredentialID, SecretHash, error) {
+	token, id, hash, err := newToken(ephemeralCredentialPrefix)
+	return EphemeralCredential(token), id, hash, err
+}
+
+// ParseEphemeralCredential returns its lookup ID, verifier, and retry secret.
+func ParseEphemeralCredential(token EphemeralCredential) (CredentialID, SecretHash, []byte, error) {
+	id, hash, err := parseToken(string(token), ephemeralCredentialPrefix, ErrInvalidEphemeralCredential)
+	if err != nil {
+		return "", SecretHash{}, nil, err
+	}
+	return id, hash, validatedTokenSecret(string(token), ephemeralCredentialPrefix), nil
+}
+
 // NewPublisherConnectionCredential creates a credential for one connection assignment.
 func NewPublisherConnectionCredential() (PublisherConnectionCredential, SecretHash, error) {
 	token, _, hash, err := newToken(connectionPrefix)
@@ -254,6 +274,7 @@ func (t PublisherConnectionCredential) String() string { return string(t) }
 
 // String returns the serialized public URL publish credential.
 func (t PublicURLPublishCredential) String() string { return string(t) }
+func (t EphemeralCredential) String() string        { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

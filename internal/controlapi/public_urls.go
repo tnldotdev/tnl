@@ -258,7 +258,7 @@ func (h *handler) CreatePublishRun(
 	}
 	var credential controlstate.PublicURLPublishCredential
 	var retrySecret []byte
-	if strings.HasPrefix(token, "tnl_publish_") {
+	if strings.HasPrefix(token, "tnl_url_") {
 		var bound controlstate.PublicURL
 		var ok bool
 		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)

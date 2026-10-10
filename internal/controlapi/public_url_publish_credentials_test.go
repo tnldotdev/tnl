@@ -17,14 +17,16 @@ import (
 
 type scopedCredentialStoreStub struct {
 	PublicURLPublishCredentialStore
-	credential  controlstate.PublicURLPublishCredential
-	page        controlstate.PublicURLPublishCredentialPage
-	validations int
-	revocations int
+	credential     controlstate.PublicURLPublishCredential
+	page           controlstate.PublicURLPublishCredentialPage
+	validations    int
+	revocations    int
+	issuedLifetime time.Duration
 }
 
-func (s *scopedCredentialStoreStub) CreatePublicURLPublishCredential(_ context.Context, _ controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error) {
-	return s.credential, "tnl_publish_one_time_secret", nil
+func (s *scopedCredentialStoreStub) CreatePublicURLPublishCredential(_ context.Context, request controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error) {
+	s.issuedLifetime = request.ExpiresAt.Sub(request.Now)
+	return s.credential, "tnl_url_one_time_secret", nil
 }
 
 func (s *scopedCredentialStoreStub) ListPublicURLPublishCredentials(_ context.Context, _ string) ([]controlstate.PublicURLPublishCredential, error) {
@@ -69,7 +71,7 @@ func TestPublishCredentialCannotStartAnotherPublicURL(t *testing.T) {
 	}}
 	h := &handler{store: store, publishCredentials: credential}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_2/publish-runs", nil)
-	request.Header.Set("Authorization", "Bearer tnl_publish_example")
+	request.Header.Set("Authorization", "Bearer tnl_url_example")
 	request.Header.Set("Idempotency-Key", "attempt")
 	response := httptest.NewRecorder()
 	h.CreatePublishRun(response, request, "public_url_2", controlv1.CreatePublishRunParams{})
@@ -77,7 +79,7 @@ func TestPublishCredentialCannotStartAnotherPublicURL(t *testing.T) {
 		t.Fatalf("cross-URL publish = %d, requests = %d, lookup = %#v", response.Code, store.sessions, store.sessionLookup)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/v1/publish-credentials/current", nil)
-	request.Header.Set("Authorization", "Bearer tnl_publish_example")
+	request.Header.Set("Authorization", "Bearer tnl_url_example")
 	response = httptest.NewRecorder()
 	h.GetPublicURLForPublishCredential(response, request)
 	var route controlv1.PublicURL
@@ -89,7 +91,7 @@ func TestPublishCredentialCannotStartAnotherPublicURL(t *testing.T) {
 		PublishRunNumber: 1, PolicyRevision: 1, PublishRunToken: "tnl_session_test", State: controlstate.PublishRunStarting,
 	}
 	request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
-	request.Header.Set("Authorization", "Bearer tnl_publish_example")
+	request.Header.Set("Authorization", "Bearer tnl_url_example")
 	request.Header.Set("Idempotency-Key", "run-1")
 	response = httptest.NewRecorder()
 	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
@@ -118,11 +120,11 @@ func TestPublishCredentialIsReturnedOnlyAtIssuance(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
 	h.CreatePublicURLPublishCredential(response, request, "public_url_1")
-	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || credential.issuedLifetime != 90*24*time.Hour {
 		t.Fatalf("issue response = %d %s", response.Code, response.Body.String())
 	}
 	var issued controlv1.IssuedPublicURLPublishCredential
-	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil || issued.Credential != "tnl_publish_one_time_secret" {
+	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil || issued.Credential != "tnl_url_one_time_secret" {
 		t.Fatalf("issued credential = %#v, %v", issued, err)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/v1/public-urls/public_url_1/publish-credentials", nil)
@@ -130,8 +132,25 @@ func TestPublishCredentialIsReturnedOnlyAtIssuance(t *testing.T) {
 	response = httptest.NewRecorder()
 	h.ListPublicURLPublishCredentials(response, request, "public_url_1")
 	if response.Code != http.StatusOK || !json.Valid(response.Body.Bytes()) ||
-		strings.Contains(response.Body.String(), "tnl_publish_one_time_secret") {
+		strings.Contains(response.Body.String(), "tnl_url_one_time_secret") {
 		t.Fatalf("list disclosed credential = %d %s", response.Code, response.Body.String())
+	}
+	for _, test := range []struct {
+		body     string
+		status   int
+		lifetime time.Duration
+	}{
+		{`{"expires_in_seconds":604800}`, http.StatusCreated, 7 * 24 * time.Hour},
+		{`{"expires_in_seconds":0}`, http.StatusBadRequest, 0},
+		{`{"expires_in_seconds":7776001}`, http.StatusBadRequest, 0},
+	} {
+		request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-credentials", strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer access-token")
+		response = httptest.NewRecorder()
+		h.CreatePublicURLPublishCredential(response, request, "public_url_1")
+		if response.Code != test.status || test.lifetime != 0 && credential.issuedLifetime != test.lifetime {
+			t.Fatalf("lifetime %q = status %d, duration %s", test.body, response.Code, credential.issuedLifetime)
+		}
 	}
 }
 
@@ -162,7 +181,7 @@ func TestTeamCredentialManagementKeepsTeamBoundaryAndSecretPrivate(t *testing.T)
 	h.ListTeamPublicURLPublishCredentials(response, request, controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: "team_1"})
 	var page controlv1.PublicURLPublishCredentialPage
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Credentials) != 1 ||
-		page.Credentials[0].PublicUrl != "https://app.example" || strings.Contains(response.Body.String(), "tnl_publish_") {
+		page.Credentials[0].PublicUrl != "https://app.example" || strings.Contains(response.Body.String(), "tnl_url_") {
 		t.Fatalf("team credential list = %d %s", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodDelete, "/v1/publish-credentials/upc_1?team_id=team_2", nil)

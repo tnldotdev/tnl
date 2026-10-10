@@ -152,6 +152,32 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	}
 }
 
+func TestPublicURLCredentialKindsDoNotCrossScopes(t *testing.T) {
+	saved, savedID, savedHash, err := NewPublicURLPublishCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ephemeral, ephemeralID, ephemeralHash, err := NewEphemeralCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(saved.String(), "tnl_url_") || !strings.HasPrefix(ephemeral.String(), "tnl_eph_") {
+		t.Fatal("credentials do not identify their distinct scopes")
+	}
+	if id, hash, secret, err := ParsePublicURLPublishCredential(saved); err != nil || id != savedID || hash != savedHash || len(secret) == 0 {
+		t.Fatalf("saved credential = %q, %x, %v", id, hash, err)
+	}
+	if id, hash, secret, err := ParseEphemeralCredential(ephemeral); err != nil || id != ephemeralID || hash != ephemeralHash || len(secret) == 0 {
+		t.Fatalf("ephemeral credential = %q, %x, %v", id, hash, err)
+	}
+	if _, _, _, err := ParsePublicURLPublishCredential(PublicURLPublishCredential(ephemeral)); !errors.Is(err, ErrInvalidPublicURLPublishCredential) {
+		t.Fatalf("ad-hoc credential published saved URL: %v", err)
+	}
+	if _, _, _, err := ParseEphemeralCredential(EphemeralCredential(saved)); !errors.Is(err, ErrInvalidEphemeralCredential) {
+		t.Fatalf("saved credential allocated ad-hoc URL: %v", err)
+	}
+}
+
 func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 	var request struct {
 		LoginToken LoginToken `json:"login_token"`

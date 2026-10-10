@@ -304,9 +304,10 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 }
 
 // CreatePublicURLPublishCredential returns the secret only on creation.
-func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURLID string) (controlv1.IssuedPublicURLPublishCredential, error) {
+func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURLID string, expiresIn time.Duration) (controlv1.IssuedPublicURLPublishCredential, error) {
+	seconds := int64(expiresIn / time.Second)
 	return requestWithAccess[controlv1.IssuedPublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublicURLPublishCredential(ctx, publicURLID, editors...)
+		return c.api.CreatePublicURLPublishCredential(ctx, publicURLID, controlv1.CreatePublicURLPublishCredentialRequest{ExpiresInSeconds: &seconds}, editors...)
 	})
 }
 
