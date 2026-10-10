@@ -1331,13 +1331,19 @@ type ProblemCode string
 
 // PublicURL defines model for PublicURL.
 type PublicURL struct {
-	AllowedIpPrefixes    *[]string               `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname    CanonicalHostname       `json:"canonical_hostname"`
-	CreatedAt            time.Time               `json:"created_at"`
-	DomainId             DomainID                `json:"domain_id"`
-	Ephemeral            bool                    `json:"ephemeral"`
-	ExpiresAt            *time.Time              `json:"expires_at,omitempty"`
-	Id                   PublicURLID             `json:"id"`
+	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname CanonicalHostname `json:"canonical_hostname"`
+	CreatedAt         time.Time         `json:"created_at"`
+	DomainId          DomainID          `json:"domain_id"`
+	Ephemeral         bool              `json:"ephemeral"`
+	ExpiresAt         *time.Time        `json:"expires_at,omitempty"`
+	Id                PublicURLID       `json:"id"`
+
+	// IdleRecoveryUntil End of the recovery window if this URL remains idle.
+	IdleRecoveryUntil *time.Time `json:"idle_recovery_until,omitempty"`
+
+	// Kept Exempts this saved public URL from idle retirement.
+	Kept                 *bool                   `json:"kept,omitempty"`
 	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
 	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
 	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
@@ -1638,6 +1644,9 @@ type TeamID = ResourceID
 // UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
+
+	// Kept Keep this saved URL indefinitely or resume automatic idle retirement.
+	Kept *bool `json:"kept,omitempty"`
 
 	// Target empty only when keeping a saved app public URL targetless.
 	Target string `json:"target"`

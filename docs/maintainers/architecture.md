@@ -103,6 +103,15 @@ the private TLS connection, while `--target-tls-name` sets the expected private
 certificate hostname. `--database-tls-passthrough` delegates that certificate
 check to the visiting database client instead.
 
+Control starts a 30-day recovery window after a saved URL has had no active
+publish run for 180 days, measured from creation or its latest closed publish
+run. Starting another run resets the idle clock; an unclosed run blocks cleanup.
+When recovery ends, control deletes the URL through the usual DNS cleanup and
+quarantines any database port for seven days. `tnl url list` shows the recovery
+deadline; `tnl url update <id> --keep` exempts a URL, and `--auto-retire` resumes
+the idle policy with a new recovery window. Explicit ephemeral URLs retain
+their separate stop-and-delete behavior.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

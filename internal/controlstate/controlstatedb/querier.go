@@ -204,6 +204,7 @@ type Querier interface {
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertGuestPublicURL(ctx context.Context, arg InsertGuestPublicURLParams) error
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
+	InsertIdlePublicURLDeleteAuditEvent(ctx context.Context, arg InsertIdlePublicURLDeleteAuditEventParams) error
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
@@ -218,6 +219,7 @@ type Querier interface {
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
 	InsertTCPPortClaim(ctx context.Context, arg InsertTCPPortClaimParams) (ControlTcpPortClaim, error)
+	LatestClosedPublicURLPublishRun(ctx context.Context, publicUrlID string) (pgtype.Timestamptz, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
@@ -267,6 +269,7 @@ type Querier interface {
 	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
 	LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error
 	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
+	LockDueSavedPublicURLRetirements(ctx context.Context, arg LockDueSavedPublicURLRetirementsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
 	// lock public URLs before publish runs, as heartbeat and closure do. the
@@ -409,6 +412,7 @@ type Querier interface {
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
 	SetPublicURLTCPPort(ctx context.Context, arg SetPublicURLTCPPortParams) (int64, error)
+	SetSavedPublicURLRecovery(ctx context.Context, arg SetSavedPublicURLRecoveryParams) (int64, error)
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)

@@ -158,6 +158,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	var body struct {
 		Target            *string   `json:"target"`
 		AllowedIPPrefixes *[]string `json:"allowed_ip_prefixes"`
+		Kept              *bool     `json:"kept"`
 	}
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.Target == nil || body.AllowedIPPrefixes == nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -201,6 +202,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLUpdateRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
+		Kept:                     body.Kept,
 		PolicyRevision:           decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())

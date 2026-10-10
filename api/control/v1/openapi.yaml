@@ -1677,6 +1677,13 @@ components:
           minimum: 1024
           maximum: 65535
           description: Stable visitor TCP port for a PostgreSQL or MySQL public URL.
+        kept:
+          type: boolean
+          description: Exempts this saved public URL from idle retirement.
+        idle_recovery_until:
+          type: string
+          format: date-time
+          description: End of the recovery window if this URL remains idle.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2602,6 +2609,9 @@ components:
             minLength: 1
             maxLength: 64
             pattern: "^\\S+$"
+        kept:
+          type: boolean
+          description: Keep this saved URL indefinitely or resume automatic idle retirement.
     CertificateChallengeMethod:
       type: string
       enum: [dns-01, tls-alpn-01]
