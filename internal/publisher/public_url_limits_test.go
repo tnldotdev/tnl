@@ -15,7 +15,58 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 )
+
+func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", RequestLimit: 1,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	newRequest := func() *http.Request {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host = "route.example"
+		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+		return request
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.http.Handler.ServeHTTP(httptest.NewRecorder(), newRequest())
+	}()
+	defer func() { close(release); <-done }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("inline handler did not start")
+	}
+
+	denied := newRequest()
+	denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
+	response := httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, denied)
+	if response.Code != http.StatusForbidden || response.Header().Get("Tnl-Error-Code") != string(diagnostic.IPPolicyDenied) {
+		t.Fatalf("denied visitor during application saturation = %d, %q", response.Code, response.Header().Get("Tnl-Error-Code"))
+	}
+
+	response = httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, newRequest())
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "1" ||
+		response.Header().Get("Connection") != "close" {
+		t.Fatalf("application overload = %d, headers = %v", response.Code, response.Header())
+	}
+}
 
 func TestRouteServerBoundsHTTP2FanoutAcrossVisitorConnections(t *testing.T) {
 	const limit = 4
