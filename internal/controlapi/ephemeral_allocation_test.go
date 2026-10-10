@@ -30,7 +30,7 @@ func TestEphemeralAllocationBindsCredentialAndCurrentSourceIP(t *testing.T) {
 		TeamID: "team_1", DomainID: "domain_1", Namespace: "member.example.test", IdentityID: "identity_1", PolicyRevision: 1,
 	}}
 	h := &handler{store: store, publishCredentials: credentialsStore, config: Config{DNSAutomation: true}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/publish-credentials/allocate", strings.NewReader(`{"invocation_id":"`+invocation+`","target":"http://127.0.0.1:3000","allow_ip":["198.51.100.9"],"limits":{"requests":2}}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/ephemeral-public-urls", strings.NewReader(`{"invocation_id":"`+invocation+`","target":"http://127.0.0.1:3000","allow_ip":["198.51.100.9"],"limits":{"requests":2}}`))
 	request.RemoteAddr = "192.0.2.9:5353"
 	request.Header.Set("Authorization", "Bearer "+token.String())
 	response := httptest.NewRecorder()
@@ -55,10 +55,32 @@ func TestEphemeralAllocationRejectsNonLoopbackTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/publish-credentials/allocate", strings.NewReader(`{"invocation_id":"`+invocation+`","target":"http://example.test:3000"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/ephemeral-public-urls", strings.NewReader(`{"invocation_id":"`+invocation+`","target":"http://example.test:3000"}`))
 	response := httptest.NewRecorder()
 	h.AllocateEphemeralPublicURL(response, request)
 	if response.Code != http.StatusBadRequest || len(store.requests) != 0 {
 		t.Fatalf("nonloopback allocation = %d, requests = %#v", response.Code, store.requests)
+	}
+}
+
+func TestEphemeralAllocationRejectsInvalidLimitsBeforeCreatingURL(t *testing.T) {
+	for _, limits := range []string{
+		`{"requests":0}`, `{"concurrency":-1}`, `{"rate":{"requests":0,"per":"1m"}}`,
+		`{"rate":{"requests":2,"per":"0s"}}`, `{"rate":{"requests":2,"per":"not-a-duration"}}`,
+	} {
+		t.Run(limits, func(t *testing.T) {
+			store := &publicURLCreationStore{}
+			h := &handler{store: store, publishCredentials: &scopedCredentialStoreStub{}, config: Config{DNSAutomation: true}}
+			invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/v1/ephemeral-public-urls", strings.NewReader(`{"invocation_id":"`+invocation+`","target":"http://127.0.0.1:3000","limits":`+limits+`}`))
+			response := httptest.NewRecorder()
+			h.AllocateEphemeralPublicURL(response, request)
+			if response.Code != http.StatusBadRequest || len(store.requests) != 0 {
+				t.Fatalf("invalid limits %s created URL: status %d, requests %#v", limits, response.Code, store.requests)
+			}
+		})
 	}
 }

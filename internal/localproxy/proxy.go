@@ -410,6 +410,18 @@ func NormalizeTarget(target string) (string, error) {
 	return scheme + "://" + targetAddress, nil
 }
 
+// ParseCanonicalTarget accepts an already-normalized HTTP or HTTPS origin.
+func ParseCanonicalTarget(target string) (*url.URL, error) {
+	normalized, err := NormalizeTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	if normalized != target {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target must be a canonical HTTP or HTTPS origin"))
+	}
+	return url.Parse(normalized)
+}
+
 // ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.
 func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
 	// bind origin-form authority and TLS SNI to this public URL's hostname.

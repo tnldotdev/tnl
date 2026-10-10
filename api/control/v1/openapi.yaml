@@ -788,10 +788,10 @@ paths:
                 $ref: "#/components/schemas/PublicURLPublishCredential"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/publish-credentials/allocate:
+  /v1/ephemeral-public-urls:
     post:
       operationId: allocateEphemeralPublicURL
-      summary: Allocate one ad-hoc public URL for an invocation
+      summary: Create a temporary public URL for one ad-hoc publication
       security:
         - bearerAuth: []
       requestBody:
@@ -802,7 +802,7 @@ paths:
               $ref: "#/components/schemas/AllocateEphemeralPublicURLRequest"
       responses:
         "201":
-          description: New or idempotently allocated ad-hoc public URL
+          description: Public URL assigned to this invocation
           content:
             application/json:
               schema:

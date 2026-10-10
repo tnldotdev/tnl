@@ -4,13 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"slices"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -30,9 +29,8 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid ad-hoc allocation request")
 		return
 	}
-	target, err := localproxy.NormalizeTarget(body.Target)
-	parsed, parseErr := url.Parse(target)
-	if err != nil || target != body.Target || parseErr != nil ||
+	parsed, err := localproxy.ParseCanonicalTarget(body.Target)
+	if err != nil ||
 		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "target must be a canonical loopback HTTP or HTTPS origin")
 		return
@@ -66,7 +64,7 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 		CredentialID, InvocationID, Target string
 		Prefixes                           []string
 		Limits                             *controlv1.PublisherApplicationLimits
-	}{credential.ID, body.InvocationId, target, prefixes, body.Limits})
+	}{credential.ID, body.InvocationId, body.Target, prefixes, body.Limits})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid ad-hoc allocation request")
 		return
@@ -74,7 +72,7 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 	result, err := h.store.CreatePublicURL(request.Context(), controlstate.CreatePublicURLRequest{
 		TeamID: credential.TeamID, DomainID: credential.DomainID, ActingIdentityID: credential.IdentityID,
 		IdempotencyKey: credential.ID + ":" + body.InvocationId, RequestDigest: sha256.Sum256(bound),
-		Target: target, PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
+		Target: body.Target, PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
 		ManagedURLMode: h.config.ManagedURLMode, AllowedIPPrefixes: prefixes,
 		DNSState: controlstate.PublicURLDNSPending, PolicyRevision: credential.PolicyRevision, Ephemeral: true,
 		EphemeralCredentialID: credential.ID, EphemeralTokenDigest: digest, EphemeralNamespace: credential.Namespace,
@@ -94,14 +92,30 @@ func validAllocationLimits(limits *controlv1.PublisherApplicationLimits) bool {
 	if limits == nil {
 		return true
 	}
-	if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
-		return false
+	requests, concurrency := 0, 0
+	if limits.Requests != nil {
+		requests = *limits.Requests
+		if requests <= 0 {
+			return false
+		}
 	}
+	if limits.Concurrency != nil {
+		concurrency = *limits.Concurrency
+		if concurrency <= 0 {
+			return false
+		}
+	}
+	rateRequests := 0
+	period := time.Duration(0)
 	if limits.Rate != nil {
-		period, err := time.ParseDuration(limits.Rate.Per)
-		return err == nil && period > 0 && limits.Rate.Requests > 0
+		var err error
+		period, err = time.ParseDuration(limits.Rate.Per)
+		if err != nil || period <= 0 || limits.Rate.Requests <= 0 {
+			return false
+		}
+		rateRequests = limits.Rate.Requests
 	}
-	return true
+	return applicationlimits.Valid(requests, rateRequests, concurrency, period)
 }
 
 func allocationIPPolicy(request *http.Request, body controlv1.AllocateEphemeralPublicURLRequest) ([]string, error) {
@@ -116,15 +130,10 @@ func allocationIPPolicy(request *http.Request, body controlv1.AllocateEphemeralP
 	if err != nil || len(canonical) > 32 {
 		return nil, authorization.ErrInvalid
 	}
-	remote, _, err := net.SplitHostPort(request.RemoteAddr)
+	address, err := guestRequestAddress(request)
 	if err != nil {
 		return nil, err
 	}
-	address, err := netip.ParseAddr(remote)
-	if err != nil || address.Zone() != "" {
-		return nil, authorization.ErrInvalid
-	}
-	address = address.Unmap()
 	current := netip.PrefixFrom(address, address.BitLen()).String()
 	if !slices.Contains(canonical, current) {
 		canonical = append(canonical, current)

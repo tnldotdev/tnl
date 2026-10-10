@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
@@ -19,8 +20,7 @@ type ApplicationLimits struct {
 }
 
 func (limits ApplicationLimits) validate() error {
-	if limits.Requests < 0 || limits.Concurrency < 0 || limits.RateRequests < 0 || limits.RatePer < 0 ||
-		(limits.RateRequests == 0) != (limits.RatePer == 0) {
+	if !applicationlimits.Valid(limits.Requests, limits.RateRequests, limits.Concurrency, limits.RatePer) {
 		return errors.New("publisher: application limits must be positive and rate requires both requests and period")
 	}
 	return nil

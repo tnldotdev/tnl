@@ -261,9 +261,8 @@ func (m *Manager) Renew(id, owner string) error {
 // register acknowledges ownership and a bound target. provisioning happens in
 // the worker after this method returns and has its own observations.
 func (m *Manager) Register(id, owner, target, framework string) error {
-	normalized, err := localproxy.NormalizeTarget(target)
-	if err != nil || normalized != target {
-		return errors.Join(err, errors.New("target must be canonical loopback HTTP"))
+	if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
+		return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
 	}
 	m.op.Lock()
 	defer m.op.Unlock()
