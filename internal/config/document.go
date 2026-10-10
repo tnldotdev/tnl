@@ -51,7 +51,6 @@ type TNL struct {
 	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."`
 	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev               *Dev                   `json:"-" yaml:"-"`
 	Readiness         *Readiness             `json:"readiness,omitempty" yaml:"readiness,omitempty"`
 	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, readiness overrides, and path mounts."`
 	Webhooks          map[string]Webhook     `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
@@ -66,7 +65,6 @@ type Service struct {
 	Directory         *string                `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
 	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev               *Dev                   `json:"-" yaml:"-"`
 	Readiness         *Readiness             `json:"readiness,omitempty" yaml:"readiness,omitempty"`
 	Paths             map[string]PathMount   `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
 }
@@ -131,18 +129,9 @@ type Publish struct {
 	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
 }
 
-// Dev remains an internal compile shape for the retired launcher; configuration
-// documents and the npm configuration API do not accept it.
-type Dev struct {
-	Command        []string  `json:"command,omitempty" yaml:"command,omitempty" jsonschema:"minItems=1" jsonschema_description:"Child command and arguments run by tnl dev."`
-	Port           *int      `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Required local service port for tnl dev."`
-	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty" jsonschema_description:"Maximum time to wait for the local service to start."`
-}
-
 // readiness selects the public GET used to check one app publication.
 type Readiness struct {
-	Path   string `json:"path" yaml:"path" jsonschema:"required"`
-	Status *int   `json:"status,omitempty" yaml:"status,omitempty" jsonschema:"minimum=200,maximum=499"`
+	Path string `json:"path" yaml:"path" jsonschema:"required"`
 }
 
 // Target accepts an HTTP or HTTPS origin or a literal local port.

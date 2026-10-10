@@ -4,7 +4,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
-import { canonicalLoopbackTarget, type CanonicalTarget } from "./dev.js";
+import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import { resolveNativeBinary } from "./launcher.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import {
@@ -49,8 +49,8 @@ interface Dependencies {
 const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
 
 // one handle survives framework config reloads in the same process. listener
-// replacements share ownership while their registration/run observations fence
-// requests and probes in the native manager.
+// replacements share ownership while the native manager rejects requests and
+// probes from old registrations or publish runs.
 declare global {
   var __tnlAppPreparations: Map<string, Promise<PreparedService>> | undefined;
 }
@@ -103,7 +103,7 @@ export async function createPreparedService(
   const owner = randomBytes(16).toString("hex");
   let socket = await dependencies.start(directory);
   const prepareRequest = {
-    protocol: 1,
+    version: 1,
     directory,
     ...(options.service === undefined ? {} : { service: options.service }),
     framework,
@@ -123,7 +123,7 @@ export async function createPreparedService(
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const registration = (target?: string) => ({
-    protocol: 1,
+    version: 1,
     registration_id: assignment.registrationID,
     owner,
     ...(target === undefined ? {} : { target }),
@@ -138,7 +138,7 @@ export async function createPreparedService(
       replacement.service !== assignment.service
     ) {
       await dependencies.request(socket, "unregister", {
-        protocol: 1,
+        version: 1,
         registration_id: replacement.registrationID,
         owner,
       });
@@ -205,7 +205,7 @@ export async function createPreparedService(
         if (closed || observedRevision !== revision) {
           if (closed || needsPrepare)
             await dependencies.request(replacementSocket, "unregister", {
-              protocol: 1,
+              version: 1,
               registration_id: replacement.registrationID,
               owner,
             });
@@ -218,7 +218,7 @@ export async function createPreparedService(
           replacement.service !== assignment.service
         ) {
           await dependencies.request(replacementSocket, "unregister", {
-            protocol: 1,
+            version: 1,
             registration_id: replacement.registrationID,
             owner,
           });
@@ -359,11 +359,11 @@ function parseAssignment(value: unknown): Assignment {
     const object = record(value, "app assignment");
     exactKeys(
       object,
-      ["protocol", "registration_id", "service", "hostname", "public_url", "project"],
+      ["version", "registration_id", "service", "hostname", "public_url", "project"],
       "app assignment",
     );
     if (
-      object.protocol !== 1 ||
+      object.version !== 1 ||
       typeof object.registration_id !== "string" ||
       !/^reg_[a-f0-9]{32}$/.test(object.registration_id) ||
       !validServiceName(object.service)
@@ -402,9 +402,9 @@ export async function startRuntime(
     );
     const value: unknown = JSON.parse(stdout);
     const object = record(value, "local publisher socket");
-    exactKeys(object, ["protocol", "socket"], "local publisher socket");
+    exactKeys(object, ["version", "socket"], "local publisher socket");
     if (
-      object.protocol !== 1 ||
+      object.version !== 1 ||
       typeof object.socket !== "string" ||
       !path.isAbsolute(object.socket) ||
       object.socket.includes("\0")

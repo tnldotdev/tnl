@@ -78,12 +78,13 @@ mutation counters; public URL counters are publish run numbers.
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **project**                 | The directory selected from where the command runs, project configuration, and Git worktree.                                |
 | **preview**                 | Control's saved group of public URLs for one project directory, reused across app restarts.                                 |
-| **app registration**        | A bound listener reported by an SDK and fenced to its live application owner.                                               |
+| **app registration**        | A bound listener reported by an SDK and kept current only while its application owner is running.                           |
 | **local publisher process** | The native `tnl` process that owns publications for one canonical project, worktree, and client state directory.            |
 | **project service**         | A named local service in project configuration, with optional settings that override project defaults.                      |
 | **project configuration**   | The selected `tnl.yml`, `tnl.yaml`, `tnl.json`, or `tnl.config.ts` file and its validated settings.                         |
 | **project metadata**        | Generated, browser-safe hostname and project-service information used by framework integrations during development.         |
 | **client state**            | Local data saved by `tnl`, including sessions, certificates, project records, and locks.                                    |
+| **local event cursor**      | A position in the app runtime's local event history; pass it to `tnl watch --after` to resume.                              |
 | **worktree label**          | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames.    |
 | **path mount**              | Serving one configured local service beneath a path on another service's public URL; the hostname's visitor policy applies. |
 

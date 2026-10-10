@@ -15,7 +15,7 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		action  telemetryCommandAction
 		tracked bool
 	}{
-		{[]string{"dev"}, telemetryDev, "", true},
+		{[]string{"publish"}, telemetryPublish, "", true},
 		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team invite", "revoke", true},
 		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
 		{[]string{"version"}, "", "", false},

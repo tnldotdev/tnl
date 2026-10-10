@@ -217,7 +217,7 @@ Set `TNLD_MANAGED_DOMAIN=routes.example.com` on your server. After signing in
 with the built-in administrator's login token, publish directly beneath it:
 
 ```bash
-tnl auth login --server https://control.example.com --token
+tnl auth login --server https://control.example.com --login-token
 tnl publish 3000 --server https://control.example.com --name app
 # https://app.routes.example.com
 ```
@@ -261,7 +261,7 @@ Or install with curl:
 curl -fsSL https://tnl.dev/install | sh
 ```
 
-This runs separately from your app's development command. [Read about `tnl publish`](https://tnl.dev/docs/publish).
+For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/publish).
 
 ## how much does it cost?
 
