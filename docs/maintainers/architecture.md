@@ -83,6 +83,17 @@ and retry boundary before forwarding database startup bytes unchanged. It closes
 a denied database connection without opening a publisher stream. Database TLS
 negotiation belongs to the publisher, not ingress.
 
+The publisher requires the PostgreSQL SSLRequest or MySQL TLS upgrade before
+forwarding database authentication bytes. In the default mode, it terminates
+visitor TLS with the public URL certificate, verifies a separate TLS connection
+to the private target using its target hostname and configured roots, and copies
+the database protocol between them. A PostgreSQL GSS request gets a refusal so
+the client can request TLS instead. The explicit passthrough mode checks the
+visitor's exact SNI but leaves TLS termination and the public URL certificate
+with the private database; it is needed when authentication binds to the TLS
+channel, such as PostgreSQL SCRAM-SHA-256-PLUS. Plaintext database startup is
+never forwarded.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.
