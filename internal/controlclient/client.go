@@ -382,6 +382,13 @@ func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, credential cred
 	})
 }
 
+func (c *Client) DeleteEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, publicURLID string) error {
+	_, err := request[struct{}](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeleteEphemeralPublicURL(ctx, publicURLID, editors...)
+	})
+	return err
+}
+
 func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
 	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
 }

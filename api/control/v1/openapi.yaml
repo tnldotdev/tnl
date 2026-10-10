@@ -809,6 +809,19 @@ paths:
                 $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/ephemeral-public-urls/{public_url_id}:
+    delete:
+      operationId: deleteEphemeralPublicURL
+      summary: Remove a temporary public URL owned by an ad-hoc credential
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      responses:
+        "204":
+          description: The ad-hoc URL is removed
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
       operationId: heartbeatPublishRun
