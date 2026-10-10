@@ -25,7 +25,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ServerHostname() != "control.tnl.example.com" || config.IngressHostname() != "ingress.tnl.example.com" ||
+	if config.ServerHostname() != "control.tnl.example.com" || config.IngressHostname() != "ingress-a.tnl.example.com" ||
 		config.StandaloneRelayHostname() != "relay.tnl.example.com" || config.ManagedDomain != "tunnels.example.com" {
 		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain)
 	}
@@ -263,7 +263,7 @@ func TestConfigRouteAndRelayDNSMatrix(t *testing.T) {
 			if cfg.DNSAutomationEnabled() != test.routes || cfg.RelayCertificateAutomationEnabled() != test.relay || cfg.DNSProviderEnabled() != test.provider {
 				t.Fatalf("route/relay/provider DNS = %v/%v/%v; want %v/%v/%v", cfg.DNSAutomationEnabled(), cfg.RelayCertificateAutomationEnabled(), cfg.DNSProviderEnabled(), test.routes, test.relay, test.provider)
 			}
-			if cfg.ServerHostname() != "control.infra.example.test" || cfg.IngressHostname() != "ingress.infra.example.test" ||
+			if cfg.ServerHostname() != "control.infra.example.test" || cfg.IngressHostname() != "ingress-a.infra.example.test" ||
 				cfg.RelayServiceHostname("relay-a") != "relay-a.infra.example.test" || cfg.ManagedDomain != "routes.other.test" {
 				t.Fatal("server and managed domains were conflated")
 			}
