@@ -34,11 +34,11 @@ type publicURLCredentialCommand struct {
 
 type publicURLCredentialCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	Selector        string               `arg:"" name:"service-or-public-url-id" optional:"" help:"Configured service or saved public URL ID. Omit to use a single service or create an ad hoc URL with --target."`
+	Selector        string               `arg:"" name:"service-or-public-url-id" optional:"" help:"Configured service or saved public URL ID. Omit to use a single service or create a new saved URL."`
 	PublicURL       string               `name:"public-url" help:"Exact public URL to save before issuing the credential."`
 	Name            string               `name:"name" help:"One label under the selected domain or namespace."`
 	Domain          string               `name:"domain" help:"Ready team domain for a generated or named public URL."`
-	Target          string               `name:"target" help:"HTTP or HTTPS target origin; it need not be reachable from this machine."`
+	Target          string               `name:"target" help:"Optional saved HTTP or HTTPS target origin; omit to supply the target when publishing."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
 	Output          credentialOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
@@ -144,14 +144,16 @@ func writeCredentialCreateResult(mode credentialOutputMode, result publicURLCred
 	if mode == credentialOutputJSON {
 		return json.NewEncoder(output).Encode(result)
 	}
+	fields := []clioutput.Field{{Label: "public URL", Value: result.PublicURL}}
+	if result.Target != "" {
+		fields = append(fields, clioutput.Field{Label: "target", Value: result.Target})
+	}
+	fields = append(fields,
+		clioutput.Field{Label: "URL ID", Value: result.PublicURLID},
+		clioutput.Field{Label: "credential", Value: result.CredentialID},
+		clioutput.Field{Label: "expires", Value: result.ExpiresAt.UTC().Format(time.RFC3339)})
 	if err := writeHumanFrame(diagnostics, "tnl url credential create", "created", "save the credential; it will not be shown again",
-		clioutput.Fields(
-			clioutput.Field{Label: "public URL", Value: result.PublicURL},
-			clioutput.Field{Label: "target", Value: result.Target},
-			clioutput.Field{Label: "URL ID", Value: result.PublicURLID},
-			clioutput.Field{Label: "credential", Value: result.CredentialID},
-			clioutput.Field{Label: "expires", Value: result.ExpiresAt.UTC().Format(time.RFC3339)},
-		)); err != nil {
+		clioutput.Fields(fields...)); err != nil {
 		return err
 	}
 	// one-time credentials remain exact raw values on stdout.
@@ -161,7 +163,7 @@ func writeCredentialCreateResult(mode credentialOutputMode, result publicURLCred
 
 func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, project projectConfiguration) (publicURLCredentialCreateCommand, error) {
 	service := flags.Selector
-	if service == "" && flags.Target == "" && project.Found() && len(project.Config.Services) != 0 {
+	if service == "" && flags.Target == "" && flags.PublicURL == "" && flags.Name == "" && project.Found() && len(project.Config.Services) != 0 {
 		selected, err := project.defaultService()
 		if err != nil {
 			return flags, err
@@ -200,11 +202,8 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 		if flags.PublicURL == "" && flags.Name == "" {
 			flags.Name = projectconfig.ServiceWorktreeLabel(service, project.Worktree)
 		}
-	} else if flags.Target == "" && project.Found() && project.Config.Publish != nil && project.Config.Publish.Target != nil {
+	} else if flags.Target == "" && flags.PublicURL == "" && flags.Name == "" && project.Found() && project.Config.Publish != nil && project.Config.Publish.Target != nil {
 		flags.Target = string(*project.Config.Publish.Target)
-	}
-	if flags.Target == "" {
-		return flags, failure.Wrap("select credential target", failure.MissingTarget, errors.New("provide --target or configure publish.target for the selected service"))
 	}
 	if flags.Name != "" && flags.PublicURL != "" {
 		return flags, failure.Wrap("validate public URL options", failure.InvalidTunnelFlags, errors.New("--name and --public-url are mutually exclusive"))
@@ -213,9 +212,13 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 }
 
 func reservePublishCredentialURL(ctx context.Context, session *teamSession, flags publicURLCredentialCreateCommand) (controlv1.PublicURL, error) {
-	target, err := localproxy.NormalizeTarget(flags.Target)
-	if err != nil {
-		return controlv1.PublicURL{}, err
+	target := ""
+	if flags.Target != "" {
+		var err error
+		target, err = localproxy.NormalizeTarget(flags.Target)
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
 	}
 	team := flags.Team
 	if team == "" {
@@ -255,7 +258,7 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	if route.AllowedIpPrefixes != nil {
 		currentPolicy = *route.AllowedIpPrefixes
 	}
-	if route.Target != target || route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
+	if target != "" && route.Target != target || route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
 		route.Ephemeral || !slices.Equal(currentPolicy, policy.prefixes) {
 		return controlv1.PublicURL{}, failure.Wrap("reserve public URL for credential", failure.PublishCredentialMismatch,
 			fmt.Errorf("public URL %s already exists with a different target or visitor policy", route.Id))

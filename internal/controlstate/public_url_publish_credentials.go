@@ -48,7 +48,7 @@ var ErrPublicURLPublishCredential = errors.New("controlstate: public URL publish
 // CreatePublicURLPublishCredential issues a secret only for an enabled, authorized saved URL.
 func (d *Database) CreatePublicURLPublishCredential(ctx context.Context, request CreatePublicURLPublishCredentialRequest) (result PublicURLPublishCredential, secret credentials.PublicURLPublishCredential, retErr error) {
 	if request.PublicURLID == "" || request.IdentityID == "" || request.MembershipID == "" || request.PolicyRevision == 0 ||
-		request.Target == "" || !request.ExpiresAt.After(request.Now) || request.ExpiresAt.After(request.Now.Add(maximumPublishCredentialLifetime)) {
+		!request.ExpiresAt.After(request.Now) || request.ExpiresAt.After(request.Now.Add(maximumPublishCredentialLifetime)) {
 		return result, "", ErrPublicURLPublishCredential
 	}
 	plan := request.CertificatePlan

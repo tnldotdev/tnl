@@ -79,7 +79,9 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 			return
 		}
 	}
-	if err := authorization.ValidateTarget(body.Target); err != nil {
+	ephemeral := body.Ephemeral != nil && *body.Ephemeral
+	if body.Target == "" && (body.Purpose != controlv1.App || ephemeral) ||
+		body.Target != "" && authorization.ValidateTarget(body.Target) != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
@@ -87,7 +89,6 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	if body.MembershipId != nil {
 		membershipID = *body.MembershipId
 	}
-	ephemeral := body.Ephemeral != nil && *body.Ephemeral
 	decision, ok := h.authorizeMutation(response, request, authorization.Request{
 		Operation: authorization.OperationPublicURLCreate, TeamID: body.TeamId,
 		PublicURLMembershipID: membershipID, DomainID: body.DomainId,
@@ -143,7 +144,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	if err := authorization.ValidateTarget(*body.Target); err != nil {
+	if *body.Target != "" && authorization.ValidateTarget(*body.Target) != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
@@ -159,6 +160,10 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	route, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
 		writeControlStateProblem(response, "read public URL for update", err)
+		return
+	}
+	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp || route.Ephemeral) {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{

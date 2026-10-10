@@ -40,6 +40,13 @@ func TestCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &encoded); err != nil || encoded != result || stderr.Len() != 0 {
 		t.Fatalf("JSON output = %#v, stderr = %q, err = %v", encoded, stderr.String(), err)
 	}
+	result.Target = ""
+	stdout.Reset()
+	stderr.Reset()
+	if err := writeCredentialCreateResult(credentialOutputHuman, result, &stdout, &stderr); err != nil ||
+		strings.Contains(stderr.String(), "target") || stdout.String() != secret.String()+"\n" {
+		t.Fatalf("targetless credential output = %q, %q, %v", stdout.String(), stderr.String(), err)
+	}
 }
 
 func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
@@ -65,6 +72,10 @@ func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
 	implicit, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{}, project)
 	if err != nil || implicit.Name != selected.Name || implicit.Target != selected.Target {
 		t.Fatalf("single project service = %#v, %v", implicit, err)
+	}
+	exact, err := resolveCredentialCreateConfig(publicURLCredentialCreateCommand{PublicURL: "https://app.example.test"}, project)
+	if err != nil || exact.Target != "" || exact.Name != "" || exact.PublicURL != "https://app.example.test" {
+		t.Fatalf("targetless exact URL = %#v, %v", exact, err)
 	}
 }
 

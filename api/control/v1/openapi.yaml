@@ -1604,8 +1604,8 @@ components:
           $ref: "#/components/schemas/CanonicalHostname"
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty when a saved app public URL has no saved target.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -1718,8 +1718,8 @@ components:
           $ref: "#/components/schemas/CanonicalHostname"
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty only for a saved app public URL with no saved target.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2421,8 +2421,8 @@ components:
       properties:
         target:
           type: string
-          format: uri
-          pattern: "^https?://"
+          pattern: "^$|^https?://"
+          description: empty only when keeping a saved app public URL targetless.
         allowed_ip_prefixes:
           type: array
           uniqueItems: true

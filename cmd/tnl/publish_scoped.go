@@ -86,18 +86,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		flags.PublicURL != "" && flags.PublicURL != "https://"+route.CanonicalHostname {
 		return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("credential is bound to another public URL or target"))
 	}
-	target, err := localproxy.NormalizeTarget(route.Target)
-	if err != nil || target != route.Target {
-		return failure.Wrap("read scoped publish target", failure.ServerResponseInvalid, errors.New("control returned an invalid saved target"))
-	}
-	if flags.Target != "" {
-		selected, err := localproxy.NormalizeTarget(flags.Target)
-		if err != nil {
-			return err
-		}
-		if selected != target {
-			return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("target differs from the saved public URL"))
-		}
+	target, err := selectScopedPublishTarget(route.Target, flags.Target)
+	if err != nil {
+		return err
 	}
 	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
 	if err != nil {
@@ -148,8 +139,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
-		TargetOptions: targetOptions,
-		RequestLimit:  flags.requestLimit(), RequestInspection: flags.RequestInspection,
+		PreserveSavedURLTarget: route.Target == "",
+		TargetOptions:          targetOptions,
+		RequestLimit:           flags.requestLimit(), RequestInspection: flags.RequestInspection,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}
@@ -175,6 +167,29 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return classifyScopedPublishError(err)
 	}
 	return output.stopped()
+}
+
+func selectScopedPublishTarget(saved, selected string) (string, error) {
+	if saved != "" {
+		canonical, err := localproxy.NormalizeTarget(saved)
+		if err != nil || canonical != saved {
+			return "", failure.Wrap("read scoped publish target", failure.ServerResponseInvalid, errors.New("control returned an invalid saved target"))
+		}
+	}
+	if selected == "" {
+		if saved == "" {
+			return "", failure.Wrap("select scoped publish target", failure.MissingTarget, errors.New("pass a target or set TNL_TARGET or publish.target"))
+		}
+		return saved, nil
+	}
+	target, err := localproxy.NormalizeTarget(selected)
+	if err != nil {
+		return "", err
+	}
+	if saved != "" && target != saved {
+		return "", failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("target differs from the saved public URL"))
+	}
+	return target, nil
 }
 
 func classifyScopedPublishError(err error) error {

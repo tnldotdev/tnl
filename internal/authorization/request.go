@@ -142,7 +142,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	case OperationPublicURLUpdate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||
-			request.Target == "" || request.AllowedIPPrefixes == nil {
+			request.AllowedIPPrefixes == nil {
 			return Digest{}, invalid("public URL update bindings are required")
 		}
 		if !request.PublicURLScope.Valid() {
@@ -168,7 +168,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	case OperationPublishRunCreate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublishRunNumber == 0 || request.PolicyRevision == 0 ||
-			request.Target == "" || request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
+			request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
 			return Digest{}, invalid("publish run bindings are required")
 		}
 		if !request.PublicURLScope.Valid() {

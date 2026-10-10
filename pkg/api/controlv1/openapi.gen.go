@@ -937,8 +937,10 @@ type CreatePublicURLRequest struct {
 	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
 	PublicUrlScope    PublicURLScope    `json:"public_url_scope"`
 	Purpose           PublicURLPurpose  `json:"purpose"`
-	Target            string            `json:"target"`
-	TeamId            TeamID            `json:"team_id"`
+
+	// Target empty only for a saved app public URL with no saved target.
+	Target string `json:"target"`
+	TeamId TeamID `json:"team_id"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1251,9 +1253,11 @@ type PublicURL struct {
 	PolicyRevision       int64                   `json:"policy_revision"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
 	Purpose              PublicURLPurpose        `json:"purpose"`
-	Target               string                  `json:"target"`
-	TeamId               TeamID                  `json:"team_id"`
-	UpdatedAt            time.Time               `json:"updated_at"`
+
+	// Target empty when a saved app public URL has no saved target.
+	Target    string    `json:"target"`
+	TeamId    TeamID    `json:"team_id"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // PublicURLID defines model for PublicURLID.
@@ -1518,7 +1522,9 @@ type TeamID = ResourceID
 // UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
-	Target            string   `json:"target"`
+
+	// Target empty only when keeping a saved app public URL targetless.
+	Target string `json:"target"`
 }
 
 // WebhookProvider defines model for WebhookProvider.

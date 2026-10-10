@@ -66,3 +66,30 @@ func TestScopedCredentialRejectionHasItsOwnAction(t *testing.T) {
 		t.Fatalf("scoped authentication error = %v", err)
 	}
 }
+
+func TestScopedPublishRequiresALocalTargetOnlyWhenTheURLHasNoSavedTarget(t *testing.T) {
+	for _, test := range []struct {
+		name, saved, selected, want string
+		reason                      failure.Reason
+	}{
+		{name: "targetless local target", selected: "http://app:3000", want: "http://app:3000"},
+		{name: "saved default", saved: "http://app:3000", want: "http://app:3000"},
+		{name: "matching saved target", saved: "http://app:3000", selected: "http://app:3000", want: "http://app:3000"},
+		{name: "missing local target", reason: failure.MissingTarget},
+		{name: "mismatched saved target", saved: "http://app:3000", selected: "http://app:4000", reason: failure.PublishCredentialMismatch},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			target, err := selectScopedPublishTarget(test.saved, test.selected)
+			if target != test.want {
+				t.Fatalf("target = %q, want %q", target, test.want)
+			}
+			if test.reason != "" {
+				if reason, _, ok := failure.Describe(err); !ok || reason != test.reason {
+					t.Fatalf("target selection error = %v, want %q", err, test.reason)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

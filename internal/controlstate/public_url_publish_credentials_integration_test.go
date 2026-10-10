@@ -58,6 +58,44 @@ func TestIntegrationPublishCredentialRevocationClosesActiveRun(t *testing.T) {
 	}
 }
 
+func TestIntegrationTargetlessSavedAppCredentialCanPublishAndHeartbeat(t *testing.T) {
+	database, now, run, _ := newPublishRunPrerequisites(t)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET target = '' WHERE id = $1`, run.PublicURLID); err != nil {
+		t.Fatal(err)
+	}
+	route, err := database.GetPublicURLForAuthorization(t.Context(), run.PublicURLID)
+	if err != nil || route.Target != "" {
+		t.Fatalf("targetless saved URL = %#v, %v", route, err)
+	}
+	credential, token, err := database.CreatePublicURLPublishCredential(t.Context(), CreatePublicURLPublishCredentialRequest{
+		PublicURLID: route.ID, TeamID: run.TeamID, IdentityID: run.ActingIdentityID, MembershipID: run.MembershipID,
+		PolicyRevision: run.PolicyRevision,
+		CertificatePlan: authorization.CertificatePlan{
+			CacheKey: run.CertificateCacheKey, Scope: run.CertificateScope,
+			Identifiers: run.CertificateIdentifiers, ChallengeMethod: run.CertificateChallenge,
+		}, Now: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil || credential.Target != "" {
+		t.Fatalf("targetless credential = %#v, %v", credential, err)
+	}
+	selected, retrySecret, err := database.AuthenticatePublicURLPublishCredential(t.Context(), token, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ValidatePublicURLPublishCredential(t.Context(), selected, route); err != nil {
+		t.Fatal(err)
+	}
+	run.RetrySecret, run.PublishCredentialID = retrySecret, credential.ID
+	setup, err := database.CreatePublishRun(t.Context(), run, now, 30*time.Second, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+	if _, err := database.HeartbeatPublishRun(t.Context(), auth, now.Add(time.Second), 30*time.Second, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIntegrationTeamPublishCredentialPagesAndLookup(t *testing.T) {
 	database, now, run, _ := newPublishRunPrerequisites(t)
 	route, err := database.GetPublicURLForAuthorization(t.Context(), run.PublicURLID)

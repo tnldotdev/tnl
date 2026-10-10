@@ -482,6 +482,59 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
+	store := &publicURLCreationStore{result: controlstate.PublicURL{
+		ID: "public_url_created", CanonicalHostname: "demo.example", Purpose: controlstate.PublicURLPurposeApp,
+	}}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "demo.example", PublicURLScope: "member", PolicyRevision: 9,
+	}}
+	h := &handler{store: store, authorizer: authorizer}
+	for _, test := range []struct {
+		name, purpose, suffix string
+		want                  int
+	}{
+		{"saved app", "app", "", http.StatusCreated},
+		{"ephemeral app", "app", `,"ephemeral":true`, http.StatusBadRequest},
+		{"saved demo", "demo", "", http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"","purpose":"` + test.purpose + `"` + test.suffix + `}`
+			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer exact-access-token")
+			request.Header.Set("Idempotency-Key", "create-key")
+			response := httptest.NewRecorder()
+			h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+			if response.Code != test.want {
+				t.Fatalf("targetless create status = %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if len(store.requests) != 1 || store.requests[0].Target != "" || len(authorizer.requests) != 1 {
+		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
+	}
+}
+
+func TestTargetlessSavedAppPublicURLCanUpdateOnlyItsVisitorPolicy(t *testing.T) {
+	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
+		Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 4,
+	}}
+	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
+		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
+	}}
+	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"","allowed_ip_prefixes":[]}`))
+	request.Header.Set("Authorization", "Bearer exact-access-token")
+	response := httptest.NewRecorder()
+	(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
+	if response.Code != http.StatusOK || store.updates != 1 || store.update.Target != "" {
+		t.Fatalf("targetless policy update = %d: %s, store = %#v", response.Code, response.Body.String(), store)
+	}
+}
+
 func TestCreateRouteRequiresPurpose(t *testing.T) {
 	for _, purpose := range []string{"", "unknown", "stripe"} {
 		body := `{"team_id":"team_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"http://127.0.0.1:3000","purpose":"` + purpose + `"}`

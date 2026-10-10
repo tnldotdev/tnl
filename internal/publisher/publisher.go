@@ -57,6 +57,7 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	PreserveSavedURLTarget   bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
 	AdmitRequest             func(*http.Request, PublishRunIdentity) error
@@ -295,6 +296,9 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 			Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
 		})
 		return updated, classifyPublicURLConflict(err)
+	}
+	if config.PreserveSavedURLTarget && route.Target == "" {
+		return route, nil
 	}
 	if route.Target == config.Target {
 		return route, nil
