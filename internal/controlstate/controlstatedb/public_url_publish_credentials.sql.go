@@ -33,7 +33,7 @@ func (q *Queries) AttachPublishRunCredential(ctx context.Context, arg AttachPubl
 }
 
 const getPublicURLPublishCredentialByID = `-- name: GetPublicURLPublishCredentialByID :one
-SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at FROM control.public_url_publish_credentials WHERE id = $1
+SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role FROM control.public_url_publish_credentials WHERE id = $1
 `
 
 func (q *Queries) GetPublicURLPublishCredentialByID(ctx context.Context, id string) (ControlPublicUrlPublishCredential, error) {
@@ -55,12 +55,17 @@ func (q *Queries) GetPublicURLPublishCredentialByID(ctx context.Context, id stri
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
 	)
 	return i, err
 }
 
 const getPublicURLPublishCredentialByTokenID = `-- name: GetPublicURLPublishCredentialByTokenID :one
-SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at FROM control.public_url_publish_credentials WHERE token_id = $1
+SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role FROM control.public_url_publish_credentials WHERE token_id = $1
 `
 
 func (q *Queries) GetPublicURLPublishCredentialByTokenID(ctx context.Context, tokenID string) (ControlPublicUrlPublishCredential, error) {
@@ -82,12 +87,17 @@ func (q *Queries) GetPublicURLPublishCredentialByTokenID(ctx context.Context, to
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
 	)
 	return i, err
 }
 
 const getPublishRunCredentialState = `-- name: GetPublishRunCredentialState :one
-SELECT credentials.id, credentials.revoked_at, credentials.expires_at,
+SELECT credentials.id, credentials.kind, credentials.revoked_at, credentials.expires_at,
     credentials.membership_id, credentials.issued_by_identity_id,
     credentials.policy_revision, credentials.target, credentials.public_url_id
 FROM control.publish_run_publish_credentials AS runs
@@ -97,13 +107,14 @@ WHERE runs.publish_run_id = $1
 
 type GetPublishRunCredentialStateRow struct {
 	ID                 string
+	Kind               string
 	RevokedAt          pgtype.Timestamptz
 	ExpiresAt          pgtype.Timestamptz
 	MembershipID       string
 	IssuedByIdentityID string
 	PolicyRevision     int64
 	Target             string
-	PublicURLID        string
+	PublicURLID        pgtype.Text
 }
 
 func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error) {
@@ -111,6 +122,7 @@ func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID
 	var i GetPublishRunCredentialStateRow
 	err := row.Scan(
 		&i.ID,
+		&i.Kind,
 		&i.RevokedAt,
 		&i.ExpiresAt,
 		&i.MembershipID,
@@ -134,12 +146,12 @@ INSERT INTO control.public_url_publish_credentials (
     $8, $9, $10,
     $11, $12,
     $13, $14
-) RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at
+) RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role
 `
 
 type InsertPublicURLPublishCredentialParams struct {
 	ID                         string
-	PublicURLID                string
+	PublicURLID                pgtype.Text
 	TokenID                    string
 	TokenDigest                []byte
 	IssuedByIdentityID         string
@@ -188,17 +200,22 @@ func (q *Queries) InsertPublicURLPublishCredential(ctx context.Context, arg Inse
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
 	)
 	return i, err
 }
 
 const listPublicURLPublishCredentials = `-- name: ListPublicURLPublishCredentials :many
-SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at FROM control.public_url_publish_credentials
+SELECT id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role FROM control.public_url_publish_credentials
 WHERE public_url_id = $1
 ORDER BY created_at DESC, id
 `
 
-func (q *Queries) ListPublicURLPublishCredentials(ctx context.Context, publicUrlID string) ([]ControlPublicUrlPublishCredential, error) {
+func (q *Queries) ListPublicURLPublishCredentials(ctx context.Context, publicUrlID pgtype.Text) ([]ControlPublicUrlPublishCredential, error) {
 	rows, err := q.db.Query(ctx, listPublicURLPublishCredentials, publicUrlID)
 	if err != nil {
 		return nil, err
@@ -223,6 +240,11 @@ func (q *Queries) ListPublicURLPublishCredentials(ctx context.Context, publicUrl
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.Kind,
+			&i.TeamID,
+			&i.DomainID,
+			&i.Namespace,
+			&i.IssuedRole,
 		); err != nil {
 			return nil, err
 		}
@@ -253,7 +275,7 @@ type ListTeamPublicURLPublishCredentialsParams struct {
 
 type ListTeamPublicURLPublishCredentialsRow struct {
 	ID                string
-	PublicURLID       string
+	PublicURLID       pgtype.Text
 	CreatedAt         pgtype.Timestamptz
 	ExpiresAt         pgtype.Timestamptz
 	RevokedAt         pgtype.Timestamptz
@@ -291,13 +313,13 @@ const revokePublicURLPublishCredential = `-- name: RevokePublicURLPublishCredent
 UPDATE control.public_url_publish_credentials
 SET revoked_at = COALESCE(revoked_at, $1)
 WHERE id = $2 AND public_url_id = $3
-RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at
+RETURNING id, public_url_id, token_id, token_digest, issued_by_identity_id, membership_id, policy_revision, target, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, created_at, expires_at, revoked_at, kind, team_id, domain_id, namespace, issued_role
 `
 
 type RevokePublicURLPublishCredentialParams struct {
 	RevokedAt   pgtype.Timestamptz
 	ID          string
-	PublicURLID string
+	PublicURLID pgtype.Text
 }
 
 func (q *Queries) RevokePublicURLPublishCredential(ctx context.Context, arg RevokePublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error) {
@@ -319,6 +341,11 @@ func (q *Queries) RevokePublicURLPublishCredential(ctx context.Context, arg Revo
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.Kind,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
 	)
 	return i, err
 }

@@ -343,7 +343,7 @@ func (d *Database) HeartbeatPublishRun(
 		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
 	}
 	credentialRevoked := credentialErr == nil && (credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
-		credential.PublicURLID != route.ID || credential.Target != route.Target)
+		credential.Kind != string(PublishCredentialSavedURL) || !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target)
 	if credentialErr == nil && !credentialRevoked {
 		membership, memberErr := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: route.TeamID, IdentityID: credential.IssuedByIdentityID,

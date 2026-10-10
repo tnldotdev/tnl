@@ -232,7 +232,7 @@ type Querier interface {
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
-	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID string) ([]ControlPublicUrlPublishCredential, error)
+	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID pgtype.Text) ([]ControlPublicUrlPublishCredential, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
