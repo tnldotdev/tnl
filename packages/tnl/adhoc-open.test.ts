@@ -53,7 +53,7 @@ test("one supplied Node listener waits for its run and stays open on close", asy
   let statuses = 0;
   const handle = await openServer(
     listener,
-    { credential: credential() },
+    { credential: credential(), targetHostname: "app.internal" },
     {
       start: async () => "/tmp/tnl-test.sock",
       request: async (_socket, operation, body: unknown) => {
@@ -67,6 +67,9 @@ test("one supplied Node listener waits for its run and stays open on close", asy
           throw new Error("invalid private request");
         registrationID ||= body.registration_id;
         expect(body.registration_id).toBe(registrationID);
+        if (operation === "ad-hoc/register") {
+          expect(body).toHaveProperty("target", "http://app.internal:3000");
+        }
         if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
         const status = {
           version: 1,

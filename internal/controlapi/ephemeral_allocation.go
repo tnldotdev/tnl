@@ -29,10 +29,8 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid ad-hoc allocation request")
 		return
 	}
-	parsed, err := localproxy.ParseCanonicalTarget(body.Target)
-	if err != nil ||
-		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "target must be a canonical loopback HTTP or HTTPS origin")
+	if _, err := localproxy.ParseCanonicalTarget(body.Target); err != nil {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "target must be an HTTP or HTTPS address with a host and port")
 		return
 	}
 	token, ok := requestBearerToken(request)

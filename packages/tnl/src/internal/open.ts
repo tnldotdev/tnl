@@ -10,6 +10,8 @@ export interface OpenOptions {
   readonly credential?: string;
   readonly server?: string;
   readonly directory?: string;
+  /** hostname the publisher uses to reach this listener. */
+  readonly targetHostname?: string;
   readonly allowIP?: readonly string[];
   readonly allowAllIPs?: boolean;
   readonly limits?: {
@@ -63,9 +65,7 @@ export async function openServer(
   if (credential === undefined || credential === "") throw new TnlError("sdk.credential_required");
   if (!/^tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(credential))
     throw new TnlError("sdk.credential_rejected");
-  const target = await listeningTarget(server);
-  const hostname = new URL(target).hostname;
-  if (hostname !== "127.0.0.1" && hostname !== "[::1]") throw new TnlError("sdk.target_invalid");
+  const target = await listeningTarget(server, { targetHostname: options.targetHostname });
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
   const registrationID = `ivk_${Array.from(
@@ -344,6 +344,7 @@ function validateOptions(options: OpenOptions): void {
           "credential",
           "server",
           "directory",
+          "targetHostname",
           "allowIP",
           "allowAllIPs",
           "limits",
@@ -355,6 +356,8 @@ function validateOptions(options: OpenOptions): void {
       (typeof options.server !== "string" || !/^https:\/\/[^/]+$/.test(options.server))) ||
     (options.directory !== undefined &&
       (typeof options.directory !== "string" || options.directory === "")) ||
+    (options.targetHostname !== undefined &&
+      (typeof options.targetHostname !== "string" || options.targetHostname === "")) ||
     (options.allowAllIPs !== undefined && typeof options.allowAllIPs !== "boolean") ||
     (options.allowIP !== undefined &&
       (!Array.isArray(options.allowIP) ||
