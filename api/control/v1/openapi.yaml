@@ -676,7 +676,7 @@ paths:
         - $ref: "#/components/parameters/PublicURLID"
       responses:
         "200":
-          description: Public credential metadata, without secrets
+          description: Credential metadata for this public URL
           content:
             application/json:
               schema:
