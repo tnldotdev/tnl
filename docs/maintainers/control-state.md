@@ -19,6 +19,13 @@ is added. `minimumSchemaVersion` tracks the oldest schema the serving code can
 use safely; it advances only when runtime reads or writes need a newer migration.
 The values can differ while an additive migration is not yet used by serving code.
 
+Migration 23 seeds the current public ingress address as `ingress-a`. Existing
+teams and public URLs keep that pool ID; its address and allocatable ports remain
+disabled until an operator has verified the deployment. A TCP port claim belongs
+to one saved public URL and one pool. Released claims retain the hostname and
+port so another public URL cannot later receive the same pair. Adding a second
+pool must not change the pool already pinned to an existing public URL.
+
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
 requires migration 12's queue table, including for storage-key rotation. The
