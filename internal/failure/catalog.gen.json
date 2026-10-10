@@ -419,7 +419,7 @@
       "slug": "publish-credential-rejected",
       "class": "unauthenticated",
       "message": "the public URL publish credential was rejected",
-      "action": "check TNL_PUBLISH_CREDENTIAL or issue a replacement with tnl url credential create"
+      "action": "check TNL_CREDENTIAL or issue a replacement with tnl url credential create"
     },
     {
       "code": "TNL_CLIENT_SERVER_CONFLICT",

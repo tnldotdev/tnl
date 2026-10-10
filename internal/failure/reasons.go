@@ -409,7 +409,7 @@ var definitions = map[Reason]Definition{
 	},
 	PublishCredentialRejected: {
 		Class: Unauthenticated, Message: "the public URL publish credential was rejected",
-		Action: "check TNL_PUBLISH_CREDENTIAL or issue a replacement with tnl url credential create", Retry: RetryAfterChange,
+		Action: "check TNL_CREDENTIAL or issue a replacement with tnl url credential create", Retry: RetryAfterChange,
 	},
 	PublishCredentialMismatch: {
 		Class: Invalid, Message: "the saved public URL does not match this publication",

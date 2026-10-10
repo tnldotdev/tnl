@@ -26,7 +26,7 @@ type publishCommand struct {
 	remoteFlags       `embed:""`
 	tunnelFlags       `embed:""`
 	Target            string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, or HTTP or HTTPS target origin."`
-	PublishCredential string            `name:"publish-credential" env:"TNL_PUBLISH_CREDENTIAL" hidden:""`
+	PublishCredential string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
 	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 

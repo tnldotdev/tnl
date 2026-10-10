@@ -49,6 +49,19 @@ func TestCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
 	}
 }
 
+func TestCredentialLifetimeAcceptsPositiveDurationsUpToNinetyDays(t *testing.T) {
+	for _, value := range []string{"1s", "24h", "7d", "90d"} {
+		if got, err := parseCredentialLifetime(value); err != nil || got <= 0 || got > 90*24*time.Hour {
+			t.Fatalf("lifetime %q = %s, %v", value, got, err)
+		}
+	}
+	for _, value := range []string{"0s", "100ms", "1.5s", "-1s", "91d", "1w", "999999999999999999999d"} {
+		if _, err := parseCredentialLifetime(value); err == nil {
+			t.Fatalf("invalid lifetime %q was accepted", value)
+		}
+	}
+}
+
 func TestCredentialCreationUsesProjectServiceOnlyWhenSelected(t *testing.T) {
 	target := config.Target("http://app:3000")
 	root := t.TempDir()

@@ -17,13 +17,15 @@ import (
 
 type scopedCredentialStoreStub struct {
 	PublicURLPublishCredentialStore
-	credential  controlstate.PublicURLPublishCredential
-	page        controlstate.PublicURLPublishCredentialPage
-	validations int
-	revocations int
+	credential     controlstate.PublicURLPublishCredential
+	page           controlstate.PublicURLPublishCredentialPage
+	validations    int
+	revocations    int
+	issuedLifetime time.Duration
 }
 
-func (s *scopedCredentialStoreStub) CreatePublicURLPublishCredential(_ context.Context, _ controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error) {
+func (s *scopedCredentialStoreStub) CreatePublicURLPublishCredential(_ context.Context, request controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error) {
+	s.issuedLifetime = request.ExpiresAt.Sub(request.Now)
 	return s.credential, "tnl_publish_one_time_secret", nil
 }
 
@@ -118,7 +120,7 @@ func TestPublishCredentialIsReturnedOnlyAtIssuance(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
 	h.CreatePublicURLPublishCredential(response, request, "public_url_1")
-	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || credential.issuedLifetime != 90*24*time.Hour {
 		t.Fatalf("issue response = %d %s", response.Code, response.Body.String())
 	}
 	var issued controlv1.IssuedPublicURLPublishCredential
@@ -132,6 +134,23 @@ func TestPublishCredentialIsReturnedOnlyAtIssuance(t *testing.T) {
 	if response.Code != http.StatusOK || !json.Valid(response.Body.Bytes()) ||
 		strings.Contains(response.Body.String(), "tnl_publish_one_time_secret") {
 		t.Fatalf("list disclosed credential = %d %s", response.Code, response.Body.String())
+	}
+	for _, test := range []struct {
+		body     string
+		status   int
+		lifetime time.Duration
+	}{
+		{`{"expires_in_seconds":604800}`, http.StatusCreated, 7 * 24 * time.Hour},
+		{`{"expires_in_seconds":0}`, http.StatusBadRequest, 0},
+		{`{"expires_in_seconds":7776001}`, http.StatusBadRequest, 0},
+	} {
+		request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-credentials", strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer access-token")
+		response = httptest.NewRecorder()
+		h.CreatePublicURLPublishCredential(response, request, "public_url_1")
+		if response.Code != test.status || test.lifetime != 0 && credential.issuedLifetime != test.lifetime {
+			t.Fatalf("lifetime %q = status %d, duration %s", test.body, response.Code, credential.issuedLifetime)
+		}
 	}
 }
 

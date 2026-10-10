@@ -92,12 +92,11 @@ func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL
 func parseShareLifetime(value string) (time.Duration, error) {
 	var duration time.Duration
 	var err error
-	if days, found := strings.CutSuffix(value, "d"); found {
-		count, parseErr := strconv.ParseUint(days, 10, 8)
-		if parseErr != nil || count == 0 || count > 30 {
+	if days, found, parseErr := parseWholeDayDuration(value, 30); found {
+		if parseErr != nil {
 			return 0, failure.Wrap("validate share lifetime", failure.ShareInputInvalid, errors.New("share lifetime must be greater than zero and at most 30d"))
 		}
-		duration = time.Duration(count) * 24 * time.Hour
+		duration = days
 	} else {
 		duration, err = time.ParseDuration(value)
 		if err != nil || duration <= 0 || duration > 30*24*time.Hour {

@@ -39,6 +39,7 @@ type publicURLCredentialCreateCommand struct {
 	Name            string               `name:"name" help:"One label under the selected domain or namespace."`
 	Domain          string               `name:"domain" help:"Team domain for this public URL."`
 	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
+	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
 	Output          credentialOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
@@ -88,6 +89,10 @@ type publicURLCredentialCreateResult struct {
 }
 
 func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	expiresIn, err := parseCredentialLifetime(flags.ExpiresIn)
+	if err != nil {
+		return failure.Wrap("validate credential lifetime", failure.InvalidTunnelFlags, err)
+	}
 	isURLID := opaqueid.Valid(flags.Selector, opaqueid.PublicURLPrefix)
 	if isURLID && (flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs) {
 		return failure.Wrap("select public URL", failure.InvalidTunnelFlags, errors.New("an existing public URL ID does not take hostname, target, or visitor policy options"))
@@ -123,7 +128,7 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 			return controlclient.ErrNotFound
 		}
 	}
-	issued, err := session.authenticated.Control.CreatePublicURLPublishCredential(ctx, route.Id)
+	issued, err := session.authenticated.Control.CreatePublicURLPublishCredential(ctx, route.Id, expiresIn)
 	if err != nil {
 		return err
 	}
@@ -138,6 +143,26 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 		Target: route.Target, CredentialID: issued.Id, Credential: issued.Credential, ExpiresAt: issued.ExpiresAt,
 	}
 	return writeCredentialCreateResult(flags.Output, result, output, diagnostics)
+}
+
+func parseCredentialLifetime(value string) (time.Duration, error) {
+	var duration time.Duration
+	if days, found, err := parseWholeDayDuration(value, 90); found {
+		if err != nil {
+			return 0, errors.New("credential lifetime must be greater than zero and at most 90d")
+		}
+		duration = days
+	} else {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return 0, errors.New("credential lifetime must be a Go duration or whole days, such as 24h or 30d")
+		}
+		duration = parsed
+	}
+	if duration < time.Second || duration > 90*24*time.Hour || duration%time.Second != 0 {
+		return 0, errors.New("credential lifetime must be whole seconds, greater than zero and at most 90d")
+	}
+	return duration, nil
 }
 
 func writeCredentialCreateResult(mode credentialOutputMode, result publicURLCredentialCreateResult, output, diagnostics io.Writer) error {

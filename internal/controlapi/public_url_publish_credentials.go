@@ -57,6 +57,21 @@ func (h *handler) credentialManagementRoute(response http.ResponseWriter, reques
 }
 
 func (h *handler) CreatePublicURLPublishCredential(response http.ResponseWriter, request *http.Request, publicURLID controlv1.PublicURLID) {
+	body := controlv1.CreatePublicURLPublishCredentialRequest{}
+	if request.Body != nil && request.Body != http.NoBody {
+		if err := decodeJSON(response, request, &body); err != nil {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid credential lifetime request")
+			return
+		}
+	}
+	expiresIn := 90 * 24 * time.Hour
+	if body.ExpiresInSeconds != nil {
+		if *body.ExpiresInSeconds < 1 || *body.ExpiresInSeconds > 90*24*60*60 {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "credential lifetime must be greater than zero and at most 90d")
+			return
+		}
+		expiresIn = time.Duration(*body.ExpiresInSeconds) * time.Second
+	}
 	route, decision, ok := h.credentialManagementRoute(response, request, string(publicURLID))
 	if !ok {
 		return
@@ -65,7 +80,7 @@ func (h *handler) CreatePublicURLPublishCredential(response http.ResponseWriter,
 	credential, secret, err := h.publishCredentials.CreatePublicURLPublishCredential(request.Context(), controlstate.CreatePublicURLPublishCredentialRequest{
 		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: decision.ActingMembershipID,
 		IdentityID: decision.IdentityID, Target: route.Target, PolicyRevision: decision.PolicyRevision,
-		CertificatePlan: *decision.CertificatePlan, Now: now, ExpiresAt: now.Add(90 * 24 * time.Hour),
+		CertificatePlan: *decision.CertificatePlan, Now: now, ExpiresAt: now.Add(expiresIn),
 	})
 	if err != nil {
 		writeControlStateProblem(response, "create public URL publish credential", err)

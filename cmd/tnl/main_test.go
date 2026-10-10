@@ -198,7 +198,7 @@ func TestPublishHostnameOptions(t *testing.T) {
 func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 	t.Setenv("TNL_TARGET", "")
 	t.Setenv("TNL_PUBLIC_URL", "")
-	t.Setenv("TNL_PUBLISH_CREDENTIAL", "tnl_publish_example")
+	t.Setenv("TNL_CREDENTIAL", "tnl_publish_example")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
