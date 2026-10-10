@@ -132,6 +132,7 @@ type Querier interface {
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
+	GetEphemeralPublicURLAllocation(ctx context.Context, publicUrlID string) (ControlEphemeralPublicUrlAllocation, error)
 	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
@@ -187,6 +188,7 @@ type Querier interface {
 	InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error
 	InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
+	InsertEphemeralPublicURLAllocation(ctx context.Context, arg InsertEphemeralPublicURLAllocationParams) (int64, error)
 	InsertEphemeralPublishCredential(ctx context.Context, arg InsertEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
 	InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error)

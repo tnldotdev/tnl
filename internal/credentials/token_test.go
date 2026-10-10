@@ -164,6 +164,10 @@ func TestPublicURLCredentialKindsDoNotCrossScopes(t *testing.T) {
 	if !strings.HasPrefix(saved.String(), "tnl_publish_") || !strings.HasPrefix(ephemeral.String(), "tnl_eph_") {
 		t.Fatal("credentials do not identify their distinct scopes")
 	}
+	if !IsPublicURLPublishCredential(saved.String()) || IsEphemeralCredential(saved.String()) ||
+		!IsEphemeralCredential(ephemeral.String()) || IsPublicURLPublishCredential(ephemeral.String()) {
+		t.Fatal("publish credential dispatch selected the wrong scope")
+	}
 	if id, hash, secret, err := ParsePublicURLPublishCredential(saved); err != nil || id != savedID || hash != savedHash || len(secret) == 0 {
 		t.Fatalf("saved credential = %q, %x, %v", id, hash, err)
 	}

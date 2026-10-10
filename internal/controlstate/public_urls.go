@@ -79,6 +79,7 @@ type CreatePublicURLRequest struct {
 	PolicyRevision        uint64
 	Ephemeral             bool
 	EphemeralCredentialID string
+	EphemeralInvocationID string
 	EphemeralTokenDigest  credentials.SecretHash
 	EphemeralNamespace    string
 }
@@ -156,6 +157,13 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		IdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
+		if request.EphemeralCredentialID != "" {
+			allocation, lookupErr := queries.GetEphemeralPublicURLAllocation(ctx, existing.ID)
+			if lookupErr != nil || allocation.CredentialID != request.EphemeralCredentialID ||
+				allocation.InvocationID != request.EphemeralInvocationID {
+				return PublicURL{}, ErrPublicURLAccess
+			}
+		}
 		if PublicURLLifecycleState(existing.LifecycleState) == PublicURLLifecycleDeleted {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
@@ -326,6 +334,17 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			}
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
+	}
+	if request.EphemeralCredentialID != "" {
+		rows, err := queries.InsertEphemeralPublicURLAllocation(ctx, controlstatedb.InsertEphemeralPublicURLAllocationParams{
+			PublicURLID: publicURLID, CredentialID: request.EphemeralCredentialID, InvocationID: request.EphemeralInvocationID,
+		})
+		if err != nil {
+			return PublicURL{}, fmt.Errorf("controlstate: record ad-hoc allocation: %w", err)
+		}
+		if rows != 1 {
+			return PublicURL{}, ErrPublicURLAccess
+		}
 	}
 	if request.GuestID != "" {
 		if err := queries.InsertGuestPublicURL(ctx, controlstatedb.InsertGuestPublicURLParams{
@@ -944,7 +963,8 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
 		request.EphemeralCredentialID == "" && !validStateText(request.CanonicalHostname) ||
 		request.EphemeralCredentialID != "" && (request.CanonicalHostname != "" || !request.Ephemeral ||
-			!opaqueid.Valid(request.EphemeralCredentialID, opaqueid.PublicURLPublishCredentialPrefix)) ||
+			!opaqueid.Valid(request.EphemeralCredentialID, opaqueid.PublicURLPublishCredentialPrefix) ||
+			!opaqueid.Valid(request.EphemeralInvocationID, opaqueid.InvocationPrefix)) ||
 		!request.Purpose.ValidForCreation() || request.GuestID != "" && request.Purpose != PublicURLPurposeDemo ||
 		request.DNSAuthorityReference != "" && !validStateText(request.DNSAuthorityReference) ||
 		request.DNSState == PublicURLDNSUnmanaged && request.DNSAuthorityReference != "" ||

@@ -168,12 +168,35 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
+	issuedRole := ""
 	if request.PublishCredentialID != "" {
 		credential, credentialErr := queries.GetPublicURLPublishCredentialByID(ctx, request.PublishCredentialID)
-		if credentialErr != nil || credential.Kind != string(PublishCredentialSavedURL) || !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target ||
-			credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
+		if credentialErr != nil || credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
 			credential.IssuedByIdentityID != request.ActingIdentityID || credential.MembershipID != request.MembershipID ||
 			credential.PolicyRevision != int64(request.PolicyRevision) {
+			return PublishRunSetup{}, ErrPublicURLCredential
+		}
+		switch PublishCredentialKind(credential.Kind) {
+		case PublishCredentialSavedURL:
+			if !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target {
+				return PublishRunSetup{}, ErrPublicURLCredential
+			}
+		case PublishCredentialEphemeral:
+			allocation, err := queries.GetEphemeralPublicURLAllocation(ctx, route.ID)
+			if err != nil || allocation.CredentialID != credential.ID || !route.Ephemeral || route.Namespace != credential.Namespace.String ||
+				route.TeamID != credential.TeamID.String || route.DomainID != credential.DomainID.String ||
+				credential.CertificateCacheKey != request.CertificateCacheKey || credential.CertificateScope != request.CertificateScope ||
+				!slices.Equal(credential.CertificateIdentifiers, request.CertificateIdentifiers) ||
+				credential.CertificateChallengeMethod != string(request.CertificateChallenge) {
+				return PublishRunSetup{}, ErrPublicURLCredential
+			}
+			if _, err := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
+				DomainID: route.DomainID, TeamID: nullableText(route.TeamID),
+			}); err != nil {
+				return PublishRunSetup{}, ErrPublicURLCredential
+			}
+			issuedRole = credential.IssuedRole.String
+		default:
 			return PublishRunSetup{}, ErrPublicURLCredential
 		}
 	}
@@ -190,7 +213,7 @@ func (d *Database) createPublishRun(
 		if err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: read membership: %w", err)
 		}
-		if membership.PolicyRevision != positive(request.PolicyRevision) ||
+		if membership.PolicyRevision != positive(request.PolicyRevision) || issuedRole != "" && membership.Role != issuedRole ||
 			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID || request.MembershipID != membership.ID) ||
 			route.PublicURLScope == "shared" && (membership.Role != "admin" && membership.Role != "owner" || request.MembershipID != membership.ID) {
 			return PublishRunSetup{}, ErrPublicURLAuthority

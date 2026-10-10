@@ -41,6 +41,7 @@ func TestEphemeralAllocationBindsCredentialAndCurrentSourceIP(t *testing.T) {
 	selected := store.requests[0]
 	if selected.CanonicalHostname != "" || selected.EphemeralCredentialID != credentialsStore.credential.ID ||
 		selected.EphemeralTokenDigest != hash || !selected.Ephemeral || selected.DNSState != controlstate.PublicURLDNSPending ||
+		selected.EphemeralInvocationID != invocation ||
 		selected.IdempotencyKey != credentialsStore.credential.ID+":"+invocation ||
 		!strings.Contains(strings.Join(selected.AllowedIPPrefixes, ","), "192.0.2.9/32") ||
 		!strings.Contains(strings.Join(selected.AllowedIPPrefixes, ","), "198.51.100.9/32") {

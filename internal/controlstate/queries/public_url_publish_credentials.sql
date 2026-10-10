@@ -75,12 +75,19 @@ RETURNING *;
 INSERT INTO control.publish_run_publish_credentials (publish_run_id, public_url_id, credential_id)
 SELECT sqlc.arg(publish_run_id), sqlc.arg(public_url_id), credentials.id
 FROM control.public_url_publish_credentials AS credentials
-WHERE credentials.id = sqlc.arg(credential_id) AND credentials.public_url_id = sqlc.arg(public_url_id);
+LEFT JOIN control.ephemeral_public_url_allocations AS allocations
+    ON allocations.credential_id = credentials.id AND allocations.public_url_id = sqlc.arg(public_url_id)
+WHERE credentials.id = sqlc.arg(credential_id)
+    AND ((credentials.kind = 'saved_url' AND credentials.public_url_id = sqlc.arg(public_url_id))
+        OR (credentials.kind = 'ephemeral' AND allocations.public_url_id = sqlc.arg(public_url_id)));
 
 -- name: GetPublishRunCredentialState :one
 SELECT credentials.id, credentials.kind, credentials.revoked_at, credentials.expires_at,
     credentials.membership_id, credentials.issued_by_identity_id,
-    credentials.policy_revision, credentials.target, credentials.public_url_id
+    credentials.policy_revision, credentials.target, credentials.public_url_id,
+    credentials.team_id, credentials.domain_id, credentials.namespace, credentials.issued_role,
+    COALESCE(allocations.credential_id, '') AS allocation_credential_id
 FROM control.publish_run_publish_credentials AS runs
 JOIN control.public_url_publish_credentials AS credentials ON credentials.id = runs.credential_id
+LEFT JOIN control.ephemeral_public_url_allocations AS allocations ON allocations.public_url_id = runs.public_url_id
 WHERE runs.publish_run_id = sqlc.arg(publish_run_id);

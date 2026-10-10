@@ -258,7 +258,7 @@ func (h *handler) CreatePublishRun(
 	}
 	var credential controlstate.PublicURLPublishCredential
 	var retrySecret []byte
-	if strings.HasPrefix(token, "tnl_publish_") {
+	if credentials.IsPublicURLPublishCredential(token) {
 		var bound controlstate.PublicURL
 		var ok bool
 		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)
@@ -267,6 +267,26 @@ func (h *handler) CreatePublishRun(
 		}
 		if bound.ID != string(publicURLID) {
 			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+			return
+		}
+	} else if credentials.IsEphemeralCredential(token) {
+		if h.publishCredentials == nil {
+			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "ad-hoc credentials are unavailable")
+			return
+		}
+		var err error
+		_, _, retrySecret, err = credentials.ParseEphemeralCredential(credentials.EphemeralCredential(token))
+		if err != nil {
+			writeBearerProblem(response)
+			return
+		}
+		credential, err = h.publishCredentials.AuthenticateEphemeralCredential(request.Context(), credentials.EphemeralCredential(token), time.Now())
+		if errors.Is(err, controlstate.ErrEphemeralCredential) {
+			writeBearerProblem(response)
+			return
+		}
+		if err != nil {
+			writeControlStateProblem(response, "authenticate ad-hoc publication", err)
 			return
 		}
 	}
@@ -290,7 +310,13 @@ func (h *handler) CreatePublishRun(
 	}
 	var decision authorization.Decision
 	if credential.ID != "" {
-		if err := h.publishCredentials.ValidatePublicURLPublishCredential(request.Context(), credential, route); err != nil {
+		var err error
+		if credential.Kind == controlstate.PublishCredentialEphemeral {
+			err = h.publishCredentials.ValidateEphemeralCredentialPublicURL(request.Context(), credential, route, time.Now())
+		} else {
+			err = h.publishCredentials.ValidatePublicURLPublishCredential(request.Context(), credential, route)
+		}
+		if err != nil {
 			writeBearerProblem(response)
 			return
 		}

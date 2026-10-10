@@ -195,6 +195,11 @@ func ParsePublicURLPublishCredential(token PublicURLPublishCredential) (Credenti
 	return id, hash, validatedTokenSecret(string(token), publishCredentialPrefix), nil
 }
 
+// IsPublicURLPublishCredential identifies the saved-URL token type before parsing.
+func IsPublicURLPublishCredential(token string) bool {
+	return strings.HasPrefix(token, publishCredentialPrefix)
+}
+
 // NewEphemeralCredential creates a revocable ad-hoc public URL credential.
 func NewEphemeralCredential() (EphemeralCredential, CredentialID, SecretHash, error) {
 	token, id, hash, err := newToken(ephemeralCredentialPrefix)
@@ -208,6 +213,11 @@ func ParseEphemeralCredential(token EphemeralCredential) (CredentialID, SecretHa
 		return "", SecretHash{}, nil, err
 	}
 	return id, hash, validatedTokenSecret(string(token), ephemeralCredentialPrefix), nil
+}
+
+// IsEphemeralCredential identifies the namespace token type before parsing.
+func IsEphemeralCredential(token string) bool {
+	return strings.HasPrefix(token, ephemeralCredentialPrefix)
 }
 
 // NewPublisherConnectionCredential creates a credential for one connection assignment.
