@@ -25,6 +25,7 @@ const mysqlClientSSL = 1 << 11
 
 type databaseForwarding struct {
 	protocol        controlv1.PublicURLServiceProtocol
+	admission       *applicationAdmission
 	publicPort      uint16
 	target          string
 	backendTLS      *tls.Config
@@ -44,8 +45,8 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 		config.BrowserAccess != nil || config.Feedback != nil {
 		return nil, errors.New("publisher: database forwarding configuration is invalid")
 	}
-	if config.DatabaseTLSPassthrough && config.TargetTLSName != "" {
-		return nil, errors.New("publisher: passthrough target TLS name is verified by the database client")
+	if config.DatabaseTLSPassthrough && (config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil) {
+		return nil, errors.New("publisher: passthrough target certificate is verified by the database client")
 	}
 	host, port, err := net.SplitHostPort(config.Target)
 	if err != nil || host == "" {
@@ -122,7 +123,7 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 		if _, err := visitor.Write(answer[:]); err != nil {
 			return err
 		}
-		return forwardDatabasePassthrough(visitor, backend, hostname)
+		return forwardDatabasePassthrough(visitor, backend, hostname, d.admission)
 	}
 	securedBackend := tls.Client(backend, d.backendTLS)
 	if err := securedBackend.Handshake(); err != nil {
@@ -132,7 +133,7 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 	if _, err := visitor.Write(answer[:]); err != nil {
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission)
 }
 
 func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
@@ -158,14 +159,14 @@ func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Con
 		return err
 	}
 	if d.passthrough {
-		return forwardDatabasePassthrough(visitor, backend, hostname)
+		return forwardDatabasePassthrough(visitor, backend, hostname, d.admission)
 	}
 	securedBackend := tls.Client(backend, d.backendTLS)
 	if err := securedBackend.Handshake(); err != nil {
 		d.targetFailed()
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission)
 }
 
 func (d *databaseForwarding) targetFailed() {
@@ -189,23 +190,31 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 	return packet, err
 }
 
-func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config) error {
+func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission) error {
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
+	if status, _ := admission.enter(time.Now()); status != 0 {
+		return errors.New("publisher: database visitor capacity is exhausted")
+	}
+	defer admission.leave()
 	_ = visitor.SetDeadline(time.Time{})
 	_ = backend.SetDeadline(time.Time{})
 	_, err := streamcopy.Copy(securedVisitor, backend)
 	return err
 }
 
-func forwardDatabasePassthrough(visitor, backend net.Conn, hostname string) error {
+func forwardDatabasePassthrough(visitor, backend net.Conn, hostname string, admission *applicationAdmission) error {
 	hello, err := router.InspectClientHello(visitor)
 	serverName, nameErr := naming.CanonicalizeHostname(hello.ServerName)
 	if err != nil || nameErr != nil || serverName != hostname || hello.ACMETLSALPN {
 		return errors.New("publisher: database TLS SNI does not match public URL")
 	}
+	if status, _ := admission.enter(time.Now()); status != 0 {
+		return errors.New("publisher: database visitor capacity is exhausted")
+	}
+	defer admission.leave()
 	if _, err := io.Copy(backend, bytes.NewReader(hello.Prefix)); err != nil {
 		return err
 	}

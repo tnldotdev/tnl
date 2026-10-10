@@ -258,6 +258,55 @@ func TestDatabasePassthroughRejectsWrongSNIWithoutSendingClientHello(t *testing.
 	}
 }
 
+func TestDatabaseVisitorCountsTowardApplicationLimits(t *testing.T) {
+	publicCertificate := publicURLTestCertificate(t, "route.example")
+	backendCertificate := publicURLTestCertificate(t, "db.internal")
+	backendRoots := x509.NewCertPool()
+	backendRoots.AddCert(backendCertificate.Leaf)
+	address, received := startDatabaseTarget(t, controlv1.Postgres, backendCertificate)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+		Target: address, TargetTLSName: "db.internal", TargetOptions: localproxy.TargetOptions{RootCAs: backendRoots},
+		Certificate: publicCertificate, Limits: ApplicationLimits{Requests: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	visitor := openDatabaseVisitor(t, route, 5432)
+	if _, err := visitor.Write(postgresSSLRequest[:]); err != nil {
+		t.Fatal(err)
+	}
+	readDatabaseByte(t, visitor, 'S')
+	visitorRoots := x509.NewCertPool()
+	visitorRoots.AddCert(publicCertificate.Leaf)
+	secured := tls.Client(visitor, &tls.Config{ServerName: "route.example", MinVersion: tls.VersionTLS12,
+		RootCAs: visitorRoots})
+	if err := secured.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secured.Write([]byte("startup!")); err != nil {
+		t.Fatal(err)
+	}
+	var response [5]byte
+	if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "ready" {
+		t.Fatalf("first database response = %q, %v", response, err)
+	}
+	if got := awaitPublisherTest(t, received); got != "startup!" {
+		t.Fatalf("first database request = %q", got)
+	}
+	_ = secured.Close()
+	select {
+	case <-route.admission.completed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("database connection did not complete its request budget")
+	}
+	second := openDatabaseVisitor(t, route, 5432)
+	if _, err := second.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("over-budget database connection = %v, want EOF", err)
+	}
+}
+
 func startDatabaseTarget(t *testing.T, protocol controlv1.PublicURLServiceProtocol, certificate tls.Certificate, rejectTLS ...bool) (string, <-chan string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

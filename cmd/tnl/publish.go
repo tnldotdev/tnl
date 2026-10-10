@@ -22,13 +22,16 @@ import (
 )
 
 type publishCommand struct {
-	openOptions       `embed:""`
-	remoteFlags       `embed:""`
-	tunnelFlags       `embed:""`
-	Target            string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, or HTTP or HTTPS target origin."`
-	PublishCredential string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
-	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions         `embed:""`
+	remoteFlags         `embed:""`
+	tunnelFlags         `embed:""`
+	Target              string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or database host:port."`
+	Protocol            string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol: http (default), postgres, or mysql."`
+	TargetTLSName       string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the private database TLS certificate; defaults to the target host."`
+	DatabasePassthrough bool              `name:"database-tls-passthrough" help:"Pass visitor TLS to the private database after checking public URL SNI; required for TLS channel binding."`
+	PublishCredential   string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
+	Output              publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo                bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -52,6 +55,18 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		return runScopedPublish(ctx, flags, output, telemetry)
 	}
+	protocol, err := publishProtocol(flags.Protocol)
+	if err != nil {
+		return err
+	}
+	if protocol != controlv1.Http &&
+		(flags.Demo || flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
+			errors.New("database publication cannot run the demo or project integration URLs"))
+	}
+	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+		return err
+	}
 	var localDemo *demo.Server
 	if flags.Demo {
 		flags.projectRoot, err = currentProjectRoot(ctx)
@@ -70,7 +85,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		flags.Target = localDemo.Target()
 		output.setDemo()
 	}
-	target, err := localproxy.NormalizeTarget(flags.Target)
+	target, err := normalizePublishTarget(flags.Target, protocol)
 	if err != nil {
 		return err
 	}
@@ -105,8 +120,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
-		return err
+	if protocol == controlv1.Http {
+		if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
+			return err
+		}
 	}
 	var guest *clientstate.GuestSession
 	if flags.Demo {
@@ -134,7 +151,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
+	if protocol == controlv1.Http {
+		output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
+	}
 	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
@@ -190,6 +209,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	publisherConfig.ServiceProtocol = protocol
+	publisherConfig.TargetTLSName = flags.TargetTLSName
+	publisherConfig.DatabaseTLSPassthrough = flags.DatabasePassthrough
 	publisherConfig.TargetOptions = targetOptions
 	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
@@ -210,6 +232,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
+	}
+	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
+		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
+			errors.New("database public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {

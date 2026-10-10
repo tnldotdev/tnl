@@ -93,7 +93,25 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled || selectedHostname != route.CanonicalHostname {
 		return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("credential is bound to another public URL or target"))
 	}
-	target, err := selectScopedPublishTarget(route.Target, flags.Target)
+	protocol := route.ServiceProtocol
+	if protocol == "" {
+		protocol = controlv1.Http
+	}
+	if _, err := publishProtocol(flags.Protocol); err != nil {
+		return err
+	}
+	if flags.Protocol != "" && flags.Protocol != string(protocol) {
+		return failure.Wrap("validate scoped publish protocol", failure.PublishCredentialMismatch,
+			errors.New("protocol differs from the saved public URL"))
+	}
+	if !protocol.Valid() {
+		return failure.Wrap("read scoped publish protocol", failure.ServerResponseInvalid,
+			errors.New("control returned an invalid service protocol"))
+	}
+	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+		return err
+	}
+	target, err := selectScopedPublishTargetForProtocol(route.Target, flags.Target, protocol)
 	if err != nil {
 		return err
 	}
@@ -123,10 +141,14 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
-		return err
+	if protocol == controlv1.Http {
+		if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
+			return err
+		}
 	}
-	output.openURL = browserOpener(ctx, flags.Open, false)
+	if protocol == controlv1.Http {
+		output.openURL = browserOpener(ctx, flags.Open, false)
+	}
 	publicURLScope := route.PublicUrlScope
 	membershipID := ""
 	if route.MembershipId != nil {
@@ -146,6 +168,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
+		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, DatabaseTLSPassthrough: flags.DatabasePassthrough,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
 		Limits:                 flags.limits(), RequestInspection: flags.RequestInspection,
@@ -161,6 +184,10 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
+	}
+	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
+		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
+			errors.New("database public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
@@ -197,6 +224,21 @@ func selectScopedPublishTarget(saved, selected string) (string, error) {
 		return "", failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("target differs from the saved public URL"))
 	}
 	return target, nil
+}
+
+func selectScopedPublishTargetForProtocol(saved, selected string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
+	if protocol == controlv1.Http {
+		return selectScopedPublishTarget(saved, selected)
+	}
+	if saved != "" {
+		return "", failure.Wrap("read scoped publish target", failure.ServerResponseInvalid,
+			errors.New("control returned a private database target"))
+	}
+	if selected == "" {
+		return "", failure.Wrap("select scoped publish target", failure.MissingTarget,
+			errors.New("pass a private database host:port or set TNL_TARGET"))
+	}
+	return normalizePublishTarget(selected, protocol)
 }
 
 func classifyScopedPublishError(err error) error {

@@ -48,6 +48,7 @@ ORDER BY created_at DESC, id;
 SELECT credentials.id, credentials.kind, COALESCE(credentials.public_url_id, '') AS public_url_id,
     credentials.created_at, credentials.expires_at, credentials.revoked_at,
     COALESCE(routes.canonical_hostname, '') AS canonical_hostname,
+    routes.public_port,
     COALESCE(credentials.team_id, routes.team_id) AS team_id,
     COALESCE(credentials.domain_id, routes.domain_id) AS domain_id,
     COALESCE(credentials.namespace, '') AS namespace
