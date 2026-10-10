@@ -172,6 +172,14 @@ snapshot includes the watermark from the same journal snapshot. cursors older
 than retained events fail with an authored diagnostic. the journal survives a
 manager restart and contains no credentials, request bodies, or OAuth state.
 
+`internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
+registrations. control allocates the URL before `publisher.Run` starts; the
+publisher reuses that exact URL and never creates a second one for the handle.
+the runner passes the namespace credential only to authenticated control calls,
+observes the normal publish-run ready event, and deletes the allocated URL
+after publication drains. a registration whose setup fails after allocation
+still attempts cleanup. the caller owns its local listener and invocation ID.
+
 ## maintain project integration urls
 
 `internal/integrationurls.Publisher` maintains one locally elected public URL
