@@ -75,6 +75,11 @@ func (s *scopedCredentialStoreStub) ValidatePublicURLPublishCredential(_ context
 	return nil
 }
 
+func (s *scopedCredentialStoreStub) ValidateEphemeralCredentialPublicURL(_ context.Context, _ controlstate.PublicURLPublishCredential, _ controlstate.PublicURL, _ time.Time) error {
+	s.validations++
+	return nil
+}
+
 func TestPublishCredentialCannotStartAnotherPublicURL(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
@@ -117,6 +122,41 @@ func TestPublishCredentialCannotStartAnotherPublicURL(t *testing.T) {
 	if response.Code != http.StatusCreated || store.sessions != 1 || store.sessionRequest.PublishCredentialID != "upc_1" ||
 		store.sessionRequest.ActingIdentityID != "identity_1" || store.sessionRequest.IdempotencyKey != "run-1" {
 		t.Fatalf("scoped run = %d %s, request = %#v", response.Code, response.Body.String(), store.sessionRequest)
+	}
+}
+
+func TestEphemeralCredentialStartsItsAllocatedPublishRun(t *testing.T) {
+	token, _, _, err := credentials.NewEphemeralCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace := "member.example.test"
+	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		CanonicalHostname: "eph-aaaaaaaaaaaaaaaaaaaaaaaaaa." + namespace,
+		Target:            "http://127.0.0.1:3000", Purpose: controlstate.PublicURLPurposeApp, Ephemeral: true,
+		LifecycleState: controlstate.PublicURLLifecycleEnabled, PublicURLScope: controlstate.PublicURLScopeMember,
+		MutationRevision: 1, AuthorizationPublishRunNumber: 1,
+	}, sessionSetup: controlstate.PublishRunSetup{
+		PublishRunID: "publish_run_1", PublicURLID: "public_url_1", TeamID: "team_1", MembershipID: "membership_1",
+		PublishRunNumber: 1, PolicyRevision: 1, PublishRunToken: "tnl_session_test", State: controlstate.PublishRunStarting,
+	}}
+	credential := &scopedCredentialStoreStub{credential: controlstate.PublicURLPublishCredential{
+		ID: "upc_ephemeral", Kind: controlstate.PublishCredentialEphemeral, TeamID: "team_1", DomainID: "domain_1",
+		Namespace: namespace, IdentityID: "identity_1", MembershipID: "membership_1", PolicyRevision: 1,
+		CertificatePlan: authorization.CertificatePlan{
+			CacheKey: namespace, Scope: namespace, Identifiers: []string{"*." + namespace}, ChallengeMethod: "dns-01",
+		},
+	}}
+	h := &handler{store: store, publishCredentials: credential, config: Config{DNSAutomation: true}}
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
+	request.Header.Set("Authorization", "Bearer "+token.String())
+	request.Header.Set("Idempotency-Key", "run-1")
+	response := httptest.NewRecorder()
+	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
+	if response.Code != http.StatusCreated || credential.validations != 1 || store.sessions != 1 ||
+		store.sessionRequest.PublishCredentialID != credential.credential.ID {
+		t.Fatalf("ad-hoc publish run = %d %s, validations = %d, request = %#v", response.Code, response.Body.String(), credential.validations, store.sessionRequest)
 	}
 }
 

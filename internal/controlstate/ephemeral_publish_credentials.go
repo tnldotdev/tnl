@@ -122,6 +122,47 @@ func (d *Database) AuthenticateEphemeralCredential(ctx context.Context, token cr
 	return publicURLPublishCredentialFromRow(row), nil
 }
 
+func (d *Database) ValidateEphemeralCredentialPublicURL(ctx context.Context, credential PublicURLPublishCredential, route PublicURL, now time.Time) error {
+	if credential.Kind != PublishCredentialEphemeral || !route.Ephemeral || route.Purpose != PublicURLPurposeApp ||
+		route.LifecycleState != PublicURLLifecycleEnabled || credential.TeamID != route.TeamID || credential.DomainID != route.DomainID ||
+		!credential.ExpiresAt.After(now) || credential.RevokedAt != nil ||
+		!strings.HasSuffix(route.CanonicalHostname, "."+credential.Namespace) ||
+		naming.PublicURLWildcard(route.CanonicalHostname, credential.Namespace) != "*."+credential.Namespace {
+		return ErrEphemeralCredential
+	}
+	queries := controlstatedb.New(d.pool)
+	allocation, err := queries.GetEphemeralPublicURLAllocation(ctx, route.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrEphemeralCredential
+	}
+	if err != nil {
+		return err
+	}
+	if allocation.CredentialID != credential.ID {
+		return ErrEphemeralCredential
+	}
+	membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
+		TeamID: credential.TeamID, IdentityID: credential.IdentityID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrEphemeralCredential
+	}
+	if err != nil {
+		return err
+	}
+	if membership.ID != credential.MembershipID || membership.Role != credential.IssuedRole ||
+		membership.PolicyRevision != int64(credential.PolicyRevision) {
+		return ErrEphemeralCredential
+	}
+	_, err = queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
+		DomainID: credential.DomainID, TeamID: nullableText(credential.TeamID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrEphemeralCredential
+	}
+	return err
+}
+
 func (d *Database) RevokeEphemeralCredential(ctx context.Context, teamID, credentialID string, now time.Time) (PublicURLPublishCredential, error) {
 	row, err := controlstatedb.New(d.pool).RevokeEphemeralPublishCredential(ctx, controlstatedb.RevokeEphemeralPublishCredentialParams{
 		ID: credentialID, TeamID: nullableText(teamID), RevokedAt: timestamptz(now),

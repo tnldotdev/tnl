@@ -76,6 +76,7 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 		ManagedURLMode: h.config.ManagedURLMode, AllowedIPPrefixes: prefixes,
 		DNSState: controlstate.PublicURLDNSPending, PolicyRevision: credential.PolicyRevision, Ephemeral: true,
 		EphemeralCredentialID: credential.ID, EphemeralTokenDigest: digest, EphemeralNamespace: credential.Namespace,
+		EphemeralInvocationID: body.InvocationId,
 	}, now)
 	if errors.Is(err, controlstate.ErrPublicURLAccess) {
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "ad-hoc credential scope is no longer authorized")

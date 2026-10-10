@@ -242,6 +242,10 @@ target and visitor IP policy, never the hostname. the 128-bit `eph-` label is
 random; identical allocation retries return the same saved URL, while changed
 inputs conflict. namespace wildcard DNS covers the label, but ingress still
 requires the exact saved URL and a ready publish run before routing visitors.
+control records the allocating credential beside the exact URL in PostgreSQL.
+a publish run can use that credential only for its allocation; run creation
+rechecks the current role, certificate plan, and domain, and heartbeat closes
+the run after credential revocation, expiry, or a changed ownership boundary.
 
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.

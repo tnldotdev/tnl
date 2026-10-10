@@ -228,6 +228,12 @@ type ControlEmailDelivery struct {
 	LastStatus        int32
 }
 
+type ControlEphemeralPublicUrlAllocation struct {
+	PublicURLID  string
+	CredentialID string
+	InvocationID string
+}
+
 type ControlFeedbackEvent struct {
 	Cursor            int64
 	SchemaVersion     int16

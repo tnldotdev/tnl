@@ -383,8 +383,16 @@ func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, credential cred
 }
 
 func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
+	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
+}
+
+func (c *Client) CreatePublishRunWithEphemeralCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential) (controlv1.PublishRunSetup, error) {
+	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
+}
+
+func (c *Client) createPublishRunWithBearer(ctx context.Context, publicURLID, idempotencyKey, bearer string) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
-	return request[controlv1.PublishRunSetup](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	return request[controlv1.PublishRunSetup](ctx, c, bearer, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
 	})
 }

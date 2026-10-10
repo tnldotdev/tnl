@@ -15,7 +15,11 @@ const attachPublishRunCredential = `-- name: AttachPublishRunCredential :execrow
 INSERT INTO control.publish_run_publish_credentials (publish_run_id, public_url_id, credential_id)
 SELECT $1, $2, credentials.id
 FROM control.public_url_publish_credentials AS credentials
-WHERE credentials.id = $3 AND credentials.public_url_id = $2
+LEFT JOIN control.ephemeral_public_url_allocations AS allocations
+    ON allocations.credential_id = credentials.id AND allocations.public_url_id = $2
+WHERE credentials.id = $3
+    AND ((credentials.kind = 'saved_url' AND credentials.public_url_id = $2)
+        OR (credentials.kind = 'ephemeral' AND allocations.public_url_id = $2))
 `
 
 type AttachPublishRunCredentialParams struct {
@@ -99,22 +103,30 @@ func (q *Queries) GetPublicURLPublishCredentialByTokenID(ctx context.Context, to
 const getPublishRunCredentialState = `-- name: GetPublishRunCredentialState :one
 SELECT credentials.id, credentials.kind, credentials.revoked_at, credentials.expires_at,
     credentials.membership_id, credentials.issued_by_identity_id,
-    credentials.policy_revision, credentials.target, credentials.public_url_id
+    credentials.policy_revision, credentials.target, credentials.public_url_id,
+    credentials.team_id, credentials.domain_id, credentials.namespace, credentials.issued_role,
+    COALESCE(allocations.credential_id, '') AS allocation_credential_id
 FROM control.publish_run_publish_credentials AS runs
 JOIN control.public_url_publish_credentials AS credentials ON credentials.id = runs.credential_id
+LEFT JOIN control.ephemeral_public_url_allocations AS allocations ON allocations.public_url_id = runs.public_url_id
 WHERE runs.publish_run_id = $1
 `
 
 type GetPublishRunCredentialStateRow struct {
-	ID                 string
-	Kind               string
-	RevokedAt          pgtype.Timestamptz
-	ExpiresAt          pgtype.Timestamptz
-	MembershipID       string
-	IssuedByIdentityID string
-	PolicyRevision     int64
-	Target             string
-	PublicURLID        pgtype.Text
+	ID                     string
+	Kind                   string
+	RevokedAt              pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	MembershipID           string
+	IssuedByIdentityID     string
+	PolicyRevision         int64
+	Target                 string
+	PublicURLID            pgtype.Text
+	TeamID                 pgtype.Text
+	DomainID               pgtype.Text
+	Namespace              pgtype.Text
+	IssuedRole             pgtype.Text
+	AllocationCredentialID string
 }
 
 func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error) {
@@ -130,6 +142,11 @@ func (q *Queries) GetPublishRunCredentialState(ctx context.Context, publishRunID
 		&i.PolicyRevision,
 		&i.Target,
 		&i.PublicURLID,
+		&i.TeamID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.IssuedRole,
+		&i.AllocationCredentialID,
 	)
 	return i, err
 }

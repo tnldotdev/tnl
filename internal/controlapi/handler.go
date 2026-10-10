@@ -77,6 +77,7 @@ type PublicURLPublishCredentialStore interface {
 	CreatePublicURLPublishCredential(context.Context, controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error)
 	CreateEphemeralCredential(context.Context, controlstate.CreateEphemeralCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.EphemeralCredential, error)
 	AuthenticateEphemeralCredential(context.Context, credentials.EphemeralCredential, time.Time) (controlstate.PublicURLPublishCredential, error)
+	ValidateEphemeralCredentialPublicURL(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL, time.Time) error
 	RevokeEphemeralCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
 	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
 	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
