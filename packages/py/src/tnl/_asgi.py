@@ -101,7 +101,7 @@ class Tunnel:
         self._id = "ivk_" + "".join(secrets.choice(_alphabet) for _ in range(22))
         self._owner = secrets.token_hex(16)
         self._registration: dict[str, object] = {
-            "protocol": 1,
+            "version": 1,
             "registration_id": self._id,
             "owner": self._owner,
         }
