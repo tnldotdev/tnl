@@ -65,7 +65,7 @@ export async function openServer(
   if (credential === undefined || credential === "") throw new TnlError("sdk.credential_required");
   if (!/^tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(credential))
     throw new TnlError("sdk.credential_rejected");
-  const target = await listeningTarget(server, { targetHostname: options.targetHostname });
+  const target = await listeningTarget(server, options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
   const registrationID = `ivk_${Array.from(
