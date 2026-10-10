@@ -408,6 +408,7 @@ type Querier interface {
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
+	SetPublicURLTCPPort(ctx context.Context, arg SetPublicURLTCPPortParams) (int64, error)
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)

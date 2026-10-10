@@ -1629,6 +1629,9 @@ components:
     PublicURLPurpose:
       type: string
       enum: [app, alias, demo, oauth, webhooks]
+    PublicURLServiceProtocol:
+      type: string
+      enum: [http, postgres, mysql]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -1644,6 +1647,7 @@ components:
           target,
           public_url_scope,
           purpose,
+          service_protocol,
           policy_revision,
           lifecycle_state,
           next_publish_run_number,
@@ -1665,7 +1669,14 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: empty when a saved app public URL has no saved target.
+          description: Empty for targetless app URLs and database endpoints that take a local publisher target.
+        service_protocol:
+          $ref: "#/components/schemas/PublicURLServiceProtocol"
+        public_port:
+          type: integer
+          minimum: 1024
+          maximum: 65535
+          description: Stable visitor TCP port for a PostgreSQL or MySQL public URL.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -1877,7 +1888,9 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: empty only for a saved app public URL with no saved target.
+          description: Empty for targetless app URLs and PostgreSQL or MySQL endpoints.
+        service_protocol:
+          $ref: "#/components/schemas/PublicURLServiceProtocol"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:

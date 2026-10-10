@@ -35,7 +35,7 @@ func (d *Database) getPublicURLForAuthorization(ctx context.Context, id, key str
 	if err != nil {
 		return PublicURL{}, err
 	}
-	result := publicURLFromValues(row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt)
+	result := publicURLFromValues(row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort)
 	if err := d.restorePublicURLPolicy(&result, row.AllowedIpPolicyStorageKeyID, row.AllowedIpPolicyCiphertext, row.AllowedIpHashes); err != nil {
 		return PublicURL{}, err
 	}

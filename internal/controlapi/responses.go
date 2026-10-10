@@ -10,10 +10,15 @@ import (
 )
 
 func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
+	protocol := controlv1.PublicURLServiceProtocol(route.ServiceProtocol)
+	if protocol == "" {
+		protocol = "http"
+	}
 	result := controlv1.PublicURL{
 		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
-		PublicUrlScope: controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
+		ServiceProtocol: protocol,
+		PublicUrlScope:  controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
 		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
 		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}
@@ -29,6 +34,10 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 	}
 	if route.OpenPublishRunID != "" {
 		result.OpenPublishRunId = &route.OpenPublishRunID
+	}
+	if route.PublicPort != nil {
+		port := int(*route.PublicPort)
+		result.PublicPort = &port
 	}
 	return result
 }

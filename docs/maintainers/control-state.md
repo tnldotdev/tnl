@@ -47,6 +47,12 @@ add verified ports but cannot change an enabled pool's public IPs or disable
 ports that have saved claims. Ingress capacity and pool addresses are separate
 from the interchangeable ingress process leases.
 
+Migration 26 makes the saved URL's public TCP port readable with its protocol.
+Creation claims that port inside the URL-creation transaction, after the
+authorization and team guard but before publishing the new URL. An exhausted
+pool rolls back the whole creation; an idempotent retry returns the saved
+hostname and port. Existing HTTP URLs still have no public TCP port.
+
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
 requires migration 12's queue table, including for storage-key rotation. The

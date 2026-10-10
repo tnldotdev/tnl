@@ -159,7 +159,7 @@ func (q *Queries) ListTCPPortPoolCapacity(ctx context.Context) ([]ListTCPPortPoo
 }
 
 const lockTCPPortPublicURL = `-- name: LockTCPPortPublicURL :one
-SELECT id, canonical_hostname, ingress_pool_id, service_protocol, lifecycle_state
+SELECT id, canonical_hostname, ingress_pool_id, service_protocol, lifecycle_state, public_port
 FROM control.public_urls
 WHERE id = $1
 FOR NO KEY UPDATE
@@ -171,6 +171,7 @@ type LockTCPPortPublicURLRow struct {
 	IngressPoolID     string
 	ServiceProtocol   string
 	LifecycleState    string
+	PublicPort        pgtype.Int4
 }
 
 func (q *Queries) LockTCPPortPublicURL(ctx context.Context, publicUrlID string) (LockTCPPortPublicURLRow, error) {
@@ -182,6 +183,7 @@ func (q *Queries) LockTCPPortPublicURL(ctx context.Context, publicUrlID string) 
 		&i.IngressPoolID,
 		&i.ServiceProtocol,
 		&i.LifecycleState,
+		&i.PublicPort,
 	)
 	return i, err
 }
@@ -218,6 +220,25 @@ WHERE claims.id IN (
 
 func (q *Queries) ReleaseQuarantinedTCPPortClaims(ctx context.Context, now pgtype.Timestamptz) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseQuarantinedTCPPortClaims, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPublicURLTCPPort = `-- name: SetPublicURLTCPPort :execrows
+UPDATE control.public_urls SET public_port = $1
+WHERE id = $2 AND public_port IS NULL
+  AND service_protocol IN ('postgres', 'mysql')
+`
+
+type SetPublicURLTCPPortParams struct {
+	Port        pgtype.Int4
+	PublicURLID string
+}
+
+func (q *Queries) SetPublicURLTCPPort(ctx context.Context, arg SetPublicURLTCPPortParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPublicURLTCPPort, arg.Port, arg.PublicURLID)
 	if err != nil {
 		return 0, err
 	}

@@ -518,6 +518,7 @@ type ControlPublicUrl struct {
 	Purpose                     string
 	IngressPoolID               string
 	ServiceProtocol             string
+	PublicPort                  pgtype.Int4
 }
 
 type ControlPublicUrlPublishCredential struct {

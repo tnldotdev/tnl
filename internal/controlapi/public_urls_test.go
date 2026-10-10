@@ -516,6 +516,29 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 	}
 }
 
+func TestCreateDatabasePublicURLReturnsAssignedAddress(t *testing.T) {
+	port := uint16(15432)
+	store := &publicURLCreationStore{result: controlstate.PublicURL{
+		ID: "url_created", CanonicalHostname: "orders.example", Purpose: controlstate.PublicURLPurposeApp,
+		ServiceProtocol: controlstate.PublicURLServicePostgres, PublicPort: &port,
+	}}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "orders.example", PublicURLScope: "member", PolicyRevision: 9,
+	}}
+	h := &handler{store: store, authorizer: authorizer}
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"orders.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"postgres"}`))
+	request.Header.Set("Authorization", "Bearer exact-access-token")
+	request.Header.Set("Idempotency-Key", "create-db")
+	response := httptest.NewRecorder()
+	h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"service_protocol":"postgres"`) ||
+		!strings.Contains(response.Body.String(), `"public_port":15432`) || len(store.requests) != 1 ||
+		store.requests[0].ServiceProtocol != controlstate.PublicURLServicePostgres || store.requests[0].Target != "" {
+		t.Fatalf("database URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
+	}
+}
+
 func TestTargetlessSavedAppPublicURLCanUpdateOnlyItsVisitorPolicy(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
