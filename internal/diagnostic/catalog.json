@@ -118,7 +118,7 @@
       "actions": {
         "visitor": ["start sign-in again after the callback publisher is ready"],
         "publisher": [
-          "keep the app or tnl publish running and check callback readiness",
+          "keep the registered app or tnl publish running and check callback readiness",
           "retry sign-in after the publisher recovers"
         ]
       }
@@ -186,7 +186,7 @@
       "actions": {
         "visitor": ["ask the public URL owner to check the target, then retry"],
         "publisher": [
-          "check the target passed to `tnl publish` or registered by the app",
+          "check the target passed to `tnl publish` or registered by the app integration",
           "verify that the target accepts connections from the machine running `tnl` and that its HTTPS certificate is trusted",
           "if the command failed at startup, rerun it; if the tunnel is still running, retry the visit after restarting the target"
         ]
@@ -407,7 +407,7 @@
       ],
       "actions": {
         "publisher": [
-          "run `tnl auth login` again",
+          "run `tnl auth login` explicitly, then retry",
           "if using `--access-token`, check that the token belongs to the selected server"
         ]
       }
@@ -495,11 +495,13 @@
         { "label": "service selection", "detail": "multiple matches", "failure": true },
         { "label": "local service (not started)" }
       ],
-      "causes": ["`tnl publish` was run without a service name in a multi-service project"],
+      "causes": [
+        "`tnl publish` was run without a service name, or an app directory matches multiple configured services"
+      ],
       "actions": {
         "publisher": [
           "choose one of the sorted service names printed by tnl",
-          "run `tnl publish <service>`"
+          "pass the service name to the integration or run `tnl publish <service>`"
         ]
       }
     },

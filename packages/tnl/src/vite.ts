@@ -6,7 +6,7 @@ import { prepareService, type PrepareOptions, type PreparedService } from "./int
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
-/** registers a Vite development server and adds project metadata. */
+/** configures a Vite development server to register its listener and add project metadata. */
 export default function tnl(options: PrepareOptions = {}): Plugin {
   let assignment: PreparedService | null = null;
   return {

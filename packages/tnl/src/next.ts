@@ -20,7 +20,7 @@ export type NextConfigFactory = (
 
 export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
 
-/** registers a Next.js development server and adds project metadata. */
+/** configures a Next.js development server to register its listener and add project metadata. */
 export function withTnl(
   config: NextConfigInput = {},
   options: PrepareOptions = {},

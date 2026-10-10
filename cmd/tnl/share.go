@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,11 +38,13 @@ type teamShareCommand struct {
 
 type teamShareCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	URL             string `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
+	URL             string           `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type teamShareRevokeCommand struct {
 	scopedTeamFlags `embed:""`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type linkShareCommand struct {
@@ -51,18 +54,39 @@ type linkShareCommand struct {
 
 type shareCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	URL             string `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
-	ExpiresIn       string `name:"expires-in" default:"24h" help:"Link lifetime (for example, 24h or 7d; at most 30d)."`
+	URL             string           `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
+	ExpiresIn       string           `name:"expires-in" default:"24h" help:"Link lifetime (for example, 24h or 7d; at most 30d)."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type shareListCommand struct {
 	scopedTeamFlags `embed:""`
-	URL             string `arg:"" name:"url" optional:"" help:"Filter to the preview containing this public URL."`
+	URL             string           `arg:"" name:"url" optional:"" help:"Filter to the preview containing this public URL."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type shareRevokeCommand struct {
 	scopedTeamFlags `embed:""`
-	ShareID         string `arg:"" name:"share-id" required:"" help:"Share ID to revoke."`
+	ShareID         string           `arg:"" name:"share-id" required:"" help:"Share ID to revoke."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+}
+
+type shareServiceResult struct {
+	PublicURLID string `json:"public_url_id"`
+	PublicURL   string `json:"public_url"`
+}
+
+func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL) map[string]shareServiceResult {
+	names := make([]string, 0, len(project.Config.Services))
+	for name := range project.Config.Services {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	services := make(map[string]shareServiceResult, len(routes))
+	for index, route := range routes {
+		services[names[index]] = shareServiceResult{PublicURLID: route.Id, PublicURL: "https://" + route.CanonicalHostname}
+	}
+	return services
 }
 
 func parseShareLifetime(value string) (time.Duration, error) {
@@ -161,7 +185,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 			if routeErr != nil {
 				return nil, controlv1.Preview{}, nil, fmt.Errorf("service %q: %w", name, routeErr)
 			}
-			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; start that app service", name))
+			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; start it with its tnl integration", name))
 		}
 		routes = append(routes, route)
 	}
@@ -205,7 +229,19 @@ func runShareCreate(ctx context.Context, flags shareCreateCommand, project proje
 	if share.Id == "" || share.PreviewId != preview.Id || !slices.Equal(share.PublicUrlIds, ids) {
 		return failure.Wrap("create preview share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
 	}
-	_, err = fmt.Fprintf(output, "https://%s/__tnl/share/%s.%s\n", selected.CanonicalHostname, share.Id, base64.RawURLEncoding.EncodeToString(secret))
+	entry := fmt.Sprintf("https://%s/__tnl/share/%s.%s", selected.CanonicalHostname, share.Id, base64.RawURLEncoding.EncodeToString(secret))
+	if flags.Output == statusOutputJSON {
+		return failure.Wrap("write share URL", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
+			SchemaVersion int                           `json:"schema_version"`
+			ShareID       string                        `json:"share_id"`
+			PreviewID     string                        `json:"preview_id"`
+			EntryURL      string                        `json:"entry_url"`
+			PublicURLIDs  []string                      `json:"public_url_ids"`
+			Services      map[string]shareServiceResult `json:"services"`
+			ExpiresAt     time.Time                     `json:"expires_at"`
+		}{1, share.Id, preview.Id, entry, ids, shareServiceURLs(project, routes), share.ExpiresAt}))
+	}
+	_, err = fmt.Fprintln(output, entry)
 	return failure.Wrap("write share URL", failure.OutputUnavailable, err)
 }
 
@@ -273,6 +309,13 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 			clioutput.Field{Label: "public URLs", Value: strconv.Itoa(len(share.PublicUrlIds))},
 		)))
 	}
+	if flags.Output == statusOutputJSON {
+		return failure.Wrap("write share list", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
+			SchemaVersion     int               `json:"schema_version"`
+			Shares            []controlv1.Share `json:"shares"`
+			TeamAccessEnabled bool              `json:"team_access_enabled"`
+		}{1, shares, teamGrant}))
+	}
 	count := len(shares)
 	if teamGrant {
 		count++
@@ -299,6 +342,15 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	}
 	if updated.Id != preview.Id || updated.TeamAccessEnabled == nil || !*updated.TeamAccessEnabled {
 		return failure.Wrap("enable team browser access", failure.ServerResponseInvalid, errors.New("server did not enable this preview's team access"))
+	}
+	if flags.Output == statusOutputJSON {
+		return failure.Wrap("write team access", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
+			SchemaVersion int                           `json:"schema_version"`
+			PreviewID     string                        `json:"preview_id"`
+			PublicURL     string                        `json:"public_url"`
+			Services      map[string]shareServiceResult `json:"services"`
+			Enabled       bool                          `json:"enabled"`
+		}{1, preview.Id, "https://" + selected.CanonicalHostname + "/", shareServiceURLs(project, routes), true}))
 	}
 	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
 		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
@@ -332,6 +384,13 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 	if updated.Id != id || updated.TeamAccessEnabled == nil || *updated.TeamAccessEnabled {
 		return failure.Wrap("revoke team browser access", failure.ServerResponseInvalid, errors.New("server did not revoke this preview's team access"))
 	}
+	if flags.Output == statusOutputJSON {
+		return failure.Wrap("write team access", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
+			SchemaVersion int    `json:"schema_version"`
+			PreviewID     string `json:"preview_id"`
+			Enabled       bool   `json:"enabled"`
+		}{1, id, false}))
+	}
 	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
 }
 
@@ -354,6 +413,13 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 	}
 	if _, err := session.authenticated.Control.RevokeShare(ctx, share.Id); err != nil {
 		return err
+	}
+	if flags.Output == statusOutputJSON {
+		return failure.Wrap("write share revocation", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
+			SchemaVersion int    `json:"schema_version"`
+			ShareID       string `json:"share_id"`
+			Revoked       bool   `json:"revoked"`
+		}{1, share.Id, true}))
 	}
 	return writeHumanFrame(output, "tnl share link revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: share.Id}))
 }

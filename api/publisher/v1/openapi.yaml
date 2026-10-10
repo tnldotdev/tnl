@@ -15,6 +15,30 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers: [{ url: / }]
 security: [{}, { shareCookie: [] }]
 paths:
+  /__tnl/access:
+    get:
+      operationId: getBrowserAccessStatus
+      summary: Check whether this browser can visit the current public URL
+      description: >-
+        Uses the same IP, share cookie, and team session decision as forwarding
+        on this hostname. The response contains no share or session secrets.
+        Denied visitors have only the bounded denied-connection budget.
+        This endpoint does not reach the local service.
+      responses:
+        "200":
+          description: Current browser access to the published preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserAccessStatus"
+        "403":
+          description: This browser cannot currently visit the public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserAccessStatus"
+        default:
+          $ref: "#/components/responses/FeedbackError"
   /__tnl/feedback:
     get:
       operationId: listBrowserFeedback
@@ -196,6 +220,22 @@ components:
           schema: { type: string }
           example: feedback changed; reload and retry
   schemas:
+    BrowserAccessStatus:
+      type: object
+      additionalProperties: false
+      required: [schema_version, allowed, preview_id, public_url_id, publish_run_number]
+      properties:
+        schema_version:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+        allowed: { type: boolean }
+        preview_id:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/PreviewID"
+        public_url_id:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/PublicURLID"
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        access_method: { type: string, enum: [ip, share, team] }
+        expires_at: { type: string, format: date-time }
+        reason: { type: string, enum: [TNL_IP_POLICY_DENIED] }
     BrowserFeedbackReportRequest:
       type: object
       additionalProperties: false
