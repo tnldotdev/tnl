@@ -59,7 +59,7 @@ func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.Pub
 	if protocol == controlv1.Http {
 		if flags.TargetTLSName != "" || flags.DatabasePassthrough {
 			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
-				errors.New("database TLS options require --protocol postgres or --protocol mysql"))
+				errors.New("database TLS options require a database protocol"))
 		}
 		return nil
 	}
