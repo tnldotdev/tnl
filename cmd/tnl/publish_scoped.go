@@ -97,10 +97,11 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if protocol == "" {
 		protocol = controlv1.Http
 	}
-	if _, err := publishProtocol(flags.Protocol); err != nil {
+	requestedProtocol, err := publishProtocol(flags.Protocol)
+	if err != nil {
 		return err
 	}
-	if flags.Protocol != "" && flags.Protocol != string(protocol) {
+	if flags.Protocol != "" && requestedProtocol != protocol {
 		return failure.Wrap("validate scoped publish protocol", failure.PublishCredentialMismatch,
 			errors.New("protocol differs from the saved public URL"))
 	}

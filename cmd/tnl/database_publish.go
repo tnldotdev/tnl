@@ -6,9 +6,11 @@ import (
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -28,24 +30,27 @@ func normalizePublishTarget(target string, protocol controlv1.PublicURLServicePr
 	if protocol == controlv1.Http {
 		return localproxy.NormalizeTarget(target)
 	}
-	host, port, err := net.SplitHostPort(target)
-	if err != nil || host == "" {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database target must be a host and port"))
-	}
-	number, err := strconv.Atoi(port)
-	if err != nil || number < 1 || number > 65535 {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database target port is invalid"))
+	if _, err := databasetarget.Host(target); err != nil {
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
 	}
 	return target, nil
 }
 
 func savedPublicAddress(route controlv1.PublicURL) (string, error) {
-	if route.ServiceProtocol == controlv1.Postgres || route.ServiceProtocol == controlv1.Mysql {
-		if route.PublicPort == nil || *route.PublicPort < 1024 || *route.PublicPort > 65535 {
+	if !route.ServiceProtocol.Valid() {
+		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
+			errors.New("control returned a public URL with an unknown service protocol"))
+	}
+	if route.ServiceProtocol != controlv1.Http {
+		if route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) {
 			return "", failure.Wrap("read database public URL", failure.ServerResponseInvalid,
 				errors.New("control returned a database public URL without a public port"))
 		}
 		return net.JoinHostPort(route.CanonicalHostname, strconv.Itoa(*route.PublicPort)), nil
+	}
+	if route.PublicPort != nil {
+		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
+			errors.New("control returned an HTTP public URL with a public TCP port"))
 	}
 	return "https://" + route.CanonicalHostname, nil
 }

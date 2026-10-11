@@ -120,7 +120,7 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 			errors.New("database targets stay on the publisher; omit --target and supply host:port when publishing"))
 	}
 	if flags.Ephemeral {
-		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs || flags.Protocol != "" && flags.Protocol != "http" {
+		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs || protocol != controlv1.Http {
 			return failure.Wrap("validate ad-hoc credential options", failure.InvalidTunnelFlags,
 				errors.New("--ephemeral cannot select an existing URL, name, target, or visitor policy"))
 		}
@@ -144,7 +144,7 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 	defer session.Close()
 	var route controlv1.PublicURL
 	if !isURLID {
-		route, err = reservePublishCredentialURL(ctx, session, flags)
+		route, err = reservePublishCredentialURL(ctx, session, flags, protocol)
 		if err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 			return controlclient.ErrNotFound
 		}
 	}
-	if flags.Protocol != "" && flags.Protocol != string(route.ServiceProtocol) {
+	if flags.Protocol != "" && protocol != route.ServiceProtocol {
 		return failure.Wrap("validate credential protocol", failure.PublishCredentialMismatch,
 			errors.New("protocol differs from the saved public URL"))
 	}
@@ -331,11 +331,7 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 	return flags, nil
 }
 
-func reservePublishCredentialURL(ctx context.Context, session *teamSession, flags publicURLCredentialCreateCommand) (controlv1.PublicURL, error) {
-	protocol, err := publishProtocol(flags.Protocol)
-	if err != nil {
-		return controlv1.PublicURL{}, err
-	}
+func reservePublishCredentialURL(ctx context.Context, session *teamSession, flags publicURLCredentialCreateCommand, protocol controlv1.PublicURLServiceProtocol) (controlv1.PublicURL, error) {
 	target := ""
 	if flags.Target != "" {
 		var err error

@@ -79,6 +79,17 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Mysql}); err == nil {
 		t.Fatal("database URL without a public port was accepted")
 	}
+	for _, invalid := range []int{1023, 65536} {
+		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Postgres, PublicPort: &invalid}); err == nil {
+			t.Fatalf("out-of-range public port %d was accepted", invalid)
+		}
+	}
+	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: "unknown"}); err == nil {
+		t.Fatal("unknown public URL protocol was accepted")
+	}
+	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, PublicPort: &port}); err == nil {
+		t.Fatal("HTTP public URL advertised a database port")
+	}
 	if got, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "api.example", ServiceProtocol: controlv1.Http}); err != nil || got != "https://api.example" {
 		t.Fatalf("HTTP address = %q, %v", got, err)
 	}
