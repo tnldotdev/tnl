@@ -61,6 +61,38 @@ func TestDatabaseTunnelEventsResumeAcrossStateOpens(t *testing.T) {
 	}
 }
 
+func TestPrivateTCPServiceEventsIncludeEverySupportedProtocol(t *testing.T) {
+	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Redis, controlv1.Ssh, controlv1.Mongodb} {
+		t.Run(string(protocol), func(t *testing.T) {
+			database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			project := t.TempDir()
+			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+				Command: TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:6379",
+				Project: project, Service: "cache", ServiceProtocol: protocol,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tunnel.Finish(context.Background(), nil)
+			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "cache.example"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tunnel.SetReady(t.Context(), "cache.example:16379", 1); err != nil {
+				t.Fatal(err)
+			}
+			events, err := database.TunnelEventsAfter(t.Context(), project, 0)
+			if err != nil || len(events) != 3 || events[2].State != TunnelStateReady ||
+				events[2].ServiceProtocol != protocol || events[2].PublicPort != 16379 {
+				t.Fatalf("%s events = %#v, %v", protocol, events, err)
+			}
+		})
+	}
+}
+
 func TestDatabaseTunnelEventsBoundRetentionAndExpireOldCursor(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
