@@ -26,8 +26,11 @@ mise exec -- task go:test:integration
 mise exec -- task build
 ```
 
-Integration needs Docker and Pebble from `mise install`. The Task target starts
-and removes its own disposable PostgreSQL container. `generate-check` regenerates
+Integration needs Docker and Pebble from `mise install`. The Task targets use
+Testcontainers for Go in the separate `tools/testharness` Go module to create
+and remove digest-pinned disposable databases; it is not a product binary
+dependency. Each PostgreSQL-backed invocation shares one PostgreSQL container
+while each test creates its own database. `generate-check` regenerates
 files and compares them with `HEAD`, so intentional uncommitted generated changes
 also appear as drift. `format-check` only checks; `format` applies fixes.
 
@@ -38,7 +41,7 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 | Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages        |
 | Go races                         | `task go:test:race`                                          | No database                                                              |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                               |
-| Real database clients            | `task go:test:integration:database-clients`                  | Docker and OpenSSL; Task manages both TLS-enabled databases              |
+| Real database clients            | `task go:test:integration:database-clients`                  | Docker; Task manages separate plaintext PostgreSQL and MySQL targets     |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available |
 | Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers              |
 | Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in  |

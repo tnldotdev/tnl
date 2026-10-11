@@ -40,6 +40,18 @@ func RequireTestTier(t testing.TB, required TestTier) {
 	}
 }
 
+// RequireOneOfTestTiers selects a fixture shared by explicit test tiers.
+func RequireOneOfTestTiers(t testing.TB, required ...TestTier) {
+	t.Helper()
+	selected := selectedTestTier(t)
+	for _, tier := range required {
+		if selected == tier {
+			return
+		}
+	}
+	t.Skipf("requires one of the %v test tiers", required)
+}
+
 // NewDisposablePostgresDatabaseURL creates a uniquely named PostgreSQL
 // database and drops it, including any remaining connections, during cleanup.
 func NewDisposablePostgresDatabaseURL(t testing.TB, suffix string) string {
