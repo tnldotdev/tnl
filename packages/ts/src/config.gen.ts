@@ -242,13 +242,21 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * HTTP or HTTPS origin reachable by the publisher, or a local port.
+   * Local service protocol: http (default), postgres, or mysql.
+   */
+  protocol?: "http" | "postgres" | "mysql";
+  /**
+   * HTTP or HTTPS origin, local port, or database host:port reached by the publisher.
    */
   target?: string | number;
   /**
-   * Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root.
+   * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
    */
-  ca_file?: string;
+  targetCAFile?: string;
+  /**
+   * Hostname expected in the private database TLS certificate; defaults to the target host.
+   */
+  targetTLSName?: string;
 }
 export interface Readiness {
   path: string;

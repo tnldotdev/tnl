@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
@@ -505,7 +506,7 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	target := config.Target("https://api.internal:443")
 	caFile := "/run/secrets/target_ca"
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Publish: &config.Publish{Target: &target, CAFile: &caFile},
+		Publish: &config.Publish{Target: &target, TargetCAFile: &caFile},
 	}}}
 	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
 	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != caFile {
@@ -514,5 +515,29 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	override := publishCommand{Target: "http://other:3000", tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
 	if err := project.applyPublish(&override); err != nil || override.TargetCAFile != "" {
 		t.Fatalf("explicit target inherited trust = %#v, %v", override, err)
+	}
+}
+
+func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
+	protocol, name, tlsName, caFile := "postgres", "orders", "db.internal", "./ca.pem"
+	target := config.Target("db.internal:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"web": {}, "orders": {Tunnel: &config.Tunnel{Name: &name},
+			Publish: &config.Publish{Protocol: &protocol, Target: &target, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+	}}}}
+	flags := publishCommand{Target: "orders"}
+	if err := project.applyPublish(&flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Service != "orders" || flags.Name != "orders" || flags.Protocol != "postgres" || flags.Target != string(target) ||
+		flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
+		t.Fatalf("database service = %#v", flags)
+	}
+	if err := validateDatabasePublishOptions(flags, controlv1.Postgres); err != nil {
+		t.Fatal(err)
+	}
+	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}
+	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "mysql" || flags.TargetTLSName != "other.internal" || flags.TargetCAFile != "other.pem" {
+		t.Fatalf("explicit overrides = %#v, %v", flags, err)
 	}
 }

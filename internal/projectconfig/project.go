@@ -128,7 +128,7 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	base := p.Config
 	result := config.TNL{
 		Server: base.Server, Team: base.Team, RequestInspection: base.RequestInspection, Readiness: base.Readiness,
-		Webhooks: base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: clonePublish(base.Publish),
+		Webhooks: base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.MergePublish(base.Publish, nil),
 	}
 	if name == "" {
 		return result, nil
@@ -141,7 +141,7 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 		result.RequestInspection = service.RequestInspection
 	}
 	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
-	result.Publish = mergePublish(result.Publish, service.Publish)
+	result.Publish = config.MergePublish(result.Publish, service.Publish)
 	if service.Readiness != nil {
 		result.Readiness = service.Readiness
 	}
@@ -206,26 +206,6 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	return result
 }
 
-func mergePublish(base, override *config.Publish) *config.Publish {
-	result := clonePublish(base)
-	if override == nil {
-		return result
-	}
-	if result == nil {
-		result = &config.Publish{}
-	}
-	if override.Target != nil {
-		result.Target = override.Target
-		if override.CAFile == nil {
-			result.CAFile = nil
-		}
-	}
-	if override.CAFile != nil {
-		result.CAFile = override.CAFile
-	}
-	return result
-}
-
 func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	if value == nil {
 		return nil
@@ -240,13 +220,5 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 		}
 		result.Limits = &limits
 	}
-	return &result
-}
-
-func clonePublish(value *config.Publish) *config.Publish {
-	if value == nil {
-		return nil
-	}
-	result := *value
 	return &result
 }

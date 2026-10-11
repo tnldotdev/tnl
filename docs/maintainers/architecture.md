@@ -102,12 +102,15 @@ never forwarded.
 
 `tnl publish db.internal:5432 --protocol postgres` keeps the private target on
 the customer machine and displays the saved public `hostname:port` after the
-publish run is ready. `tnl url credential create --protocol postgres` saves the
+publish run is ready. a configured database service uses `publish.protocol` and
+`publish.target` to select the same protocol and private `host:port` target.
+`tnl url credential create --protocol postgres` saves the
 same endpoint without a private target; a credential-backed `tnl publish` must
 then supply that target locally. `--target-ca-file` extends the trust roots for
 the private TLS connection, while `--target-tls-name` sets the expected private
-certificate hostname. `--database-tls-passthrough` delegates that certificate
-check to the visiting database client instead.
+certificate hostname. TypeScript configuration uses `publish.targetCAFile` and
+`publish.targetTLSName` for the same settings. `--database-tls-passthrough`
+delegates the target certificate check to the visiting database client instead.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the

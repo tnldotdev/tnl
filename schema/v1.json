@@ -4,6 +4,11 @@
   "$defs": {
     "Publish": {
       "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": ["http", "postgres", "mysql"],
+          "description": "Local service protocol: http (default), postgres, or mysql."
+        },
         "target": {
           "oneOf": [
             {
@@ -16,11 +21,15 @@
               "minimum": 1
             }
           ],
-          "description": "HTTP or HTTPS origin reachable by the publisher, or a local port."
+          "description": "HTTP or HTTPS origin, local port, or database host:port reached by the publisher."
         },
-        "ca_file": {
+        "target_tls_name": {
           "type": "string",
-          "description": "Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."
+          "description": "Hostname expected in the private database TLS certificate; defaults to the target host."
+        },
+        "target_ca_file": {
+          "type": "string",
+          "description": "Additional PEM certificate authorities for the target; relative paths are resolved from the project root."
         }
       },
       "additionalProperties": false,

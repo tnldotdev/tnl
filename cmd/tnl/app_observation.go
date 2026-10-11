@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -129,8 +131,8 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if err != nil {
 		return err
 	}
-	if !project.Found() || len(project.Config.Services) == 0 {
-		return failure.Wrap("observe apps", failure.ProjectConfigMissing, errors.New("configured app services are required"))
+	if !project.Found() || len(configuredRuntimeServices(project)) == 0 {
+		return failure.Wrap("observe apps", failure.ProjectConfigMissing, errors.New("configured HTTP app services are required; database services use tnl publish"))
 	}
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
@@ -154,6 +156,10 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 	for _, name := range flags.Service {
 		if _, found := project.Config.Services[name]; !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
+		}
+		effective, _ := project.EffectiveService(name)
+		if config.ServiceProtocol(effective.Publish) != "http" {
+			return failure.Wrap("wait for service", failure.InvalidCommand, fmt.Errorf("database service %q uses tnl publish; check tnl status instead", name))
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)

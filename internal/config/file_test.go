@@ -41,6 +41,8 @@ func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
 		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
 		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
+		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field ca_file not found"},
+		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "ca_file"`},
 		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
 		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
 		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
@@ -226,6 +228,55 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateTNL(value); err == nil {
 				t.Fatalf("invalid configuration was accepted: %#v", value)
+			}
+		})
+	}
+}
+
+func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
+	protocol, target, tlsName, caFile := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
+	webTarget := Target("3000")
+	project := TNL{OAuth: true, Services: Services{
+		"web":    {Publish: &Publish{Target: &webTarget}},
+		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+	}}
+	if err := ValidateTNL(project); err != nil {
+		t.Fatalf("mixed web and PostgreSQL services: %v", err)
+	}
+	for name, change := range map[string]func(*TNL){
+		"http target": func(value *TNL) {
+			invalid := Target("http://db.internal:5432")
+			service := value.Services["orders"]
+			service.Publish.Target = &invalid
+		},
+		"readiness": func(value *TNL) {
+			service := value.Services["orders"]
+			service.Readiness = &Readiness{Path: "/health"}
+			value.Services["orders"] = service
+		},
+		"mount": func(value *TNL) {
+			service := value.Services["web"]
+			service.Paths = map[string]PathMount{"/db": {Service: "orders"}}
+			value.Services["web"] = service
+		},
+		"protocol": func(value *TNL) {
+			invalid := "unknown"
+			service := value.Services["orders"]
+			service.Publish.Protocol = &invalid
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := TNL{OAuth: project.OAuth, Services: Services{"web": project.Services["web"], "orders": project.Services["orders"]}}
+			for key, service := range changed.Services {
+				if service.Publish != nil {
+					copy := *service.Publish
+					service.Publish = &copy
+					changed.Services[key] = service
+				}
+			}
+			change(&changed)
+			if err := ValidateTNL(changed); err == nil {
+				t.Fatal("invalid mixed project was accepted")
 			}
 		})
 	}

@@ -59,10 +59,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if protocol != controlv1.Http &&
-		(flags.Demo || flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+	if protocol != controlv1.Http && flags.Demo {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database publication cannot run the demo or project integration URLs"))
+			errors.New("database publication cannot run the demo"))
 	}
 	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
 		return err
@@ -182,7 +181,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	integrationGroup := ""
-	if !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+	if protocol == controlv1.Http && !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		if flags.project.Root == "" {
 			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 			if resolveErr != nil {
@@ -195,7 +194,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	if !flags.Demo && flags.project.Config.OAuth {
+	if protocol == controlv1.Http && !flags.Demo && flags.project.Config.OAuth {
 		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if resolveErr != nil {
 			return resolveErr
@@ -204,7 +203,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
 	}
-	if !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
+	if protocol == controlv1.Http && !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
 		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
@@ -244,7 +243,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
-	if !flags.Demo && len(flags.project.Config.Aliases) != 0 {
+	if protocol == controlv1.Http && !flags.Demo && len(flags.project.Config.Aliases) != 0 {
 		stopAliases := startProjectAliases(ctx, state, flags.project, flags.Service, flags.selectedTeam, services, publisherConfig, integrationGroup, tunnel, output)
 		defer stopAliases()
 	}
