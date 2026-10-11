@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -79,7 +80,7 @@ func run() error {
 				mysql.WithUsername("root"), mysql.WithPassword("testpass"), mysql.WithDatabase("mysql"),
 				testcontainers.WithEnv(map[string]string{"MYSQL_ROOT_HOST": "%"}),
 				testcontainers.WithCmdArgs("--require_secure_transport=OFF", "--auto_generate_certs=OFF"),
-				loopbackPort("3306"),
+				reservedLoopbackPort("3306"),
 				testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp")),
 			)
 			if err == nil {
@@ -202,6 +203,28 @@ func loopbackPort(port string) testcontainers.CustomizeRequestOption {
 		}
 		config.PortBindings[network.MustParsePort(port+"/tcp")] = []network.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "0"}}
 	})
+}
+
+// reservedLoopbackPort asks the OS for a free port before assigning it to a
+// disposable container. docker's port-0 allocator can select a busy host port
+// after the larger integration suite has opened many short-lived sockets.
+func reservedLoopbackPort(port string) testcontainers.CustomizeRequestOption {
+	return func(request *testcontainers.GenericContainerRequest) error {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("select disposable MySQL port: %w", err)
+		}
+		selected := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+		if err := listener.Close(); err != nil {
+			return fmt.Errorf("release disposable MySQL port: %w", err)
+		}
+		return testcontainers.WithHostConfigModifier(func(config *container.HostConfig) {
+			if config.PortBindings == nil {
+				config.PortBindings = make(network.PortMap)
+			}
+			config.PortBindings[network.MustParsePort(port+"/tcp")] = []network.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: selected}}
+		}).Customize(request)
+	}
 }
 
 func terminate(container testcontainers.Container) {
