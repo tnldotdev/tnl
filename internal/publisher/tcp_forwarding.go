@@ -8,9 +8,11 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
@@ -28,6 +30,7 @@ type tcpForwarding struct {
 	publicPort      uint16
 	target          string
 	backendTLS      *tls.Config
+	mongoSRV        *mongoSRVTarget
 	onTargetFailure func()
 }
 
@@ -50,13 +53,22 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		tlsName = host
 	}
 	var backendTLS *tls.Config
+	var mongoSRV *mongoSRVTarget
 	if config.TargetTLS {
-		backendTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: tlsName,
-			RootCAs: config.TargetOptions.RootCAs}
+		if config.ServiceProtocol == controlv1.Mongodb && strings.HasPrefix(config.Target, mongosrv.Prefix) {
+			mongoSRV, err = parseMongoSRVTarget(config.Target, config.TargetOptions.RootCAs)
+			if err != nil {
+				return nil, diagnostic.Wrap(diagnostic.TargetInvalid, err)
+			}
+		} else {
+			backendTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: tlsName,
+				RootCAs: config.TargetOptions.RootCAs}
+		}
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
 		backendTLS:      backendTLS,
+		mongoSRV:        mongoSRV,
 		onTargetFailure: config.OnTargetFailure,
 	}, nil
 }
@@ -73,6 +85,16 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 	if !config.TargetTLS && (config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil) {
 		return "", errors.New("publisher: private target TLS options require target TLS")
 	}
+	if config.ServiceProtocol == controlv1.Mongodb && strings.HasPrefix(config.Target, mongosrv.Prefix) {
+		if !config.TargetTLS || config.TargetTLSName != "" {
+			return "", errors.New("publisher: mongodb SRV target requires verified TLS for each discovered hostname")
+		}
+		seed, err := mongosrv.Parse(config.Target)
+		if err != nil {
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
+		}
+		return seed, nil
+	}
 	host, err := tcptarget.Host(config.Target)
 	if err != nil {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
@@ -83,7 +105,13 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
+	var backend net.Conn
+	var err error
+	if d.mongoSRV != nil {
+		backend, err = d.mongoSRV.connect(ctx)
+	} else {
+		backend, err = (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
+	}
 	if err != nil {
 		d.targetFailed()
 		return

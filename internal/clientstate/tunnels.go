@@ -15,8 +15,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const tunnelSnapshotSchemaVersion = 3
@@ -51,6 +54,7 @@ type BeginTunnelOptions struct {
 	Command          TunnelCommand
 	Server           string
 	Target           string
+	ServiceProtocol  controlv1.PublicURLServiceProtocol
 	Project          string
 	Service          string
 	IntegrationGroup string
@@ -117,8 +121,24 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err != nil {
 		return nil, err
 	}
+	protocol := options.ServiceProtocol
+	if protocol == "" {
+		protocol = controlv1.Http
+	}
+	if !protocol.Valid() || options.Command == TunnelCommandDev && protocol != controlv1.Http {
+		return nil, errors.New("clientstate: invalid tunnel service protocol")
+	}
 	if options.Target != "" {
-		options.Target, err = localproxy.NormalizeTarget(options.Target)
+		switch {
+		case protocol == controlv1.Http:
+			options.Target, err = localproxy.NormalizeTarget(options.Target)
+		case protocol == controlv1.Mongodb && strings.HasPrefix(options.Target, mongosrv.Prefix):
+			var seed string
+			seed, err = mongosrv.Parse(options.Target)
+			options.Target = mongosrv.Prefix + seed
+		default:
+			options.Target, err = tcptarget.Normalize(options.Target)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"go.yaml.in/yaml/v3"
@@ -330,6 +331,13 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 			if protocol == "http" {
 				if _, err := localproxy.NormalizeTarget(target); err != nil {
 					return fmt.Errorf("publish.target: %w", err)
+				}
+			} else if protocol == "mongodb" && strings.HasPrefix(target, mongosrv.Prefix) {
+				if _, err := mongosrv.Parse(target); err != nil {
+					return fmt.Errorf("publish.target: %w", err)
+				}
+				if publish.TargetTLS == nil || !*publish.TargetTLS || publish.TargetTLSName != nil {
+					return errors.New("publish.target for mongodb+srv requires target_tls: true and no target_tls_name")
 				}
 			} else if _, err := tcptarget.Normalize(target); err != nil {
 				return fmt.Errorf("publish.target: %w", err)

@@ -5,5 +5,8 @@ This product includes software developed for the tnl project.
 
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
 
+The publisher uses the MongoDB Go driver BSON package (Apache-2.0) to probe
+the private target selected from a MongoDB SRV seedlist.
+
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.

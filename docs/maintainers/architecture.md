@@ -140,6 +140,19 @@ plaintext TCP unless explicit verified target TLS is configured. A single
 public port does not proxy other replica-set member addresses discovered by a
 client; use a standalone `mongod` or a single `mongos` for this initial shape.
 
+For a hosted replica set or sharded cluster, a publisher can instead use a
+credential-free `mongodb+srv://` private seed with `--target-tls`. It resolves
+the provider's SRV and allowed TXT records for each new visitor, checks the
+parent domain and any TXT-declared replica-set identity, and probes candidates over
+certificate-verified TLS for a writable primary or `mongos`. It closes the
+probe connection and opens a new verified connection to the selected host for
+the visitor's own MongoDB handshake. Visitor clients still use
+`mongodb://<public-hostname>:<public-port>/?tls=true&directConnection=true`;
+they do not discover provider members. Existing streams cannot move during a
+primary change, but new connections select the current writable target. The
+publisher never puts database credentials in the private target URI or retries
+failed target TLS as plaintext.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

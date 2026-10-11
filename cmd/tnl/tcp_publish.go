@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -29,6 +31,13 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 func normalizePublishTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
 	if protocol == controlv1.Http {
 		return localproxy.NormalizeTarget(target)
+	}
+	if protocol == controlv1.Mongodb && strings.HasPrefix(target, mongosrv.Prefix) {
+		seed, err := mongosrv.Parse(target)
+		if err != nil {
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
+		}
+		return mongosrv.Prefix + seed, nil
 	}
 	canonical, err := tcptarget.Normalize(target)
 	if err != nil {
@@ -71,6 +80,11 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 	if !flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
 		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
 			errors.New("--target-tls-name and --target-ca-file require --target-tls"))
+	}
+	if protocol == controlv1.Mongodb && strings.HasPrefix(flags.Target, mongosrv.Prefix) &&
+		(!flags.TargetTLS || flags.TargetTLSName != "") {
+		return failure.Wrap("validate mongodb SRV target", failure.InvalidTunnelFlags,
+			errors.New("mongodb SRV targets require --target-tls and do not accept --target-tls-name; each discovered host must verify its own certificate"))
 	}
 	return nil
 }

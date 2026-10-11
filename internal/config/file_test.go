@@ -282,6 +282,24 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 	}
 }
 
+func TestMongoSRVProjectTargetRequiresPerHostTLSVerification(t *testing.T) {
+	protocol, target, verified := "mongodb", Target("mongodb+srv://seed.cluster.example"), true
+	config := TNL{Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLS: &verified}}
+	if err := ValidateTNL(config); err != nil {
+		t.Fatalf("valid MongoDB SRV project target: %v", err)
+	}
+	config.Publish.TargetTLS = nil
+	if err := ValidateTNL(config); err == nil {
+		t.Fatal("MongoDB SRV target without verified TLS was accepted")
+	}
+	config.Publish.TargetTLS = &verified
+	tlsName := "seed.cluster.example"
+	config.Publish.TargetTLSName = &tlsName
+	if err := ValidateTNL(config); err == nil {
+		t.Fatal("MongoDB SRV target accepted one shared TLS hostname")
+	}
+}
+
 func TestRequestInspectionModeValid(t *testing.T) {
 	for _, test := range []struct {
 		mode  RequestInspectionMode

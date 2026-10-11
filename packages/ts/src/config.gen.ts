@@ -246,7 +246,7 @@ export interface Publish {
    */
   protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
   /**
-   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
+   * HTTP or HTTPS origin, local port, private TCP host:port, or MongoDB SRV seed hostname reached by the publisher.
    */
   target?: string | number;
   /**

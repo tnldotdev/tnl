@@ -432,12 +432,14 @@ Packages:
   github.com/aws/smithy-go v1.27.3
   github.com/benbjohnson/litestream v0.5.17
   github.com/superfly/ltx v0.5.2
+  go.mongodb.org/mongo-driver/v2 v2.9.2
 License: Apache-2.0
 License sources:
   https://github.com/aws/aws-sdk-go-v2/blob/v1.42.1/LICENSE.txt
   https://github.com/aws/smithy-go/blob/v1.27.3/LICENSE
   https://github.com/benbjohnson/litestream/blob/v0.5.17/LICENSE
   https://github.com/superfly/ltx/blob/v0.5.2/LICENSE
+  https://github.com/mongodb/mongo-go-driver/blob/v2.9.2/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004

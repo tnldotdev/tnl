@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -17,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -176,7 +178,15 @@ func Run(ctx context.Context, config Config) (result error) {
 		})
 		if err == nil {
 			var connection net.Conn
-			connection, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", config.Target)
+			if config.ServiceProtocol == controlv1.Mongodb && strings.HasPrefix(config.Target, mongosrv.Prefix) {
+				var target *mongoSRVTarget
+				target, err = parseMongoSRVTarget(config.Target, config.TargetOptions.RootCAs)
+				if err == nil {
+					connection, err = target.connect(ctx)
+				}
+			} else {
+				connection, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", config.Target)
+			}
 			if err == nil {
 				err = connection.Close()
 			} else {

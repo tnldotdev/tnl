@@ -12,7 +12,51 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestPublishTunnelRecordsPrivateTCPTargetWithoutHTTPNormalization(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	project := t.TempDir()
+	for _, test := range []struct {
+		protocol controlv1.PublicURLServiceProtocol
+		target   string
+	}{
+		{protocol: controlv1.Postgres, target: "db.internal:5432"},
+		{protocol: controlv1.Mongodb, target: "mongodb+srv://seed.cluster.example"},
+	} {
+		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+			Command: TunnelCommandPublish, Server: "https://server.example", Project: project,
+			ServiceProtocol: test.protocol, Target: test.target,
+		})
+		if err != nil {
+			t.Fatalf("%s tunnel: %v", test.protocol, err)
+		}
+		snapshot, err := database.SnapshotProject(t.Context(), project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, entry := range snapshot.Tunnels {
+			if entry.ID == tunnel.ID() {
+				found = true
+				if entry.Target != test.target {
+					t.Fatalf("%s local target = %q, want %q", test.protocol, entry.Target, test.target)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("active private TCP tunnel is missing")
+		}
+		if err := tunnel.Finish(t.Context(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))

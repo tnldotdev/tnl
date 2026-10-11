@@ -124,6 +124,48 @@ func TestMongoDBPublishTargetAndAddress(t *testing.T) {
 	}
 }
 
+func TestMongoDBSRVPrivateTargetKeepsVisitorCredentialsSeparate(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "mongodb+srv://seed.cluster.example", "--protocol", "mongodb", "--target-tls"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTCPPublishOptions(flags.Publish, controlv1.Mongodb); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := normalizePublishTarget(flags.Publish.Target, controlv1.Mongodb); err != nil || target != "mongodb+srv://seed.cluster.example" {
+		t.Fatalf("SRV publish target = %q, %v", target, err)
+	}
+	if target, err := selectScopedPublishTargetForProtocol("", flags.Publish.Target, controlv1.Mongodb); err != nil || target != flags.Publish.Target {
+		t.Fatalf("SRV credential target = %q, %v", target, err)
+	}
+	for _, target := range []string{
+		"mongodb+srv://user:pass@seed.cluster.example",
+		"mongodb+srv://seed.cluster.example/app?retryWrites=true",
+		"mongodb+srv://seed.cluster.example:27017",
+	} {
+		if _, err := normalizePublishTarget(target, controlv1.Mongodb); err == nil {
+			t.Fatalf("private SRV target accepted embedded credentials, options, or port: %q", target)
+		} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetInvalid {
+			t.Fatalf("invalid SRV target diagnostic = %q, %v", code, err)
+		}
+	}
+	if _, err := normalizePublishTarget(flags.Publish.Target, controlv1.Redis); err == nil {
+		t.Fatal("non-MongoDB protocol accepted an SRV target")
+	}
+	for _, invalid := range []publishCommand{
+		{Target: flags.Publish.Target},
+		{Target: flags.Publish.Target, TargetTLS: true, TargetTLSName: "seed.cluster.example"},
+	} {
+		if err := validateTCPPublishOptions(invalid, controlv1.Mongodb); err == nil {
+			t.Fatalf("invalid SRV TLS settings accepted: %+v", invalid)
+		}
+	}
+}
+
 func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {

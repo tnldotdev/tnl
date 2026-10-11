@@ -21,7 +21,7 @@
               "minimum": 1
             }
           ],
-          "description": "HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."
+          "description": "HTTP or HTTPS origin, local port, private TCP host:port, or MongoDB SRV seed hostname reached by the publisher."
         },
         "target_tls_name": {
           "type": "string",
