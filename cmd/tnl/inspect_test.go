@@ -77,6 +77,14 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
 		Origin: "local_service", CaptureMode: "summary", DurationMS: 12,
 	})
+	recorder.Observe(clientstate.RequestRecord{
+		ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
+		Origin: "local_service", CaptureMode: "summary", DurationMS: 25,
+	})
+	recorder.Observe(clientstate.RequestRecord{
+		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
+		Origin: "tnl", CaptureMode: "summary", DurationMS: 1,
+	})
 	recorder.Close()
 	var listOutput bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
@@ -86,11 +94,31 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 3 ||
 		list.Inspections[0].Protocol != "http" || list.Inspections[0].HTTP == nil ||
-		list.Inspections[0].Postgres != nil || list.Inspections[0].HTTP.Method != "GET" ||
-		list.Inspections[0].HTTP.Status != 200 {
+		list.Inspections[0].Result != "error" || list.Inspections[0].HTTP.Status != 404 ||
+		list.Inspections[1].Result != "error" || list.Inspections[1].HTTP.Status != 500 ||
+		list.Inspections[2].Result != "ok" || list.Inspections[2].HTTP.Status != 200 {
 		t.Fatalf("typed HTTP list = %s, %v", listOutput.String(), err)
+	}
+	listOutput.Reset()
+	if err := run(t.Context(), []string{"inspect", "list", "--result=ok", "--limit=1", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
+		list.Inspections[0].Number != 1 || list.Inspections[0].Result != "ok" {
+		t.Fatalf("HTTP result filter before limit = %s, %v", listOutput.String(), err)
+	}
+	listOutput.Reset()
+	if err := run(t.Context(), []string{"inspect", "list", "--result=error", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 2 ||
+		list.Inspections[0].HTTP.Status != 404 || list.Inspections[1].HTTP.Status != 500 {
+		t.Fatalf("HTTP error results = %s, %v", listOutput.String(), err)
+	}
+	if err := run(t.Context(), []string{"inspect", "list", "--result=unknown"}, &bytes.Buffer{}, &bytes.Buffer{}, nil); err == nil {
+		t.Fatal("unknown inspection result was accepted")
 	}
 	var showOutput bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &showOutput, &bytes.Buffer{}, nil); err != nil {
@@ -100,7 +128,7 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		Inspection inspectionRecord `json:"inspection"`
 	}
 	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.Inspection.Number != 1 ||
-		show.Inspection.HTTP == nil || show.Inspection.HTTP.Path != "/health" || show.Inspection.Postgres != nil {
+		show.Inspection.HTTP == nil || show.Inspection.HTTP.Path != "/health" || show.Inspection.Result != "ok" {
 		t.Fatalf("typed HTTP inspection = %s, %v", showOutput.String(), err)
 	}
 }

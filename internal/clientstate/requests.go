@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/inspection"
 )
 
 const (
@@ -145,12 +146,14 @@ type RequestFilter struct {
 	Service       string
 	Method        string
 	Status        int
+	Result        inspection.Result
 	Since         time.Time
 	Limit         int
 }
 
 func (d *Database) ListRequests(ctx context.Context, filter RequestFilter) ([]RequestRecord, error) {
-	if filter.Project == "" || filter.SharedProject == "" || filter.Limit < 1 || filter.Limit > 500 {
+	if filter.Project == "" || filter.SharedProject == "" || filter.Limit < 1 || filter.Limit > 500 ||
+		filter.Result != "" && !filter.Result.Valid() {
 		return nil, errors.New("clientstate: project and limit between 1 and 500 are required")
 	}
 	_ = d.pruneRequests(ctx)
@@ -168,9 +171,10 @@ func (d *Database) ListRequests(ctx context.Context, filter RequestFilter) ([]Re
 		service, received_at, method, path, status, duration_ms, origin, capture_mode, NULL AS detail_json,
 		(detail_json IS NOT NULL) AS detail_available
 		FROM local_requests WHERE ` + column + ` = ? AND (? = '' OR service = ?) AND (? = '' OR method = ?)
-		AND (? = 0 OR status = ?) AND received_at >= ? ORDER BY received_at DESC, row_id DESC LIMIT ?`
+		AND (? = 0 OR status = ?) AND (? = '' OR (? = 'ok' AND status < 400) OR (? = 'error' AND status >= 400))
+		AND received_at >= ? ORDER BY received_at DESC, row_id DESC LIMIT ?`
 	rows, err := d.db.QueryContext(ctx, query, selected, filter.Service, filter.Service, filter.Method, filter.Method,
-		filter.Status, filter.Status, cutoff.UnixNano(), filter.Limit)
+		filter.Status, filter.Status, filter.Result, filter.Result, filter.Result, cutoff.UnixNano(), filter.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: list requests: %w", err)
 	}
