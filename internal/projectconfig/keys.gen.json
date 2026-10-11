@@ -2,7 +2,6 @@
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
   "public_url": "publicURL",
-  "request_inspection": "requestInspection",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
   "target_ca_file": "targetCAFile",

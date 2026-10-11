@@ -139,8 +139,8 @@ func ValidateTNL(config TNL) error {
 	if err := validateReadiness(config.Readiness); err != nil {
 		return err
 	}
-	if err := validateRequestInspection(config.RequestInspection); err != nil {
-		return fmt.Errorf("request_inspection: %w", err)
+	if err := ValidateInspection(config.Inspection); err != nil {
+		return fmt.Errorf("inspection: %w", err)
 	}
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
@@ -176,8 +176,8 @@ func ValidateTNL(config TNL) error {
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if err := validateRequestInspection(service.RequestInspection); err != nil {
-			return fmt.Errorf("services.%s.request_inspection: %w", name, err)
+		if err := ValidateInspection(service.Inspection); err != nil {
+			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
@@ -194,9 +194,9 @@ func ValidateTNL(config TNL) error {
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
 				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
-			if service.RequestInspection != nil && *service.RequestInspection == RequestInspectionDetailed ||
-				service.RequestInspection == nil && config.RequestInspection != nil && *config.RequestInspection == RequestInspectionDetailed {
-				return fmt.Errorf("services.%s: database services cannot inspect HTTP requests", name)
+			selected := MergeInspection(config.Inspection, service.Inspection)
+			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed {
+				return fmt.Errorf("services.%s: detailed inspection requires an HTTP service", name)
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {
@@ -246,13 +246,6 @@ func validateReadiness(value *Readiness) error {
 	}
 	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
 		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
-	}
-	return nil
-}
-
-func validateRequestInspection(value *RequestInspectionMode) error {
-	if value != nil && !value.Valid() {
-		return errors.New("must be summary or detailed")
 	}
 	return nil
 }

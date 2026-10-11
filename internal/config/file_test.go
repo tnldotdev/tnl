@@ -282,14 +282,14 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 	}
 }
 
-func TestRequestInspectionModeValid(t *testing.T) {
+func TestInspectionModeValid(t *testing.T) {
 	for _, test := range []struct {
-		mode  RequestInspectionMode
+		mode  InspectionMode
 		valid bool
 	}{
-		{RequestInspectionSummary, true},
-		{RequestInspectionDetailed, true},
-		{RequestInspectionMode("all"), false},
+		{InspectionSummary, true},
+		{InspectionDetailed, true},
+		{InspectionMode("all"), false},
 		{"", false},
 	} {
 		if got := test.mode.Valid(); got != test.valid {
@@ -298,10 +298,29 @@ func TestRequestInspectionModeValid(t *testing.T) {
 	}
 }
 
+func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
+	mode := InspectionDetailed
+	protocol := "postgres"
+	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"orders": {
+		Publish: &Publish{Protocol: &protocol},
+	}}}
+	if err := ValidateTNL(project); err == nil {
+		t.Fatal("PostgreSQL accepted detailed inspection without a parser")
+	}
+	protocol = "mysql"
+	if err := ValidateTNL(project); err == nil {
+		t.Fatal("MySQL accepted detailed inspection without a parser")
+	}
+	protocol = "redis"
+	if err := ValidateTNL(project); err == nil {
+		t.Fatal("opaque Redis traffic accepted detailed inspection")
+	}
+}
+
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"request_inspection":"detailed","services":{"web":{"request_inspection":"summary"}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
-		"yml":  "version: 1\ntnl:\n  request_inspection: detailed\n  services:\n    web:\n      request_inspection: summary\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -318,8 +337,8 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "services.web: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
 		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "tunnel.limits.rate requires positive requests and per"},
 		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
-		"invalid request inspection": {`{"version":1,"tnl":{"request_inspection":"all"}}`, "version: 1\ntnl:\n  request_inspection: all\n", "request_inspection"},
-		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"request_inspection":"all"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      request_inspection: all\n", "request_inspection"},
+		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be summary or detailed"},
+		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"inspection":{"mode":"all"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      inspection: {mode: all}\n", "services.web.inspection: mode must be summary or detailed"},
 		"retired dev":                {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "dev"},
 		"server URL":                 {`{"version":1,"tnl":{"server":"http://control.example"}}`, "version: 1\ntnl:\n  server: http://control.example\n", "server must be an HTTPS origin"},
 		"uppercase domain":           {`{"version":1,"tnl":{"tunnel":{"domain":"API.EXAMPLE.TEST"}}}`, "version: 1\ntnl:\n  tunnel:\n    domain: API.EXAMPLE.TEST\n", "tunnel.domain must be a canonical domain name"},

@@ -2,6 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schema/v1.json",
   "$defs": {
+    "Inspection": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["summary", "detailed"]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Publish": {
       "properties": {
         "protocol": {
@@ -67,10 +77,9 @@
           "type": "boolean",
           "description": "Publish one shared OAuth callback URL while project tunnels run."
         },
-        "request_inspection": {
-          "type": "string",
-          "enum": ["summary", "detailed"],
-          "description": "Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."
+        "inspection": {
+          "$ref": "#/$defs/Inspection",
+          "description": "Local inspection capture and retention for HTTP and database services."
         },
         "tunnel": {
           "allOf": [
@@ -183,10 +192,8 @@
                 "minLength": 1,
                 "description": "Service directory relative to the project configuration."
               },
-              "request_inspection": {
-                "type": "string",
-                "enum": ["summary", "detailed"],
-                "description": "Local HTTP request capture for this service."
+              "inspection": {
+                "$ref": "#/$defs/Inspection"
               },
               "tunnel": {
                 "allOf": [

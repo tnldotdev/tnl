@@ -73,7 +73,7 @@ type Config struct {
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	Limits                   ApplicationLimits
 	ObserveRequest           func(RequestObservation)
-	RequestInspection        projectconfig.RequestInspectionMode
+	InspectionMode           projectconfig.InspectionMode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
 	AllocatedPublicURL       *controlv1.PublicURL

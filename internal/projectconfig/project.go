@@ -127,7 +127,7 @@ func (p Project) ServiceDirectory(name string) (string, string, error) {
 func (p Project) EffectiveService(name string) (config.TNL, error) {
 	base := p.Config
 	result := config.TNL{
-		Server: base.Server, Team: base.Team, RequestInspection: base.RequestInspection, Readiness: base.Readiness,
+		Server: base.Server, Team: base.Team, Inspection: config.MergeInspection(base.Inspection, nil), Readiness: base.Readiness,
 		Webhooks: base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.MergePublish(base.Publish, nil),
 	}
 	if name == "" {
@@ -137,9 +137,7 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	if !found {
 		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
 	}
-	if service.RequestInspection != nil {
-		result.RequestInspection = service.RequestInspection
-	}
+	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
 	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
 	result.Publish = config.MergePublish(result.Publish, service.Publish)
 	if service.Readiness != nil {

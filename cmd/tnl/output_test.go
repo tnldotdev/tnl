@@ -86,7 +86,7 @@ func TestDetailedRequestCaptureIsVisibleInReadyOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output.setRequestInspection("detailed")
+	output.setInspectionMode("detailed")
 	if err := output.starting("tun_test", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}

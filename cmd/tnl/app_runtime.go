@@ -366,9 +366,9 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	flags := tunnelFlags{RequestInspection: "summary"}
+	flags := tunnelFlags{InspectionMode: config.InspectionSummary}
 	applyTunnelConfiguration(&flags, effective.Tunnel)
-	applyRequestInspection(&flags, effective)
+	applyInspection(&flags, effective)
 	// app-led URLs remain saved across restarts, including configurations that
 	// previously requested ephemeral development URLs.
 	flags.Ephemeral = false
@@ -581,7 +581,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
 	configuration.Feedback = project.Config.Feedback != nil && *project.Config.Feedback
-	configuration.RequestInspection = flags.RequestInspection
+	configuration.InspectionMode = flags.InspectionMode
 	configuration.AdmitRequest = func(_ *http.Request, identity publisher.PublishRunIdentity) error {
 		if !a.manager.Current(service.Name, service.RegistrationID, service.Target, identity.Number) {
 			return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
