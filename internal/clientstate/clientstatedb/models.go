@@ -141,6 +141,8 @@ type LocalTunnel struct {
 	StoppedAt        sql.NullInt64
 	LastError        string
 	IntegrationGroup string
+	PublicPort       int64
+	ServiceProtocol  string
 }
 
 type OauthAliasReturn struct {

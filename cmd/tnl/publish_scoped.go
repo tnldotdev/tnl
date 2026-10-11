@@ -128,7 +128,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
-		Project: flags.projectRoot, Service: flags.Service,
+		Project: flags.projectRoot, Service: flags.Service, ServiceProtocol: protocol,
 	})
 	if err != nil {
 		return err

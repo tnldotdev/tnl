@@ -105,7 +105,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
-		Project: flags.projectRoot, Service: flags.Service,
+		Project: flags.projectRoot, Service: flags.Service, ServiceProtocol: protocol,
 	})
 	if err != nil {
 		return err

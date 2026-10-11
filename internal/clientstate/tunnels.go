@@ -5,18 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const tunnelSnapshotSchemaVersion = 3
@@ -53,6 +58,7 @@ type BeginTunnelOptions struct {
 	Target           string
 	Project          string
 	Service          string
+	ServiceProtocol  controlv1.PublicURLServiceProtocol
 	IntegrationGroup string
 }
 
@@ -87,24 +93,26 @@ type TunnelSummary struct {
 }
 
 type TunnelInfo struct {
-	ID               string        `json:"tunnel_id"`
-	Command          TunnelCommand `json:"command"`
-	State            TunnelState   `json:"state"`
-	ProcessID        int           `json:"process_id"`
-	Server           string        `json:"server"`
-	Project          string        `json:"project"`
-	Service          string        `json:"service,omitempty"`
-	PublicURLID      string        `json:"public_url_id,omitempty"`
-	PublishRunNumber uint64        `json:"publish_run_number,omitempty"`
-	Hostname         string        `json:"hostname,omitempty"`
-	PublicURL        string        `json:"public_url,omitempty"`
-	Target           string        `json:"target,omitempty"`
-	Framework        string        `json:"framework,omitempty"`
-	IntegrationGroup string        `json:"-"`
-	StartedAt        time.Time     `json:"started_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
-	HeartbeatAt      time.Time     `json:"heartbeat_at"`
-	LeaseExpiresAt   time.Time     `json:"lease_expires_at"`
+	ID               string                             `json:"tunnel_id"`
+	Command          TunnelCommand                      `json:"command"`
+	State            TunnelState                        `json:"state"`
+	ProcessID        int                                `json:"process_id"`
+	Server           string                             `json:"server"`
+	Project          string                             `json:"project"`
+	Service          string                             `json:"service,omitempty"`
+	ServiceProtocol  controlv1.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
+	PublicURLID      string                             `json:"public_url_id,omitempty"`
+	PublishRunNumber uint64                             `json:"publish_run_number,omitempty"`
+	PublicPort       uint16                             `json:"public_port,omitempty"`
+	Hostname         string                             `json:"hostname,omitempty"`
+	PublicURL        string                             `json:"public_url,omitempty"`
+	Target           string                             `json:"target,omitempty"`
+	Framework        string                             `json:"framework,omitempty"`
+	IntegrationGroup string                             `json:"-"`
+	StartedAt        time.Time                          `json:"started_at"`
+	UpdatedAt        time.Time                          `json:"updated_at"`
+	HeartbeatAt      time.Time                          `json:"heartbeat_at"`
+	LeaseExpiresAt   time.Time                          `json:"lease_expires_at"`
 }
 
 // BeginTunnel registers a local tunnel and maintains its liveness lease until
@@ -117,8 +125,18 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err != nil {
 		return nil, err
 	}
+	if options.ServiceProtocol == "" {
+		options.ServiceProtocol = controlv1.Http
+	}
+	if !options.ServiceProtocol.Valid() {
+		return nil, errors.New("clientstate: invalid tunnel service protocol")
+	}
 	if options.Target != "" {
-		options.Target, err = localproxy.NormalizeTarget(options.Target)
+		if options.ServiceProtocol == controlv1.Http {
+			options.Target, err = localproxy.NormalizeTarget(options.Target)
+		} else {
+			_, err = databasetarget.Host(options.Target)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +169,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	}
 	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
-		ProjectRoot: options.Project, Service: options.Service, Target: options.Target,
+		ProjectRoot: options.Project, Service: options.Service, ServiceProtocol: string(options.ServiceProtocol), Target: options.Target,
 		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(), IntegrationGroup: options.IntegrationGroup,
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
@@ -226,23 +244,45 @@ func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) e
 }
 
 func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumber uint64) error {
-	parsed, err := url.Parse(publicURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
-		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("clientstate: invalid tunnel public URL")
-	}
-	hostname, err := naming.CanonicalizeHostname(parsed.Hostname())
-	if err != nil || hostname != parsed.Hostname() {
-		return errors.New("clientstate: invalid tunnel public URL")
+	hostname, publicPort, err := parsePublicTunnelAddress(publicURL)
+	if err != nil {
+		return err
 	}
 	versionValue, err := databaseVersion(publishRunNumber)
 	if err != nil || publishRunNumber == 0 {
 		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname: hostname, PublishRunNumber: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		Hostname: hostname, PublicPort: int64(publicPort), PublishRunNumber: versionValue,
+		Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
+}
+
+func parsePublicTunnelAddress(address string) (string, uint16, error) {
+	invalid := errors.New("clientstate: invalid tunnel public address")
+	if !strings.HasPrefix(address, "https://") {
+		host, text, err := net.SplitHostPort(address)
+		if err != nil {
+			return "", 0, invalid
+		}
+		hostname, err := naming.CanonicalizeHostname(host)
+		port, portErr := strconv.Atoi(text)
+		if err != nil || hostname != host || portErr != nil || !tcpport.Valid(port) || net.JoinHostPort(hostname, strconv.Itoa(port)) != address {
+			return "", 0, invalid
+		}
+		return hostname, uint16(port), nil
+	}
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
+		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", 0, invalid
+	}
+	hostname, err := naming.CanonicalizeHostname(parsed.Hostname())
+	if err != nil || hostname != parsed.Hostname() {
+		return "", 0, invalid
+	}
+	return hostname, 0, nil
 }
 
 func (t *Tunnel) SetDraining(ctx context.Context) error {
@@ -330,13 +370,20 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		info := TunnelInfo{
 			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
-			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
+			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber), PublicPort: uint16(row.PublicPort),
 			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, IntegrationGroup: row.IntegrationGroup,
 			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		}
-		if info.Hostname != "" {
-			info.PublicURL = "https://" + info.Hostname
+		if row.ServiceProtocol != string(controlv1.Http) {
+			info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
+		}
+		if info.Hostname != "" && (info.PublicPort != 0 || info.ServiceProtocol == "") {
+			if info.PublicPort != 0 {
+				info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
+			} else {
+				info.PublicURL = "https://" + info.Hostname
+			}
 		}
 		snapshot.Tunnels = append(snapshot.Tunnels, info)
 		snapshot.Summary.Total++

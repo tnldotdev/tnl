@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
@@ -123,6 +124,56 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	if snapshot.Summary.Total != 0 || len(snapshot.Tunnels) != 0 {
 		t.Fatalf("finished snapshot = %#v", snapshot)
+	}
+}
+
+func TestDatabaseTunnelReadyPersistsPublicPort(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	database, err := Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: t.TempDir(), Service: "orders", ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "orders.example"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := database.Snapshot(t.Context())
+	if err != nil || len(before.Tunnels) != 1 || before.Tunnels[0].PublicURL != "" {
+		t.Fatalf("unassigned database port snapshot = %#v, %v", before, err)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"orders.example:0", "orders.example:65536", "https://orders.example:15432"} {
+		if err := tunnel.SetReady(t.Context(), address, 1); err == nil {
+			t.Fatalf("accepted invalid public address %q", address)
+		}
+	}
+	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	snapshot, err := reader.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].PublicURL != "orders.example:15432" ||
+		snapshot.Tunnels[0].PublicPort != 15432 || snapshot.Tunnels[0].Service != "orders" ||
+		snapshot.Tunnels[0].ServiceProtocol != controlv1.Postgres || snapshot.Tunnels[0].Target != "127.0.0.1:5432" ||
+		snapshot.Tunnels[0].State != TunnelStateReady {
+		t.Fatalf("database tunnel snapshot = %#v", snapshot)
 	}
 }
 
