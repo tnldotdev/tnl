@@ -63,6 +63,7 @@ type Config struct {
 	ServiceProtocol          controlv1.PublicURLServiceProtocol
 	TargetTLSName            string
 	TargetTLS                bool
+	VisitorTLSPassthrough    bool
 	PreserveSavedURLTarget   bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
@@ -158,7 +159,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		config.ServiceProtocol = controlv1.Http
 	}
 	if config.ServiceProtocol == controlv1.Http {
-		if config.TargetTLSName != "" || config.TargetTLS {
+		if config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
 			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("private target TLS settings require a private TCP service protocol"))
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
@@ -171,7 +172,8 @@ func Run(ctx context.Context, config Config) (result error) {
 	} else {
 		_, err = validateTCPForwarding(PublicURLServerConfig{
 			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
-			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS, TargetOptions: config.TargetOptions,
+			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
+			VisitorTLSPassthrough: config.VisitorTLSPassthrough, TargetOptions: config.TargetOptions,
 			Handler: config.Handler, Mounts: config.Mounts,
 		})
 		if err == nil {
