@@ -66,7 +66,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			if err != nil {
 				return err
 			}
-			appSnapshot = mergeDatabaseServices(appSnapshot, project, snapshot.Tunnels)
+			appSnapshot = mergeTCPServices(appSnapshot, project, snapshot.Tunnels)
 		}
 	} else {
 		projects, err := clientruntime.ListSnapshots(root)
