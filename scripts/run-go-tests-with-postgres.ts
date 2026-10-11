@@ -1,9 +1,9 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { TestContainerRunner } from "./test-container-runner.ts";
 
 const separator = process.argv.indexOf("--", 2);
 if (separator === -1 || separator === process.argv.length - 1) {
@@ -20,25 +20,14 @@ const image =
 const command = process.argv[separator + 1];
 if (command === undefined) throw new Error("test command is required");
 const arguments_ = process.argv.slice(separator + 2);
-let testProcess: ChildProcess | undefined;
-let stopping = false;
+const runner = new TestContainerRunner(container);
 const certificateDirectory = tlsEnabled
   ? await mkdtemp(path.join(os.tmpdir(), "tnl-test-postgres-tls-"))
   : undefined;
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, async () => {
-    if (stopping) return;
-    stopping = true;
-    testProcess?.kill(signal);
-    await removeContainer();
-    process.exitCode = 1;
-  });
-}
-
 try {
-  await removeContainer();
-  await run("docker", [
+  await runner.remove();
+  await runner.run("docker", [
     "run",
     "--detach",
     "--rm",
@@ -66,7 +55,7 @@ try {
   if (certificateDirectory !== undefined) {
     const certificate = path.join(certificateDirectory, "server.crt");
     const key = path.join(certificateDirectory, "server.key");
-    await run("openssl", [
+    await runner.run("openssl", [
       "req",
       "-x509",
       "-newkey",
@@ -83,9 +72,13 @@ try {
       "-addext",
       "subjectAltName=DNS:route.example",
     ]);
-    await run("docker", ["cp", certificate, `${container}:/var/lib/postgresql/data/server.crt`]);
-    await run("docker", ["cp", key, `${container}:/var/lib/postgresql/data/server.key`]);
-    await run("docker", [
+    await runner.run("docker", [
+      "cp",
+      certificate,
+      `${container}:/var/lib/postgresql/data/server.crt`,
+    ]);
+    await runner.run("docker", ["cp", key, `${container}:/var/lib/postgresql/data/server.key`]);
+    await runner.run("docker", [
       "exec",
       "--user",
       "root",
@@ -95,7 +88,7 @@ try {
       "/var/lib/postgresql/data/server.crt",
       "/var/lib/postgresql/data/server.key",
     ]);
-    await run("docker", [
+    await runner.run("docker", [
       "exec",
       "--user",
       "root",
@@ -104,7 +97,7 @@ try {
       "0600",
       "/var/lib/postgresql/data/server.key",
     ]);
-    await run("docker", [
+    await runner.run("docker", [
       "exec",
       container,
       "psql",
@@ -115,7 +108,7 @@ try {
       "-c",
       "ALTER SYSTEM SET ssl = on",
     ]);
-    await run("docker", [
+    await runner.run("docker", [
       "exec",
       "--user",
       "postgres",
@@ -127,7 +120,7 @@ try {
     ]);
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const enabled = (
-        await output("docker", [
+        await runner.output("docker", [
           "exec",
           container,
           "psql",
@@ -144,11 +137,9 @@ try {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  const mapping = (await output("docker", ["port", container, "5432/tcp"])).trim();
-  const port = mapping.match(/:([0-9]+)$/)?.[1];
-  if (port === undefined) throw new Error(`unexpected PostgreSQL port mapping ${mapping}`);
+  const port = await runner.port(5432);
   const postgresURL = `postgres://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
-  const result = await run(
+  const result = await runner.run(
     command,
     [
       ...arguments_,
@@ -162,21 +153,21 @@ try {
   process.exitCode = result;
 } catch (error) {
   try {
-    const logs = await output("docker", ["logs", container]);
+    const logs = await runner.output("docker", ["logs", container]);
     if (logs !== "") process.stderr.write(logs);
   } catch {
     // the container may have failed before it was created.
   }
   throw error;
 } finally {
-  await removeContainer();
+  await runner.remove();
   if (certificateDirectory !== undefined)
     await rm(certificateDirectory, { recursive: true, force: true });
 }
 
 async function waitForHealthy() {
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    const status = await output("docker", [
+    const status = await runner.output("docker", [
       "inspect",
       "--format",
       "{{.State.Health.Status}}",
@@ -186,54 +177,4 @@ async function waitForHealthy() {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error("PostgreSQL test container did not become healthy");
-}
-
-async function removeContainer() {
-  await run("docker", ["rm", "--force", container], false, true);
-}
-
-function output(executable: string, arguments_: readonly string[]): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(executable, arguments_, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (data: string) => (stdout += data));
-    child.stderr.setEncoding("utf8").on("data", (data: string) => (stderr += data));
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`${executable} ${arguments_.join(" ")} failed: ${stderr.trim()}`));
-    });
-  });
-}
-
-function run(
-  executable: string,
-  arguments_: readonly string[],
-  inherited = false,
-  allowFailure = false,
-): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const child = spawn(executable, arguments_, {
-      stdio: inherited ? "inherit" : ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.setEncoding("utf8").on("data", (data: string) => {
-      stderr = (stderr + data).slice(-4096);
-    });
-    if (inherited) testProcess = child;
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (inherited) testProcess = undefined;
-      if (code === 0 || allowFailure) resolve(code ?? 1);
-      else
-        reject(
-          new Error(
-            `${executable} exited with ${signal ?? code}${stderr.trim() === "" ? "" : `: ${stderr.trim()}`}`,
-          ),
-        );
-    });
-  });
 }
