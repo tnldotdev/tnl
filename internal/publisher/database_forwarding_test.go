@@ -50,6 +50,54 @@ func TestMySQLPublicPortSelectsCertificateWithoutVisitorSNI(t *testing.T) {
 	}
 }
 
+func TestPostgresPlaintextCancelIsReportedWithoutForwarding(t *testing.T) {
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	received := make(chan []byte, 1)
+	go func() {
+		connection, err := target.Accept()
+		if err != nil {
+			received <- nil
+			return
+		}
+		defer connection.Close()
+		_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
+		data, _ := io.ReadAll(connection)
+		received <- data
+	}()
+	warning := make(chan struct{}, 1)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+		Target: target.Addr().String(), Certificate: publicURLTestCertificate(t, "route.example"),
+		OnCancelUnsupported: func() { warning <- struct{}{} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	visitor := openDatabaseVisitor(t, route, 5432)
+	request := append(postgresCancelRequest[:], make([]byte, 8)...)
+	if _, err := visitor.Write(request); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-warning:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancel request did not trigger a publisher warning")
+	}
+	select {
+	case data := <-received:
+		if len(data) != 0 {
+			t.Fatalf("plaintext cancel bytes reached the target: %x", data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("target connection did not close")
+	}
+}
+
 func TestMySQLInspectionWaitsForVerifiedTargetAuthentication(t *testing.T) {
 	visitorCertificate := publicURLTestCertificate(t, "route.example")
 	backendCertificate := publicURLTestCertificate(t, "db.internal")
