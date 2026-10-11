@@ -393,6 +393,9 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		snapshot, err := clientruntime.ReadSnapshot(project.Root, state)
 		if err != nil {
 			return err
@@ -409,8 +412,14 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 			}
 		}
 		if hasDatabase {
+			if ctx.Err() != nil {
+				return nil
+			}
 			tunnelEvents, err := database.TunnelEventsAfter(ctx, project.Root, tunnelCursor)
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return failure.Wrap("resume local events", failure.AppCursorExpired, err)
 			}
 			for _, change := range tunnelEvents {
