@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -168,8 +169,8 @@ func Run(ctx context.Context, config Config) (result error) {
 			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 		}
 	} else {
-		_, err = newDatabaseForwarding(PublicURLServerConfig{
-			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol, PublicPort: 1024,
+		_, err = validateDatabaseForwarding(PublicURLServerConfig{
+			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
 			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetOptions: config.TargetOptions,
 			DatabaseTLSPassthrough: config.DatabaseTLSPassthrough, Handler: config.Handler, Mounts: config.Mounts,
 		})
@@ -319,11 +320,11 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
-	if config.ServiceProtocol == controlv1.Postgres || config.ServiceProtocol == controlv1.Mysql {
-		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || route.Target != "" {
+	if supportsDatabaseForwarding(config.ServiceProtocol) {
+		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
 			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
 		}
-	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http {
+	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
 	}
 	if config.PublicURLScope == controlv1.Member {
@@ -351,7 +352,7 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 	if desiredPolicy == nil {
 		desiredPolicy = []string{}
 	}
-	if config.ServiceProtocol == controlv1.Postgres || config.ServiceProtocol == controlv1.Mysql {
+	if supportsDatabaseForwarding(config.ServiceProtocol) {
 		if slices.Equal(currentPolicy, desiredPolicy) {
 			return route, nil
 		}

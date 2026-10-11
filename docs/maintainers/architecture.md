@@ -82,6 +82,8 @@ conflicting entries fail closed. Ingress applies the same IP policy, admission,
 and retry boundary before forwarding database startup bytes unchanged. It closes
 a denied database connection without opening a publisher stream. Database TLS
 negotiation belongs to the publisher, not ingress.
+`internal/tcpport` checks allocated public ports (1024–65535);
+`internal/databasetarget` checks private host:port targets (1–65535).
 
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.

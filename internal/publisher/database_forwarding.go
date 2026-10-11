@@ -8,13 +8,14 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strconv"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -39,21 +40,12 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 		}
 		return nil, nil
 	}
-	if config.ServiceProtocol != controlv1.Postgres && config.ServiceProtocol != controlv1.Mysql ||
-		config.PublicPort < 1024 || config.Handler != nil || len(config.Mounts) != 0 || config.ShareAccess != nil ||
-		config.BrowserAccess != nil || config.Feedback != nil {
-		return nil, errors.New("publisher: database forwarding configuration is invalid")
+	host, err := validateDatabaseForwarding(config)
+	if err != nil {
+		return nil, err
 	}
-	if config.DatabaseTLSPassthrough && config.TargetTLSName != "" {
-		return nil, errors.New("publisher: passthrough target TLS name is verified by the database client")
-	}
-	host, port, err := net.SplitHostPort(config.Target)
-	if err != nil || host == "" {
-		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database target must be a host and port"))
-	}
-	value, err := strconv.Atoi(port)
-	if err != nil || value < 1 || value > 65535 {
-		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database target port is invalid"))
+	if !tcpport.Valid(int(config.PublicPort)) {
+		return nil, errors.New("publisher: database public port is invalid")
 	}
 	tlsName := config.TargetTLSName
 	if tlsName == "" {
@@ -67,14 +59,31 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 	}, nil
 }
 
+func supportsDatabaseForwarding(protocol controlv1.PublicURLServiceProtocol) bool {
+	return protocol == controlv1.Postgres || protocol == controlv1.Mysql
+}
+
+func validateDatabaseForwarding(config PublicURLServerConfig) (string, error) {
+	if !supportsDatabaseForwarding(config.ServiceProtocol) || config.Handler != nil || len(config.Mounts) != 0 || config.ShareAccess != nil ||
+		config.BrowserAccess != nil || config.Feedback != nil {
+		return "", errors.New("publisher: database forwarding configuration is invalid")
+	}
+	if config.DatabaseTLSPassthrough && config.TargetTLSName != "" {
+		return "", errors.New("publisher: passthrough target TLS name is verified by the database client")
+	}
+	host, err := databasetarget.Host(config.Target)
+	if err != nil {
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
+	}
+	return host, nil
+}
+
 func (d *databaseForwarding) forward(visitor net.Conn, publicTLS *tls.Config, hostname string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
 	if err != nil {
-		if d.onTargetFailure != nil {
-			d.onTargetFailure()
-		}
+		d.targetFailed()
 		return
 	}
 	defer backend.Close()
@@ -124,9 +133,8 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 		}
 		return forwardDatabasePassthrough(visitor, backend, hostname)
 	}
-	securedBackend := tls.Client(backend, d.backendTLS)
-	if err := securedBackend.Handshake(); err != nil {
-		d.targetFailed()
+	securedBackend, err := d.connectTargetTLS(backend)
+	if err != nil {
 		return err
 	}
 	if _, err := visitor.Write(answer[:]); err != nil {
@@ -160,12 +168,20 @@ func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Con
 	if d.passthrough {
 		return forwardDatabasePassthrough(visitor, backend, hostname)
 	}
-	securedBackend := tls.Client(backend, d.backendTLS)
-	if err := securedBackend.Handshake(); err != nil {
-		d.targetFailed()
+	securedBackend, err := d.connectTargetTLS(backend)
+	if err != nil {
 		return err
 	}
 	return forwardDatabaseTLS(visitor, securedBackend, publicTLS)
+}
+
+func (d *databaseForwarding) connectTargetTLS(backend net.Conn) (net.Conn, error) {
+	secured := tls.Client(backend, d.backendTLS)
+	if err := secured.Handshake(); err != nil {
+		d.targetFailed()
+		return nil, err
+	}
+	return secured, nil
 }
 
 func (d *databaseForwarding) targetFailed() {
