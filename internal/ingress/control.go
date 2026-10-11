@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -421,7 +422,7 @@ func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (
 	return entry, LookupCurrent
 }
 
-func (c *Controller) LookupPortWithReason(pool string, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
+func (c *Controller) LookupPortWithReason(pool ingresspool.ID, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !c.Ready(now) {
 		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
 	}

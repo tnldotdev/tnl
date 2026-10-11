@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcpport"
@@ -28,7 +29,7 @@ type routingTableEntry struct {
 }
 
 type portKey struct {
-	pool string
+	pool ingresspool.ID
 	port uint16
 }
 
@@ -36,7 +37,7 @@ func entryPort(entry routingTableEntry) (portKey, bool) {
 	if entry.entry.PublicPort == nil {
 		return portKey{}, false
 	}
-	return portKey{pool: *entry.entry.IngressPoolId, port: uint16(*entry.entry.PublicPort)}, true
+	return portKey{pool: ingresspool.ID(*entry.entry.IngressPoolId), port: uint16(*entry.entry.PublicPort)}, true
 }
 
 // RoutingTable replaces its data as one operation and rejects lookups until it
@@ -177,7 +178,7 @@ func (t *RoutingTable) Lookup(canonicalHostname string, now time.Time) (ingressv
 	return entry, reason == LookupCurrent
 }
 
-func (t *RoutingTable) LookupPortWithReason(pool string, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
+func (t *RoutingTable) LookupPortWithReason(pool ingresspool.ID, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	t.mu.RLock()
 	stored, exists := t.ports[portKey{pool: pool, port: port}]
 	initialized := t.initialized

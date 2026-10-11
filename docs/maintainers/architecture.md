@@ -83,6 +83,9 @@ and retry boundary before forwarding database startup bytes unchanged. It closes
 a denied database connection without opening a publisher stream. Database TLS
 negotiation belongs to the publisher, not ingress.
 
+`internal/ingresspool` names the pool across control and ingress without making
+the stateless ingress role depend on control's database package.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

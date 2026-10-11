@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -79,7 +80,7 @@ type ingressSettings struct {
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
 	visitorConnectionLimit           int64
-	ingressPoolID                    string
+	ingressPoolID                    ingresspool.ID
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
@@ -192,7 +193,7 @@ func (d *daemon) startIngressRuntime(
 		LookupPort: func(port uint16) (ingress.PublicURL, ingress.LookupReason) {
 			pool := settings.ingressPoolID
 			if pool == "" {
-				pool = "ingress-a"
+				pool = ingresspool.PrimaryID
 			}
 			entry, reason := controller.LookupPortWithReason(pool, port, time.Now())
 			if reason != ingress.LookupCurrent {

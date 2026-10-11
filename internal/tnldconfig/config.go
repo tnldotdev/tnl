@@ -14,6 +14,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/storagekey"
@@ -109,12 +110,12 @@ type Config struct {
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
-	IngressID            string `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
-	IngressPoolID        string `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
-	RelayServiceID       string `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
-	RelayID              string `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
-	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
-	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
+	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
+	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
+	RelayServiceID       string         `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
+	RelayID              string         `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
+	RelayAddress         string         `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
+	InternalRelayAddress string         `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
 	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
 	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent public URL certificate validation connections per ingress process (default: automatic)."`

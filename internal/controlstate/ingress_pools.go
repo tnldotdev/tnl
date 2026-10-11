@@ -9,10 +9,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
-const PrimaryIngressPoolID = "ingress-a"
+const PrimaryIngressPoolID = string(ingresspool.PrimaryID)
 
 type IngressPoolState string
 
