@@ -253,6 +253,7 @@ var typeScriptKeyMappings = map[string]string{
 	"source_ips":      "sourceIPs",
 	"allow_all_ips":   "allowAllIPs",
 	"startup_timeout": "startupTimeout",
+	"max_bytes":       "maxBytes",
 	"target_ca_file":  "targetCAFile",
 	"target_tls":      "targetTLS",
 	"target_tls_name": "targetTLSName",

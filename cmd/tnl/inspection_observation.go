@@ -19,15 +19,33 @@ func inspectionRoots(ctx context.Context, project string) (string, string, error
 	return worktree.PrimaryCheckoutRoot(), projectconfig.SharedProjectIdentity(worktree, project), nil
 }
 
-func newInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, mode config.InspectionMode) (*clientstate.InspectionRecorder, error) {
-	if mode == config.InspectionNone {
+func (flags tunnelFlags) inspectionPolicy() (inspection.Policy, error) {
+	policy := inspection.Policy{Retention: flags.InspectionRetention, MaxBytes: inspection.DefaultMaxBytes}
+	if policy.Retention == 0 {
+		policy.Retention = inspection.DefaultRetention
+	}
+	if flags.InspectionMaxBytes != "" {
+		size, err := config.ParseByteSize(flags.InspectionMaxBytes)
+		if err != nil {
+			return policy, fmt.Errorf("inspection max bytes: %w", err)
+		}
+		policy.MaxBytes = size.Value()
+	}
+	return policy, nil
+}
+
+func newInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, flags tunnelFlags) (*clientstate.InspectionRecorder, error) {
+	if flags.InspectionMode == config.InspectionNone {
 		return nil, nil
 	}
 	primary, shared, err := inspectionRoots(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	policy := inspection.Policy{Retention: inspection.DefaultRetention, MaxBytes: inspection.DefaultMaxBytes}
+	policy, err := flags.inspectionPolicy()
+	if err != nil {
+		return nil, err
+	}
 	return tunnel.NewInspectionRecorder(primary, project, shared, service, policy), nil
 }
 

@@ -239,6 +239,8 @@ export interface TnlConfig {
  */
 export interface Inspection {
   mode?: "none" | "summary";
+  retention?: string;
+  maxBytes?: string;
 }
 export interface Publish {
   /**
@@ -267,6 +269,8 @@ export interface Readiness {
 }
 export interface Inspection1 {
   mode?: "none" | "summary";
+  retention?: string;
+  maxBytes?: string;
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

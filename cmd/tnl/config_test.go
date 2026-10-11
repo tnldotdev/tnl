@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -177,18 +178,22 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 
 func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 	rootMode, serviceMode := config.InspectionNone, config.InspectionSummary
+	rootRetention, serviceRetention := config.Duration(168*time.Hour), config.Duration(48*time.Hour)
+	rootBytes, serviceBytes := config.ByteSize(64<<20), config.ByteSize(16<<20)
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
-			Inspection: &config.Inspection{Mode: &serviceMode}, Publish: &config.Publish{Target: &target},
+		Inspection: &config.Inspection{Mode: &rootMode, Retention: &rootRetention, MaxBytes: &rootBytes}, Services: config.Services{"web": {
+			Inspection: &config.Inspection{Mode: &serviceMode, Retention: &serviceRetention, MaxBytes: &serviceBytes}, Publish: &config.Publish{Target: &target},
 		}},
 	}}}
 	for _, tc := range []struct {
-		args []string
-		want config.InspectionMode
+		args      []string
+		want      config.InspectionMode
+		retention time.Duration
+		maxBytes  string
 	}{
-		{[]string{"publish", "web"}, "summary"},
-		{[]string{"publish", "web", "--inspection-mode=none"}, "none"},
+		{[]string{"publish", "web"}, "summary", 48 * time.Hour, "16384KiB"},
+		{[]string{"publish", "web", "--inspection-mode=none", "--inspection-retention=1h", "--inspection-max-bytes=32MiB"}, "none", time.Hour, "32MiB"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -203,8 +208,35 @@ func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 		if err := project.applyPublish(&flags.Publish); err != nil {
 			t.Fatal(err)
 		}
-		if flags.Publish.InspectionMode != tc.want {
-			t.Fatalf("%v: inspection mode = %q", tc.args, flags.Publish.InspectionMode)
+		if flags.Publish.InspectionMode != tc.want || flags.Publish.InspectionRetention != tc.retention ||
+			flags.Publish.InspectionMaxBytes != tc.maxBytes {
+			t.Fatalf("%v: inspection = %q, %s, %s", tc.args,
+				flags.Publish.InspectionMode, flags.Publish.InspectionRetention, flags.Publish.InspectionMaxBytes)
+		}
+	}
+}
+
+func TestInspectionFlagsRejectZeroOverrides(t *testing.T) {
+	target := config.Target("3000")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Publish: &config.Publish{Target: &target},
+	}}}
+	for _, args := range [][]string{
+		{"publish", "3000", "--inspection-retention=0s"},
+		{"publish", "3000", "--inspection-max-bytes="},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parser.Parse(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applyTunnelCLIUnits(parsed, &flags)
+		if err := project.applyPublish(&flags.Publish); err == nil {
+			t.Fatalf("invalid inspection override %v was accepted", args)
 		}
 	}
 }
