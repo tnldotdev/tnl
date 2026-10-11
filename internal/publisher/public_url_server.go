@@ -510,9 +510,16 @@ func (r *PublicURLServer) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certi
 	if hello == nil {
 		return nil, errors.New("publisher: TLS SNI does not match public URL")
 	}
-	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
-	if err != nil || hostname != r.hostname {
-		return nil, errors.New("publisher: TLS SNI does not match public URL")
+	if hello.ServerName == "" {
+		// a dedicated MySQL public port selects this certificate without SNI.
+		if r.tcp == nil || r.tcp.protocol != controlv1.Mysql {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
+	} else {
+		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+		if err != nil || hostname != r.hostname {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
 		return r.challenges.GetCertificate(hello)
