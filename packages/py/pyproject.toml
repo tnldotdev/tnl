@@ -12,7 +12,7 @@ license = "MIT"
 dependencies = ["httpx>=0.28,<0.29", "starlette>=0.45,<2", "uvicorn>=0.40,<1", "websockets>=14,<17"]
 
 [dependency-groups]
-dev = ["mypy>=1.18,<1.20", "pytest>=8.4,<9", "ruff>=0.14,<0.16"]
+dev = ["mypy>=1.18,<1.20", "pytest>=8.4,<10", "ruff>=0.14,<0.16"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tnl"]
