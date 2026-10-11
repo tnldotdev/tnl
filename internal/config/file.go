@@ -194,9 +194,10 @@ func ValidateTNL(config TNL) error {
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
 				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
-			if service.RequestInspection != nil && *service.RequestInspection == RequestInspectionDetailed ||
-				service.RequestInspection == nil && config.RequestInspection != nil && *config.RequestInspection == RequestInspectionDetailed {
-				return fmt.Errorf("services.%s: database services cannot inspect HTTP requests", name)
+			if ServiceProtocol(effectivePublish) != "postgres" &&
+				(service.RequestInspection != nil && *service.RequestInspection == RequestInspectionDetailed ||
+					service.RequestInspection == nil && config.RequestInspection != nil && *config.RequestInspection == RequestInspectionDetailed) {
+				return fmt.Errorf("services.%s: detailed inspection requires an HTTP or split-TLS PostgreSQL service", name)
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {

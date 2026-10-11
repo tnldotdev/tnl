@@ -59,6 +59,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	output.setServiceProtocol(protocol)
 	if protocol != controlv1.Http && flags.Demo {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
 			errors.New("database publication cannot run the demo"))
@@ -218,6 +219,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = requestObservation(recorder)
+	if protocol == controlv1.Postgres && !flags.DatabasePassthrough {
+		publisherConfig.ObserveDatabase = postgresObservation(recorder, flags.RequestInspection)
+	}
 	publisherConfig.RequestInspection = flags.RequestInspection
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())

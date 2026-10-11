@@ -48,7 +48,7 @@ type TNL struct {
 	Team              *string                `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
 	Feedback          *bool                  `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
 	OAuth             bool                   `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
-	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."`
+	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Local HTTP or PostgreSQL capture: summary (default) or detailed statements, headers, and bodies."`
 	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Readiness         *Readiness             `json:"readiness,omitempty" yaml:"readiness,omitempty"`
@@ -61,7 +61,7 @@ type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Override local request capture for this service."`
+	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Override local HTTP or PostgreSQL capture for this service."`
 	Directory         *string                `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
 	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`

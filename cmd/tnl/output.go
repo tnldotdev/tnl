@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publishEventType string
@@ -74,6 +75,7 @@ type publishOutput struct {
 	target                string
 	current               string
 	inspection            config.RequestInspectionMode
+	serviceProtocol       controlv1.PublicURLServiceProtocol
 	demo                  bool
 	guestDemo             bool
 	openURL               func(string) error
@@ -244,7 +246,11 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
 			}
 			if o.inspection == config.RequestInspectionDetailed {
-				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
+				if o.serviceProtocol == controlv1.Postgres {
+					fields = append(fields, clioutput.Field{Label: "SQL capture", Value: "detailed; statements saved locally"})
+				} else {
+					fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
+				}
 			}
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
@@ -318,6 +324,12 @@ func (o *publishOutput) currentIP(ip string) error {
 func (o *publishOutput) setRequestInspection(mode config.RequestInspectionMode) {
 	o.mu.Lock()
 	o.inspection = mode
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) setServiceProtocol(protocol controlv1.PublicURLServiceProtocol) {
+	o.mu.Lock()
+	o.serviceProtocol = protocol
 	o.mu.Unlock()
 }
 

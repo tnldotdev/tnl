@@ -63,9 +63,10 @@ func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.Pub
 		}
 		return nil
 	}
-	if flags.Open || flags.RequestInspection == config.RequestInspectionDetailed {
+	if flags.Open || flags.RequestInspection == config.RequestInspectionDetailed &&
+		(protocol != controlv1.Postgres || flags.DatabasePassthrough) {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database publications do not support --open or HTTP request capture"))
+			errors.New("database publications do not support browser opening; detailed inspection requires split-TLS PostgreSQL"))
 	}
 	if flags.DatabasePassthrough && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,

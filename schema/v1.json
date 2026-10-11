@@ -66,7 +66,7 @@
         "request_inspection": {
           "type": "string",
           "enum": ["summary", "detailed"],
-          "description": "Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."
+          "description": "Local HTTP or PostgreSQL capture: summary (default) or detailed statements, headers, and bodies."
         },
         "tunnel": {
           "allOf": [
@@ -182,7 +182,7 @@
               "request_inspection": {
                 "type": "string",
                 "enum": ["summary", "detailed"],
-                "description": "Local HTTP request capture for this service."
+                "description": "Local HTTP or PostgreSQL capture for this service."
               },
               "tunnel": {
                 "allOf": [

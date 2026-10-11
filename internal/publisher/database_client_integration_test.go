@@ -17,6 +17,7 @@ import (
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -98,6 +99,67 @@ func TestIntegrationDatabaseClientPostgresMatchingCertificate(t *testing.T) {
 	var value int
 	if err := connection.QueryRow(ctx, "SELECT $1::int", 1).Scan(&value); err != nil || value != 1 {
 		t.Fatalf("shared certificate query = %d, %v", value, err)
+	}
+}
+
+func TestIntegrationDatabaseClientPostgresInspection(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	backendRoots := postgresClientTestRoots(t)
+	parsed, err := url.Parse(testutil.PostgresURL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []projectconfig.RequestInspectionMode{projectconfig.RequestInspectionSummary, projectconfig.RequestInspectionDetailed} {
+		t.Run(string(mode), func(t *testing.T) {
+			observed := make(chan DatabaseObservation, 8)
+			certificate := publicURLTestCertificate(t, "route.example")
+			route, err := NewPublicURLServer(PublicURLServerConfig{
+				Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+				Target: parsed.Host, TargetTLSName: "db.internal", Certificate: certificate,
+				TargetOptions:     localproxy.TargetOptions{RootCAs: backendRoots},
+				RequestInspection: mode,
+				ObserveDatabase:   func(value DatabaseObservation) { observed <- value },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer route.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			connection, err := pgx.ConnectConfig(ctx, postgresClientTestConfig(t, route, rootsForCertificate(t, certificate), "disable"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close(context.Background())
+			var value int
+			if err := connection.QueryRow(ctx, "SELECT $1::int", 1).Scan(&value); err != nil || value != 1 {
+				t.Fatalf("query = %d, %v", value, err)
+			}
+			if _, err := connection.Exec(ctx, "SELECT missing_column"); err == nil {
+				t.Fatal("expected a PostgreSQL query failure")
+			}
+			var success, failed DatabaseObservation
+			select {
+			case success = <-observed:
+			case <-ctx.Done():
+				t.Fatal("successful execution was not observed")
+			}
+			select {
+			case failed = <-observed:
+			case <-ctx.Done():
+				t.Fatal("failed execution was not observed")
+			}
+			if success.Operation != "execute" || success.Result != "ok" || success.Rows != 1 ||
+				failed.Result != "error" || failed.SQLState != "42703" {
+				t.Fatalf("database observations = %#v, %#v", success, failed)
+			}
+			if mode == projectconfig.RequestInspectionSummary && (success.Statement != "" || failed.Statement != "") {
+				t.Fatal("summary inspection stored SQL")
+			}
+			if mode == projectconfig.RequestInspectionDetailed && (success.Statement != "SELECT $1::int" || failed.Statement != "SELECT missing_column") {
+				t.Fatalf("detailed inspection did not capture statements: %#v, %#v", success, failed)
+			}
+		})
 	}
 }
 

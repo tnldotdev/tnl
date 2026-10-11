@@ -149,7 +149,7 @@ export interface TnlConfig {
               | undefined;
           };
           /**
-           * Local HTTP request capture for this service.
+           * Local HTTP or PostgreSQL capture for this service.
            */
           requestInspection?: "summary" | "detailed";
         }
@@ -236,7 +236,7 @@ export interface TnlConfig {
       | undefined;
   };
   /**
-   * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
+   * Local HTTP or PostgreSQL capture: summary (default) or detailed statements, headers, and bodies.
    */
   requestInspection?: "summary" | "detailed";
 }

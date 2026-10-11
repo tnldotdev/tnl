@@ -6,8 +6,10 @@ import (
 	"fmt"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func requestRoots(ctx context.Context, project string) (string, string, error) {
@@ -36,6 +38,24 @@ func requestObservation(recorder *clientstate.RequestRecorder) func(publisher.Re
 			ReceivedAt: event.ReceivedAt, Method: event.Method, Path: event.Path,
 			Status: event.Status, DurationMS: event.Duration.Milliseconds(), Origin: event.Origin,
 			CaptureMode: string(event.CaptureMode), Detail: detail,
+		})
+	}
+}
+
+func postgresObservation(recorder *clientstate.RequestRecorder, mode config.RequestInspectionMode) func(publisher.DatabaseObservation) {
+	return func(event publisher.DatabaseObservation) {
+		var detail json.RawMessage
+		if mode == config.RequestInspectionDetailed && event.Statement != "" {
+			detail, _ = json.Marshal(struct {
+				Statement string `json:"statement"`
+				Truncated bool   `json:"truncated,omitempty"`
+			}{event.Statement, event.StatementTruncated})
+		}
+		recorder.Observe(clientstate.RequestRecord{
+			ServiceProtocol: controlv1.Postgres, ReceivedAt: event.ReceivedAt,
+			DurationMS: event.Duration.Milliseconds(), Origin: "tnl", CaptureMode: string(mode), Detail: detail,
+			DatabaseOperation: event.Operation, DatabaseResult: event.Result, SQLState: event.SQLState,
+			DatabaseRows: event.Rows,
 		})
 	}
 }

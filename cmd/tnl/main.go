@@ -66,7 +66,7 @@ type tunnelFlags struct {
 	RatePer            string                       `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	Concurrency        *int                         `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
 	TargetCAFile       string                       `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or database target."`
-	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
+	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local HTTP or PostgreSQL capture: summary (default) or detailed statements, headers, and bodies."`
 
 	allowAllIPsFromCLI       bool
 	ephemeralFromCLI         bool

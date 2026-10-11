@@ -195,6 +195,7 @@ func runSession(
 		RequestLimit:           config.RequestLimit,
 		Limits:                 config.Limits,
 		ObserveRequest:         config.ObserveRequest,
+		ObserveDatabase:        config.ObserveDatabase,
 		RequestInspection:      config.RequestInspection,
 		Handler:                config.Handler,
 		AdmitRequest: func(request *http.Request) error {

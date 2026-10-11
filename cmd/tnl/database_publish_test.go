@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -101,5 +102,16 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 	}
 	if err := validateDatabasePublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
 		t.Fatal("database --open was silently ignored")
+	}
+	flags := publishCommand{tunnelFlags: tunnelFlags{RequestInspection: config.RequestInspectionDetailed}}
+	if err := validateDatabasePublishOptions(flags, controlv1.Postgres); err != nil {
+		t.Fatalf("split-TLS PostgreSQL rejected detailed inspection: %v", err)
+	}
+	if err := validateDatabasePublishOptions(flags, controlv1.Mysql); err == nil {
+		t.Fatal("MySQL accepted detailed inspection without an execution parser")
+	}
+	flags.DatabasePassthrough = true
+	if err := validateDatabasePublishOptions(flags, controlv1.Postgres); err == nil {
+		t.Fatal("opaque PostgreSQL TLS passthrough accepted detailed inspection")
 	}
 }

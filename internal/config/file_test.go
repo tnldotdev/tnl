@@ -243,6 +243,22 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)
 	}
+	detailed := RequestInspectionDetailed
+	orders := project.Services["orders"]
+	orders.RequestInspection = &detailed
+	project.Services["orders"] = orders
+	if err := ValidateTNL(project); err != nil {
+		t.Fatalf("split-TLS PostgreSQL statement inspection: %v", err)
+	}
+	mysql := "mysql"
+	orders.Publish = &Publish{Protocol: &mysql, Target: &target}
+	project.Services["orders"] = orders
+	if err := ValidateTNL(project); err == nil {
+		t.Fatal("detailed MySQL inspection was accepted without a MySQL execution parser")
+	}
+	orders.Publish = &Publish{Protocol: &protocol, Target: &target, TargetTLSName: &tlsName, TargetCAFile: &caFile}
+	orders.RequestInspection = nil
+	project.Services["orders"] = orders
 	for name, change := range map[string]func(*TNL){
 		"http target": func(value *TNL) {
 			invalid := Target("http://db.internal:5432")

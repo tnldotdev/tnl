@@ -10,6 +10,7 @@ import (
 	"net"
 	"time"
 
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -34,6 +35,8 @@ type databaseForwarding struct {
 	passthrough         bool
 	onTargetFailure     func()
 	onCancelUnsupported func()
+	observeDatabase     func(DatabaseObservation)
+	inspectionMode      projectconfig.RequestInspectionMode
 }
 
 func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, error) {
@@ -60,6 +63,8 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 			RootCAs: config.TargetOptions.RootCAs}, passthrough: config.DatabaseTLSPassthrough,
 		onTargetFailure:     config.OnTargetFailure,
 		onCancelUnsupported: config.OnCancelUnsupported,
+		observeDatabase:     config.ObserveDatabase,
+		inspectionMode:      config.RequestInspection,
 	}, nil
 }
 
@@ -154,7 +159,7 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 	if _, err := visitor.Write(answer[:]); err != nil {
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, true)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, true, d.observeDatabase, d.inspectionMode)
 }
 
 func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
@@ -186,7 +191,7 @@ func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Con
 	if err != nil {
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, false)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, false, nil, "")
 }
 
 func (d *databaseForwarding) connectTargetTLS(backend net.Conn) (net.Conn, error) {
@@ -219,7 +224,8 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 	return packet, err
 }
 
-func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission, postgres bool) error {
+func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission, postgres bool,
+	observe func(DatabaseObservation), inspectionMode projectconfig.RequestInspectionMode) error {
 	var visitorCertificate []byte
 	if postgres && publicTLS.GetCertificate != nil {
 		publicTLS = publicTLS.Clone()
@@ -249,6 +255,9 @@ func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admiss
 			!bytes.Equal(visitorCertificate, targetTLS.ConnectionState().PeerCertificates[0].Raw) {
 			client = &postgresAuthChoiceConn{Conn: securedVisitor}
 		}
+	}
+	if postgres && observe != nil {
+		backend = &postgresInspectionConn{Conn: backend, observer: newPostgresInspector(observe, inspectionMode)}
 	}
 	_, err := streamcopy.Copy(client, backend)
 	return err
