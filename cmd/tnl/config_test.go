@@ -533,7 +533,7 @@ func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
 		!flags.TargetTLS || flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
 		t.Fatalf("database service = %#v", flags)
 	}
-	if err := validateDatabasePublishOptions(flags, controlv1.Postgres); err != nil {
+	if err := validateTCPPublishOptions(flags, controlv1.Postgres); err != nil {
 		t.Fatal(err)
 	}
 	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLS: true, TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}

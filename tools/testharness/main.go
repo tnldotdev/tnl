@@ -30,6 +30,7 @@ import (
 const (
 	postgresImage = "public.ecr.aws/docker/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 	mysqlImage    = "public.ecr.aws/docker/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
+	redisImage    = "public.ecr.aws/docker/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 )
 
 func main() {
@@ -57,7 +58,7 @@ func run() error {
 		}
 	}
 	if separator != 2 || separator == len(os.Args)-1 {
-		return errors.New("usage: testharness postgres|mysql -- go test [arguments...], or testharness dns")
+		return errors.New("usage: testharness postgres|mysql|redis -- go test [arguments...], or testharness dns|runtime")
 	}
 	command := os.Args[separator+1:]
 	root, err := repositoryRoot()
@@ -122,8 +123,27 @@ func run() error {
 			return fmt.Errorf("read disposable MySQL port: %w", err)
 		}
 		command = append(command, "-tnl-test-mysql-address="+net.JoinHostPort(host, port.Port()))
+	case "redis":
+		container, err := testcontainers.Run(ctx, redisImage,
+			testcontainers.WithExposedPorts("6379/tcp"), loopbackPort("6379"),
+			testcontainers.WithCmd("redis-server", "--requirepass", "testpass"),
+			testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp")),
+		)
+		if err != nil {
+			return fmt.Errorf("start disposable Redis: %w", err)
+		}
+		defer terminate(container)
+		host, err := container.Host(ctx)
+		if err != nil {
+			return fmt.Errorf("read disposable Redis host: %w", err)
+		}
+		port, err := container.MappedPort(ctx, "6379/tcp")
+		if err != nil {
+			return fmt.Errorf("read disposable Redis port: %w", err)
+		}
+		command = append(command, "-tnl-test-redis-address="+net.JoinHostPort(host, port.Port()))
 	default:
-		return errors.New("test service must be postgres or mysql")
+		return errors.New("test service must be postgres, mysql, or redis")
 	}
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Dir = root

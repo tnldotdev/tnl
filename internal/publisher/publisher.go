@@ -159,7 +159,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 	if config.ServiceProtocol == controlv1.Http {
 		if config.TargetTLSName != "" || config.TargetTLS {
-			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database TLS settings require a database service protocol"))
+			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("private target TLS settings require a private TCP service protocol"))
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
 		if err != nil {
@@ -169,7 +169,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 		}
 	} else {
-		_, err = validateDatabaseForwarding(PublicURLServerConfig{
+		_, err = validateTCPForwarding(PublicURLServerConfig{
 			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
 			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS, TargetOptions: config.TargetOptions,
 			Handler: config.Handler, Mounts: config.Mounts,
@@ -180,7 +180,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			if err == nil {
 				err = connection.Close()
 			} else {
-				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect database target: %w", err))
+				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect private TCP target: %w", err))
 			}
 		}
 	}
@@ -320,12 +320,12 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
-	if supportsDatabaseForwarding(config.ServiceProtocol) {
+	if supportsTCPForwarding(config.ServiceProtocol) {
 		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
-			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
+			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested private TCP endpoint"))
 		}
 	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested database endpoint"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested private TCP endpoint"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
@@ -352,7 +352,7 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 	if desiredPolicy == nil {
 		desiredPolicy = []string{}
 	}
-	if supportsDatabaseForwarding(config.ServiceProtocol) {
+	if supportsTCPForwarding(config.ServiceProtocol) {
 		if slices.Equal(currentPolicy, desiredPolicy) {
 			return route, nil
 		}

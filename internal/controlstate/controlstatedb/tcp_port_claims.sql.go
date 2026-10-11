@@ -223,7 +223,7 @@ func (q *Queries) ReleaseQuarantinedTCPPortClaims(ctx context.Context, now pgtyp
 const setPublicURLTCPPort = `-- name: SetPublicURLTCPPort :execrows
 UPDATE control.public_urls SET public_port = $1
 WHERE id = $2 AND public_port IS NULL
-  AND service_protocol IN ('postgres', 'mysql')
+  AND service_protocol IN ('postgres', 'mysql', 'redis')
 `
 
 type SetPublicURLTCPPortParams struct {

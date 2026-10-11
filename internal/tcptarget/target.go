@@ -1,5 +1,5 @@
-// package databasetarget validates the private database address used by a publisher.
-package databasetarget
+// package tcptarget validates the private TCP address used by a publisher.
+package tcptarget
 
 import (
 	"errors"
@@ -12,11 +12,11 @@ import (
 func Host(target string) (string, error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || host == "" {
-		return "", errors.New("database target must be a host and port")
+		return "", errors.New("private TCP target must be a host and port")
 	}
 	number, err := strconv.Atoi(port)
 	if err != nil || !tcpport.ValidNetwork(number) {
-		return "", errors.New("database target port is invalid")
+		return "", errors.New("private TCP target port is invalid")
 	}
 	return host, nil
 }

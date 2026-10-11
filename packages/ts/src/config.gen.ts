@@ -242,11 +242,11 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local service protocol: http (default), postgres, or mysql.
+   * Local service protocol: http (default), postgres, mysql, or redis.
    */
-  protocol?: "http" | "postgres" | "mysql";
+  protocol?: "http" | "postgres" | "mysql" | "redis";
   /**
-   * HTTP or HTTPS origin, local port, or database host:port reached by the publisher.
+   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
    */
   target?: string | number;
   /**
@@ -254,11 +254,11 @@ export interface Publish {
    */
   targetCAFile?: string;
   /**
-   * Use verified TLS for the private database target.
+   * Use verified TLS for the private TCP target.
    */
   targetTLS?: boolean;
   /**
-   * Hostname expected in the private database TLS certificate; defaults to the target host.
+   * Hostname expected in the private target TLS certificate; defaults to the target host.
    */
   targetTLSName?: string;
 }

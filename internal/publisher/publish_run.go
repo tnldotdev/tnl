@@ -59,7 +59,7 @@ func runSession(
 	var publicPort uint16
 	if setup.PublicUrl.PublicPort != nil {
 		if !tcpport.Valid(*setup.PublicUrl.PublicPort) {
-			return errors.New("publisher: server returned invalid database public port")
+			return errors.New("publisher: server returned invalid private TCP public port")
 		}
 		publicPort = uint16(*setup.PublicUrl.PublicPort)
 	}

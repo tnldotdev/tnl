@@ -30,6 +30,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            tools/testharness/go.sum
             .github/workflows/integration.yml
 
       - name: Install Task
@@ -47,6 +48,9 @@ jobs:
 
       - name: Verify database clients
         run: task go:test:integration:database-clients
+
+      - name: Verify Redis publishing
+        run: task go:test:integration:redis
 
   binary:
     name: Binary integration

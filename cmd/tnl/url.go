@@ -62,7 +62,7 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 			clioutput.Field{Label: "next publish run number", Value: strconv.FormatInt(route.NextPublishRunNumber, 10)},
 			clioutput.Field{Label: "public URL ID", Value: route.Id},
 		}
-		if route.ServiceProtocol == controlv1.Postgres || route.ServiceProtocol == controlv1.Mysql {
+		if route.ServiceProtocol != controlv1.Http {
 			address, err := savedPublicAddress(route)
 			if err != nil {
 				return err
@@ -123,8 +123,8 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		return controlclient.ErrNotFound
 	}
 	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
-		return failure.Wrap("validate database URL update", failure.InvalidTunnelFlags,
-			errors.New("database targets are configured on the publisher, not the saved public URL"))
+		return failure.Wrap("validate private TCP URL update", failure.InvalidTunnelFlags,
+			errors.New("private TCP targets are configured on the publisher, not the saved public URL"))
 	}
 	target := route.Target
 	if flags.Target != "" {

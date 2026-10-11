@@ -243,6 +243,11 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:redis:
+    desc: Verify Redis authentication and commands through a TLS public URL to a disposable plaintext Redis
+    cmds:
+      - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:binary:
     desc: Run Linux binary integration tests
     deps: [js:build]

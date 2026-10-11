@@ -115,6 +115,14 @@ connection, while `--target-tls-name` sets its expected certificate hostname.
 TypeScript configuration uses `publish.targetTLS`, `publish.targetCAFile`, and
 `publish.targetTLSName` for the same settings.
 
+`tnl publish redis:6379 --protocol redis` uses the same saved TCP port and
+publisher-owned private target. Redis visitors start TLS immediately, before
+sending authentication or commands. The publisher terminates visitor TLS and
+forwards Redis bytes to the private target unchanged. A Redis target in a
+Compose network can remain plaintext; `--target-tls` instead requires a
+verified TLS handshake to the target and never falls back to plaintext. Redis
+authentication and command authorization remain with the target.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

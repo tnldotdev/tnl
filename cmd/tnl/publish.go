@@ -25,10 +25,10 @@ type publishCommand struct {
 	openOptions       `embed:""`
 	remoteFlags       `embed:""`
 	tunnelFlags       `embed:""`
-	Target            string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or database host:port."`
+	Target            string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or private TCP host:port."`
 	Protocol          string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
-	TargetTLSName     string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the private database TLS certificate; defaults to the target host."`
-	TargetTLS         bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the private database target."`
+	TargetTLSName     string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the private target TLS certificate; defaults to the target host."`
+	TargetTLS         bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the private TCP target."`
 	PublishCredential string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
 	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
@@ -60,10 +60,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	if protocol != controlv1.Http && flags.Demo {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database publication cannot run the demo"))
+		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("private TCP publication cannot run the demo"))
 	}
-	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
 	}
 	var localDemo *demo.Server
@@ -233,8 +233,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database public URLs cannot use HTTP path mounts"))
+		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("private TCP public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {

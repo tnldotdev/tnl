@@ -109,7 +109,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if protocol == controlv1.Http && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
 	}
-	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
 	}
 	target, err := selectScopedPublishTargetForProtocol(route.Target, flags.Target, protocol)
@@ -187,8 +187,8 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return err
 	}
 	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database public URLs cannot use HTTP path mounts"))
+		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("private TCP public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {

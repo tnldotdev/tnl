@@ -14,9 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -319,11 +319,11 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	}
 	if publish != nil {
 		protocol := ServiceProtocol(publish)
-		if protocol != "http" && protocol != "postgres" && protocol != "mysql" {
-			return errors.New("publish.protocol must be http, postgres, or mysql")
+		if protocol != "http" && protocol != "postgres" && protocol != "mysql" && protocol != "redis" {
+			return errors.New("publish.protocol must be http, postgres, mysql, or redis")
 		}
 		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a database protocol")
+			return errors.New("publish.target_tls requires a private TCP protocol")
 		}
 		if publish.Target != nil {
 			target := string(*publish.Target)
@@ -331,18 +331,18 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 				if _, err := localproxy.NormalizeTarget(target); err != nil {
 					return fmt.Errorf("publish.target: %w", err)
 				}
-			} else if _, err := databasetarget.Normalize(target); err != nil {
+			} else if _, err := tcptarget.Normalize(target); err != nil {
 				return fmt.Errorf("publish.target: %w", err)
 			}
 		}
 		if publish.TargetTLSName != nil {
 			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a database protocol and a hostname")
+				return errors.New("publish.target_tls_name requires a private TCP protocol and a hostname")
 			}
 		}
 		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
 			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when private database TLS settings are supplied")
+			return errors.New("publish.target_tls must be true when private target TLS settings are supplied")
 		}
 		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
 			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")

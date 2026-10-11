@@ -30,7 +30,7 @@ type TCPPortPoolCapacity struct {
 	AvailablePorts   int64
 }
 
-// AllocateTCPPort assigns one stable address to an enabled saved database URL.
+// AllocateTCPPort assigns one stable address to an enabled saved TCP URL.
 // concurrent URLs race on the unique pool/port claim, never on the hostname.
 func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now time.Time) (result TCPPortClaim, retErr error) {
 	if !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) || now.IsZero() {
@@ -58,7 +58,7 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 		return TCPPortClaim{}, err
 	}
 	protocol := PublicURLServiceProtocol(url.ServiceProtocol)
-	if url.LifecycleState != string(PublicURLLifecycleEnabled) || protocol != PublicURLServicePostgres && protocol != PublicURLServiceMySQL {
+	if url.LifecycleState != string(PublicURLLifecycleEnabled) || !protocol.Valid() || protocol == PublicURLServiceHTTP {
 		return TCPPortClaim{}, ErrPublicURLInvalid
 	}
 	existing, err := queries.GetHeldTCPPortClaim(ctx, publicURLID)
