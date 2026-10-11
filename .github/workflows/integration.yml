@@ -55,6 +55,9 @@ jobs:
       - name: Verify SSH publishing
         run: task go:test:integration:ssh
 
+      - name: Verify MongoDB publishing
+        run: task go:test:integration:mongodb
+
   binary:
     name: Binary integration
     runs-on: ubuntu-latest

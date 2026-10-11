@@ -319,8 +319,8 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	}
 	if publish != nil {
 		protocol := ServiceProtocol(publish)
-		if protocol != "http" && protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" {
-			return errors.New("publish.protocol must be http, postgres, mysql, redis, or ssh")
+		if protocol != "http" && protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" && protocol != "mongodb" {
+			return errors.New("publish.protocol must be http, postgres, mysql, redis, ssh, or mongodb")
 		}
 		if publish.TargetTLS != nil && protocol == "http" {
 			return errors.New("publish.target_tls requires a private TCP protocol")

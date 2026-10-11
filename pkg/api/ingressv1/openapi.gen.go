@@ -60,6 +60,7 @@ func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
 // Defines values for IngressRoutingTableEntryServiceProtocol.
 const (
 	Http     IngressRoutingTableEntryServiceProtocol = "http"
+	Mongodb  IngressRoutingTableEntryServiceProtocol = "mongodb"
 	Mysql    IngressRoutingTableEntryServiceProtocol = "mysql"
 	Postgres IngressRoutingTableEntryServiceProtocol = "postgres"
 	Redis    IngressRoutingTableEntryServiceProtocol = "redis"
@@ -70,6 +71,8 @@ const (
 func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
+		return true
+	case Mongodb:
 		return true
 	case Mysql:
 		return true

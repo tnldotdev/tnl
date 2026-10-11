@@ -132,6 +132,14 @@ The publisher checks it before forwarding new SSH visitors and retains the
 normal certificate expiration and renewal lifecycle. Target TLS remains an
 explicit option for an SSH target behind a separate TLS wrapper.
 
+`tnl publish mongod:27017 --protocol mongodb` forwards one mongodb endpoint.
+MongoDB clients use `tls=true&directConnection=true` with the saved public
+hostname and port so they verify visitor TLS and stay on that endpoint. The
+publisher terminates visitor TLS and forwards to the private target over
+plaintext TCP unless explicit verified target TLS is configured. A single
+public port does not proxy other replica-set member addresses discovered by a
+client; use a standalone `mongod` or a single `mongos` for this initial shape.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

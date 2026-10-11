@@ -38,7 +38,7 @@ ON CONFLICT DO NOTHING RETURNING *;
 -- name: SetPublicURLTCPPort :execrows
 UPDATE control.public_urls SET public_port = sqlc.arg(port)
 WHERE id = sqlc.arg(public_url_id) AND public_port IS NULL
-  AND service_protocol IN ('postgres', 'mysql', 'redis', 'ssh');
+  AND service_protocol IN ('postgres', 'mysql', 'redis', 'ssh', 'mongodb');
 
 -- name: QuarantineTCPPortClaim :execrows
 UPDATE control.tcp_port_claims SET state = 'quarantined',

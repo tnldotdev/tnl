@@ -434,6 +434,7 @@ func (e PublicURLScope) Valid() bool {
 // Defines values for PublicURLServiceProtocol.
 const (
 	Http     PublicURLServiceProtocol = "http"
+	Mongodb  PublicURLServiceProtocol = "mongodb"
 	Mysql    PublicURLServiceProtocol = "mysql"
 	Postgres PublicURLServiceProtocol = "postgres"
 	Redis    PublicURLServiceProtocol = "redis"
@@ -444,6 +445,8 @@ const (
 func (e PublicURLServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
+		return true
+	case Mongodb:
 		return true
 	case Mysql:
 		return true

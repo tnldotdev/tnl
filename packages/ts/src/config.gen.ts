@@ -242,9 +242,9 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local service protocol: http (default), postgres, mysql, redis, or ssh.
+   * Local service protocol: http (default), postgres, mysql, redis, ssh, or mongodb.
    */
-  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
+  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
   /**
    * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
    */

@@ -187,6 +187,15 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 	if got, reason := table.LookupPortWithReason("ingress-b", 2222, now); reason != "" || got.PublicUrlId != ssh.PublicUrlId {
 		t.Fatalf("SSH port = %+v, %q", got, reason)
 	}
+	mongodb := event(6, "mongo", "ingress-b", 27017)
+	mongoProtocol := ingressv1.Mongodb
+	mongodb.Entry.ServiceProtocol = &mongoProtocol
+	if err := table.ApplyPage(5, ingressv1.IngressRoutingTablePage{ThroughRevision: 6, NextRevision: 6, Events: []ingressv1.IngressRoutingTableEvent{mongodb}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, reason := table.LookupPortWithReason("ingress-b", 27017, now); reason != "" || got.PublicUrlId != mongodb.PublicUrlId {
+		t.Fatalf("MongoDB port = %+v, %q", got, reason)
+	}
 }
 
 func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {

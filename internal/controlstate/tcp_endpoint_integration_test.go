@@ -91,4 +91,13 @@ func TestIntegrationDatabasePublicURLClaimsPortWithCreation(t *testing.T) {
 	if err != nil || sshURL.ServiceProtocol != PublicURLServiceSSH || sshURL.Target != "" || sshURL.PublicPort == nil || *sshURL.PublicPort != 2222 {
 		t.Fatalf("saved SSH address = %#v, %v", sshURL, err)
 	}
+	if err := database.EnsurePrimaryIngressPool(t.Context(), "192.0.2.10", "", []int32{5432, 15432, 3306, 6379, 2222, 27017}, now.Add(5*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	mongodb := request
+	mongodb.IdempotencyKey, mongodb.CanonicalHostname, mongodb.ServiceProtocol = "mongo-endpoint", "mongo."+request.CanonicalHostname, PublicURLServiceMongoDB
+	mongoURL, err := database.CreatePublicURL(t.Context(), mongodb, now.Add(5*time.Hour))
+	if err != nil || mongoURL.ServiceProtocol != PublicURLServiceMongoDB || mongoURL.Target != "" || mongoURL.PublicPort == nil || *mongoURL.PublicPort != 27017 {
+		t.Fatalf("saved MongoDB address = %#v, %v", mongoURL, err)
+	}
 }

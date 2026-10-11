@@ -34,6 +34,7 @@ const (
 	mysqlImage    = "public.ecr.aws/docker/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
 	redisImage    = "public.ecr.aws/docker/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 	sshImage      = "lscr.io/linuxserver/openssh-server:latest@sha256:46f115de7c251558297e7e87566fc3fc08544b63e55502b5cf294454db5d29d1"
+	mongoImage    = "public.ecr.aws/docker/library/mongo:8.0@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c"
 )
 
 func main() {
@@ -61,7 +62,7 @@ func run() error {
 		}
 	}
 	if separator != 2 || separator == len(os.Args)-1 {
-		return errors.New("usage: testharness postgres|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
+		return errors.New("usage: testharness postgres|mysql|redis|ssh|mongodb -- go test [arguments...], or testharness dns|runtime")
 	}
 	command := os.Args[separator+1:]
 	root, err := repositoryRoot()
@@ -190,8 +191,34 @@ func run() error {
 		}
 		command = append(command, "-tnl-test-ssh-address="+net.JoinHostPort(host, port.Port()),
 			"-tnl-test-ssh-host-key="+hostKey)
+	case "mongodb":
+		container, err := testcontainers.Run(ctx, mongoImage,
+			testcontainers.WithExposedPorts("27017/tcp"), loopbackPort("27017"),
+			testcontainers.WithEnv(map[string]string{
+				"MONGO_INITDB_ROOT_USERNAME": "tnl_test", "MONGO_INITDB_ROOT_PASSWORD": "testpass",
+			}),
+			testcontainers.WithWaitStrategyAndDeadline(3*time.Minute,
+				wait.ForListeningPort("27017/tcp"),
+				wait.ForExec([]string{"mongosh", "--quiet", "--host", "127.0.0.1", "--port", "27017",
+					"--username", "tnl_test", "--password", "testpass", "--authenticationDatabase", "admin",
+					"--eval", "db.adminCommand({ping: 1}).ok"}),
+			),
+		)
+		if err != nil {
+			return fmt.Errorf("start disposable MongoDB: %w", err)
+		}
+		defer terminate(container)
+		host, err := container.Host(ctx)
+		if err != nil {
+			return fmt.Errorf("read disposable MongoDB host: %w", err)
+		}
+		port, err := container.MappedPort(ctx, "27017/tcp")
+		if err != nil {
+			return fmt.Errorf("read disposable MongoDB port: %w", err)
+		}
+		command = append(command, "-tnl-test-mongodb-address="+net.JoinHostPort(host, port.Port()))
 	default:
-		return errors.New("test service must be postgres, mysql, redis, or ssh")
+		return errors.New("test service must be postgres, mysql, redis, ssh, or mongodb")
 	}
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Dir = root

@@ -253,6 +253,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:mongodb:
+    desc: Verify MongoDB driver TLS, authentication, and commands through a disposable mongod
+    cmds:
+      - go -C tools/testharness run . mongodb -- go test -race -v ./internal/publisher -run='^TestIntegrationMongoDBClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:binary:
     desc: Run Linux binary integration tests
     deps: [js:build]

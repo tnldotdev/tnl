@@ -62,7 +62,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 }
 
 func supportsTCPForwarding(protocol controlv1.PublicURLServiceProtocol) bool {
-	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis || protocol == controlv1.Ssh
+	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis || protocol == controlv1.Ssh || protocol == controlv1.Mongodb
 }
 
 func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
@@ -97,8 +97,8 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config) {
 		_ = d.postgres(visitor, backend, visitorTLS)
 	case controlv1.Mysql:
 		_ = d.mysql(visitor, backend, visitorTLS)
-	case controlv1.Redis:
-		_ = d.redis(visitor, backend, visitorTLS)
+	case controlv1.Redis, controlv1.Mongodb:
+		_ = d.tlsFirst(visitor, backend, visitorTLS)
 	case controlv1.Ssh:
 		_ = d.ssh(visitor, backend)
 	}
@@ -115,7 +115,7 @@ func (d *tcpForwarding) ssh(visitor, backend net.Conn) error {
 	return copyTCPConnections(visitor, visitor, backend, d.admission)
 }
 
-func (d *tcpForwarding) redis(visitor, backend net.Conn, publicTLS *tls.Config) error {
+func (d *tcpForwarding) tlsFirst(visitor, backend net.Conn, publicTLS *tls.Config) error {
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err

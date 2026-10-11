@@ -1631,7 +1631,7 @@ components:
       enum: [app, alias, demo, oauth, webhooks]
     PublicURLServiceProtocol:
       type: string
-      enum: [http, postgres, mysql, redis, ssh]
+      enum: [http, postgres, mysql, redis, ssh, mongodb]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]

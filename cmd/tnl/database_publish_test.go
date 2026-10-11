@@ -96,6 +96,34 @@ func TestSSHPublishTargetAndAddress(t *testing.T) {
 	}
 }
 
+func TestMongoDBPublishTargetAndAddress(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "mongod:27017", "--protocol", "mongodb", "--name", "data"}); err != nil {
+		t.Fatal(err)
+	}
+	protocol, err := publishProtocol(flags.Publish.Protocol)
+	if err != nil || protocol != controlv1.Mongodb {
+		t.Fatalf("MongoDB protocol = %q, %v", protocol, err)
+	}
+	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "mongod:27017" {
+		t.Fatalf("MongoDB private target = %q, %v", target, err)
+	}
+	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
+		t.Fatal(err)
+	}
+	port := 27017
+	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "data.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "data.example:27017" {
+		t.Fatalf("MongoDB public address = %q, %v", address, err)
+	}
+	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "mongo.internal"}, protocol); err == nil {
+		t.Fatal("MongoDB accepted a target TLS name without target TLS")
+	}
+}
+
 func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
