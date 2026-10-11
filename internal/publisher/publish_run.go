@@ -213,6 +213,10 @@ func runSession(
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,
 				Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version})
 		},
+		OnCancelUnsupported: func() {
+			_ = observe(config, Event{Type: EventCancelUnsupported, PublicURLID: setup.PublicUrl.Id,
+				Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version})
+		},
 	})
 	if err != nil {
 		return err

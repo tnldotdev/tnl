@@ -53,6 +53,7 @@ type PublicURLServerConfig struct {
 	RequestLimit           int // zero selects localproxy.DefaultRequestLimit.
 	Limits                 ApplicationLimits
 	OnTargetFailure        func()
+	OnCancelUnsupported    func()
 	ObserveRequest         func(RequestObservation)
 	RequestInspection      projectconfig.RequestInspectionMode
 	Certificate            tls.Certificate

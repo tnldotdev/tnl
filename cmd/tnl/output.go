@@ -67,6 +67,7 @@ type publishOutput struct {
 	stalled               uint64
 	readyPublishRunNumber uint64
 	fallbackPublicURL     uint64
+	cancelWarningRun      uint64
 	blockPublicURL        uint64
 	blocked               uint64
 	command               string
@@ -130,6 +131,25 @@ func (o *publishOutput) targetUnavailable() error {
 		Reason: string(diagnostic.TargetUnavailable),
 		Code:   string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
 		Retryable: &retryable,
+	})
+}
+
+func (o *publishOutput) cancelUnsupported(publishRunNumber uint64) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if publishRunNumber <= o.cancelWarningRun {
+		return nil
+	}
+	o.cancelWarningRun = publishRunNumber
+	if o.mode == publishOutputHuman {
+		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.DatabaseCancelUnsupported)
+	}
+	retryable := false
+	return o.emitLocked(publishEvent{
+		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.DatabaseCancelUnsupported),
+		Reason: string(diagnostic.DatabaseCancelUnsupported), Code: string(diagnostic.DatabaseCancelUnsupported),
+		HelpURL: diagnostic.HelpURL(diagnostic.DatabaseCancelUnsupported), Retryable: &retryable,
+		PublishRunNumber: publishRunNumber,
 	})
 }
 
@@ -434,6 +454,8 @@ func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, outpu
 		return output.blockedVisitors(event.PublishRunNumber, event.PolicyDenials)
 	case publisher.EventTargetUnavailable:
 		return output.targetUnavailable()
+	case publisher.EventCancelUnsupported:
+		return output.cancelUnsupported(event.PublishRunNumber)
 	}
 	return nil
 }

@@ -21,17 +21,19 @@ import (
 
 var postgresSSLRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}
 var postgresGSSRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 48}
+var postgresCancelRequest = [8]byte{0, 0, 0, 16, 4, 210, 22, 46}
 
 const mysqlClientSSL = 1 << 11
 
 type databaseForwarding struct {
-	protocol        controlv1.PublicURLServiceProtocol
-	admission       *applicationAdmission
-	publicPort      uint16
-	target          string
-	backendTLS      *tls.Config
-	passthrough     bool
-	onTargetFailure func()
+	protocol            controlv1.PublicURLServiceProtocol
+	admission           *applicationAdmission
+	publicPort          uint16
+	target              string
+	backendTLS          *tls.Config
+	passthrough         bool
+	onTargetFailure     func()
+	onCancelUnsupported func()
 }
 
 func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, error) {
@@ -56,7 +58,8 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
 		backendTLS: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: tlsName,
 			RootCAs: config.TargetOptions.RootCAs}, passthrough: config.DatabaseTLSPassthrough,
-		onTargetFailure: config.OnTargetFailure,
+		onTargetFailure:     config.OnTargetFailure,
+		onCancelUnsupported: config.OnCancelUnsupported,
 	}, nil
 }
 
@@ -111,6 +114,16 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 		if _, err := io.ReadFull(visitor, startup[:]); err != nil {
 			return err
 		}
+	}
+	if startup == postgresCancelRequest {
+		var proof [8]byte
+		if _, err := io.ReadFull(visitor, proof[:]); err != nil {
+			return err
+		}
+		if d.onCancelUnsupported != nil {
+			d.onCancelUnsupported()
+		}
+		return errors.New("publisher: plaintext PostgreSQL cancellation is not supported")
 	}
 	if startup != postgresSSLRequest {
 		return errors.New("publisher: PostgreSQL visitor TLS is required")
