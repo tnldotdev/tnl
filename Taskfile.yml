@@ -248,6 +248,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:ssh:
+    desc: Verify SSH authentication and host-key checking through a disposable sshd
+    cmds:
+      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:binary:
     desc: Run Linux binary integration tests
     deps: [js:build]

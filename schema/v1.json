@@ -6,8 +6,8 @@
       "properties": {
         "protocol": {
           "type": "string",
-          "enum": ["http", "postgres", "mysql", "redis"],
-          "description": "Local service protocol: http (default), postgres, mysql, or redis."
+          "enum": ["http", "postgres", "mysql", "redis", "ssh"],
+          "description": "Local service protocol: http (default), postgres, mysql, redis, or ssh."
         },
         "target": {
           "oneOf": [

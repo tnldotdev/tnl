@@ -10,10 +10,11 @@ const (
 	PublicURLServicePostgres PublicURLServiceProtocol = "postgres"
 	PublicURLServiceMySQL    PublicURLServiceProtocol = "mysql"
 	PublicURLServiceRedis    PublicURLServiceProtocol = "redis"
+	PublicURLServiceSSH      PublicURLServiceProtocol = "ssh"
 )
 
 func (protocol PublicURLServiceProtocol) Valid() bool {
-	return protocol == PublicURLServiceHTTP || protocol == PublicURLServicePostgres || protocol == PublicURLServiceMySQL || protocol == PublicURLServiceRedis
+	return protocol == PublicURLServiceHTTP || protocol == PublicURLServicePostgres || protocol == PublicURLServiceMySQL || protocol == PublicURLServiceRedis || protocol == PublicURLServiceSSH
 }
 
 // ValidCreateTarget checks how a public URL receives its local target.

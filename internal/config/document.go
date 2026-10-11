@@ -138,7 +138,7 @@ type Rate struct {
 }
 
 type Publish struct {
-	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis" jsonschema_description:"Local service protocol: http (default), postgres, mysql, or redis."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Local service protocol: http (default), postgres, mysql, redis, or ssh."`
 	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."`
 	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the private target TLS certificate; defaults to the target host."`
 	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the private TCP target."`

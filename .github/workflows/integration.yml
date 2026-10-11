@@ -52,6 +52,9 @@ jobs:
       - name: Verify Redis publishing
         run: task go:test:integration:redis
 
+      - name: Verify SSH publishing
+        run: task go:test:integration:ssh
+
   binary:
     name: Binary integration
     runs-on: ubuntu-latest
