@@ -89,7 +89,7 @@ host:port target before the publisher dials it.
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 
-The publisher requires the PostgreSQL SSLRequest or MySQL TLS upgrade before
+The publisher requires TLS negotiation for the selected database protocol before
 forwarding database authentication bytes. In the default mode, it terminates
 visitor TLS with the public URL certificate, verifies a separate TLS connection
 to the private target using its target hostname and configured roots, and copies
@@ -99,6 +99,15 @@ visitor's exact SNI but leaves TLS termination and the public URL certificate
 with the private database; it is needed when authentication binds to the TLS
 channel, such as PostgreSQL SCRAM-SHA-256-PLUS. Plaintext database startup is
 never forwarded.
+
+`tnl publish db.internal:5432 --protocol postgres` keeps the private target on
+the customer machine and displays the saved public `hostname:port` after the
+publish run is ready. `tnl url credential create --protocol postgres` saves the
+same endpoint without a private target; a credential-backed `tnl publish` must
+then supply that target locally. `--target-ca-file` extends the trust roots for
+the private TLS connection, while `--target-tls-name` sets the expected private
+certificate hostname. `--database-tls-passthrough` delegates that certificate
+check to the visiting database client instead.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the

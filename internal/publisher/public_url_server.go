@@ -152,6 +152,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil {
 		return nil, err
 	}
+	if database != nil {
+		database.admission = admission
+	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
@@ -716,6 +719,11 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 	if r.database != nil {
 		if header.Destination.Port() == r.database.publicPort {
 			if !denied {
+				select {
+				case <-r.admission.completed:
+					return
+				default:
+				}
 				r.database.forward(metadata, r.tls, r.hostname)
 			}
 			return

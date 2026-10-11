@@ -56,12 +56,21 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 		clioutput.Field{Label: "team", Value: current.team.DisplayName},
 	)}
 	for _, route := range routes {
-		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(
+		fields := []clioutput.Field{
 			clioutput.Field{Label: "scope", Value: string(route.PublicUrlScope)},
 			clioutput.Field{Label: "state", Value: string(route.LifecycleState)},
 			clioutput.Field{Label: "next publish run number", Value: strconv.FormatInt(route.NextPublishRunNumber, 10)},
 			clioutput.Field{Label: "public URL ID", Value: route.Id},
-		)))
+		}
+		if route.ServiceProtocol == controlv1.Postgres || route.ServiceProtocol == controlv1.Mysql {
+			address, err := savedPublicAddress(route)
+			if err != nil {
+				return err
+			}
+			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(route.ServiceProtocol)},
+				clioutput.Field{Label: "public URL", Value: address})
+		}
+		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(output, "tnl url list", countState(len(routes), "public URL", "public URLs"), "", blocks...)
 }
@@ -113,6 +122,10 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if route.TeamId != current.team.Id {
 		return controlclient.ErrNotFound
 	}
+	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
+		return failure.Wrap("validate database URL update", failure.InvalidTunnelFlags,
+			errors.New("database targets are configured on the publisher, not the saved public URL"))
+	}
 	target := route.Target
 	if flags.Target != "" {
 		target, err = localproxy.NormalizeTarget(flags.Target)
@@ -137,7 +150,14 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if err != nil {
 		return err
 	}
+	address, err := savedPublicAddress(updated)
+	if err != nil {
+		return err
+	}
+	fields := []clioutput.Field{{Label: "public URL", Value: address}}
+	if updated.Target != "" {
+		fields = append(fields, clioutput.Field{Label: "target", Value: updated.Target})
+	}
 	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target or policy",
-		clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + updated.CanonicalHostname},
-			clioutput.Field{Label: "target", Value: updated.Target}))
+		clioutput.Fields(fields...))
 }

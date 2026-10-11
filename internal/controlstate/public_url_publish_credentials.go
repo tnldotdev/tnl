@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -198,6 +200,9 @@ func (d *Database) ListTeamPublicURLPublishCredentials(ctx context.Context, team
 		}
 		if row.CanonicalHostname != "" {
 			entry.PublicURL = "https://" + row.CanonicalHostname
+			if row.PublicPort.Valid {
+				entry.PublicURL = net.JoinHostPort(row.CanonicalHostname, strconv.Itoa(int(row.PublicPort.Int32)))
+			}
 		}
 		if row.RevokedAt.Valid {
 			entry.RevokedAt = &row.RevokedAt.Time
