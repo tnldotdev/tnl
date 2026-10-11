@@ -78,6 +78,8 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		}}
 	case reflect.TypeOf(config.Duration(0)):
 		return &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern}
+	case reflect.TypeOf(config.ByteSize(0)):
+		return &jsonschema.Schema{Type: "string", Pattern: `^[1-9][0-9]*(KiB|MiB|GiB)$`}
 	case reflect.TypeOf(config.Tunnel{}):
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):

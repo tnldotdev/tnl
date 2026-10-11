@@ -7,6 +7,14 @@
         "mode": {
           "type": "string",
           "enum": ["none", "summary"]
+        },
+        "retention": {
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+        },
+        "max_bytes": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)$"
         }
       },
       "additionalProperties": false,

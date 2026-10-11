@@ -588,7 +588,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 		return nil
 	}
-	recorder, err := newInspectionRecorder(ctx, tunnel, a.project.Root, service.Name, flags.InspectionMode)
+	recorder, err := newInspectionRecorder(ctx, tunnel, a.project.Root, service.Name, flags)
 	if err != nil {
 		return err
 	}
