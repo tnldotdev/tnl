@@ -73,15 +73,31 @@ func run() error {
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
 	case "mysql":
-		container, err := mysql.Run(ctx, mysqlImage,
-			mysql.WithUsername("root"), mysql.WithPassword("testpass"), mysql.WithDatabase("mysql"),
-			testcontainers.WithEnv(map[string]string{"MYSQL_ROOT_HOST": "%"}),
-			testcontainers.WithCmdArgs("--require_secure_transport=OFF", "--auto_generate_certs=OFF"),
-			loopbackPort("3306"),
-			testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp")),
-		)
+		var container *mysql.MySQLContainer
+		for range 3 {
+			container, err = mysql.Run(ctx, mysqlImage,
+				mysql.WithUsername("root"), mysql.WithPassword("testpass"), mysql.WithDatabase("mysql"),
+				testcontainers.WithEnv(map[string]string{"MYSQL_ROOT_HOST": "%"}),
+				testcontainers.WithCmdArgs("--require_secure_transport=OFF", "--auto_generate_certs=OFF"),
+				loopbackPort("3306"),
+				testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp")),
+			)
+			if err == nil {
+				break
+			}
+			if container == nil {
+				return fmt.Errorf("start disposable MySQL: %w", err)
+			}
+			// docker can create the container but fail to bind its chosen host
+			// port. remove that failed attempt before asking docker to choose again.
+			canRetry := !container.IsRunning() && ctx.Err() == nil
+			terminate(container)
+			if !canRetry {
+				return fmt.Errorf("start disposable MySQL: %w", err)
+			}
+		}
 		if err != nil {
-			return fmt.Errorf("start disposable MySQL: %w", err)
+			return fmt.Errorf("start disposable MySQL after 3 attempts: %w", err)
 		}
 		defer terminate(container)
 		code, output, err := container.Exec(ctx, []string{"mysql", "--protocol=socket", "--user=root", "--password=testpass",
