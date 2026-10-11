@@ -21,19 +21,21 @@ import (
 
 var postgresSSLRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}
 var postgresGSSRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 48}
+var postgresCancelRequest = [8]byte{0, 0, 0, 16, 4, 210, 22, 46}
 
 const mysqlClientSSL = 1 << 11
 
 type tcpForwarding struct {
-	protocol        controlv1.PublicURLServiceProtocol
-	admission       *applicationAdmission
-	publicPort      uint16
-	target          string
-	backendTLS      *tls.Config
-	passthrough     bool
-	onTargetFailure func()
-	observeDatabase func(DatabaseObservation)
-	observeRedis    func(RedisObservation)
+	protocol            controlv1.PublicURLServiceProtocol
+	admission           *applicationAdmission
+	publicPort          uint16
+	target              string
+	backendTLS          *tls.Config
+	passthrough         bool
+	onTargetFailure     func()
+	onCancelUnsupported func()
+	observeDatabase     func(DatabaseObservation)
+	observeRedis        func(RedisObservation)
 }
 
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
@@ -61,11 +63,12 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
-		backendTLS:      backendTLS,
-		passthrough:     config.VisitorTLSPassthrough,
-		onTargetFailure: config.OnTargetFailure,
-		observeDatabase: config.ObserveDatabase,
-		observeRedis:    config.ObserveRedis,
+		backendTLS:          backendTLS,
+		passthrough:         config.VisitorTLSPassthrough,
+		onTargetFailure:     config.OnTargetFailure,
+		onCancelUnsupported: config.OnCancelUnsupported,
+		observeDatabase:     config.ObserveDatabase,
+		observeRedis:        config.ObserveRedis,
 	}, nil
 }
 
@@ -165,6 +168,16 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 		}
 	}
 	if startup != postgresSSLRequest {
+		if startup == postgresCancelRequest {
+			var proof [8]byte
+			if _, err := io.ReadFull(visitor, proof[:]); err != nil {
+				return err
+			}
+			if d.onCancelUnsupported != nil {
+				d.onCancelUnsupported()
+			}
+			return errors.New("publisher: plaintext PostgreSQL cancellation is not supported")
+		}
 		return errors.New("publisher: PostgreSQL visitor TLS is required")
 	}
 	if d.backendTLS != nil || d.passthrough {

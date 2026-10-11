@@ -2,6 +2,30 @@
   "schema_version": 1,
   "diagnostics": [
     {
+      "code": "TNL_DATABASE_CANCEL_UNSUPPORTED",
+      "slug": "database-cancel",
+      "category": "database",
+      "title": "PostgreSQL cancellation unavailable",
+      "summary": "this PostgreSQL client sent a cancel request without TLS. tnl did not forward it; the query may still be running. close its query connection or cancel the query at the database.",
+      "description": "PostgreSQL clients such as libpq send a separate plaintext CancelRequest for query cancellation. tnl requires visitor TLS and cannot safely forward its cancel secret on a public connection.",
+      "diagram_label": "plaintext cancellation was not forwarded",
+      "surfaces": ["cli"],
+      "flow": [
+        { "label": "database client" },
+        { "label": "tnl", "detail": "cancel request is not encrypted", "failure": true },
+        { "label": "database target" }
+      ],
+      "causes": [
+        "the client sends PostgreSQL cancellation on a separate connection without visitor TLS"
+      ],
+      "actions": {
+        "publisher": [
+          "close the original query connection or cancel the query at the database",
+          "check whether the query stopped before retrying"
+        ]
+      }
+    },
+    {
       "code": "TNL_ALIAS_UNAVAILABLE",
       "slug": "alias-unavailable",
       "category": "alias",

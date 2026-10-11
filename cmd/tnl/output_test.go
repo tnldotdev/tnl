@@ -80,6 +80,41 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	}
 }
 
+func TestPostgresCancelWarningIsEmittedOncePerPublishRun(t *testing.T) {
+	for _, mode := range []publishOutputMode{publishOutputHuman, publishOutputNDJSON} {
+		t.Run(string(mode), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			output, err := newPublishOutput(mode, "tnl publish", &stdout, &stderr, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := output.starting("tun_test", "127.0.0.1:5432"); err != nil {
+				t.Fatal(err)
+			}
+			for _, run := range []uint64{1, 1, 2} {
+				if err := output.cancelUnsupported(run); err != nil {
+					t.Fatal(err)
+				}
+			}
+			written := stdout.String()
+			if mode == publishOutputHuman {
+				written = stderr.String()
+			}
+			count := strings.Count(written, string(diagnostic.DatabaseCancelUnsupported))
+			if mode == publishOutputNDJSON {
+				count = strings.Count(written, `"type":"warning"`)
+			}
+			if count != 2 || !strings.Contains(written, diagnostic.HelpURL(diagnostic.DatabaseCancelUnsupported)) ||
+				!strings.Contains(written, "query may still be running") {
+				t.Fatalf("cancel warning = %q", written)
+			}
+			if mode == publishOutputNDJSON && !strings.Contains(written, `"retryable":false`) {
+				t.Fatalf("cancel warning has no retry policy: %s", written)
+			}
+		})
+	}
+}
+
 func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var opened []string
