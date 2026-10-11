@@ -176,6 +176,48 @@ func TestDatabaseTunnelReadyPersistsPublicPort(t *testing.T) {
 	}
 }
 
+func TestNamedTCPServicesPersistTheirProtocolAndPublicPort(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol controlv1.PublicURLServiceProtocol
+		target   string
+		want     string
+		address  string
+	}{
+		{"cache", controlv1.Redis, "6379", "127.0.0.1:6379", "cache.example:16379"},
+		{"shell", controlv1.Ssh, "127.0.0.1:22", "127.0.0.1:22", "shell.example:10022"},
+		{"catalog", controlv1.Mongodb, "127.0.0.1:27017", "127.0.0.1:27017", "catalog.example:27017"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			project := t.TempDir()
+			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+				Command: TunnelCommandPublish, Server: "https://server.example", Target: test.target,
+				Project: project, Service: test.name, ServiceProtocol: test.protocol,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tunnel.Finish(context.Background(), nil)
+			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, test.name+".example"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tunnel.SetReady(t.Context(), test.address, 1); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := database.SnapshotProject(t.Context(), project)
+			if err != nil || len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].PublicURL != test.address ||
+				snapshot.Tunnels[0].ServiceProtocol != test.protocol || snapshot.Tunnels[0].Target != test.want {
+				t.Fatalf("%s snapshot = %#v, %v", test.name, snapshot, err)
+			}
+		})
+	}
+}
+
 func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	owner, err := Open(t.Context(), root)

@@ -19,8 +19,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 type waitCommand struct {
@@ -92,10 +92,10 @@ func readProjectServicesSnapshot(ctx context.Context, project projectConfigurati
 	if err != nil {
 		return snapshot, err
 	}
-	return mergeDatabaseServices(snapshot, project, tunnels.Tunnels), nil
+	return mergeTCPServices(snapshot, project, tunnels.Tunnels), nil
 }
 
-func mergeDatabaseServices(snapshot clientruntime.Snapshot, project projectConfiguration, tunnels []clientstate.TunnelInfo) clientruntime.Snapshot {
+func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfiguration, tunnels []clientstate.TunnelInfo) clientruntime.Snapshot {
 	for name := range project.Config.Services {
 		effective, _ := project.EffectiveService(name)
 		protocol := config.ServiceProtocol(effective.Publish)
@@ -247,7 +247,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			go func() {
 				defer workers.Done()
 				if service.ServiceProtocol != "" {
-					service.Ready = probeDatabaseTarget(ctx, service.Target)
+					service.Ready = probeTCPTarget(ctx, service.Target)
 					return
 				}
 				observation := probe(ctx, *service)
@@ -321,7 +321,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
 }
 
-func probeDatabaseTarget(ctx context.Context, target string) bool {
+func probeTCPTarget(ctx context.Context, target string) bool {
 	if _, err := tcptarget.Host(target); err != nil {
 		return false
 	}
