@@ -121,6 +121,32 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 	if _, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "missing" {
 		t.Fatalf("wrong pool lookup reason = %q", reason)
 	}
+	for _, test := range []struct {
+		name   string
+		port   int
+		change func(*ingressv1.IngressRoutingTableEntry)
+	}{
+		{name: "below public port range", port: 1023},
+		{name: "above public port range", port: 65536},
+		{name: "http with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
+			protocol := ingressv1.Http
+			entry.ServiceProtocol = &protocol
+		}},
+		{name: "unknown protocol with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
+			protocol := ingressv1.IngressRoutingTableEntryServiceProtocol("unknown")
+			entry.ServiceProtocol = &protocol
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := event(2, "invalid", "ingress-a", test.port)
+			if test.change != nil {
+				test.change(&invalid.Entry)
+			}
+			if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{invalid}}); !errors.Is(err, ErrRoutingTableEvent) {
+				t.Fatalf("invalid port projection = %v", err)
+			}
+		})
+	}
 	second := event(2, "two", "ingress-a", 5432)
 	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{second}}); !errors.Is(err, ErrRoutingTableEvent) {
 		t.Fatalf("colliding port page = %v", err)

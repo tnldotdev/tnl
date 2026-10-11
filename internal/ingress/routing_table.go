@@ -9,6 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -248,8 +249,8 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		return ErrRoutingTableEvent
 	}
 	if entry.PublicPort != nil {
-		if *entry.PublicPort < 1024 || *entry.PublicPort > 65535 || entry.IngressPoolId == nil || *entry.IngressPoolId == "" ||
-			entry.ServiceProtocol == nil || *entry.ServiceProtocol != ingressv1.Postgres && *entry.ServiceProtocol != ingressv1.Mysql {
+		if !tcpport.Valid(*entry.PublicPort) || entry.IngressPoolId == nil || *entry.IngressPoolId == "" ||
+			entry.ServiceProtocol == nil || !entry.ServiceProtocol.Valid() || *entry.ServiceProtocol == ingressv1.Http {
 			return ErrRoutingTableEvent
 		}
 	} else if entry.ServiceProtocol != nil && *entry.ServiceProtocol != ingressv1.Http ||

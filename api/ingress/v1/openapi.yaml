@@ -412,6 +412,7 @@ components:
           type: integer
           minimum: 1024
           maximum: 65535
+          description: Stable visitor TCP port for a port-addressed public URL.
         policy_revision:
           type: integer
           format: int64
