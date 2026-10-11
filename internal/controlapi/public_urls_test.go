@@ -466,6 +466,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	want := controlstate.CreatePublicURLRequest{
 		TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", ActingIdentityID: "identity_1", IdempotencyKey: "create-key",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
+		ServiceProtocol:   controlstate.PublicURLServiceHTTP,
 		AllowedIPPrefixes: []string{"192.0.2.0/24", "2001:db8::/64"}, DNSState: controlstate.PublicURLDNSPending,
 		DNSAuthorityReference: "dns_authority_1", PolicyRevision: 9, Ephemeral: true,
 	}
@@ -513,6 +514,38 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 	}
 	if len(store.requests) != 1 || store.requests[0].Target != "" || len(authorizer.requests) != 1 {
 		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
+	}
+}
+
+func TestCreateDatabasePublicURLReturnsAssignedAddress(t *testing.T) {
+	port := uint16(15432)
+	store := &publicURLCreationStore{result: controlstate.PublicURL{
+		ID: "url_created", CanonicalHostname: "orders.example", Purpose: controlstate.PublicURLPurposeApp,
+		ServiceProtocol: controlstate.PublicURLServicePostgres, PublicPort: &port,
+	}}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "orders.example", PublicURLScope: "member", PolicyRevision: 9,
+	}}
+	h := &handler{store: store, authorizer: authorizer}
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"orders.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"postgres"}`))
+	request.Header.Set("Authorization", "Bearer exact-access-token")
+	request.Header.Set("Idempotency-Key", "create-db")
+	response := httptest.NewRecorder()
+	h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"service_protocol":"postgres"`) ||
+		!strings.Contains(response.Body.String(), `"public_port":15432`) || len(store.requests) != 1 ||
+		store.requests[0].ServiceProtocol != controlstate.PublicURLServicePostgres || store.requests[0].Target != "" {
+		t.Fatalf("database URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
+	}
+}
+
+func TestCreatePublicURLRejectsUnknownServiceProtocol(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","domain_id":"domain_1","canonical_hostname":"app.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"unknown"}`))
+	response := httptest.NewRecorder()
+	(&handler{}).CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid service protocol") {
+		t.Fatalf("unknown service protocol = %d: %s", response.Code, response.Body.String())
 	}
 }
 

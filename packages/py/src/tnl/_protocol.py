@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal, cast
+from enum import StrEnum
 from urllib.parse import urlsplit
 
 
@@ -40,7 +40,13 @@ class InvalidResponse(TnlError):
         )
 
 
-State = Literal["starting", "publishing", "routable", "draining", "stopped", "failed"]
+class State(StrEnum):
+    STARTING = "starting"
+    PUBLISHING = "publishing"
+    ROUTABLE = "routable"
+    DRAINING = "draining"
+    STOPPED = "stopped"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +59,6 @@ class Status:
     failure_code: str | None = None
 
 
-_states: set[str] = {"starting", "publishing", "routable", "draining", "stopped", "failed"}
 _label = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
 _id = re.compile(r"url_[A-Za-z0-9_-]{1,128}")
 _code = re.compile(r"[A-Za-z0-9_.-]{1,128}")
@@ -72,9 +77,13 @@ def parse_status(value: object, registration_id: str) -> Status:
         raise InvalidResponse()
     if value.get("version") != 1 or value.get("registration_id") != registration_id:
         raise InvalidResponse()
-    state: object = value.get("state")
-    if not isinstance(state, str) or state not in _states:
+    raw_state: object = value.get("state")
+    if not isinstance(raw_state, str):
         raise InvalidResponse()
+    try:
+        state = State(raw_state)
+    except ValueError as cause:
+        raise InvalidResponse() from cause
     public_url_id: object = value.get("public_url_id")
     if public_url_id is not None and (
         not isinstance(public_url_id, str) or _id.fullmatch(public_url_id) is None
@@ -121,7 +130,7 @@ def parse_status(value: object, registration_id: str) -> Status:
         raise InvalidResponse()
     return Status(
         registration_id=registration_id,
-        state=cast(State, state),
+        state=state,
         public_url_id=public_url_id,
         public_url=public_url,
         publish_run_number=publish_run_number,

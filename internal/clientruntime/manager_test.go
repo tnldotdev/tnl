@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestListenerOwnershipPublicationAndReplacementFences(t *testing.T) {
+func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)
 	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
@@ -104,7 +104,7 @@ func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	}
 }
 
-func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
+func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	started := make(chan struct{})
 	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(started)
@@ -149,13 +149,13 @@ func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
 	}
 }
 
-func TestJournalResumeAndManagerRestartWatermark(t *testing.T) {
+func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 	project, state := t.TempDir(), t.TempDir()
 	manager, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	watermark := manager.Snapshot().Cursor
+	cursor := manager.Snapshot().Cursor
 	if _, err := manager.Reserve("web", "owner", 1, "https://web.example"); err != nil {
 		t.Fatal(err)
 	}
@@ -169,11 +169,11 @@ func TestJournalResumeAndManagerRestartWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := EventsAfter(snapshot, watermark)
+	events, err := EventsAfter(snapshot, cursor)
 	if err != nil || len(events) != 5 || snapshot.Services[0].Registered {
 		t.Fatalf("resume = %#v, %v", events, err)
 	}
-	previous, _ := ParseCursor(watermark)
+	previous, _ := ParseCursor(cursor)
 	for _, event := range events {
 		value, _ := ParseCursor(event.Cursor)
 		if value != previous+1 {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -56,11 +57,21 @@ func TestOpenWaitsForRoutabilityAndCleansUpOnCancellation(t *testing.T) {
 	if err := os.Chmod(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SaveServer(t.Context(), server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	tunnel, err := Open(ctx, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}), Options{Credential: credential.String(), ServerURL: server.URL, HTTPClient: server.Client(), StateDir: state})
+	}), Options{Credential: credential.String(), HTTPClient: server.Client(), StateDir: state})
 	if tunnel != nil || !errors.Is(err, context.DeadlineExceeded) || allocations.Load() != 1 || publishRuns.Load() < 1 ||
 		deletions.Load() != 1 || reads.Load() != 0 {
 		t.Fatalf("Open returned before ready or failed cleanup: tunnel=%v error=%v allocations=%d runs=%d deletes=%d unexpected=%d",

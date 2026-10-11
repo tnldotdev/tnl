@@ -74,6 +74,8 @@ def test_python_uses_the_same_go_and_typescript_socket_fixture() -> None:
     assert parse_status(failed, registration_id).failure_code == "runtime.publication_failed"
     with pytest.raises(InvalidResponse):
         parse_status({**ready, "credential": "not allowed in status"}, registration_id)
+    with pytest.raises(InvalidResponse):
+        parse_status({**ready, "state": "unknown"}, registration_id)
 
 
 def test_single_request_handler_requires_an_explicit_asgi_adapter() -> None:

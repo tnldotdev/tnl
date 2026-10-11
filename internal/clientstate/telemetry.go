@@ -30,11 +30,12 @@ func (d *Database) SetTelemetryEnabled(ctx context.Context, enabled bool) error 
 		return fmt.Errorf("clientstate: begin telemetry preference: %w", err)
 	}
 	defer tx.Rollback()
-	if err := d.queries.WithTx(tx).SetTelemetryEnabled(ctx, value); err != nil {
+	queries := d.queries.WithTx(tx)
+	if err := queries.SetTelemetryEnabled(ctx, value); err != nil {
 		return fmt.Errorf("clientstate: save telemetry preference: %w", err)
 	}
 	if !enabled {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM telemetry_outbox`); err != nil {
+		if err := queries.ClearTelemetryEvents(ctx); err != nil {
 			return fmt.Errorf("clientstate: clear telemetry queue: %w", err)
 		}
 	}

@@ -75,9 +75,11 @@ export function reportFrameworkTarget(
   return report(target);
 }
 
+type Framework = "node" | "bun" | "vite" | "next";
+
 export function prepareService(
   options: PrepareOptions = {},
-  framework = "node",
+  framework: Framework = "node",
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
@@ -94,7 +96,7 @@ export function prepareService(
 
 export async function createPreparedService(
   options: PrepareOptions,
-  framework: string,
+  framework: Framework,
   dependencies: Dependencies,
   onClose: () => void = () => {},
 ): Promise<PreparedService> {

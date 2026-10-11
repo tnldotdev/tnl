@@ -158,7 +158,7 @@ type appPreparation struct {
 	services   publisherServices
 	policy     resolvedIPPolicy
 	flags      tunnelFlags
-	framework  string
+	framework  privateprotocol.Framework
 	project    projectConfiguration
 }
 
@@ -296,7 +296,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (assignmentResult privateprotocol.Assignment, resultErr error) {
 	finishPreparation := a.manager.BeginPreparation()
 	defer finishPreparation()
-	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !slices.Contains([]string{"node", "bun", "vite", "next"}, request.Framework) {
+	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
 	}
 	directory, err := filepath.EvalSymlinks(request.Directory)
@@ -496,7 +496,7 @@ func (a *appRuntime) handler() http.Handler {
 				if !found {
 					err = clientruntime.ErrRegistrationStale
 				} else {
-					err = a.manager.Register(request.RegistrationID, request.Owner, request.Target, preparation.framework)
+					err = a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
 				}
 			case "renew":
 				err = a.manager.Renew(request.RegistrationID, request.Owner)

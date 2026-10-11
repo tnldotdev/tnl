@@ -44,6 +44,9 @@ test("the ad-hoc Go, TypeScript, and Python socket fixture has the same bounded 
   expect(status.publicURL).toBe("https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test");
   expect(status.publishRunNumber).toBe(1);
   expect(() => parseAdHocStatus({ ...ready, credential: "secret" }, id)).toThrow(TnlError);
+  expect(() => parseAdHocStatus({ ...ready, state: { toString: () => "routable" } }, id)).toThrow(
+    TnlError,
+  );
   expect(parseAdHocStatus(fixture.failed, id).failureCode).toBe("runtime.publication_failed");
 });
 

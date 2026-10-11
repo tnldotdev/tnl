@@ -18,13 +18,31 @@ var ownerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 
+type Framework string
+
+const (
+	FrameworkNode Framework = "node"
+	FrameworkBun  Framework = "bun"
+	FrameworkVite Framework = "vite"
+	FrameworkNext Framework = "next"
+)
+
+func (framework Framework) Valid() bool {
+	switch framework {
+	case FrameworkNode, FrameworkBun, FrameworkVite, FrameworkNext:
+		return true
+	default:
+		return false
+	}
+}
+
 type Prepare struct {
-	Version   int    `json:"version"`
-	Directory string `json:"directory"`
-	Service   string `json:"service,omitempty"`
-	Framework string `json:"framework"`
-	Owner     string `json:"owner"`
-	PID       int    `json:"pid"`
+	Version   int       `json:"version"`
+	Directory string    `json:"directory"`
+	Service   string    `json:"service,omitempty"`
+	Framework Framework `json:"framework"`
+	Owner     string    `json:"owner"`
+	PID       int       `json:"pid"`
 }
 
 type Assignment struct {
@@ -69,15 +87,35 @@ type AdHocRateLimit struct {
 	Per      string `json:"per"`
 }
 
+type AdHocState string
+
+const (
+	AdHocStarting   AdHocState = "starting"
+	AdHocPublishing AdHocState = "publishing"
+	AdHocRoutable   AdHocState = "routable"
+	AdHocDraining   AdHocState = "draining"
+	AdHocStopped    AdHocState = "stopped"
+	AdHocFailed     AdHocState = "failed"
+)
+
+func (state AdHocState) Valid() bool {
+	switch state {
+	case AdHocStarting, AdHocPublishing, AdHocRoutable, AdHocDraining, AdHocStopped, AdHocFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // AdHocStatus never contains credentials, visitor requests, or browser metadata.
 type AdHocStatus struct {
-	Version          int    `json:"version"`
-	RegistrationID   string `json:"registration_id"`
-	State            string `json:"state"`
-	PublicURLID      string `json:"public_url_id,omitempty"`
-	PublicURL        string `json:"public_url,omitempty"`
-	PublishRunNumber uint64 `json:"publish_run_number,omitempty"`
-	FailureCode      string `json:"failure_code,omitempty"`
+	Version          int        `json:"version"`
+	RegistrationID   string     `json:"registration_id"`
+	State            AdHocState `json:"state"`
+	PublicURLID      string     `json:"public_url_id,omitempty"`
+	PublicURL        string     `json:"public_url,omitempty"`
+	PublishRunNumber uint64     `json:"publish_run_number,omitempty"`
+	FailureCode      string     `json:"failure_code,omitempty"`
 }
 
 type Problem struct {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/adhoc"
+	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -73,25 +74,24 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	if serverURL == "" {
 		serverURL = os.Getenv("TNL_SERVER")
 	}
-	if serverURL == "" {
-		serverURL = "https://control.tnl.dev"
-	}
-	serverURL, err := clientstate.CanonicalServer(serverURL)
-	if err != nil {
-		return nil, err
-	}
 	stateDir := options.StateDir
 	if stateDir == "" {
 		stateDir = os.Getenv("TNL_STATE_DIR")
 	}
 	if stateDir == "" {
-		stateDir, err = clientstate.DefaultDir()
+		defaultDir, err := clientstate.DefaultDir()
 		if err != nil {
 			return nil, err
 		}
+		stateDir = defaultDir
 	}
 	state, err := clientstate.Open(ctx, stateDir)
 	if err != nil {
+		return nil, err
+	}
+	serverURL, err = clientserver.Select(ctx, state, serverURL)
+	if err != nil {
+		_ = state.Close()
 		return nil, err
 	}
 	profile, err := state.Server(ctx, serverURL)

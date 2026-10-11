@@ -9,19 +9,19 @@ import (
 	"context"
 )
 
-const fenceAuthOperations = `-- name: FenceAuthOperations :exec
+const cancelAuthOperations = `-- name: CancelAuthOperations :exec
 UPDATE auth_operations SET phase = 'cancelled', revision = revision + 1,
     stored_private = CASE WHEN phase = 'issued' THEN stored_private ELSE X'' END, updated_at = ?
 WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired', 'recovery_required')
 `
 
-type FenceAuthOperationsParams struct {
+type CancelAuthOperationsParams struct {
 	UpdatedAt    int64
 	ServerOrigin string
 }
 
-func (q *Queries) FenceAuthOperations(ctx context.Context, arg FenceAuthOperationsParams) error {
-	_, err := q.db.ExecContext(ctx, fenceAuthOperations, arg.UpdatedAt, arg.ServerOrigin)
+func (q *Queries) CancelAuthOperations(ctx context.Context, arg CancelAuthOperationsParams) error {
+	_, err := q.db.ExecContext(ctx, cancelAuthOperations, arg.UpdatedAt, arg.ServerOrigin)
 	return err
 }
 

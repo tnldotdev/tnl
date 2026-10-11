@@ -70,6 +70,15 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "public URL purpose is required")
 		return
 	}
+	protocol := controlv1.Http
+	if body.ServiceProtocol != nil {
+		protocol = *body.ServiceProtocol
+	}
+	if !protocol.Valid() {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service protocol")
+		return
+	}
+	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
 	allowedIPPrefixes := []string(nil)
 	if body.AllowedIpPrefixes != nil {
 		var err error
@@ -80,8 +89,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		}
 	}
 	ephemeral := body.Ephemeral != nil && *body.Ephemeral
-	if body.Target == "" && (body.Purpose != controlv1.App || ephemeral) ||
-		body.Target != "" && authorization.ValidateTarget(body.Target) != nil {
+	if !storedProtocol.ValidCreateTarget(controlstate.PublicURLPurpose(body.Purpose), body.Target, ephemeral) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
@@ -98,10 +106,15 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
+	hashProtocol := ""
+	if protocol != controlv1.Http {
+		hashProtocol = string(protocol)
+	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationPublicURLCreate, TeamID: decision.TeamID, MembershipID: decision.PublicURLMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
-		PublicURLPurpose: string(body.Purpose), Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: ephemeral,
+		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol,
+		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: ephemeral,
 	})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -118,7 +131,8 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
-		PublicURLScope: controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AllowedIPPrefixes: allowedIPPrefixes,
+		ServiceProtocol: storedProtocol,
+		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AllowedIPPrefixes: allowedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,
@@ -162,7 +176,10 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeControlStateProblem(response, "read public URL for update", err)
 		return
 	}
-	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp || route.Ephemeral) {
+	httpProtocol := route.ServiceProtocol == "" || route.ServiceProtocol == controlstate.PublicURLServiceHTTP
+	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp ||
+		route.Ephemeral && httpProtocol) ||
+		*body.Target != "" && !httpProtocol {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}

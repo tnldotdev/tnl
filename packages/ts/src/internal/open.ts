@@ -46,8 +46,17 @@ const dependencies: Dependencies = {
     }),
 };
 
+const adHocStates = [
+  "starting",
+  "publishing",
+  "routable",
+  "draining",
+  "stopped",
+  "failed",
+] as const;
+
 type Status = {
-  state: "starting" | "publishing" | "routable" | "draining" | "stopped" | "failed";
+  state: (typeof adHocStates)[number];
   registrationID: string;
   publicURL?: `https://${string}`;
   publicURLID?: string;
@@ -272,6 +281,10 @@ export async function openServer(
   }
 }
 
+function isAdHocState(value: unknown): value is Status["state"] {
+  return typeof value === "string" && adHocStates.some((state) => state === value);
+}
+
 export function parseAdHocStatus(value: unknown, id: string): Status {
   try {
     const object = record(value, "ad-hoc status");
@@ -288,12 +301,10 @@ export function parseAdHocStatus(value: unknown, id: string): Status {
       Object.keys(object).some((key) => !allowed.includes(key)) ||
       object.version !== 1 ||
       object.registration_id !== id ||
-      !["starting", "publishing", "routable", "draining", "stopped", "failed"].includes(
-        String(object.state),
-      )
+      !isAdHocState(object.state)
     )
       throw new TnlError("sdk.response_invalid");
-    const state = object.state as Status["state"];
+    const state = object.state;
     const publicURLID = object.public_url_id;
     if (
       publicURLID !== undefined &&

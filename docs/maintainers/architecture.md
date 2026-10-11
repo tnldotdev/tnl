@@ -173,16 +173,17 @@ grace. it never launches or terminates application processes.
 
 registered, routable, and ready are separate facts. routable means the existing
 publisher has reported control readiness. ready additionally requires a fresh
-public GET: by default `/` accepts app statuses 200 through 499 except 408 and 429. tnl diagnostic responses always fail. service readiness can select a path
-and exact status. checks use normal DNS/TLS, send no app credentials, follow no
-redirects, and read headers only with a five-second deadline. retries start at
+public GET: by default `/` accepts any 2xx app response. tnl diagnostic
+responses always fail. service readiness can select a path. checks use normal
+DNS/TLS, send no app credentials, follow no redirects, and read headers only
+with a five-second deadline. retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run
 gets an automatic check; `tnl wait` checks again. a failed check leaves the
 publication running. `tnl status` only reads observations.
 
-`tnl watch` resumes after an ordered journal cursor. a status or initial watch
-snapshot includes the watermark from the same journal snapshot. cursors older
-than retained events fail with an authored diagnostic. the journal survives a
+`tnl watch` resumes after a local event cursor. a status or initial watch
+snapshot includes the cursor for its service state. cursors older than retained
+events fail with an authored diagnostic. the journal survives a
 manager restart and contains no credentials, request bodies, or OAuth state.
 
 `internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
@@ -199,6 +200,10 @@ GET probe. on exit, unregister joins native drain before ASGI shutdown; a
 process crash leaves the owner/pid lease and ephemeral expiry as cleanup
 boundaries. a single-request Python callable needs the explicit HTTP adapter,
 while ASGI apps and supplied TypeScript servers keep their normal WebSockets.
+
+`pkg/tnl.Open` owns its Go HTTP listener and uses the same server selection as
+the native client: an explicit server, `TNL_SERVER`, the saved selection, then
+the hosted default.
 
 ## maintain project integration urls
 

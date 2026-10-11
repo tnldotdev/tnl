@@ -167,11 +167,11 @@ func EventsAfter(snapshot Snapshot, cursor string) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	watermark, err := ParseCursor(snapshot.Cursor)
+	latestSequence, err := ParseCursor(snapshot.Cursor)
 	if err != nil {
 		return nil, err
 	}
-	if sequence > watermark {
+	if sequence > latestSequence {
 		return nil, ErrCursorExpired
 	}
 	if len(snapshot.Events) > 0 {
