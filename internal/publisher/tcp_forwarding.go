@@ -191,7 +191,7 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 	if d.passthrough {
 		return forwardVisitorTLSPassthrough(visitor, backend, hostname, d.admission)
 	}
-	return forwardDatabaseTLS(visitor, backend, publicTLS, d.admission)
+	return forwardDatabaseTLS(visitor, backend, publicTLS, d.admission, d.observeDatabase, d.inspectionMode)
 }
 
 func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
@@ -284,10 +284,14 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 	return packet, err
 }
 
-func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission) error {
+func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission,
+	observe func(DatabaseObservation), mode projectconfig.InspectionMode) error {
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
+	}
+	if observe != nil {
+		backend = &databaseInspectionConn{Conn: backend, observer: newPostgresInspector(observe, mode)}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, admission)
 }

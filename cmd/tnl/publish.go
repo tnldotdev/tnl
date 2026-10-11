@@ -220,7 +220,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = httpObservation(recorder)
-	if protocol == controlv1.Mysql && !flags.VisitorTLSPassthrough {
+	if (protocol == controlv1.Mysql || protocol == controlv1.Postgres) && !flags.VisitorTLSPassthrough {
 		publisherConfig.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
 	}
 	publisherConfig.InspectionMode = flags.InspectionMode

@@ -200,7 +200,13 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}}, controlv1.Mysql); err != nil {
 		t.Fatalf("MySQL split visitor TLS rejected detailed inspection: %v", err)
 	}
+	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}}, controlv1.Postgres); err != nil {
+		t.Fatalf("PostgreSQL split visitor TLS rejected detailed inspection: %v", err)
+	}
 	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}, VisitorTLSPassthrough: true}, controlv1.Mysql); err == nil {
 		t.Fatal("opaque MySQL passthrough accepted detailed inspection")
+	}
+	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}, VisitorTLSPassthrough: true}, controlv1.Postgres); err == nil {
+		t.Fatal("opaque PostgreSQL passthrough accepted detailed inspection")
 	}
 }

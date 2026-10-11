@@ -60,6 +60,64 @@ func TestIntegrationDatabaseClientPostgresLogin(t *testing.T) {
 	}
 }
 
+func TestIntegrationDatabaseClientPostgresInspection(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	parsed, err := url.Parse(testutil.PostgresURL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []projectconfig.InspectionMode{projectconfig.InspectionSummary, projectconfig.InspectionDetailed} {
+		t.Run(string(mode), func(t *testing.T) {
+			observed := make(chan DatabaseObservation, 8)
+			certificate := publicURLTestCertificate(t, "route.example")
+			route, err := NewPublicURLServer(PublicURLServerConfig{
+				Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+				Target: parsed.Host, Certificate: certificate, InspectionMode: mode,
+				ObserveDatabase: func(value DatabaseObservation) { observed <- value },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer route.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			connection, err := pgx.ConnectConfig(ctx, postgresClientTestConfig(t, route, rootsForCertificate(t, certificate), "disable"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close(context.Background())
+			var value int
+			if err := connection.QueryRow(ctx, "SELECT $1::int", 1).Scan(&value); err != nil || value != 1 {
+				t.Fatalf("prepared query = %d, %v", value, err)
+			}
+			if _, err := connection.Exec(ctx, "SELECT missing_column"); err == nil {
+				t.Fatal("expected PostgreSQL SQL error")
+			}
+			var success, failed DatabaseObservation
+			select {
+			case success = <-observed:
+			case <-ctx.Done():
+				t.Fatal("successful execution was not observed")
+			}
+			select {
+			case failed = <-observed:
+			case <-ctx.Done():
+				t.Fatal("failed execution was not observed")
+			}
+			if success.Protocol != controlv1.Postgres || success.Operation != "execute" || success.Result != "ok" || success.Rows != 1 ||
+				failed.Result != "error" || failed.SQLState != "42703" {
+				t.Fatalf("PostgreSQL observations = %#v, %#v", success, failed)
+			}
+			if mode == projectconfig.InspectionSummary && (success.Statement != "" || failed.Statement != "") {
+				t.Fatal("summary inspection stored SQL")
+			}
+			if mode == projectconfig.InspectionDetailed && (success.Statement != "SELECT $1::int" || failed.Statement != "SELECT missing_column") {
+				t.Fatalf("detailed inspection did not capture statements: %#v, %#v", success, failed)
+			}
+		})
+	}
+}
+
 func postgresClientTestConfig(t *testing.T, route *PublicURLServer, roots *x509.CertPool, channelBinding string) *pgx.ConnConfig {
 	t.Helper()
 	address := "postgres://postgres:postgres@route.example:5432/postgres?sslmode=verify-full&channel_binding=" + channelBinding

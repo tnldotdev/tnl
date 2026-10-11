@@ -240,7 +240,7 @@ tasks:
   go:test:integration:database-clients:
     desc: Verify real database clients with disposable private servers
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|Inspection)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:mysql-oracle:

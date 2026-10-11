@@ -326,8 +326,8 @@ func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
 	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"orders": {
 		Publish: &Publish{Protocol: &protocol},
 	}}}
-	if err := ValidateTNL(project); err == nil {
-		t.Fatal("PostgreSQL accepted detailed inspection without a parser")
+	if err := ValidateTNL(project); err != nil {
+		t.Fatalf("PostgreSQL rejected detailed inspection: %v", err)
 	}
 	protocol = "mysql"
 	if err := ValidateTNL(project); err != nil {
