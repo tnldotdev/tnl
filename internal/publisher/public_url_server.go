@@ -509,9 +509,16 @@ func (r *PublicURLServer) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certi
 	if hello == nil {
 		return nil, errors.New("publisher: TLS SNI does not match public URL")
 	}
-	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
-	if err != nil || hostname != r.hostname {
-		return nil, errors.New("publisher: TLS SNI does not match public URL")
+	if hello.ServerName == "" {
+		// database connections already select one public URL by its dedicated port.
+		if r.database == nil {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
+	} else {
+		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+		if err != nil || hostname != r.hostname {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
 		return r.challenges.GetCertificate(hello)
