@@ -19,6 +19,8 @@ type rawVisitorBackend struct {
 	opens      atomic.Int32
 }
 
+func testPublicPort(port uint16) *uint16 { return &port }
+
 func (b *rawVisitorBackend) Open(context.Context, string) (net.Conn, error) {
 	b.opens.Add(1)
 	return b.connection, nil
@@ -51,15 +53,15 @@ func TestIngressSelectsDatabasePortFromTrustedDestination(t *testing.T) {
 	var httpsLookups atomic.Int32
 	_, address := startIngress(t, Config{
 		RequireProxyHeader: true, OpenUsage: usage.Open,
-		Lookup: func(string) (PublicURL, string) {
+		Lookup: func(string) (PublicURL, LookupReason) {
 			httpsLookups.Add(1)
 			return PublicURL{}, "missing"
 		},
-		LookupPort: func(port uint16) (PublicURL, string) {
+		LookupPort: func(port uint16) (PublicURL, LookupReason) {
 			if port != 15432 {
 				return PublicURL{}, "missing"
 			}
-			return PublicURL{ID: "public_url_db", PublishRunNumber: 2, PublicPort: 15432,
+			return PublicURL{ID: "public_url_db", PublishRunNumber: 2, PublicPort: testPublicPort(15432),
 				AllowAll: true, Backends: []routebackend.Backend{backend}}, ""
 		},
 	})
@@ -132,11 +134,11 @@ func TestIngressDatabasePortForwardsServerFirstGreeting(t *testing.T) {
 	})
 	_, address := startIngress(t, Config{
 		RequireProxyHeader: true,
-		LookupPort: func(port uint16) (PublicURL, string) {
+		LookupPort: func(port uint16) (PublicURL, LookupReason) {
 			if port != 3306 {
 				return PublicURL{}, "missing"
 			}
-			return PublicURL{ID: "public_url_mysql", PublishRunNumber: 1, PublicPort: 3306,
+			return PublicURL{ID: "public_url_mysql", PublishRunNumber: 1, PublicPort: testPublicPort(3306),
 				AllowAll: true, Backends: []routebackend.Backend{backend}}, ""
 		},
 	})
@@ -172,13 +174,13 @@ func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
 	usage := newUsageRecorder()
 	var allow atomic.Bool
 	lookup := func() PublicURL {
-		return PublicURL{ID: "public_url_db", PublishRunNumber: 1, PublicPort: 5432,
+		return PublicURL{ID: "public_url_db", PublishRunNumber: 1, PublicPort: testPublicPort(5432),
 			Backends: []routebackend.Backend{backend}, AllowAll: allow.Load()}
 	}
 	_, address := startIngress(t, Config{
 		RequireProxyHeader: true, OpenUsage: usage.Open,
-		Lookup: func(string) (PublicURL, string) { return lookup(), "" },
-		LookupPort: func(uint16) (PublicURL, string) {
+		Lookup: func(string) (PublicURL, LookupReason) { return lookup(), LookupCurrent },
+		LookupPort: func(uint16) (PublicURL, LookupReason) {
 			return lookup(), ""
 		},
 	})

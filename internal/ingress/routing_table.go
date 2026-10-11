@@ -174,10 +174,10 @@ func (t *RoutingTable) Revision() (int64, bool) {
 
 func (t *RoutingTable) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
 	entry, reason := t.lookup(canonicalHostname, now, false)
-	return entry, reason == ""
+	return entry, reason == LookupCurrent
 }
 
-func (t *RoutingTable) LookupPortWithReason(pool string, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+func (t *RoutingTable) LookupPortWithReason(pool string, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	t.mu.RLock()
 	stored, exists := t.ports[portKey{pool: pool, port: port}]
 	initialized := t.initialized
@@ -187,10 +187,10 @@ func (t *RoutingTable) LookupPortWithReason(pool string, port uint16, now time.T
 
 func (t *RoutingTable) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
 	entry, reason := t.lookup(canonicalHostname, now, true)
-	return entry, reason == ""
+	return entry, reason == LookupCurrent
 }
 
-func (t *RoutingTable) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+func (t *RoutingTable) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	return t.lookup(canonicalHostname, now, true)
 }
 
@@ -198,10 +198,10 @@ func (t *RoutingTable) lookup(
 	canonicalHostname string,
 	now time.Time,
 	challenge bool,
-) (ingressv1.IngressRoutingTableEntry, string) {
+) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	canonical, err := naming.CanonicalizeHostname(canonicalHostname)
 	if err != nil {
-		return ingressv1.IngressRoutingTableEntry{}, "invalid_hostname"
+		return ingressv1.IngressRoutingTableEntry{}, LookupInvalidHostname
 	}
 	t.mu.RLock()
 	entries := t.routes
@@ -214,24 +214,24 @@ func (t *RoutingTable) lookup(
 	return currentEntry(stored, initialized, exists, now)
 }
 
-func currentEntry(stored routingTableEntry, initialized, exists bool, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+func currentEntry(stored routingTableEntry, initialized, exists bool, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !initialized {
-		return ingressv1.IngressRoutingTableEntry{}, "uninitialized"
+		return ingressv1.IngressRoutingTableEntry{}, LookupUninitialized
 	}
 	if !exists {
-		return ingressv1.IngressRoutingTableEntry{}, "missing"
+		return ingressv1.IngressRoutingTableEntry{}, LookupMissing
 	}
 	if stored.tombstone {
-		return ingressv1.IngressRoutingTableEntry{}, "tombstone"
+		return ingressv1.IngressRoutingTableEntry{}, LookupTombstone
 	}
 	if !stored.entry.PublicUrlExpiresAt.After(now) {
-		return ingressv1.IngressRoutingTableEntry{}, "public_url_expired"
+		return ingressv1.IngressRoutingTableEntry{}, LookupPublicURLExpired
 	}
 	entry := cloneRoutingTableEntry(stored.entry)
 	// relay renewal does not republish this public URL projection. the copied
 	// deadline is a hint; the relay checks its current lease and exact process
 	// identity before accepting each internal stream.
-	return entry, ""
+	return entry, LookupCurrent
 }
 
 func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {

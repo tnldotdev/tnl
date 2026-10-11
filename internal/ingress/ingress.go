@@ -37,12 +37,12 @@ type PublicURL struct {
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
 	Backends          []routebackend.Backend
-	PublicPort        uint16
+	PublicPort        *uint16
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
 // are fixed labels, never hostnames, identifiers, or error text.
-type LookupFunc func(string) (PublicURL, string)
+type LookupFunc func(string) (PublicURL, LookupReason)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -70,8 +70,8 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
-	LookupPort                      func(uint16) (PublicURL, string)
-	LookupChallenge                 func(string) ([]routebackend.Backend, string)
+	LookupPort                      func(uint16) (PublicURL, LookupReason)
+	LookupChallenge                 func(string) ([]routebackend.Backend, LookupReason)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
 	RelayHostname                   string
@@ -91,7 +91,7 @@ type Config struct {
 	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
-	OnForwardingFailure             func(string, uint64, string, string, int)
+	OnForwardingFailure             func(string, uint64, string, ForwardingFailureReason, int)
 }
 
 type Server struct {

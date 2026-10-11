@@ -241,8 +241,9 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 		Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
 	}
 	for _, test := range []struct {
-		name, reason string
-		change       func(*ingressv1.IngressRoutingTableEvent)
+		name   string
+		reason LookupReason
+		change func(*ingressv1.IngressRoutingTableEvent)
 	}{
 		{"ready", "", func(*ingressv1.IngressRoutingTableEvent) {}},
 		{"renewed relay with old projected deadline", "", func(e *ingressv1.IngressRoutingTableEvent) {

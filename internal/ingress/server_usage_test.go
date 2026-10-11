@@ -57,10 +57,10 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	backend := newTLSBackend(t, "acme-tls/1")
 	var opened atomic.Bool
 	config := Config{
-		Lookup: func(string) (PublicURL, string) {
+		Lookup: func(string) (PublicURL, LookupReason) {
 			return PublicURL{HashedIPPolicy: hashedPolicyForTest(t, "192.0.2.0/24")}, ""
 		},
-		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
+		LookupChallenge: func(host string) ([]routebackend.Backend, LookupReason) {
 			if host != "route.example" {
 				return nil, "missing"
 			}
@@ -96,8 +96,8 @@ func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
 	metrics := new(testMetrics)
 	_, address := startIngress(t, Config{
 		Metrics: metrics,
-		Lookup:  func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
-		LookupChallenge: func(string) ([]routebackend.Backend, string) {
+		Lookup:  func(string) (PublicURL, LookupReason) { return PublicURL{}, LookupNotFound },
+		LookupChallenge: func(string) ([]routebackend.Backend, LookupReason) {
 			return nil, "missing"
 		},
 	})
@@ -117,7 +117,7 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, string) {
+	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, LookupReason) {
 		lookups.Add(1)
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
@@ -181,7 +181,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	usage := newUsageRecorder()
 	config := Config{
 		RequireProxyHeader: true, MaxDeniedConnections: 2, OpenUsage: usage.Open,
-		Lookup: func(host string) (PublicURL, string) {
+		Lookup: func(host string) (PublicURL, LookupReason) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
 			}
