@@ -162,6 +162,8 @@ func (d *Database) ListRequests(ctx context.Context, filter RequestFilter) ([]Re
 	if filter.AllWorktrees {
 		column, selected = "shared_project_root", filter.SharedProject
 	}
+	// keep one of these two fixed columns in the query so SQLite can use its
+	// project index; all caller-provided values remain bound parameters.
 	query := `SELECT request_number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
 		service, received_at, method, path, status, duration_ms, origin, capture_mode, NULL AS detail_json,
 		(detail_json IS NOT NULL) AS detail_available
