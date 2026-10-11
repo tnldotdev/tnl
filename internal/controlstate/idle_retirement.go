@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,7 +41,7 @@ func (d *Database) RetireIdlePublicURLs(ctx context.Context, now time.Time) (del
 	}
 	for _, route := range routes {
 		latest, err := queries.LatestClosedPublicURLPublishRun(ctx, route.ID)
-		if err != nil && err != pgx.ErrNoRows {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return 0, fmt.Errorf("read last publish run for idle URL: %w", err)
 		}
 		idleSince := route.CreatedAt.Time
