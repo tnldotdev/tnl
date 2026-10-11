@@ -55,6 +55,7 @@ type PublicURLServerConfig struct {
 	Limits                ApplicationLimits
 	OnTargetFailure       func()
 	ObserveRequest        func(RequestObservation)
+	ObserveDatabase       func(DatabaseObservation)
 	InspectionMode        projectconfig.InspectionMode
 	Certificate           tls.Certificate
 	CertificatePlan       controlv1.CertificatePlan
