@@ -25,6 +25,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const maxHeaderFields = 100
@@ -403,7 +404,7 @@ func NormalizeTarget(target string) (string, error) {
 		hostname = canonical
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
+	if err != nil || !tcpport.ValidNetwork(port) {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target requires a valid port"))
 	}
 	targetAddress := net.JoinHostPort(hostname, strconv.Itoa(port))

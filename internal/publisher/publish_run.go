@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -57,7 +58,7 @@ func runSession(
 	}
 	var publicPort uint16
 	if setup.PublicUrl.PublicPort != nil {
-		if *setup.PublicUrl.PublicPort < 1024 || *setup.PublicUrl.PublicPort > 65535 {
+		if !tcpport.Valid(*setup.PublicUrl.PublicPort) {
 			return errors.New("publisher: server returned invalid database public port")
 		}
 		publicPort = uint16(*setup.PublicUrl.PublicPort)

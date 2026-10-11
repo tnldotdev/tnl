@@ -1,4 +1,4 @@
-// package tcpport defines the public TCP port inventory bounds used by control.
+// package tcpport defines public and ordinary TCP port bounds.
 package tcpport
 
 const (
@@ -7,3 +7,6 @@ const (
 )
 
 func Valid(port int) bool { return port >= Min && port <= Max }
+
+// ValidNetwork accepts a nonzero TCP source, destination, or private target port.
+func ValidNetwork(port int) bool { return port >= 1 && port <= Max }

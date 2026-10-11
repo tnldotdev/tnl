@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"golang.org/x/net/idna"
 )
 
@@ -115,7 +116,7 @@ func CanonicalizeAuthority(input string) (string, error) {
 		var port string
 		hostname, port, _ = strings.Cut(input, ":")
 		value, err := strconv.Atoi(port)
-		if err != nil || value < 1 || value > 65535 {
+		if err != nil || !tcpport.ValidNetwork(value) {
 			return "", invalid(ErrorInvalidPort)
 		}
 	}
