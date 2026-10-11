@@ -145,6 +145,25 @@ type LocalTunnel struct {
 	ServiceProtocol  string
 }
 
+type LocalTunnelEvent struct {
+	ProjectRoot      string
+	Sequence         int64
+	TunnelID         string
+	Service          string
+	ServiceProtocol  string
+	State            string
+	Target           string
+	Hostname         string
+	PublicPort       int64
+	PublishRunNumber int64
+	CreatedAt        int64
+}
+
+type LocalTunnelEventCursor struct {
+	ProjectRoot string
+	Sequence    int64
+}
+
 type OauthAliasReturn struct {
 	ServerOrigin     string
 	Hostname         string
