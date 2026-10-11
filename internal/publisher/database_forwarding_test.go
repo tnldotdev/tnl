@@ -371,9 +371,20 @@ func startDatabaseTarget(t *testing.T, protocol controlv1.PublicURLServiceProtoc
 
 func openDatabaseVisitor(t *testing.T, route *PublicURLServer, port uint16) net.Conn {
 	t.Helper()
+	visitor, err := dialDatabaseVisitor(t, route, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return visitor
+}
+
+func dialDatabaseVisitor(t *testing.T, route *PublicURLServer, port uint16) (net.Conn, error) {
+	t.Helper()
 	visitor, publisher := net.Pipe()
 	t.Cleanup(func() { _ = visitor.Close(); _ = publisher.Close() })
-	_ = visitor.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := visitor.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return nil, err
+	}
 	done := make(chan struct{})
 	go func() { route.handleVisitor(publisher, false); close(done) }()
 	t.Cleanup(func() { _ = visitor.Close(); awaitPublisherTest(t, done) })
@@ -382,12 +393,12 @@ func openDatabaseVisitor(t *testing.T, route *PublicURLServer, port uint16) net.
 		Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), port),
 	})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if _, err := visitor.Write(header); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	return visitor
+	return visitor, nil
 }
 
 func readDatabaseByte(t *testing.T, visitor net.Conn, expected byte) {

@@ -70,7 +70,7 @@ try {
       "-subj",
       "/CN=route.example",
       "-addext",
-      "subjectAltName=DNS:route.example",
+      "subjectAltName=DNS:route.example,DNS:db.internal",
     ]);
     await runner.run("docker", [
       "cp",
