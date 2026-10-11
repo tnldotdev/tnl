@@ -80,6 +80,9 @@ func readProjectServicesSnapshot(ctx context.Context, project projectConfigurati
 	if err != nil {
 		return snapshot, err
 	}
+	if len(project.Config.Services) == len(configuredRuntimeServices(project)) {
+		return snapshot, nil
+	}
 	database, err := clientstate.Open(ctx, state)
 	if err != nil {
 		return snapshot, err

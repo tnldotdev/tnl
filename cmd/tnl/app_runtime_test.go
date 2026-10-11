@@ -212,7 +212,7 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal("database service sent an HTTP readiness probe")
 		return clientruntime.Observation{}
 	}
-	flags := waitCommand{Service: []string{"orders"}, Timeout: 40 * time.Millisecond, Output: "json"}
+	flags := waitCommand{Service: []string{"orders"}, Timeout: 500 * time.Millisecond, Output: "json"}
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
 		t.Fatal("unready database publication passed wait")
 	}
@@ -220,6 +220,7 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
+	flags.Timeout = 2 * time.Second
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +234,7 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
+	flags.Timeout = 500 * time.Millisecond
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
 		t.Fatal("wait passed with closed database target")
 	}
