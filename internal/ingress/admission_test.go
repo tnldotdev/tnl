@@ -25,11 +25,11 @@ func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
 	var ordinaryLookups atomic.Int32
 	config := Config{
 		MaxConnections: 1,
-		Lookup: func(string) (PublicURL, string) {
+		Lookup: func(string) (PublicURL, LookupReason) {
 			ordinaryLookups.Add(1)
 			return PublicURL{}, "not_found"
 		},
-		LookupChallenge: func(host string) ([]routebackend.Backend, string) {
+		LookupChallenge: func(host string) ([]routebackend.Backend, LookupReason) {
 			if host != "route.example" || !active.Load() {
 				return nil, "missing"
 			}
@@ -219,7 +219,7 @@ func (b challengeDeadlineBackend) Open(ctx context.Context, _ string) (net.Conn,
 
 func TestChallengeDeadlineAndForcedDrain(t *testing.T) {
 	backend := challengeDeadlineBackend{deadline: make(chan time.Time, 1)}
-	config := Config{OpenTimeout: time.Minute, LookupChallenge: func(string) ([]routebackend.Backend, string) {
+	config := Config{OpenTimeout: time.Minute, LookupChallenge: func(string) ([]routebackend.Backend, LookupReason) {
 		return []routebackend.Backend{backend}, ""
 	}}
 	server, address := startIngress(t, config)
@@ -260,8 +260,8 @@ func TestChallengeStreamDeadlineReleasesCapacity(t *testing.T) {
 		defer upstream.Close()
 		defer origin.Close()
 		server, err := New(listener, Config{MaxConnections: 1,
-			Lookup: func(string) (PublicURL, string) { return PublicURL{}, "not_found" },
-			LookupChallenge: func(string) ([]routebackend.Backend, string) {
+			Lookup: func(string) (PublicURL, LookupReason) { return PublicURL{}, LookupNotFound },
+			LookupChallenge: func(string) ([]routebackend.Backend, LookupReason) {
 				return []routebackend.Backend{singleBackend{upstream}}, ""
 			}})
 		if err != nil {

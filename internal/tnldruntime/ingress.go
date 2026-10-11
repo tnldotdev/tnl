@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -79,6 +80,7 @@ type ingressSettings struct {
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
 	visitorConnectionLimit           int64
+	ingressPoolID                    ingresspool.ID
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
@@ -93,6 +95,7 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
+		ingressPoolID:                    cfg.IngressPoolID,
 		requireProxyHeader:               cfg.RequireProxyHeader,
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
@@ -172,29 +175,51 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	ingressConfig := ingress.Config{
-		Lookup: func(hostname string) (ingress.PublicURL, string) {
+		Lookup: func(hostname string) (ingress.PublicURL, ingress.LookupReason) {
 			entry, reason := controller.LookupWithReason(hostname, time.Now())
-			if reason != "" {
+			if reason != ingress.LookupCurrent {
 				return ingress.PublicURL{}, reason
+			}
+			if entry.PublicPort != nil {
+				return ingress.PublicURL{}, ingress.LookupInvalidProjection
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
 				logOperationalError("read ingress public URL", failure.ServerIngressFailed, err)
-				return ingress.PublicURL{}, "invalid_projection"
+				return ingress.PublicURL{}, ingress.LookupInvalidProjection
 			}
-			return route, ""
+			return route, ingress.LookupCurrent
 		},
-		LookupChallenge: func(hostname string) ([]routebackend.Backend, string) {
+		LookupPort: func(port uint16) (ingress.PublicURL, ingress.LookupReason) {
+			pool := settings.ingressPoolID
+			if pool == "" {
+				pool = ingresspool.PrimaryID
+			}
+			entry, reason := controller.LookupPortWithReason(pool, port, time.Now())
+			if reason != ingress.LookupCurrent {
+				return ingress.PublicURL{}, reason
+			}
+			if entry.PublicPort == nil || *entry.PublicPort != int(port) {
+				return ingress.PublicURL{}, ingress.LookupInvalidProjection
+			}
+			route, err := forwarder.PublicURL(entry)
+			if err != nil {
+				logOperationalError("read ingress database public URL", failure.ServerIngressFailed, err)
+				return ingress.PublicURL{}, ingress.LookupInvalidProjection
+			}
+			return route, ingress.LookupCurrent
+		},
+		LookupChallenge: func(hostname string) ([]routebackend.Backend, ingress.LookupReason) {
 			entry, reason := controller.LookupChallengeWithReason(hostname, time.Now())
-			if reason != "" {
+			if reason != ingress.LookupCurrent {
 				return nil, reason
 			}
 			backends, err := forwarder.Backends(entry)
 			if err != nil {
 				logOperationalError("read ingress certificate challenge", failure.ServerIngressFailed, err)
-				return nil, "invalid_projection"
+				return nil, ingress.LookupInvalidProjection
 			}
-			return backends, ""
+			return backends, ingress.LookupCurrent
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
 		MaxClientHelloConnections:       settings.clientHelloConnectionLimit,
@@ -206,7 +231,7 @@ func (d *daemon) startIngressRuntime(
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
 		OnError:         func(err error) { logOperationalError("serve ingress connection", failure.ServerIngressFailed, err) },
-		OnForwardingFailure: func(publicURLID string, version uint64, visitorID, reason string, attempts int) {
+		OnForwardingFailure: func(publicURLID string, version uint64, visitorID string, reason ingress.ForwardingFailureReason, attempts int) {
 			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
 				publicURLID, version, visitorID, reason, attempts)
 		},

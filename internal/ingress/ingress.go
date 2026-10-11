@@ -1,5 +1,5 @@
-// Package ingress routes TLS connections by exact SNI hostname without
-// terminating their TLS.
+// package ingress routes HTTPS by exact SNI and database connections by the
+// trusted destination port without terminating visitor TLS.
 package ingress
 
 import (
@@ -37,11 +37,12 @@ type PublicURL struct {
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
 	Backends          []routebackend.Backend
+	PublicPort        *uint16
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
 // are fixed labels, never hostnames, identifiers, or error text.
-type LookupFunc func(string) (PublicURL, string)
+type LookupFunc func(string) (PublicURL, LookupReason)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -69,7 +70,8 @@ type Metrics interface {
 
 type Config struct {
 	Lookup                          LookupFunc
-	LookupChallenge                 func(string) ([]routebackend.Backend, string)
+	LookupPort                      func(uint16) (PublicURL, LookupReason)
+	LookupChallenge                 func(string) ([]routebackend.Backend, LookupReason)
 	ServerHostname                  string
 	HandleControl                   func(net.Conn) bool
 	RelayHostname                   string
@@ -89,7 +91,7 @@ type Config struct {
 	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
-	OnForwardingFailure             func(string, uint64, string, string, int)
+	OnForwardingFailure             func(string, uint64, string, ForwardingFailureReason, int)
 }
 
 type Server struct {
@@ -240,6 +242,15 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		return nil
 	}
 	_ = public.SetReadDeadline(time.Time{})
+	// fly sends the visitor's original destination in the trusted outer header.
+	// database clients start with protocol negotiation, not a TLS ClientHello.
+	if s.config.RequireProxyHeader && destination.Port() != 443 {
+		finishInspection()
+		if s.config.LookupPort == nil {
+			return nil
+		}
+		return s.forwardPort(public, source, destination, reader)
+	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
 	if err != nil {

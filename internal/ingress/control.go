@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -407,28 +408,35 @@ func (c *Controller) Ready(now time.Time) bool {
 
 func (c *Controller) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
 	entry, reason := c.LookupWithReason(canonicalHostname, now)
-	return entry, reason == ""
+	return entry, reason == LookupCurrent
 }
 
-func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, "ingress_unavailable"
+		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
 	}
 	entry, ok := c.routingTable.Lookup(canonicalHostname, now)
 	if !ok {
-		return ingressv1.IngressRoutingTableEntry{}, "not_found"
+		return ingressv1.IngressRoutingTableEntry{}, LookupNotFound
 	}
-	return entry, ""
+	return entry, LookupCurrent
+}
+
+func (c *Controller) LookupPortWithReason(pool ingresspool.ID, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
+	if !c.Ready(now) {
+		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
+	}
+	return c.routingTable.LookupPortWithReason(pool, port, now)
 }
 
 func (c *Controller) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
 	entry, reason := c.LookupChallengeWithReason(canonicalHostname, now)
-	return entry, reason == ""
+	return entry, reason == LookupCurrent
 }
 
-func (c *Controller) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, string) {
+func (c *Controller) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, "ingress_unavailable"
+		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
 	}
 	return c.routingTable.LookupChallengeWithReason(canonicalHostname, now)
 }

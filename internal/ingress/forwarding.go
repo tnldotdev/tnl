@@ -132,6 +132,10 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
 	}
+	if entry.PublicPort != nil {
+		port := uint16(*entry.PublicPort)
+		route.PublicPort = &port
+	}
 	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {
 		route.RecoveryEpisodeID = uint64(*entry.RecoveryEpisodeId)
 	}

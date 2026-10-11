@@ -92,6 +92,85 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 	}
 }
 
+func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
+	now := time.Now().UTC()
+	event := func(revision int64, hostname, pool string, port int) ingressv1.IngressRoutingTableEvent {
+		entry := forwardingTestEntry(now, "relay.example:443")
+		entry.PublicUrlId = "public_url_" + hostname
+		entry.CanonicalHostname = hostname + ".example"
+		entry.PolicyRevision = 1
+		entry.IpPolicy = ingressv1.AllowAll
+		id, protocol := ingressv1.Identifier(pool), ingressv1.Postgres
+		entry.IngressPoolId, entry.ServiceProtocol, entry.PublicPort = &id, &protocol, &port
+		return ingressv1.IngressRoutingTableEvent{
+			RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert,
+			PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
+			CanonicalHostname: entry.CanonicalHostname, EntryRevision: revision,
+			Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
+		}
+	}
+	first := event(1, "one", "ingress-a", 5432)
+	var table RoutingTable
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{first}}); err != nil {
+		t.Fatal(err)
+	}
+	*first.Entry.PublicPort = 9999
+	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || *got.PublicPort != 5432 {
+		t.Fatalf("retained port = %+v, reason %q", got, reason)
+	}
+	if _, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "missing" {
+		t.Fatalf("wrong pool lookup reason = %q", reason)
+	}
+	for _, test := range []struct {
+		name   string
+		port   int
+		change func(*ingressv1.IngressRoutingTableEntry)
+	}{
+		{name: "below public port range", port: 1023},
+		{name: "above public port range", port: 65536},
+		{name: "http with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
+			protocol := ingressv1.Http
+			entry.ServiceProtocol = &protocol
+		}},
+		{name: "unknown protocol with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
+			protocol := ingressv1.IngressRoutingTableEntryServiceProtocol("unknown")
+			entry.ServiceProtocol = &protocol
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := event(2, "invalid", "ingress-a", test.port)
+			if test.change != nil {
+				test.change(&invalid.Entry)
+			}
+			if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{invalid}}); !errors.Is(err, ErrRoutingTableEvent) {
+				t.Fatalf("invalid port projection = %v", err)
+			}
+		})
+	}
+	second := event(2, "two", "ingress-a", 5432)
+	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{second}}); !errors.Is(err, ErrRoutingTableEvent) {
+		t.Fatalf("colliding port page = %v", err)
+	}
+	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || got.PublicUrlId != first.PublicUrlId {
+		t.Fatalf("collision changed active port: %+v, %q", got, reason)
+	}
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 2, Entries: []ingressv1.IngressRoutingTableEvent{event(1, "one", "ingress-a", 5432), second}}); !errors.Is(err, ErrRoutingTableEvent) {
+		t.Fatalf("colliding snapshot = %v", err)
+	}
+	tombstone := event(2, "one", "ingress-a", 5432)
+	tombstone.Kind, tombstone.PublicUrlExpiresAt, tombstone.Entry.PublisherConnections = ingressv1.PublicUrlTombstone, nil, nil
+	otherPool := event(3, "two", "ingress-b", 5432)
+	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 3, NextRevision: 3, Events: []ingressv1.IngressRoutingTableEvent{tombstone, otherPool}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "missing" {
+		t.Fatalf("tombstoned port reason = %q", reason)
+	}
+	if got, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "" || got.PublicUrlId != otherPool.PublicUrlId {
+		t.Fatalf("other pool port = %+v, %q", got, reason)
+	}
+}
+
 func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	entry := forwardingTestEntry(now, "relay.example:443")
@@ -162,8 +241,9 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 		Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
 	}
 	for _, test := range []struct {
-		name, reason string
-		change       func(*ingressv1.IngressRoutingTableEvent)
+		name   string
+		reason LookupReason
+		change func(*ingressv1.IngressRoutingTableEvent)
 	}{
 		{"ready", "", func(*ingressv1.IngressRoutingTableEvent) {}},
 		{"renewed relay with old projected deadline", "", func(e *ingressv1.IngressRoutingTableEvent) {

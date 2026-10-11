@@ -25,17 +25,37 @@ type committedVisitorStream struct {
 	setupErr   error
 }
 
+type visitorSelection uint8
+
+const (
+	hostnameSelection visitorSelection = iota
+	portSelection
+	challengeSelection
+)
+
 var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
 
 // forward resolves policy and admission before attempting a publisher stream.
 // challenges use their own lookup and capacity; denied visitors retain their
 // bounded publisher path for an HTTPS 403.
 func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) error {
+	selection := hostnameSelection
+	if hello.ACMETLSALPN {
+		selection = challengeSelection
+	}
+	return s.forwardSelected(public, source, destination, hello, selection)
+}
+
+func (s *Server) forwardPort(public net.Conn, source, destination netip.AddrPort, reader io.Reader) error {
+	return s.forwardSelected(public, source, destination, router.ClientHello{Remainder: reader}, portSelection)
+}
+
+func (s *Server) forwardSelected(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello, selection visitorSelection) error {
 	var route PublicURL
 	var backends []routebackend.Backend
 	var ok bool
-	var challengeReason string
-	challenge := hello.ACMETLSALPN
+	var challengeReason LookupReason
+	challenge, byPort := selection == challengeSelection, selection == portSelection
 	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
 	if !challenge && s.config.Metrics != nil {
@@ -52,26 +72,34 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		}
 		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
 	} else {
-		var reason string
-		route, reason = s.config.Lookup(hello.ServerName)
-		ok = reason == ""
+		var reason LookupReason
+		if byPort {
+			route, reason = s.config.LookupPort(destination.Port())
+		} else {
+			route, reason = s.config.Lookup(hello.ServerName)
+		}
+		if reason == LookupCurrent && (byPort && (route.PublicPort == nil || *route.PublicPort != destination.Port()) ||
+			!byPort && route.PublicPort != nil) {
+			reason = LookupInvalidProjection
+		}
+		ok = reason == LookupCurrent
 		switch reason {
-		case "ingress_unavailable":
-			visitorOutcome = "lookup_unavailable"
-		case "invalid_projection":
-			visitorOutcome = "invalid_projection"
+		case LookupIngressUnavailable:
+			visitorOutcome = observability.VisitorLookupUnavailable
+		case LookupInvalidProjection:
+			visitorOutcome = observability.VisitorInvalidProjection
 		}
 		backends = route.Backends
 	}
-	if challengeReason != "" || (!challenge && !ok) || len(backends) == 0 {
+	if challengeReason != LookupCurrent || (!challenge && !ok) || len(backends) == 0 {
 		if !challenge && ok {
-			visitorOutcome = "lookup_unavailable"
+			visitorOutcome = observability.VisitorLookupUnavailable
 		}
 		if challenge && s.config.Metrics != nil {
-			if challengeReason == "" {
-				challengeReason = "unavailable"
+			if challengeReason == LookupCurrent {
+				challengeReason = LookupNoBackends
 			}
-			s.config.Metrics.IncChallengeRejection(challengeReason)
+			s.config.Metrics.IncChallengeRejection(string(challengeReason))
 		}
 		return nil
 	}
@@ -84,9 +112,14 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	denied := !challenge && !route.allowsIP(source.Addr())
 	if denied {
-		visitorOutcome = "policy_denied"
+		visitorOutcome = observability.VisitorPolicyDenied
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
+		}
+		// database visitors have no HTTPS denial response. do not send their
+		// startup bytes to the publisher when ingress has denied the source.
+		if byPort {
+			return nil
 		}
 	}
 	kind, key := visitorConnection, route.ID
@@ -99,9 +132,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	if release == nil {
 		s.rejectCapacity(rejected)
 		if !challenge && !denied {
-			visitorOutcome = "capacity_denied"
+			visitorOutcome = observability.VisitorCapacityDenied
 			if rejected == "draining" {
-				visitorOutcome = "draining"
+				visitorOutcome = observability.VisitorDraining
 			}
 		}
 		if usage != nil {
@@ -154,9 +187,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if openErr != nil {
 		if !denied {
-			visitorOutcome = "open_failed"
+			visitorOutcome = observability.VisitorOpenFailed
 		}
-		s.reportForwardingFailure(challenge, route, visitorID, "no_backend", len(backends))
+		s.reportForwardingFailure(challenge, route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
 	defer s.releaseBackend(opened.connection)
@@ -170,10 +203,10 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if opened.setupErr != nil {
 		if !denied {
-			visitorOutcome = "committed_failed"
+			visitorOutcome = observability.VisitorCommittedFailed
 		}
-		s.reportForwardingFailure(challenge, route, visitorID, "committed_write", len(backends))
-		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", opened.bytes, opened.setupErr)
+		s.reportForwardingFailure(challenge, route, visitorID, ForwardingCommittedWrite, len(backends))
+		return fmt.Errorf("ingress: write visitor setup after %d bytes: %w", opened.bytes, opened.setupErr)
 	}
 	if challenge {
 		if err := opened.connection.SetDeadline(challengeDeadline); err != nil {
@@ -182,9 +215,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	err = s.copyVisitor(public, opened.connection, hello.Remainder, route, denied, usage)
 	if !denied {
-		visitorOutcome = "forwarded"
+		visitorOutcome = observability.VisitorForwarded
 		if err != nil {
-			visitorOutcome = "committed_failed"
+			visitorOutcome = observability.VisitorCommittedFailed
 		}
 	}
 	return err
@@ -227,7 +260,7 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 		if openErr != nil {
 			stopAttempt()
 			s.observeAttempt(attempt, openErr, started)
-			s.observeRelayAttempt(backend, "open_failed")
+			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
 			continue
 		}
@@ -245,14 +278,14 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 		stopAttempt()
 		s.observeAttempt(attempt, writeErr, started)
 		if writeErr != nil && written == 0 {
-			s.observeRelayAttempt(backend, "setup_failed")
+			s.observeRelayAttempt(backend, observability.RelayAttemptSetupFailed)
 			lastErr = errors.Join(writeErr, s.releaseBackend(candidate))
 			continue
 		}
 		if writeErr != nil {
-			s.observeRelayAttempt(backend, "committed_failed")
+			s.observeRelayAttempt(backend, observability.RelayAttemptCommittedFailed)
 		} else {
-			s.observeRelayAttempt(backend, "committed")
+			s.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
 		}
 		return committedVisitorStream{connection: candidate, bytes: written, setupErr: writeErr}, nil
 	}
@@ -301,7 +334,7 @@ func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome obser
 	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
 }
 
-func (s *Server) reportForwardingFailure(challenge bool, route PublicURL, visitorID, reason string, attempts int) {
+func (s *Server) reportForwardingFailure(challenge bool, route PublicURL, visitorID string, reason ForwardingFailureReason, attempts int) {
 	if !challenge && s.config.OnForwardingFailure != nil {
 		s.config.OnForwardingFailure(route.ID, route.PublishRunNumber, visitorID, reason, attempts)
 	}
