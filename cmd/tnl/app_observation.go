@@ -344,9 +344,9 @@ func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot
 }
 
 func runAppWatch(ctx context.Context, project projectConfiguration, state string, flags watchCommand, output io.Writer) error {
-	hasDatabase := len(project.Config.Services) != len(configuredRuntimeServices(project))
+	hasTCP := len(project.Config.Services) != len(configuredRuntimeServices(project))
 	var database *clientstate.Database
-	if hasDatabase {
+	if hasTCP {
 		var err error
 		database, err = clientstate.Open(ctx, state)
 		if err != nil {
@@ -360,7 +360,7 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 		if err != nil {
 			return err
 		}
-		if hasDatabase {
+		if hasTCP {
 			sequence, err := database.LatestTunnelEventCursor(ctx, project.Root)
 			if err != nil {
 				return err
@@ -369,7 +369,7 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 			if err != nil {
 				return err
 			}
-			snapshot = mergeDatabaseServices(snapshot, project, tunnels.Tunnels)
+			snapshot = mergeTCPServices(snapshot, project, tunnels.Tunnels)
 			cursor = watchCursor(snapshot.Cursor, sequence, true)
 		} else {
 			cursor = snapshot.Cursor
@@ -406,12 +406,12 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 		}
 		for _, event := range events {
 			appCursor = event.Cursor
-			event.Cursor = watchCursor(appCursor, tunnelCursor, hasDatabase)
+			event.Cursor = watchCursor(appCursor, tunnelCursor, hasTCP)
 			if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
 				return err
 			}
 		}
-		if hasDatabase {
+		if hasTCP {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -456,8 +456,8 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 	}
 }
 
-func watchCursor(app string, database uint64, hasDatabase bool) string {
-	if hasDatabase {
+func watchCursor(app string, database uint64, hasTCP bool) string {
+	if hasTCP {
 		return app + ":" + strconv.FormatUint(database, 10)
 	}
 	return app
