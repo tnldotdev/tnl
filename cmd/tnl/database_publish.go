@@ -21,7 +21,7 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 	protocol := controlv1.PublicURLServiceProtocol(value)
 	if !protocol.Valid() {
 		return "", failure.Wrap("select service protocol", failure.InvalidTunnelFlags,
-			errors.New("protocol must be http, postgres, or mysql"))
+			errors.New("unsupported service protocol"))
 	}
 	return protocol, nil
 }

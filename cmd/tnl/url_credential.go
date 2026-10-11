@@ -40,7 +40,7 @@ type publicURLCredentialCreateCommand struct {
 	Domain          string               `name:"domain" help:"Team domain for this public URL."`
 	Ephemeral       bool                 `name:"ephemeral" help:"Issue a credential for temporary public URLs in the selected namespace."`
 	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
-	Protocol        string               `name:"protocol" help:"Service protocol of a new saved public URL: http (default), postgres, or mysql."`
+	Protocol        string               `name:"protocol" help:"Service protocol of a new saved public URL; defaults to http."`
 	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`

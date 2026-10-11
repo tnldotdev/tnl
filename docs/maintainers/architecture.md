@@ -89,7 +89,7 @@ host:port target before the publisher dials it.
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 
-The publisher requires the PostgreSQL SSLRequest or MySQL TLS upgrade before
+The publisher requires TLS negotiation for the selected database protocol before
 forwarding database authentication bytes. In the default mode, it terminates
 visitor TLS with the public URL certificate, verifies a separate TLS connection
 to the private target using its target hostname and configured roots, and copies

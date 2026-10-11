@@ -26,7 +26,7 @@ type publishCommand struct {
 	remoteFlags         `embed:""`
 	tunnelFlags         `embed:""`
 	Target              string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or database host:port."`
-	Protocol            string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol: http (default), postgres, or mysql."`
+	Protocol            string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
 	TargetTLSName       string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the private database TLS certificate; defaults to the target host."`
 	DatabasePassthrough bool              `name:"database-tls-passthrough" help:"Pass visitor TLS to the private database after checking public URL SNI; required for TLS channel binding."`
 	PublishCredential   string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
