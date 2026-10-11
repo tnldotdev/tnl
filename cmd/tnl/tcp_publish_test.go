@@ -69,10 +69,10 @@ func TestVisitorTLSPassthroughFlagUsesClientVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "db.internal:5432", "--protocol", "postgres", "--visitor-tls-passthrough"}); err != nil {
+	if _, err := parser.Parse([]string{"publish", "db.internal:5432", "--protocol", "postgres", "--visitor-tls-passthrough", "--inspection-mode=none"}); err != nil {
 		t.Fatal(err)
 	}
-	if !flags.Publish.VisitorTLSPassthrough || flags.Publish.TargetTLS ||
+	if !flags.Publish.VisitorTLSPassthrough || flags.Publish.TargetTLS || flags.Publish.InspectionMode != config.InspectionNone ||
 		validateTCPPublishOptions(flags.Publish, controlv1.Postgres) != nil {
 		t.Fatalf("passthrough unexpectedly required target TLS: %+v", flags.Publish)
 	}
@@ -222,5 +222,13 @@ func TestTCPPublicAddressAndFlags(t *testing.T) {
 	}
 	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
 		t.Fatal("TCP --open was silently ignored")
+	}
+	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Mysql, controlv1.Postgres} {
+		if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}, VisitorTLSPassthrough: true}, protocol); err == nil {
+			t.Fatalf("%s passthrough accepted summary inspection", protocol)
+		}
+		if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionNone}, VisitorTLSPassthrough: true}, protocol); err != nil {
+			t.Fatalf("%s passthrough rejected none inspection: %v", protocol, err)
+		}
 	}
 }

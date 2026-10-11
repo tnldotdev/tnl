@@ -54,7 +54,7 @@ func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 // the visitor sends its login with sequence 2; the target expects 1. track both
 // sides' sequences during authentication; after OK or ERR, command packets
 // begin a new sequence at zero and can be copied unchanged.
-func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) error {
+func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte, clientFlags *uint32) error {
 	visitorSequence, backendSequence := byte(2), byte(1)
 	for step := 0; step < 32; step++ {
 		if step == 0 {
@@ -68,6 +68,7 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 			}
 			visitorSequence++
 			flags := binary.LittleEndian.Uint32(response[4:8])
+			*clientFlags = flags
 			binary.LittleEndian.PutUint32(response[4:8], flags&^mysqlClientSSL)
 			response[3] = backendSequence
 			backendSequence++

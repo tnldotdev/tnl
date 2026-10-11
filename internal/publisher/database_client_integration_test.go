@@ -8,11 +8,13 @@ import (
 	"flag"
 	"net"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -81,9 +83,17 @@ func TestIntegrationDatabaseClientMySQLLogin(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	publicCertificate := publicURLTestCertificate(t, "route.example")
+	var observationsMu sync.Mutex
+	var observations []DatabaseObservation
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", ServiceProtocol: controlv1.Mysql, PublicPort: 3306,
 		Target: *testMySQLAddress, Certificate: publicCertificate,
+		InspectionMode: projectconfig.InspectionSummary,
+		ObserveDatabase: func(value DatabaseObservation) {
+			observationsMu.Lock()
+			observations = append(observations, value)
+			observationsMu.Unlock()
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +110,7 @@ func TestIntegrationDatabaseClientMySQLLogin(t *testing.T) {
 		return dialDatabaseVisitor(t, route, 3306)
 	})
 	t.Cleanup(func() { mysql.DeregisterDialContext(tlsName) })
-	database, err := sql.Open("mysql", "tnl_client:testpass@"+tlsName+"(route.example:3306)/mysql?tls="+tlsName+"&timeout=10s&readTimeout=10s&writeTimeout=10s")
+	database, err := sql.Open("mysql", "tnl_client:testpass@"+tlsName+"(route.example:3306)/mysql?tls="+tlsName+"&timeout=10s&readTimeout=10s&writeTimeout=10s&multiStatements=true")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,5 +122,49 @@ func TestIntegrationDatabaseClientMySQLLogin(t *testing.T) {
 	var status, cipher string
 	if err := database.QueryRowContext(ctx, "SHOW SESSION STATUS LIKE 'Ssl_cipher'").Scan(&status, &cipher); err != nil || status != "Ssl_cipher" || cipher != "" {
 		t.Fatalf("private MySQL TLS cipher = %q, %v", cipher, err)
+	}
+	statement, err := database.PrepareContext(ctx, "SELECT ?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := statement.QueryRowContext(ctx, 23).Scan(&value); err != nil || value != 23 {
+		t.Fatalf("prepared query = %d, %v", value, err)
+	}
+	if err := statement.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.QueryContext(ctx, "SELECT 1; SELECT 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for expected := 1; expected <= 2; expected++ {
+		if !rows.Next() {
+			t.Fatalf("missing result set %d: %v", expected, rows.Err())
+		}
+		if err := rows.Scan(&value); err != nil || value != expected {
+			t.Fatalf("result set %d = %d, %v", expected, value, err)
+		}
+		if rows.Next() || rows.Err() != nil {
+			t.Fatalf("unexpected extra row in result set %d: %v", expected, rows.Err())
+		}
+		if expected < 2 && !rows.NextResultSet() {
+			t.Fatalf("missing second result set: %v", rows.Err())
+		}
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT missing_column").Scan(&value); err == nil {
+		t.Fatal("expected MySQL SQL error")
+	}
+	observationsMu.Lock()
+	defer observationsMu.Unlock()
+	if len(observations) != 5 {
+		t.Fatalf("observed %d MySQL executions: %#v", len(observations), observations)
+	}
+	if observations[2].Operation != "execute" || observations[2].Rows != 1 ||
+		observations[3].ResultSets != 2 || observations[3].Rows != 2 || observations[4].Result != "error" ||
+		observations[4].MySQLErrorCode != 1054 || observations[4].SQLState != "42S22" {
+		t.Fatalf("MySQL execution attribution = %#v", observations)
 	}
 }

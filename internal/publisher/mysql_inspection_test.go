@@ -156,6 +156,34 @@ func TestMySQLInspectorStopsAtBrokenContinuation(t *testing.T) {
 	}
 }
 
+func TestMySQLInspectorStartsOnlyAfterVerifiedTargetLogin(t *testing.T) {
+	var observed []DatabaseObservation
+	monitor := newMySQLInspectorDuringAuth(mysqlClientSSL,
+		func(value DatabaseObservation) { observed = append(observed, value) })
+	login := make([]byte, 4)
+	binary.LittleEndian.PutUint32(login, mysqlClientSSL|mysqlClientDeprecateEOF)
+	login = append(login, []byte("secret-auth-response")...)
+	monitor.clientBytes(encodeMySQLPacket(2, login))
+	monitor.serverBytes(encodeMySQLPacket(3, []byte{1, 3}))
+	if !monitor.awaitingAuth || len(observed) != 0 || cap(monitor.client.prefix) > 16 {
+		t.Fatalf("login was inspected as SQL: awaiting=%t, records=%d", monitor.awaitingAuth, len(observed))
+	}
+	monitor.serverBytes(encodeMySQLPacket(4, []byte{0, 0, 0, 0, 0, 0, 0}))
+	if monitor.awaitingAuth || monitor.disabled || !monitor.deprecateEOF {
+		t.Fatalf("authenticated observer = awaiting=%t disabled=%t EOF=%t", monitor.awaitingAuth, monitor.disabled, monitor.deprecateEOF)
+	}
+	for _, value := range monitor.client.firstPrefix {
+		if value != 0 {
+			t.Fatal("authentication prefix remained in the observer")
+		}
+	}
+	monitor.clientBytes(encodeMySQLPacket(0, append([]byte{0x03}, []byte("SELECT 1")...)))
+	monitor.serverBytes(encodeMySQLPacket(1, []byte{0, 0, 0, 0, 0, 0, 0}))
+	if len(observed) != 1 || observed[0].Operation != "query" || observed[0].Result != "ok" {
+		t.Fatalf("first authenticated query = %#v", observed)
+	}
+}
+
 func mysqlInspectionTerminator(status uint16) []byte {
 	payload := []byte{0xfe, 0, 0, 0, 0, 0, 0}
 	binary.LittleEndian.PutUint16(payload[3:5], status)
