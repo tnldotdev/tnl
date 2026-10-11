@@ -195,8 +195,9 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
-			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed {
-				return fmt.Errorf("services.%s: detailed inspection requires an HTTP service", name)
+			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed &&
+				ServiceProtocol(effectivePublish) != "mysql" {
+				return fmt.Errorf("services.%s: detailed inspection requires HTTP or MySQL", name)
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {

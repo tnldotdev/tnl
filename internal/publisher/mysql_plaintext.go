@@ -47,7 +47,7 @@ func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 // the visitor's SSLRequest adds a packet the private server has not seen.
 // translate authentication packet numbers until OK or ERR; command packets
 // have their own sequence starting at zero and can then be copied unchanged.
-func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) error {
+func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte, clientFlags *uint32) error {
 	visitorSequence, backendSequence := byte(2), byte(1)
 	for step := 0; step < 32; step++ {
 		if step == 0 {
@@ -60,6 +60,7 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 			}
 			visitorSequence++
 			flags := binary.LittleEndian.Uint32(response[4:8])
+			*clientFlags = flags
 			binary.LittleEndian.PutUint32(response[4:8], flags&^mysqlClientSSL)
 			response[3] = backendSequence
 			backendSequence++

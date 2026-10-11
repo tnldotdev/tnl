@@ -73,6 +73,7 @@ type Config struct {
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	Limits                   ApplicationLimits
 	ObserveRequest           func(RequestObservation)
+	ObserveDatabase          func(DatabaseObservation)
 	InspectionMode           projectconfig.InspectionMode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool

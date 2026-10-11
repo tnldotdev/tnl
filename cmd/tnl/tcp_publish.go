@@ -64,9 +64,13 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 		}
 		return nil
 	}
-	if flags.Open || flags.InspectionMode == config.InspectionDetailed {
+	if flags.Open {
 		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
-			errors.New("private TCP publications do not support --open or HTTP request capture"))
+			errors.New("private TCP publications do not support --open"))
+	}
+	if flags.InspectionMode == config.InspectionDetailed && (protocol != controlv1.Mysql || flags.VisitorTLSPassthrough) {
+		return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("detailed inspection requires split visitor TLS for MySQL"))
 	}
 	if flags.VisitorTLSPassthrough {
 		if protocol != controlv1.Postgres && protocol != controlv1.Mysql {

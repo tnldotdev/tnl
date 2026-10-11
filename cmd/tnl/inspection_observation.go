@@ -60,3 +60,21 @@ func httpObservation(recorder *clientstate.InspectionRecorder) func(publisher.Re
 		})
 	}
 }
+
+func sqlObservation(recorder *clientstate.InspectionRecorder, mode config.InspectionMode) func(publisher.DatabaseObservation) {
+	return func(event publisher.DatabaseObservation) {
+		var detail json.RawMessage
+		if mode == config.InspectionDetailed && event.Statement != "" {
+			detail, _ = json.Marshal(struct {
+				Statement string `json:"statement"`
+				Truncated bool   `json:"truncated,omitempty"`
+			}{event.Statement, event.StatementTruncated})
+		}
+		recorder.Observe(clientstate.InspectionRecord{
+			Protocol: event.Protocol, ReceivedAt: event.ReceivedAt, DurationMS: event.Duration.Milliseconds(),
+			Origin: "tnl", CaptureMode: mode, Detail: detail,
+			Operation: event.Operation, Result: event.Result, SQLState: event.SQLState, Rows: event.Rows,
+			ResultSets: int64(event.ResultSets), MySQLErrorCode: int64(event.MySQLErrorCode),
+		})
+	}
+}

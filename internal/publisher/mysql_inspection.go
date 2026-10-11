@@ -63,6 +63,8 @@ type mysqlInspector struct {
 	observe         func(DatabaseObservation)
 	deprecateEOF    bool
 	disabled        bool
+	awaitingAuth    bool
+	loginFlagsSeen  bool
 	serverSequence  byte
 	commandSequence byte
 	phase           mysqlPhase
@@ -85,11 +87,70 @@ func newMySQLInspector(clientFlags uint32, mode projectconfig.InspectionMode, ob
 	}
 }
 
+func newMySQLInspectorDuringAuth(clientFlags uint32, mode projectconfig.InspectionMode, observe func(DatabaseObservation)) *mysqlInspector {
+	monitor := newMySQLInspector(clientFlags, mode, observe)
+	monitor.awaitingAuth = true
+	monitor.client.limit = 16 // login packets may contain credentials.
+	return monitor
+}
+
+func (m *mysqlInspector) stop() {
+	m.mu.Lock()
+	m.stopLocked()
+	m.mu.Unlock()
+}
+
+func (m *mysqlInspector) onLoginClientPacket(sequence byte, data []byte, _ int64, _ int) {
+	if m.loginFlagsSeen {
+		return // authentication challenge responses are opaque.
+	}
+	if sequence != 2 || len(data) < 4 {
+		m.stopLocked()
+		return
+	}
+	flags := binary.LittleEndian.Uint32(data[:4])
+	if flags&mysqlClientSSL == 0 {
+		m.stopLocked()
+		return
+	}
+	m.loginFlagsSeen = true
+	m.deprecateEOF = flags&mysqlClientDeprecateEOF != 0
+	if flags&(mysqlClientCompress|mysqlClientZstdCompression) != 0 {
+		m.stopLocked()
+	}
+}
+
+func (m *mysqlInspector) onLoginServerPacket(_ byte, data []byte, _ int64, _ int) {
+	if len(data) == 0 || !m.loginFlagsSeen {
+		m.stopLocked()
+		return
+	}
+	if data[0] == 0xff {
+		m.stopLocked() // a rejected login never starts an execution.
+		return
+	}
+	if data[0] == 0x00 {
+		m.awaitingAuth = false
+		m.client.limit = 16
+		if m.mode == projectconfig.InspectionDetailed {
+			m.client.limit = mysqlClientCapture
+		}
+		clear(m.client.firstPrefix[:cap(m.client.firstPrefix)])
+		clear(m.client.prefix[:cap(m.client.prefix)])
+		clear(m.server.firstPrefix[:cap(m.server.firstPrefix)])
+		m.serverSequence = 1
+	}
+}
+
 func (m *mysqlInspector) clientBytes(data []byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.disabled {
-		m.client.feed(data, m.onClientPacket)
+		if m.awaitingAuth {
+			m.client.feed(data, m.onLoginClientPacket)
+		} else {
+			m.client.feed(data, m.onClientPacket)
+		}
 		if m.client.broken {
 			m.stopLocked()
 		}
@@ -99,7 +160,11 @@ func (m *mysqlInspector) clientBytes(data []byte) {
 func (m *mysqlInspector) serverBytes(data []byte) {
 	m.mu.Lock()
 	if !m.disabled {
-		m.server.feed(data, m.onServerPacket)
+		if m.awaitingAuth {
+			m.server.feed(data, m.onLoginServerPacket)
+		} else {
+			m.server.feed(data, m.onServerPacket)
+		}
 		if m.server.broken {
 			m.stopLocked()
 		}
