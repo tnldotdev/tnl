@@ -5,18 +5,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
-	"errors"
 	"flag"
 	"net"
 	"net/url"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -141,72 +138,5 @@ func TestIntegrationDatabaseClientMySQLLogin(t *testing.T) {
 	var value int
 	if err := database.QueryRowContext(ctx, "SELECT 1").Scan(&value); err != nil || value != 1 {
 		t.Fatalf("MySQL query result = %d, %v", value, err)
-	}
-}
-
-func TestIntegrationDatabaseClientPostgresChannelBinding(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	roots := postgresClientTestRoots(t)
-	address := testutil.PostgresURL(t)
-	parsed, err := url.Parse(address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
-		Target: parsed.Host, DatabaseTLSPassthrough: true, Certificate: publicURLTestCertificate(t, "route.example"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = route.Close() })
-	config := postgresClientTestConfig(t, route, roots, "require")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	connection, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer connection.Close(ctx)
-	var value int
-	if err := connection.QueryRow(ctx, "SELECT 1").Scan(&value); err != nil || value != 1 {
-		t.Fatalf("SCRAM-SHA-256-PLUS query result = %d, %v", value, err)
-	}
-	if err := connection.Close(ctx); err != nil {
-		t.Fatal(err)
-	}
-	publicCertificate := publicURLTestCertificate(t, "route.example")
-	backend, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
-		Target: parsed.Host, TargetTLSName: "db.internal", Certificate: publicCertificate,
-		TargetOptions: localproxy.TargetOptions{RootCAs: roots},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = backend.Close() })
-	separatedRoots := rootsForCertificate(t, publicCertificate)
-	withoutBinding := postgresClientTestConfig(t, backend, separatedRoots, "disable")
-	withoutBindingCtx, cancelWithoutBinding := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelWithoutBinding()
-	connection, err = pgx.ConnectConfig(withoutBindingCtx, withoutBinding)
-	if err != nil {
-		t.Fatalf("separate TLS login without channel binding: %v", err)
-	}
-	if err := connection.Close(withoutBindingCtx); err != nil {
-		t.Fatal(err)
-	}
-	required := postgresClientTestConfig(t, backend, separatedRoots, "require")
-	requiredCtx, cancelRequired := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelRequired()
-	connection, err = pgx.ConnectConfig(requiredCtx, required)
-	if err == nil {
-		_ = connection.Close(requiredCtx)
-		t.Fatal("SCRAM-SHA-256-PLUS unexpectedly crossed two different TLS channels")
-	}
-	var authError *pgconn.PgError
-	if requiredCtx.Err() != nil || !errors.As(err, &authError) || authError.Code != "28000" ||
-		!strings.Contains(strings.ToLower(authError.Message), "channel binding") {
-		t.Fatalf("separate TLS channel binding failure = %v, context = %v", err, requiredCtx.Err())
 	}
 }

@@ -57,7 +57,7 @@ func savedPublicAddress(route controlv1.PublicURL) (string, error) {
 
 func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
 	if protocol == controlv1.Http {
-		if flags.TargetTLSName != "" || flags.DatabasePassthrough {
+		if flags.TargetTLSName != "" {
 			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
 				errors.New("database TLS options require a database protocol"))
 		}
@@ -66,10 +66,6 @@ func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.Pub
 	if flags.Open || flags.RequestInspection == config.RequestInspectionDetailed {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
 			errors.New("database publications do not support --open or HTTP request capture"))
-	}
-	if flags.DatabasePassthrough && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("the database client verifies the target certificate in TLS passthrough mode; omit target TLS options"))
 	}
 	return nil
 }

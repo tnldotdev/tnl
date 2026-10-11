@@ -33,30 +33,29 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname               string
-	PreviewID              string
-	PublicURLID            string
-	PublishRunNumber       uint64
-	Target                 string
-	ServiceProtocol        controlv1.PublicURLServiceProtocol
-	PublicPort             uint16
-	TargetTLSName          string
-	DatabaseTLSPassthrough bool
-	TargetOptions          localproxy.TargetOptions
-	Handler                http.Handler
-	AdmitRequest           func(*http.Request) error
-	ObserveResponse        func(*http.Response) error
-	Mounts                 []localproxy.Mount
-	ShareAccess            *shareAccess
-	BrowserAccess          *browserAccess
-	Feedback               *feedbackRuntime
-	RequestLimit           int // zero selects localproxy.DefaultRequestLimit.
-	Limits                 ApplicationLimits
-	OnTargetFailure        func()
-	ObserveRequest         func(RequestObservation)
-	RequestInspection      projectconfig.RequestInspectionMode
-	Certificate            tls.Certificate
-	CertificatePlan        controlv1.CertificatePlan
+	Hostname          string
+	PreviewID         string
+	PublicURLID       string
+	PublishRunNumber  uint64
+	Target            string
+	ServiceProtocol   controlv1.PublicURLServiceProtocol
+	PublicPort        uint16
+	TargetTLSName     string
+	TargetOptions     localproxy.TargetOptions
+	Handler           http.Handler
+	AdmitRequest      func(*http.Request) error
+	ObserveResponse   func(*http.Response) error
+	Mounts            []localproxy.Mount
+	ShareAccess       *shareAccess
+	BrowserAccess     *browserAccess
+	Feedback          *feedbackRuntime
+	RequestLimit      int // zero selects localproxy.DefaultRequestLimit.
+	Limits            ApplicationLimits
+	OnTargetFailure   func()
+	ObserveRequest    func(RequestObservation)
+	RequestInspection projectconfig.RequestInspectionMode
+	Certificate       tls.Certificate
+	CertificatePlan   controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
@@ -724,7 +723,7 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 					return
 				default:
 				}
-				r.database.forward(metadata, r.tls, r.hostname)
+				r.database.forward(metadata, r.tls)
 			}
 			return
 		}

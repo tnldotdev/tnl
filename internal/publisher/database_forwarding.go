@@ -12,8 +12,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -30,13 +28,12 @@ type databaseForwarding struct {
 	publicPort      uint16
 	target          string
 	backendTLS      *tls.Config
-	passthrough     bool
 	onTargetFailure func()
 }
 
 func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, error) {
 	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
-		if config.PublicPort != 0 || config.TargetTLSName != "" || config.DatabaseTLSPassthrough {
+		if config.PublicPort != 0 || config.TargetTLSName != "" {
 			return nil, errors.New("publisher: HTTP public URL cannot configure database forwarding")
 		}
 		return nil, nil
@@ -55,7 +52,7 @@ func newDatabaseForwarding(config PublicURLServerConfig) (*databaseForwarding, e
 	return &databaseForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
 		backendTLS: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: tlsName,
-			RootCAs: config.TargetOptions.RootCAs}, passthrough: config.DatabaseTLSPassthrough,
+			RootCAs: config.TargetOptions.RootCAs},
 		onTargetFailure: config.OnTargetFailure,
 	}, nil
 }
@@ -69,9 +66,6 @@ func validateDatabaseForwarding(config PublicURLServerConfig) (string, error) {
 		config.BrowserAccess != nil || config.Feedback != nil {
 		return "", errors.New("publisher: database forwarding configuration is invalid")
 	}
-	if config.DatabaseTLSPassthrough && (config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil) {
-		return "", errors.New("publisher: passthrough target certificate is verified by the database client")
-	}
 	host, err := databasetarget.Host(config.Target)
 	if err != nil {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
@@ -79,7 +73,7 @@ func validateDatabaseForwarding(config PublicURLServerConfig) (string, error) {
 	return host, nil
 }
 
-func (d *databaseForwarding) forward(visitor net.Conn, publicTLS *tls.Config, hostname string) {
+func (d *databaseForwarding) forward(visitor net.Conn, publicTLS *tls.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
@@ -93,13 +87,13 @@ func (d *databaseForwarding) forward(visitor net.Conn, publicTLS *tls.Config, ho
 	visitorTLS.NextProtos = nil
 	switch d.protocol {
 	case controlv1.Postgres:
-		_ = d.postgres(visitor, backend, visitorTLS, hostname)
+		_ = d.postgres(visitor, backend, visitorTLS)
 	case controlv1.Mysql:
-		_ = d.mysql(visitor, backend, visitorTLS, hostname)
+		_ = d.mysql(visitor, backend, visitorTLS)
 	}
 }
 
-func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
+func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Config) error {
 	var startup [8]byte
 	if _, err := io.ReadFull(visitor, startup[:]); err != nil {
 		return err
@@ -128,12 +122,6 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 		d.targetFailed()
 		return errors.New("publisher: PostgreSQL target TLS is required")
 	}
-	if d.passthrough {
-		if _, err := visitor.Write(answer[:]); err != nil {
-			return err
-		}
-		return forwardDatabasePassthrough(visitor, backend, hostname, d.admission)
-	}
 	securedBackend, err := d.connectTargetTLS(backend)
 	if err != nil {
 		return err
@@ -144,7 +132,7 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission)
 }
 
-func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
+func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config) error {
 	// mysql begins with a server greeting. preserve its scramble and capability
 	// flags so the private target, not tnl, authenticates the visitor.
 	greeting, err := readMySQLPacket(backend, 64<<10)
@@ -165,9 +153,6 @@ func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Con
 	if _, err := io.Copy(backend, bytes.NewReader(request)); err != nil {
 		d.targetFailed()
 		return err
-	}
-	if d.passthrough {
-		return forwardDatabasePassthrough(visitor, backend, hostname, d.admission)
 	}
 	securedBackend, err := d.connectTargetTLS(backend)
 	if err != nil {
@@ -218,24 +203,5 @@ func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admiss
 	_ = visitor.SetDeadline(time.Time{})
 	_ = backend.SetDeadline(time.Time{})
 	_, err := streamcopy.Copy(securedVisitor, backend)
-	return err
-}
-
-func forwardDatabasePassthrough(visitor, backend net.Conn, hostname string, admission *applicationAdmission) error {
-	hello, err := router.InspectClientHello(visitor)
-	serverName, nameErr := naming.CanonicalizeHostname(hello.ServerName)
-	if err != nil || nameErr != nil || serverName != hostname || hello.ACMETLSALPN {
-		return errors.New("publisher: database TLS SNI does not match public URL")
-	}
-	if status, _ := admission.enter(time.Now()); status != 0 {
-		return errors.New("publisher: database visitor capacity is exhausted")
-	}
-	defer admission.leave()
-	if _, err := io.Copy(backend, bytes.NewReader(hello.Prefix)); err != nil {
-		return err
-	}
-	_ = visitor.SetDeadline(time.Time{})
-	_ = backend.SetDeadline(time.Time{})
-	_, err = streamcopy.Copy(&publicURLReaderConn{Conn: visitor, reader: hello.Remainder}, backend)
 	return err
 }
