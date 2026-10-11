@@ -539,6 +539,15 @@ func TestCreateDatabasePublicURLReturnsAssignedAddress(t *testing.T) {
 	}
 }
 
+func TestCreatePublicURLRejectsUnknownServiceProtocol(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","domain_id":"domain_1","canonical_hostname":"app.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"unknown"}`))
+	response := httptest.NewRecorder()
+	(&handler{}).CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid service protocol") {
+		t.Fatalf("unknown service protocol = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestTargetlessSavedAppPublicURLCanUpdateOnlyItsVisitorPolicy(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",

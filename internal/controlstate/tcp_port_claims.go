@@ -57,7 +57,8 @@ func (d *Database) AllocateTCPPort(ctx context.Context, publicURLID string, now 
 	if err != nil {
 		return TCPPortClaim{}, err
 	}
-	if url.LifecycleState != string(PublicURLLifecycleEnabled) || url.ServiceProtocol != "postgres" && url.ServiceProtocol != "mysql" {
+	protocol := PublicURLServiceProtocol(url.ServiceProtocol)
+	if url.LifecycleState != string(PublicURLLifecycleEnabled) || protocol != PublicURLServicePostgres && protocol != PublicURLServiceMySQL {
 		return TCPPortClaim{}, ErrPublicURLInvalid
 	}
 	existing, err := queries.GetHeldTCPPortClaim(ctx, publicURLID)

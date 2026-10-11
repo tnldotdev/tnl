@@ -12,7 +12,7 @@ import (
 func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 	protocol := controlv1.PublicURLServiceProtocol(route.ServiceProtocol)
 	if protocol == "" {
-		protocol = "http"
+		protocol = controlv1.Http
 	}
 	result := controlv1.PublicURL{
 		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,

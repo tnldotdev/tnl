@@ -1028,10 +1028,8 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 			return nil, ErrPublicURLInvalid
 		}
 	}
-	if !request.ServiceProtocol.Valid() || request.ServiceProtocol != PublicURLServiceHTTP &&
-		(request.Purpose != PublicURLPurposeApp || request.Target != "" || request.GuestID != "" || request.EphemeralCredentialID != "") ||
-		request.Target == "" && (request.Purpose != PublicURLPurposeApp || request.Ephemeral && request.ServiceProtocol == PublicURLServiceHTTP) ||
-		request.Target != "" && authorization.ValidateTarget(request.Target) != nil {
+	if !request.ServiceProtocol.ValidCreateTarget(request.Purpose, request.Target, request.Ephemeral) ||
+		request.ServiceProtocol != PublicURLServiceHTTP && (request.GuestID != "" || request.EphemeralCredentialID != "") {
 		return nil, ErrPublicURLInvalid
 	}
 	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)

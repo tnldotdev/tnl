@@ -70,14 +70,15 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "public URL purpose is required")
 		return
 	}
-	protocol := controlv1.PublicURLServiceProtocol("http")
+	protocol := controlv1.Http
 	if body.ServiceProtocol != nil {
 		protocol = *body.ServiceProtocol
 	}
-	if protocol != "http" && protocol != "postgres" && protocol != "mysql" {
+	if !protocol.Valid() {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service protocol")
 		return
 	}
+	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
 	allowedIPPrefixes := []string(nil)
 	if body.AllowedIpPrefixes != nil {
 		var err error
@@ -88,9 +89,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		}
 	}
 	ephemeral := body.Ephemeral != nil && *body.Ephemeral
-	if protocol != "http" && (body.Purpose != controlv1.App || body.Target != "") ||
-		body.Target == "" && (body.Purpose != controlv1.App || ephemeral && protocol == "http") ||
-		body.Target != "" && authorization.ValidateTarget(body.Target) != nil {
+	if !storedProtocol.ValidCreateTarget(controlstate.PublicURLPurpose(body.Purpose), body.Target, ephemeral) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
@@ -108,7 +107,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	hashProtocol := ""
-	if protocol != "http" {
+	if protocol != controlv1.Http {
 		hashProtocol = string(protocol)
 	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
@@ -126,10 +125,6 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	if h.config.DNSAutomation {
 		dnsState = controlstate.PublicURLDNSPending
 		dnsAuthorityReference = decision.DNSAuthorityReference
-	}
-	storedProtocol := controlstate.PublicURLServiceProtocol("")
-	if protocol != "http" {
-		storedProtocol = controlstate.PublicURLServiceProtocol(protocol)
 	}
 	route, err := h.store.CreatePublicURL(request.Context(), controlstate.CreatePublicURLRequest{
 		GuestID: decision.GuestID,

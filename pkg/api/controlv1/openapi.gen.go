@@ -1017,7 +1017,7 @@ type CreatePublicURLRequest struct {
 	Purpose           PublicURLPurpose          `json:"purpose"`
 	ServiceProtocol   *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 
-	// Target Empty for targetless app URLs and PostgreSQL or MySQL endpoints.
+	// Target Leave empty when the publisher supplies the target locally.
 	Target string `json:"target"`
 	TeamId TeamID `json:"team_id"`
 }
@@ -1346,13 +1346,13 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 
-	// PublicPort Stable visitor TCP port for a PostgreSQL or MySQL public URL.
+	// PublicPort Stable visitor TCP port for a port-addressed public URL.
 	PublicPort      *int                     `json:"public_port,omitempty"`
 	PublicUrlScope  PublicURLScope           `json:"public_url_scope"`
 	Purpose         PublicURLPurpose         `json:"purpose"`
 	ServiceProtocol PublicURLServiceProtocol `json:"service_protocol"`
 
-	// Target Empty for targetless app URLs and database endpoints that take a local publisher target.
+	// Target Empty when the publisher supplies the target locally.
 	Target    string    `json:"target"`
 	TeamId    TeamID    `json:"team_id"`
 	UpdatedAt time.Time `json:"updated_at"`

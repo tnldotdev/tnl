@@ -315,7 +315,7 @@ func TestDeviceProviderStates(t *testing.T) {
 	}
 }
 
-func TestCancelAndLogoutFenceInFlightExchange(t *testing.T) {
+func TestCancelAndLogoutRejectInFlightExchange(t *testing.T) {
 	for _, logout := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cancel", true: "logout"}[logout], func(t *testing.T) {
 			d := newDeviceFixture(t)

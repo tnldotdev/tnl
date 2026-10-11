@@ -154,7 +154,7 @@ func startOperation(ctx context.Context, store *clientstate.Store, method string
 			return current, joined, false, nil
 		}
 	}
-	if err := store.FenceAuthOperations(ctx); err != nil {
+	if err := store.CancelAuthOperations(ctx); err != nil {
 		_ = operationLock.Close()
 		return op, nil, false, err
 	}

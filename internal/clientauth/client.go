@@ -117,7 +117,7 @@ func Logout(ctx context.Context, config Config) error {
 		return err
 	}
 	defer lock.Close()
-	if err := store.FenceAuthOperations(ctx); err != nil {
+	if err := store.CancelAuthOperations(ctx); err != nil {
 		return err
 	}
 	stored, found, err := store.ControlSession(ctx)

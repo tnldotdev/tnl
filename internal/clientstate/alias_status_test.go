@@ -7,7 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-func TestAliasStatusFencesReadyRunsAndRetainsStoppedDefault(t *testing.T) {
+func TestAliasStatusIgnoresStaleReadyRunsAndRetainsStoppedDefault(t *testing.T) {
 	state, _ := aliasTestDatabase(t)
 	scope := aliasTestScope(t)
 	main, initial := aliasTestTunnel(t, state, scope, scope.ProjectKey, "main", true)

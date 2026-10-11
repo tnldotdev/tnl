@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestListenerOwnershipPublicationAndReplacementFences(t *testing.T) {
+func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)
 	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
@@ -104,7 +104,7 @@ func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	}
 }
 
-func TestPublisherWarningsStayFencedAndClearWhenRoutable(t *testing.T) {
+func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	started := make(chan struct{})
 	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(started)

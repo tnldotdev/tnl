@@ -203,9 +203,9 @@ func (s *Store) UpdateAuthOperation(ctx context.Context, op *AuthOperation) erro
 	return nil
 }
 
-// FenceAuthOperations must run under the credential lock, as must installation.
-func (s *Store) FenceAuthOperations(ctx context.Context) error {
-	return s.database.queries.FenceAuthOperations(ctx, clientstatedb.FenceAuthOperationsParams{ServerOrigin: s.controlEndpoint, UpdatedAt: s.database.now().UnixNano()})
+// CancelAuthOperations runs under the credential lock, as does session installation.
+func (s *Store) CancelAuthOperations(ctx context.Context) error {
+	return s.database.queries.CancelAuthOperations(ctx, clientstatedb.CancelAuthOperationsParams{ServerOrigin: s.controlEndpoint, UpdatedAt: s.database.now().UnixNano()})
 }
 
 // InstallAuthSession atomically completes the checkpoint and installs credentials.

@@ -65,7 +65,7 @@ func newAliasFixture(t *testing.T) aliasFixture {
 	return f
 }
 
-func TestAliasRequestsAreFencedImmediatelyAfterSelectionChange(t *testing.T) {
+func TestAliasRequestsStopAfterSelectionChange(t *testing.T) {
 	f := newAliasFixture(t)
 	store, err := f.state.Server(t.Context(), testServer)
 	if err != nil {

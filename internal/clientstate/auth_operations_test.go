@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestAuthOperationPrivateCheckpointAndFence(t *testing.T) {
+func TestAuthOperationPrivateCheckpointAndCancellation(t *testing.T) {
 	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestAuthOperationPrivateCheckpointAndFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.FenceAuthOperations(t.Context()); err != nil {
+	if err := store.CancelAuthOperations(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	_ = lock.Close()

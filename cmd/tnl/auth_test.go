@@ -119,7 +119,7 @@ func TestAuthStatusLocalJSONDoesNotExposeSavedCredentials(t *testing.T) {
 	}
 }
 
-func TestAuthLogoutFencesPendingOperationsOffline(t *testing.T) {
+func TestAuthLogoutCancelsPendingOperationsOffline(t *testing.T) {
 	keyring.MockInit()
 	root := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), root)
