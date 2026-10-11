@@ -43,6 +43,13 @@ func ValidSQLState(value string) bool {
 	return true
 }
 
+func SQLStateOrEmpty(value string) string {
+	if ValidSQLState(value) {
+		return value
+	}
+	return ""
+}
+
 type Policy struct {
 	Retention time.Duration
 	MaxBytes  int64
