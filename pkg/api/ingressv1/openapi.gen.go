@@ -245,10 +245,8 @@ type IngressRoutingTableEntry struct {
 	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey    *[]byte `json:"ip_policy_key,omitempty"`
-	PolicyRevision int64   `json:"policy_revision"`
-
-	// PublicPort Stable visitor TCP port for a port-addressed public URL.
+	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
+	PolicyRevision       int64                                    `json:"policy_revision"`
 	PublicPort           *int                                     `json:"public_port,omitempty"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	PublicUrlId          Identifier                               `json:"public_url_id"`
