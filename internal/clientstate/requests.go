@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const (
@@ -18,21 +19,26 @@ const (
 )
 
 type RequestRecord struct {
-	RequestNumber       int64           `json:"request_number"`
-	TunnelID            string          `json:"tunnel_id"`
-	PrimaryCheckoutRoot string          `json:"primary_checkout_root"`
-	Project             string          `json:"project_root"`
-	SharedProjectRoot   string          `json:"shared_project_root"`
-	Service             string          `json:"service,omitempty"`
-	ReceivedAt          time.Time       `json:"received_at"`
-	Method              string          `json:"method"`
-	Path                string          `json:"path"`
-	Status              int             `json:"status"`
-	DurationMS          int64           `json:"duration_ms"`
-	Origin              string          `json:"origin"`
-	CaptureMode         string          `json:"capture_mode"`
-	DetailAvailable     bool            `json:"detail_available"`
-	Detail              json.RawMessage `json:"detail,omitempty"`
+	RequestNumber       int64                              `json:"request_number"`
+	TunnelID            string                             `json:"tunnel_id"`
+	PrimaryCheckoutRoot string                             `json:"primary_checkout_root"`
+	Project             string                             `json:"project_root"`
+	SharedProjectRoot   string                             `json:"shared_project_root"`
+	Service             string                             `json:"service,omitempty"`
+	ServiceProtocol     controlv1.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
+	ReceivedAt          time.Time                          `json:"received_at"`
+	Method              string                             `json:"method"`
+	Path                string                             `json:"path"`
+	Status              int                                `json:"status"`
+	DurationMS          int64                              `json:"duration_ms"`
+	Origin              string                             `json:"origin"`
+	CaptureMode         string                             `json:"capture_mode"`
+	DetailAvailable     bool                               `json:"detail_available"`
+	Detail              json.RawMessage                    `json:"detail,omitempty"`
+	DatabaseOperation   string                             `json:"database_operation,omitempty"`
+	DatabaseResult      string                             `json:"database_result,omitempty"`
+	SQLState            string                             `json:"sql_state,omitempty"`
+	DatabaseRows        int64                              `json:"database_rows,omitempty"`
 }
 
 // RequestRecorder drops observations rather than delaying a visitor when its queue is full.
@@ -98,8 +104,22 @@ func (d *Database) saveRequest(ctx context.Context, tunnelID, primary, project, 
 	if mode == "" {
 		mode = "summary"
 	}
+	if record.ServiceProtocol == "" {
+		record.ServiceProtocol = controlv1.Http
+	}
+	if record.ServiceProtocol != controlv1.Http && record.ServiceProtocol != controlv1.Postgres {
+		return errors.New("clientstate: unsupported inspection protocol")
+	}
+	if record.ServiceProtocol == controlv1.Postgres && record.DatabaseOperation != "query" && record.DatabaseOperation != "execute" ||
+		record.DatabaseResult != "" && record.DatabaseResult != "ok" && record.DatabaseResult != "error" ||
+		record.DatabaseRows < 0 || len(record.SQLState) != 0 && len(record.SQLState) != 5 {
+		return errors.New("clientstate: invalid database inspection")
+	}
 	var detail sql.NullString
 	if len(record.Detail) != 0 && json.Valid(record.Detail) {
+		if len(record.Detail) > 16<<10 {
+			return errors.New("clientstate: inspection detail exceeds limit")
+		}
 		detail = sql.NullString{String: string(record.Detail), Valid: true}
 	}
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -118,6 +138,8 @@ func (d *Database) saveRequest(ctx context.Context, tunnelID, primary, project, 
 		ReceivedAt: record.ReceivedAt.UnixNano(), Method: record.Method, Path: record.Path,
 		Status: int64(record.Status), DurationMs: record.DurationMS, Origin: record.Origin,
 		CaptureMode: mode, DetailJson: detail,
+		ServiceProtocol: string(record.ServiceProtocol), DatabaseOperation: record.DatabaseOperation,
+		DatabaseResult: record.DatabaseResult, SqlState: record.SQLState, DatabaseRows: record.DatabaseRows,
 	}); err != nil {
 		return err
 	}
@@ -166,7 +188,8 @@ func (d *Database) ListRequests(ctx context.Context, filter RequestFilter) ([]Re
 	// project index; all caller-provided values remain bound parameters.
 	query := `SELECT request_number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
 		service, received_at, method, path, status, duration_ms, origin, capture_mode, NULL AS detail_json,
-		(detail_json IS NOT NULL) AS detail_available
+		(detail_json IS NOT NULL) AS detail_available, service_protocol, database_operation,
+		database_result, sql_state, database_rows
 		FROM local_requests WHERE ` + column + ` = ? AND (? = '' OR service = ?) AND (? = '' OR method = ?)
 		AND (? = 0 OR status = ?) AND received_at >= ? ORDER BY received_at DESC, row_id DESC LIMIT ?`
 	rows, err := d.db.QueryContext(ctx, query, selected, filter.Service, filter.Service, filter.Method, filter.Method,
@@ -195,7 +218,8 @@ func scanRequest(row requestScanner) (RequestRecord, error) {
 	var available int
 	err := row.Scan(&item.RequestNumber, &item.PrimaryCheckoutRoot, &item.TunnelID, &item.Project,
 		&item.SharedProjectRoot, &item.Service, &nanos, &item.Method, &item.Path, &item.Status,
-		&item.DurationMS, &item.Origin, &item.CaptureMode, &detail, &available)
+		&item.DurationMS, &item.Origin, &item.CaptureMode, &detail, &available,
+		&item.ServiceProtocol, &item.DatabaseOperation, &item.DatabaseResult, &item.SQLState, &item.DatabaseRows)
 	if err != nil {
 		return item, fmt.Errorf("clientstate: read request: %w", err)
 	}
@@ -211,7 +235,8 @@ func (d *Database) GetRequest(ctx context.Context, primary string, number int64)
 	_ = d.pruneRequests(ctx)
 	row := d.db.QueryRowContext(ctx, `SELECT request_number, primary_checkout_root, tunnel_id, project_root,
 		shared_project_root, service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json,
-		(detail_json IS NOT NULL) AS detail_available
+		(detail_json IS NOT NULL) AS detail_available, service_protocol, database_operation,
+		database_result, sql_state, database_rows
 		FROM local_requests WHERE primary_checkout_root = ? AND request_number = ? AND received_at >= ?`,
 		primary, number, d.now().Add(-requestRetention).UnixNano())
 	return scanRequest(row)

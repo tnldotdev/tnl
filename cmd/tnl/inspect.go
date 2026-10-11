@@ -59,26 +59,46 @@ type inspectionHTTP struct {
 }
 
 type inspectionPostgres struct {
-	Operation       string `json:"operation"`
-	Result          string `json:"result"`
-	SQLState        string `json:"sql_state,omitempty"`
-	Statement       string `json:"statement,omitempty"`
-	Rows            int64  `json:"rows,omitempty"`
-	CaptureMode     string `json:"capture_mode"`
-	DetailAvailable bool   `json:"detail_available"`
+	Operation          string `json:"operation"`
+	Result             string `json:"result"`
+	SQLState           string `json:"sql_state,omitempty"`
+	Statement          string `json:"statement,omitempty"`
+	StatementTruncated bool   `json:"statement_truncated,omitempty"`
+	Rows               int64  `json:"rows,omitempty"`
+	CaptureMode        string `json:"capture_mode"`
+	DetailAvailable    bool   `json:"detail_available"`
 }
 
 const inspectionDetailHint = "set tnl.request_inspection: detailed and restart the tunnel, or pass --request-inspection=detailed on the next run"
 
-func httpInspection(item clientstate.RequestRecord) inspectionRecord {
-	return inspectionRecord{
-		Number: item.RequestNumber, Protocol: controlv1.Http, TunnelID: item.TunnelID,
+func inspectionFromRecord(item clientstate.RequestRecord, includeDetail bool) inspectionRecord {
+	record := inspectionRecord{
+		Number: item.RequestNumber, Protocol: item.ServiceProtocol, TunnelID: item.TunnelID,
 		Project: item.Project, Service: item.Service, ReceivedAt: item.ReceivedAt, DurationMS: item.DurationMS,
-		HTTP: &inspectionHTTP{
-			Method: item.Method, Path: item.Path, Status: item.Status, Origin: item.Origin,
-			CaptureMode: item.CaptureMode, DetailAvailable: item.DetailAvailable, Detail: item.Detail,
-		},
 	}
+	if record.Protocol == controlv1.Postgres {
+		record.Postgres = &inspectionPostgres{
+			Operation: item.DatabaseOperation, Result: item.DatabaseResult, SQLState: item.SQLState,
+			Rows: item.DatabaseRows, CaptureMode: item.CaptureMode, DetailAvailable: item.DetailAvailable,
+		}
+		if includeDetail && item.DetailAvailable {
+			var details struct {
+				Statement string `json:"statement"`
+				Truncated bool   `json:"truncated"`
+			}
+			if json.Unmarshal(item.Detail, &details) == nil {
+				record.Postgres.Statement = details.Statement
+				record.Postgres.StatementTruncated = details.Truncated
+			}
+		}
+		return record
+	}
+	record.Protocol = controlv1.Http
+	record.HTTP = &inspectionHTTP{
+		Method: item.Method, Path: item.Path, Status: item.Status, Origin: item.Origin,
+		CaptureMode: item.CaptureMode, DetailAvailable: item.DetailAvailable, Detail: item.Detail,
+	}
+	return record
 }
 
 func runInspectList(ctx context.Context, flags inspectListCommand, project string, output io.Writer) error {
@@ -112,7 +132,7 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 	records := make([]inspectionRecord, 0, len(items))
 	hint := ""
 	for _, item := range items {
-		records = append(records, httpInspection(item))
+		records = append(records, inspectionFromRecord(item, false))
 		if !item.DetailAvailable {
 			hint = inspectionDetailHint
 		}
@@ -129,6 +149,19 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 	}
 	blocks := make([]clioutput.Block, 0, len(records))
 	for _, record := range records {
+		if record.Postgres != nil {
+			fields := []clioutput.Field{
+				{Label: "protocol", Value: string(record.Protocol)},
+				{Label: "result", Value: record.Postgres.Result},
+				{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)},
+				{Label: "worktree", Value: record.Project},
+			}
+			if record.Postgres.SQLState != "" {
+				fields = append(fields, clioutput.Field{Label: "SQLSTATE", Value: record.Postgres.SQLState})
+			}
+			blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / postgres %s", record.Number, record.Postgres.Operation), clioutput.Fields(fields...)))
+			continue
+		}
 		blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / %s %s", record.Number, record.HTTP.Method, record.HTTP.Path), clioutput.Fields(
 			clioutput.Field{Label: "protocol", Value: string(record.Protocol)},
 			clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
@@ -161,7 +194,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 	if err != nil {
 		return err
 	}
-	record := httpInspection(item)
+	record := inspectionFromRecord(item, true)
 	hint := ""
 	if !item.DetailAvailable {
 		hint = inspectionDetailHint
@@ -173,19 +206,35 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 			DetailHint    string           `json:"detail_hint,omitempty"`
 		}{1, record, hint})
 	}
-	blocks := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339Nano)},
-		clioutput.Field{Label: "protocol", Value: string(record.Protocol)},
-		clioutput.Field{Label: "method", Value: record.HTTP.Method},
-		clioutput.Field{Label: "path", Value: record.HTTP.Path},
-		clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
-		clioutput.Field{Label: "duration", Value: fmt.Sprintf("%d ms", record.DurationMS)},
-		clioutput.Field{Label: "from", Value: record.HTTP.Origin},
-		clioutput.Field{Label: "service", Value: record.Service},
-		clioutput.Field{Label: "worktree", Value: record.Project},
-		clioutput.Field{Label: "tunnel", Value: record.TunnelID},
-	)}
-	if record.HTTP.DetailAvailable {
+	fields := []clioutput.Field{
+		{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339Nano)},
+		{Label: "protocol", Value: string(record.Protocol)},
+		{Label: "duration", Value: fmt.Sprintf("%d ms", record.DurationMS)},
+		{Label: "service", Value: record.Service},
+		{Label: "worktree", Value: record.Project},
+		{Label: "tunnel", Value: record.TunnelID},
+	}
+	if record.Postgres != nil {
+		fields = append(fields,
+			clioutput.Field{Label: "operation", Value: record.Postgres.Operation},
+			clioutput.Field{Label: "result", Value: record.Postgres.Result},
+			clioutput.Field{Label: "rows", Value: fmt.Sprint(record.Postgres.Rows)},
+		)
+		if record.Postgres.SQLState != "" {
+			fields = append(fields, clioutput.Field{Label: "SQLSTATE", Value: record.Postgres.SQLState})
+		}
+	} else {
+		fields = append(fields,
+			clioutput.Field{Label: "method", Value: record.HTTP.Method},
+			clioutput.Field{Label: "path", Value: record.HTTP.Path},
+			clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
+			clioutput.Field{Label: "from", Value: record.HTTP.Origin},
+		)
+	}
+	blocks := []clioutput.Block{clioutput.Fields(fields...)}
+	if record.Postgres != nil && record.Postgres.DetailAvailable {
+		blocks = append(blocks, clioutput.Text("the captured statement is available with --output json"))
+	} else if record.HTTP != nil && record.HTTP.DetailAvailable {
 		blocks = append(blocks, clioutput.Text("detailed query, headers, and bodies are available with --output json"))
 	} else {
 		blocks = append(blocks, clioutput.Text("summary only; "+inspectionDetailHint))

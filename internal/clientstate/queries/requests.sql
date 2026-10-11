@@ -7,12 +7,14 @@ RETURNING last_number;
 -- name: InsertLocalRequest :exec
 INSERT INTO local_requests (
     request_number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
-    service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json
+    service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json,
+    service_protocol, database_operation, database_result, sql_state, database_rows
 ) VALUES (
     sqlc.arg(request_number), sqlc.arg(primary_checkout_root), sqlc.arg(tunnel_id),
     sqlc.arg(project_root), sqlc.arg(shared_project_root), sqlc.arg(service), sqlc.arg(received_at),
     sqlc.arg(method), sqlc.arg(path), sqlc.arg(status), sqlc.arg(duration_ms), sqlc.arg(origin),
-    sqlc.arg(capture_mode), sqlc.narg(detail_json)
+    sqlc.arg(capture_mode), sqlc.narg(detail_json), sqlc.arg(service_protocol),
+    sqlc.arg(database_operation), sqlc.arg(database_result), sqlc.arg(sql_state), sqlc.arg(database_rows)
 );
 
 -- name: DeleteExpiredLocalRequests :exec

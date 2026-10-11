@@ -114,6 +114,11 @@ type LocalRequest struct {
 	Origin              string
 	CaptureMode         string
 	DetailJson          sql.NullString
+	ServiceProtocol     string
+	DatabaseOperation   string
+	DatabaseResult      string
+	SqlState            string
+	DatabaseRows        int64
 }
 
 type LocalRequestCounter struct {

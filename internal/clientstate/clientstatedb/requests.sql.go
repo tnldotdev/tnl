@@ -22,12 +22,14 @@ func (q *Queries) DeleteExpiredLocalRequests(ctx context.Context, before int64) 
 const insertLocalRequest = `-- name: InsertLocalRequest :exec
 INSERT INTO local_requests (
     request_number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
-    service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json
+    service, received_at, method, path, status, duration_ms, origin, capture_mode, detail_json,
+    service_protocol, database_operation, database_result, sql_state, database_rows
 ) VALUES (
     ?1, ?2, ?3,
     ?4, ?5, ?6, ?7,
     ?8, ?9, ?10, ?11, ?12,
-    ?13, ?14
+    ?13, ?14, ?15,
+    ?16, ?17, ?18, ?19
 )
 `
 
@@ -46,6 +48,11 @@ type InsertLocalRequestParams struct {
 	Origin              string
 	CaptureMode         string
 	DetailJson          sql.NullString
+	ServiceProtocol     string
+	DatabaseOperation   string
+	DatabaseResult      string
+	SqlState            string
+	DatabaseRows        int64
 }
 
 func (q *Queries) InsertLocalRequest(ctx context.Context, arg InsertLocalRequestParams) error {
@@ -64,6 +71,11 @@ func (q *Queries) InsertLocalRequest(ctx context.Context, arg InsertLocalRequest
 		arg.Origin,
 		arg.CaptureMode,
 		arg.DetailJson,
+		arg.ServiceProtocol,
+		arg.DatabaseOperation,
+		arg.DatabaseResult,
+		arg.SqlState,
+		arg.DatabaseRows,
 	)
 	return err
 }

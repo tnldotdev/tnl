@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
@@ -45,6 +46,69 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	}
 	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, factory); err == nil {
 		t.Fatal("retired requests command is still accepted")
+	}
+}
+
+func TestInspectPostgresListAndShowKeepStatementsInDetails(t *testing.T) {
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TNL_STATE_DIR", stateRoot)
+	database, err := clientstate.Open(t.Context(), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: project, Service: "orders", ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	primary, shared, err := requestRoots(t.Context(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := tunnel.NewRequestRecorder(primary, project, shared, "orders")
+	recorder.Observe(clientstate.RequestRecord{
+		ServiceProtocol: controlv1.Postgres, ReceivedAt: time.Now().UTC(), Origin: "tnl",
+		DatabaseOperation: "execute", DatabaseResult: "error", SQLState: "42703",
+		Detail: json.RawMessage(`{"statement":"SELECT missing_column"}`), CaptureMode: "detailed",
+	})
+	recorder.Close()
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Inspections []inspectionRecord `json:"inspections"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &listed); err != nil || len(listed.Inspections) != 1 ||
+		listed.Inspections[0].Protocol != controlv1.Postgres || listed.Inspections[0].HTTP != nil ||
+		listed.Inspections[0].Postgres == nil || listed.Inspections[0].Postgres.Statement != "" ||
+		listed.Inspections[0].Postgres.SQLState != "42703" {
+		t.Fatalf("PostgreSQL inspection list = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var shown struct {
+		Inspection inspectionRecord `json:"inspection"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &shown); err != nil || shown.Inspection.Postgres == nil ||
+		shown.Inspection.Postgres.Statement != "SELECT missing_column" || shown.Inspection.Postgres.Result != "error" {
+		t.Fatalf("PostgreSQL inspection detail = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "list"}, &output, &bytes.Buffer{}, nil); err != nil ||
+		!bytes.Contains(output.Bytes(), []byte("postgres execute")) {
+		t.Fatalf("PostgreSQL inspection diagram = %s, %v", output.String(), err)
 	}
 }
 

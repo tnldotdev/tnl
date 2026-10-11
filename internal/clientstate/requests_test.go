@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestRequestNumbersAndSharedProjectAcrossWorktrees(t *testing.T) {
@@ -57,6 +59,41 @@ func TestRequestNumbersAndSharedProjectAcrossWorktrees(t *testing.T) {
 	item, err = state.GetRequest(ctx, primary, 3)
 	if err != nil || item.RequestNumber != 3 {
 		t.Fatalf("next number = %+v, %v", item, err)
+	}
+}
+
+func TestPostgresInspectionSharesHTTPNumbersAndKeepsDetailsLocal(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	project := t.TempDir()
+	at := time.Now().UTC()
+	if err := database.saveRequest(t.Context(), "tun_test", project, project, project, "web", RequestRecord{
+		ReceivedAt: at, Method: "GET", Path: "/health", Status: 200, Origin: "local_service",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.saveRequest(t.Context(), "tun_test", project, project, project, "orders", RequestRecord{
+		ReceivedAt: at, ServiceProtocol: controlv1.Postgres, Origin: "tnl", CaptureMode: "detailed",
+		DatabaseOperation: "execute", DatabaseResult: "error", SQLState: "42703", DatabaseRows: 2,
+		Detail: json.RawMessage(`{"statement":"SELECT missing_column"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := database.ListRequests(t.Context(), RequestFilter{
+		Project: project, SharedProject: project, Since: at.Add(-time.Minute), Limit: 10,
+	})
+	if err != nil || len(items) != 2 || items[0].RequestNumber != 2 || items[0].ServiceProtocol != controlv1.Postgres ||
+		items[0].DatabaseOperation != "execute" || items[0].DatabaseResult != "error" || items[0].SQLState != "42703" ||
+		items[0].DatabaseRows != 2 || !items[0].DetailAvailable || len(items[0].Detail) != 0 ||
+		items[1].RequestNumber != 1 || items[1].ServiceProtocol != controlv1.Http {
+		t.Fatalf("numbered activity = %#v, %v", items, err)
+	}
+	record, err := database.GetRequest(t.Context(), project, 2)
+	if err != nil || string(record.Detail) != `{"statement":"SELECT missing_column"}` {
+		t.Fatalf("private statement detail = %#v, %v", record, err)
 	}
 }
 
