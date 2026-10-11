@@ -79,10 +79,11 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		stateDir = os.Getenv("TNL_STATE_DIR")
 	}
 	if stateDir == "" {
-		stateDir, err = clientstate.DefaultDir()
+		defaultDir, err := clientstate.DefaultDir()
 		if err != nil {
 			return nil, err
 		}
+		stateDir = defaultDir
 	}
 	state, err := clientstate.Open(ctx, stateDir)
 	if err != nil {
