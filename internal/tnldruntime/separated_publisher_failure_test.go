@@ -29,7 +29,7 @@ func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 		'routing_table_head', (SELECT current_revision FROM control.ingress_routing_table_clock),
 		'ingress_applied_revision', (SELECT min(routing_table_revision) FROM control.ingress_leases
 			WHERE NOT draining AND lease_expires_at > now()),
-		'public_url_routing_revision', (SELECT max(routing_table_revision) FROM control.ingress_routing_table_events
+		'public_url_routing_revision', (SELECT max(id) FROM control.ingress_routing_table_events
 			WHERE public_url_id = r.id AND publish_run_number = s.publish_run_number AND event_kind = 'public_url_upsert'),
 		'authorizations', (SELECT jsonb_agg(jsonb_build_object(
 			'state', a.state, 'attempts', a.attempts, 'claimed', a.work_owner IS NOT NULL,

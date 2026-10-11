@@ -327,7 +327,7 @@ tasks:
       RACE: '{{default "" .RACE}}'
       RESULTS: "{{.RESULTS}}"
     cmds:
-      - node scripts/runtime-load.ts
+      - go -C tools/testharness run . runtime
 
   go:test:fuzz:
     desc: Fuzz all Go parser and policy boundaries

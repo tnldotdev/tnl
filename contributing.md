@@ -30,9 +30,11 @@ Integration needs Docker and Pebble from `mise install`. The Task targets use
 Testcontainers for Go in the separate `tools/testharness` Go module to create
 and remove digest-pinned disposable databases; it is not a product binary
 dependency. Each PostgreSQL-backed invocation shares one PostgreSQL container
-while each test creates its own database. `generate-check` regenerates
-files and compares them with `HEAD`, so intentional uncommitted generated changes
-also appear as drift. `format-check` only checks; `format` applies fixes.
+while each test creates its own database. The same harness drives the runtime
+load topology and fault sweeps without a TypeScript container runner.
+`generate-check` regenerates files and compares them with `HEAD`, so intentional
+uncommitted generated changes also appear as drift. `format-check` only checks;
+`format` applies fixes.
 
 ### choose a test tier
 

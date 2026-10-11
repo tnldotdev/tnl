@@ -46,6 +46,9 @@ func run() error {
 	if len(os.Args) == 2 && os.Args[1] == "dns" {
 		return runDNS(ctx)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "runtime" {
+		return runRuntime(ctx)
+	}
 	separator := -1
 	for index, argument := range os.Args {
 		if argument == "--" {
