@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
@@ -173,19 +175,73 @@ func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 	response.Body.Close()
 }
 
-func TestDatabaseServicesDoNotBecomeAppRegistrationsOrHTTPReadinessProbes(t *testing.T) {
+func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
+	a, stateDir, _ := testAppRuntime(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
 	protocol := "postgres"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
-		"web": {}, "orders": {Publish: &config.Publish{Protocol: &protocol}},
-	}}}}
+	target := config.Target(listener.Addr().String())
+	project := a.project
+	project.Config.Services["orders"] = config.Service{Publish: &config.Publish{Protocol: &protocol, Target: &target}}
+	project.RelativeServiceDirectories["orders"] = "."
 	services := configuredRuntimeServices(project)
-	if len(services) != 1 || services[0].Name != "web" {
+	if len(services) != 2 || services[0].Name != "api" || services[1].Name != "web" {
 		t.Fatalf("app registrations = %#v", services)
 	}
+	database, err := clientstate.Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: listener.Addr().String(),
+		Project: project.Root, Service: "orders", ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "orders.example"); err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
-	err := runAppWaitWithProbe(t.Context(), project, "", waitCommand{Service: []string{"orders"}, Timeout: time.Second}, &output, nil)
-	if reason, _, ok := failure.Describe(err); !ok || reason != failure.InvalidCommand || !strings.Contains(err.Error(), "tnl status") {
-		t.Fatalf("database HTTP readiness = %v", err)
+	probe := func(context.Context, clientruntime.Service) clientruntime.Observation {
+		t.Fatal("database service sent an HTTP readiness probe")
+		return clientruntime.Observation{}
+	}
+	flags := waitCommand{Service: []string{"orders"}, Timeout: 40 * time.Millisecond, Output: "json"}
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
+		t.Fatal("unready database publication passed wait")
+	}
+	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot clientruntime.Snapshot
+	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || len(snapshot.Services) != 1 ||
+		!snapshot.Services[0].Ready || snapshot.Services[0].PublicURL != "orders.example:15432" ||
+		snapshot.Services[0].ServiceProtocol != protocol || snapshot.Services[0].TunnelID != tunnel.ID() {
+		t.Fatalf("database wait = %s, %v", output.String(), err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
+		t.Fatal("wait passed with closed database target")
+	}
+	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{},"orders":{"publish":{"protocol":"postgres","target":"`+string(target)+`"}}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := runStatus(t.Context(), statusCommand{StateDir: stateDir, Project: project.Root, Output: "human"}, &output); err != nil || !strings.Contains(output.String(), "orders routable") || !strings.Contains(output.String(), "orders.example:15432") {
+		t.Fatalf("database status = %s, %v", output.String(), err)
 	}
 }
 
