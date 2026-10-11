@@ -2,10 +2,12 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -85,8 +87,8 @@ func TestIngressSelectsDatabasePortFromTrustedDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	var closed [1]byte
-	if _, err := missing.Read(closed[:]); err != io.EOF {
-		t.Fatalf("unknown port read = %v, want EOF", err)
+	if count, err := missing.Read(closed[:]); count != 0 || !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("unknown port read = %d bytes, %v; want a closed connection without visitor bytes", count, err)
 	}
 	client := connect(15432)
 	if _, err := client.Write([]byte("startup!")); err != nil {
