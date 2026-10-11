@@ -176,12 +176,12 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}
-	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	publisherConfig.ObserveRequest = requestObservation(recorder)
+	publisherConfig.ObserveRequest = httpObservation(recorder)
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err

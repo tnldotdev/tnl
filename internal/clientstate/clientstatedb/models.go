@@ -98,15 +98,18 @@ type IntegrationUrlPublisher struct {
 	ExpiresAt           int64
 }
 
-type LocalRequest struct {
+type LocalInspection struct {
 	RowID               int64
-	RequestNumber       int64
+	Number              int64
 	PrimaryCheckoutRoot string
 	TunnelID            string
 	ProjectRoot         string
 	SharedProjectRoot   string
 	Service             string
+	ServiceProtocol     string
 	ReceivedAt          int64
+	ExpiresAt           int64
+	StoredBytes         int64
 	Method              string
 	Path                string
 	Status              int64
@@ -114,11 +117,23 @@ type LocalRequest struct {
 	Origin              string
 	CaptureMode         string
 	DetailJson          sql.NullString
+	DatabaseOperation   string
+	DatabaseResult      string
+	SqlState            string
+	DatabaseRows        int64
+	DatabaseResultSets  int64
+	MysqlErrorCode      int64
 }
 
-type LocalRequestCounter struct {
+type LocalInspectionCounter struct {
 	PrimaryCheckoutRoot string
 	LastNumber          int64
+}
+
+type LocalInspectionUsage struct {
+	ProjectRoot string
+	Service     string
+	UsedBytes   int64
 }
 
 type LocalTunnel struct {
