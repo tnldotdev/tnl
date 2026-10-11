@@ -77,7 +77,7 @@ func (m *AdHocManager) Register(request privateprotocol.AdHocRegister) (privatep
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	entry := &adHocEntry{owner: request.Owner, pid: request.PID, expires: time.Now().Add(LeaseDuration), digest: digest,
-		status: privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: "starting"},
+		status: privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: privateprotocol.AdHocStarting},
 		cancel: cancel, done: make(chan struct{}), release: func() {}}
 	if m.hold != nil {
 		entry.release = m.hold()
@@ -93,18 +93,18 @@ func (m *AdHocManager) publish(ctx context.Context, request privateprotocol.AdHo
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.entries[request.RegistrationID] == entry && status.Version == privateprotocol.Version &&
-			status.RegistrationID == request.RegistrationID && entry.status.State != "failed" {
+			status.RegistrationID == request.RegistrationID && status.State.Valid() && entry.status.State != privateprotocol.AdHocFailed {
 			entry.status = status
 		}
 	})
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.entries[request.RegistrationID] != entry || entry.status.State == "failed" {
+	if m.entries[request.RegistrationID] != entry || entry.status.State == privateprotocol.AdHocFailed {
 		return
 	}
-	entry.status.State = "stopped"
+	entry.status.State = privateprotocol.AdHocStopped
 	if err != nil && ctx.Err() == nil {
-		entry.status.State, entry.status.FailureCode = "failed", "runtime.publication_failed"
+		entry.status.State, entry.status.FailureCode = privateprotocol.AdHocFailed, "runtime.publication_failed"
 		if errors.Is(err, controlclient.ErrUnauthenticated) {
 			entry.status.FailureCode = "runtime.credential_rejected"
 		} else if reason, _, ok := failure.Describe(err); ok {
@@ -154,7 +154,7 @@ func (m *AdHocManager) Sweep() {
 	var expired []*adHocEntry
 	for id, entry := range m.entries {
 		if time.Now().After(entry.expires) || m.alive != nil && !m.alive(entry.pid) {
-			entry.status.State, entry.status.FailureCode = "failed", "runtime.registration_stale"
+			entry.status.State, entry.status.FailureCode = privateprotocol.AdHocFailed, "runtime.registration_stale"
 			delete(m.entries, id)
 			entry.cancel()
 			expired = append(expired, entry)

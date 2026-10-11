@@ -28,7 +28,7 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
     ...actual,
     prepareService: async (
       options: import("./dist/internal/app.js").PrepareOptions,
-      framework: string,
+      framework: Parameters<typeof actual.createPreparedService>[1],
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
         start: async () => process.env.APP_TEST_SOCKET ?? "",

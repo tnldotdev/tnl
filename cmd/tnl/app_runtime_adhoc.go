@@ -41,13 +41,13 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	if err := limits.Validate(); err != nil {
 		return err
 	}
-	status := privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: "starting"}
+	status := privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: privateprotocol.AdHocStarting}
 	return adhoc.Run(ctx, adhoc.Options{
 		ControlURL: serverURL, State: profile, Credential: credentials.EphemeralCredential(request.Credential),
 		InvocationID: request.RegistrationID, Target: request.Target,
 		AllowIP: request.AllowIP, AllowAllIPs: request.AllowAllIPs, Limits: limits,
 		OnAllocated: func(route controlv1.PublicURL) error {
-			status.State, status.PublicURLID, status.PublicURL = "publishing", route.Id, "https://"+route.CanonicalHostname
+			status.State, status.PublicURLID, status.PublicURL = privateprotocol.AdHocPublishing, route.Id, "https://"+route.CanonicalHostname
 			update(status)
 			return nil
 		},
@@ -57,10 +57,10 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 				if event.PublicURLID != status.PublicURLID || event.PublicURL != status.PublicURL {
 					return errors.New("ready publish run does not match the ad-hoc allocation")
 				}
-				status.State, status.PublishRunNumber = "routable", event.PublishRunNumber
+				status.State, status.PublishRunNumber = privateprotocol.AdHocRoutable, event.PublishRunNumber
 				update(status)
 			case publisher.EventDraining:
-				status.State = "draining"
+				status.State = privateprotocol.AdHocDraining
 				update(status)
 			}
 			return nil
