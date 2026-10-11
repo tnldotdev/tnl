@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
@@ -68,20 +71,20 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	primary, shared, err := requestRoots(t.Context(), project)
+	primary, shared, err := inspectionRoots(t.Context(), project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := tunnel.NewRequestRecorder(primary, project, shared, "web")
-	recorder.Observe(clientstate.RequestRecord{
+	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "web", inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20})
+	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
 		Origin: "local_service", CaptureMode: "summary", DurationMS: 12,
 	})
-	recorder.Observe(clientstate.RequestRecord{
+	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
 		Origin: "local_service", CaptureMode: "summary", DurationMS: 25,
 	})
-	recorder.Observe(clientstate.RequestRecord{
+	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
 		Origin: "tnl", CaptureMode: "summary", DurationMS: 1,
 	})
@@ -130,5 +133,81 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.Inspection.Number != 1 ||
 		show.Inspection.HTTP == nil || show.Inspection.HTTP.Path != "/health" || show.Inspection.Result != "ok" {
 		t.Fatalf("typed HTTP inspection = %s, %v", showOutput.String(), err)
+	}
+}
+
+func TestInspectSQLListAndShowKeepStatementsInDetails(t *testing.T) {
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TNL_STATE_DIR", stateRoot)
+	database, err := clientstate.Open(t.Context(), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: project, Service: "orders", ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	primary, shared, err := inspectionRoots(t.Context(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20}
+	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "orders", policy)
+	recorder.Observe(clientstate.InspectionRecord{
+		Protocol: controlv1.Postgres, ReceivedAt: time.Now().UTC(), Origin: "tnl",
+		Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703",
+		CaptureMode: config.InspectionDetailed, Detail: json.RawMessage(`{"statement":"SELECT missing_column"}`),
+	})
+	recorder.Observe(clientstate.InspectionRecord{
+		Protocol: controlv1.Mysql, ReceivedAt: time.Now().UTC().Add(time.Second), Origin: "tnl",
+		Operation: inspection.OperationQuery, Result: inspection.ResultError, SQLState: "42S22", MySQLErrorCode: 1054,
+		CaptureMode: config.InspectionSummary,
+	})
+	recorder.Close()
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"inspect", "list", "--protocol=postgres", "--result=error", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Inspections []inspectionRecord `json:"inspections"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
+		list.Inspections[0].Protocol != controlv1.Postgres || list.Inspections[0].Result != inspection.ResultError ||
+		list.Inspections[0].Postgres == nil || list.Inspections[0].Postgres.SQLState != "42703" ||
+		list.Inspections[0].Postgres.Statement != "" || !list.Inspections[0].DetailAvailable {
+		t.Fatalf("PostgreSQL inspection list = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var show struct {
+		Inspection inspectionRecord `json:"inspection"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.Postgres == nil ||
+		show.Inspection.Postgres.Statement != "SELECT missing_column" || show.Inspection.CaptureMode != "detailed" {
+		t.Fatalf("PostgreSQL inspection detail = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "show", "2", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.MySQL == nil ||
+		show.Inspection.MySQL.ErrorCode != 1054 || show.Inspection.MySQL.SQLState != "42S22" ||
+		show.Inspection.MySQL.Statement != "" || show.Inspection.DetailAvailable {
+		t.Fatalf("MySQL summary inspection = %s, %v", output.String(), err)
+	}
+	if err := run(t.Context(), []string{"inspect", "list", "--protocol=mysql", "--status=500"}, &bytes.Buffer{}, &bytes.Buffer{}, nil); err == nil {
+		t.Fatal("HTTP-only status filter was accepted for MySQL")
 	}
 }

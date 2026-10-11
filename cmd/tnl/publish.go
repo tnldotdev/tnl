@@ -214,12 +214,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.TargetTLS = flags.TargetTLS
 	publisherConfig.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	publisherConfig.TargetOptions = targetOptions
-	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	publisherConfig.ObserveRequest = requestObservation(recorder)
+	publisherConfig.ObserveRequest = httpObservation(recorder)
 	publisherConfig.InspectionMode = flags.InspectionMode
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())

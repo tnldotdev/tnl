@@ -588,12 +588,12 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 		return nil
 	}
-	recorder, err := newRequestRecorder(ctx, tunnel, a.project.Root, service.Name)
+	recorder, err := newInspectionRecorder(ctx, tunnel, a.project.Root, service.Name)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	configuration.ObserveRequest = requestObservation(recorder)
+	configuration.ObserveRequest = httpObservation(recorder)
 	configuration.Logf = func(_ string, _ ...any) {
 		if ctx.Err() == nil {
 			a.manager.RecordWarning(service.Name, service.RegistrationID, string(failure.TransportUnavailable))
