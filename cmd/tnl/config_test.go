@@ -175,20 +175,20 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 }
 
-func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
-	rootMode, serviceMode := config.RequestInspectionDetailed, config.RequestInspectionSummary
+func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
+	rootMode, serviceMode := config.InspectionDetailed, config.InspectionSummary
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		RequestInspection: &rootMode, Services: config.Services{"web": {
-			RequestInspection: &serviceMode, Publish: &config.Publish{Target: &target},
+		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
+			Inspection: &config.Inspection{Mode: &serviceMode}, Publish: &config.Publish{Target: &target},
 		}},
 	}}}
 	for _, tc := range []struct {
 		args []string
-		want config.RequestInspectionMode
+		want config.InspectionMode
 	}{
 		{[]string{"publish", "web"}, "summary"},
-		{[]string{"publish", "web", "--request-inspection=detailed"}, "detailed"},
+		{[]string{"publish", "web", "--inspection-mode=detailed"}, "detailed"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -203,8 +203,8 @@ func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
 		if err := project.applyPublish(&flags.Publish); err != nil {
 			t.Fatal(err)
 		}
-		if flags.Publish.RequestInspection != tc.want {
-			t.Fatalf("%v: capture = %q", tc.args, flags.Publish.RequestInspection)
+		if flags.Publish.InspectionMode != tc.want {
+			t.Fatalf("%v: inspection mode = %q", tc.args, flags.Publish.InspectionMode)
 		}
 	}
 }
