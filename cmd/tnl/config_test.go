@@ -519,24 +519,24 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 }
 
 func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
-	protocol, name, tlsName, caFile := "postgres", "orders", "db.internal", "./ca.pem"
+	protocol, name, tlsName, caFile, targetTLS := "postgres", "orders", "db.internal", "./ca.pem", true
 	target := config.Target("db.internal:5432")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
 		"web": {}, "orders": {Tunnel: &config.Tunnel{Name: &name},
-			Publish: &config.Publish{Protocol: &protocol, Target: &target, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+			Publish: &config.Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
 	}}}}
 	flags := publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
 	if flags.Service != "orders" || flags.Name != "orders" || flags.Protocol != "postgres" || flags.Target != string(target) ||
-		flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
+		!flags.TargetTLS || flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
 		t.Fatalf("database service = %#v", flags)
 	}
 	if err := validateDatabasePublishOptions(flags, controlv1.Postgres); err != nil {
 		t.Fatal(err)
 	}
-	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}
+	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLS: true, TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}
 	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "mysql" || flags.TargetTLSName != "other.internal" || flags.TargetCAFile != "other.pem" {
 		t.Fatalf("explicit overrides = %#v, %v", flags, err)
 	}

@@ -30,10 +30,11 @@ func normalizePublishTarget(target string, protocol controlv1.PublicURLServicePr
 	if protocol == controlv1.Http {
 		return localproxy.NormalizeTarget(target)
 	}
-	if _, err := databasetarget.Host(target); err != nil {
+	canonical, err := databasetarget.Normalize(target)
+	if err != nil {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
 	}
-	return target, nil
+	return canonical, nil
 }
 
 func savedPublicAddress(route controlv1.PublicURL) (string, error) {
@@ -57,7 +58,7 @@ func savedPublicAddress(route controlv1.PublicURL) (string, error) {
 
 func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
 	if protocol == controlv1.Http {
-		if flags.TargetTLSName != "" || flags.DatabasePassthrough {
+		if flags.TargetTLSName != "" || flags.TargetTLS {
 			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
 				errors.New("database TLS options require a database protocol"))
 		}
@@ -67,9 +68,9 @@ func validateDatabasePublishOptions(flags publishCommand, protocol controlv1.Pub
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
 			errors.New("database publications do not support --open or HTTP request capture"))
 	}
-	if flags.DatabasePassthrough && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
+	if !flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
 		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("the database client verifies the target certificate in TLS passthrough mode; omit target TLS options"))
+			errors.New("--target-tls-name and --target-ca-file require --target-tls"))
 	}
 	return nil
 }

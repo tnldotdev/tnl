@@ -254,6 +254,10 @@ export interface Publish {
    */
   targetCAFile?: string;
   /**
+   * Use verified TLS for the private database target.
+   */
+  targetTLS?: boolean;
+  /**
    * Hostname expected in the private database TLS certificate; defaults to the target host.
    */
   targetTLSName?: string;

@@ -238,9 +238,9 @@ tasks:
       - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
   go:test:integration:database-clients:
-    desc: Verify real database clients with disposable TLS-enabled servers
+    desc: Verify real database clients with disposable private servers
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts --tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|ChannelBinding)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - node scripts/run-go-tests-with-mysql.ts -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:

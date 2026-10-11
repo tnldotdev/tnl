@@ -36,6 +36,7 @@ const staticConfig = {
       publish: {
         protocol: "postgres",
         target: "db.internal:5432",
+        targetTLS: true,
         targetTLSName: "db.internal",
         targetCAFile: "./ca.pem",
       },

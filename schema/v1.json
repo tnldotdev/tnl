@@ -27,6 +27,10 @@
           "type": "string",
           "description": "Hostname expected in the private database TLS certificate; defaults to the target host."
         },
+        "target_tls": {
+          "type": "boolean",
+          "description": "Use verified TLS for the private database target."
+        },
         "target_ca_file": {
           "type": "string",
           "description": "Additional PEM certificate authorities for the target; relative paths are resolved from the project root."

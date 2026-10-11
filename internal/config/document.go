@@ -141,6 +141,7 @@ type Publish struct {
 	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql" jsonschema_description:"Local service protocol: http (default), postgres, or mysql."`
 	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or database host:port reached by the publisher."`
 	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the private database TLS certificate; defaults to the target host."`
+	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the private database target."`
 	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for the target; relative paths are resolved from the project root."`
 }
 
@@ -170,9 +171,13 @@ func MergePublish(base, override *Publish) *Publish {
 	if override.Target != nil {
 		result.Target = override.Target
 		result.TargetTLSName, result.TargetCAFile = nil, nil
+		result.TargetTLS = nil
 	}
 	if override.TargetTLSName != nil {
 		result.TargetTLSName = override.TargetTLSName
+	}
+	if override.TargetTLS != nil {
+		result.TargetTLS = override.TargetTLS
 	}
 	if override.TargetCAFile != nil {
 		result.TargetCAFile = override.TargetCAFile

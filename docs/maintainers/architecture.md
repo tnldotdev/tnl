@@ -89,28 +89,31 @@ host:port target before the publisher dials it.
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 
-The publisher requires TLS negotiation for the selected database protocol before
-forwarding database authentication bytes. In the default mode, it terminates
-visitor TLS with the public URL certificate, verifies a separate TLS connection
-to the private target using its target hostname and configured roots, and copies
-the database protocol between them. A PostgreSQL GSS request gets a refusal so
-the client can request TLS instead. The explicit passthrough mode checks the
-visitor's exact SNI but leaves TLS termination and the public URL certificate
-with the private database; it is needed when authentication binds to the TLS
-channel, such as PostgreSQL SCRAM-SHA-256-PLUS. Plaintext database startup is
-never forwarded.
+the publisher requires TLS negotiation for the selected database protocol before
+forwarding database authentication bytes. it terminates visitor TLS with the
+public URL certificate. by default the private target receives plaintext TCP;
+`--target-tls` selects a separate, certificate-verified TLS connection instead.
+the publisher never retries in plaintext after a target TLS failure. a
+PostgreSQL GSS request gets a refusal so the client can request TLS instead.
+PostgreSQL clients must disable SCRAM channel binding
+(`channel_binding=disable`): their TLS channel does not reach the database. a
+MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
+the publisher preserves its challenge and plugin, adjusts the authentication
+packet sequence, and handles the private server's RSA password exchange when
+required. plaintext database startup is never forwarded from a visitor.
 
 `tnl publish db.internal:5432 --protocol postgres` keeps the private target on
 the customer machine and displays the saved public `hostname:port` after the
-publish run is ready. a configured database service uses `publish.protocol` and
-`publish.target` to select the same protocol and private `host:port` target.
-`tnl url credential create --protocol postgres` saves the
-same endpoint without a private target; a credential-backed `tnl publish` must
-then supply that target locally. `--target-ca-file` extends the trust roots for
-the private TLS connection, while `--target-tls-name` sets the expected private
-certificate hostname. TypeScript configuration uses `publish.targetCAFile` and
-`publish.targetTLSName` for the same settings. `--database-tls-passthrough`
-delegates the target certificate check to the visiting database client instead.
+publish run is ready. a configured database service can select the same protocol
+and private `host:port` target through `publish.protocol` and `publish.target` in
+`tnl.config.ts`. `tnl url credential create --protocol postgres` saves the
+endpoint without a private target; a credential-backed `tnl publish` must then
+supply that target locally. a bare port selects a loopback target, while a
+host:port such as `postgres:5432` reaches a service on the publisher's network.
+`--target-ca-file` extends the trust roots for an explicit `--target-tls`
+connection, while `--target-tls-name` sets its expected certificate hostname.
+TypeScript configuration uses `publish.targetTLS`, `publish.targetCAFile`, and
+`publish.targetTLSName` for the same settings.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the

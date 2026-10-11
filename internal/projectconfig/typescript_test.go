@@ -387,7 +387,7 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 }
 
 func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
-	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"publish":{"target":3000}},"orders":{"publish":{"protocol":"postgres","target":"db.internal:5432","targetTLSName":"db.internal","targetCAFile":"./ca.pem"}}}}`))
+	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"publish":{"target":3000}},"orders":{"publish":{"protocol":"postgres","target":"db.internal:5432","targetTLS":true,"targetTLSName":"db.internal","targetCAFile":"./ca.pem"}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,6 +397,7 @@ func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
 	options := value.Services["orders"].Publish
 	if options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||
+		options.TargetTLS == nil || !*options.TargetTLS ||
 		options.TargetTLSName == nil || *options.TargetTLSName != "db.internal" ||
 		options.TargetCAFile == nil || *options.TargetCAFile != "./ca.pem" {
 		t.Fatalf("database publication = %#v", options)
