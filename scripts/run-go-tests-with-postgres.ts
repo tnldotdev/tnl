@@ -12,6 +12,8 @@ if (separator === -1 || separator === process.argv.length - 1) {
 
 const root = path.resolve(import.meta.dirname, "..");
 const tlsEnabled = process.argv.slice(2, separator).includes("--tls");
+const sharedCertificate = process.argv.slice(2, separator).includes("--shared-cert");
+if (sharedCertificate && !tlsEnabled) throw new Error("--shared-cert requires --tls");
 const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
 // distinct invocations from one checkout must not remove each other's database.
 const container = `tnl-test-postgres-${identity}-${randomUUID()}`;
@@ -146,7 +148,12 @@ try {
       `-tnl-test-postgres-url=${postgresURL}`,
       ...(certificateDirectory === undefined
         ? []
-        : [`-tnl-test-postgres-ca=${path.join(certificateDirectory, "server.crt")}`]),
+        : [
+            `-tnl-test-postgres-ca=${path.join(certificateDirectory, "server.crt")}`,
+            ...(sharedCertificate
+              ? [`-tnl-test-postgres-key=${path.join(certificateDirectory, "server.key")}`]
+              : []),
+          ]),
     ],
     true,
   );

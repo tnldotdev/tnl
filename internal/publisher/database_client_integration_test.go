@@ -26,6 +26,7 @@ var (
 	testMySQLAddress = flag.String("tnl-test-mysql-address", "", "disposable MySQL server host and port")
 	testMySQLCA      = flag.String("tnl-test-mysql-ca", "", "disposable MySQL server certificate")
 	testPostgresCA   = flag.String("tnl-test-postgres-ca", "", "disposable PostgreSQL server certificate")
+	testPostgresKey  = flag.String("tnl-test-postgres-key", "", "disposable PostgreSQL server private key for a shared-certificate check")
 )
 
 func TestIntegrationDatabaseClientPostgresLogin(t *testing.T) {
@@ -60,6 +61,43 @@ func TestIntegrationDatabaseClientPostgresLogin(t *testing.T) {
 	}
 	if err := connection.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIntegrationDatabaseClientPostgresMatchingCertificate(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	backendRoots := postgresClientTestRoots(t)
+	if *testPostgresKey == "" {
+		t.Skip("requires a disposable PostgreSQL target sharing the visitor certificate")
+	}
+	certificate, err := tls.LoadX509KeyPair(*testPostgresCA, *testPostgresKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(testutil.PostgresURL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+		Target: parsed.Host, TargetTLSName: "db.internal", Certificate: certificate,
+		TargetOptions: localproxy.TargetOptions{RootCAs: backendRoots},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	config := postgresClientTestConfig(t, route, rootsForCertificate(t, certificate), "require")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	connection, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("shared certificate should allow default PLUS authentication: %v", err)
+	}
+	defer connection.Close(context.Background())
+	var value int
+	if err := connection.QueryRow(ctx, "SELECT $1::int", 1).Scan(&value); err != nil || value != 1 {
+		t.Fatalf("shared certificate query = %d, %v", value, err)
 	}
 }
 
@@ -206,7 +244,8 @@ func TestIntegrationDatabaseClientPostgresChannelBinding(t *testing.T) {
 	}
 	var authError *pgconn.PgError
 	if requiredCtx.Err() != nil || !errors.As(err, &authError) || authError.Code != "28000" ||
-		!strings.Contains(strings.ToLower(authError.Message), "channel binding") {
+		!strings.Contains(authError.Message, "channel_binding=disable") ||
+		!strings.Contains(authError.Message, "--database-tls-passthrough") {
 		t.Fatalf("separate TLS channel binding failure = %v, context = %v", err, requiredCtx.Err())
 	}
 }

@@ -141,7 +141,7 @@ func (d *databaseForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.
 	if _, err := visitor.Write(answer[:]); err != nil {
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, true)
 }
 
 func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
@@ -173,7 +173,7 @@ func (d *databaseForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Con
 	if err != nil {
 		return err
 	}
-	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission)
+	return forwardDatabaseTLS(visitor, securedBackend, publicTLS, d.admission, false)
 }
 
 func (d *databaseForwarding) connectTargetTLS(backend net.Conn) (net.Conn, error) {
@@ -206,7 +206,19 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 	return packet, err
 }
 
-func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission) error {
+func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission, postgres bool) error {
+	var visitorCertificate []byte
+	if postgres && publicTLS.GetCertificate != nil {
+		publicTLS = publicTLS.Clone()
+		getCertificate := publicTLS.GetCertificate
+		publicTLS.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certificate, err := getCertificate(hello)
+			if err == nil && certificate != nil && len(certificate.Certificate) != 0 {
+				visitorCertificate = certificate.Certificate[0]
+			}
+			return certificate, err
+		}
+	}
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
@@ -217,7 +229,15 @@ func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admiss
 	defer admission.leave()
 	_ = visitor.SetDeadline(time.Time{})
 	_ = backend.SetDeadline(time.Time{})
-	_, err := streamcopy.Copy(securedVisitor, backend)
+	var client net.Conn = securedVisitor
+	if postgres {
+		targetTLS, ok := backend.(*tls.Conn)
+		if !ok || len(targetTLS.ConnectionState().PeerCertificates) == 0 ||
+			!bytes.Equal(visitorCertificate, targetTLS.ConnectionState().PeerCertificates[0].Raw) {
+			client = &postgresAuthChoiceConn{Conn: securedVisitor}
+		}
+	}
+	_, err := streamcopy.Copy(client, backend)
 	return err
 }
 
