@@ -298,6 +298,28 @@ func TestInspectionModeValid(t *testing.T) {
 	}
 }
 
+func TestInspectionRetentionAndByteSizeValidation(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		valid bool
+	}{
+		{"1MiB", true}, {"64MiB", true}, {"1GiB", true},
+		{"1000KiB", false}, {"2GiB", false}, {"1 MB", false}, {"-1MiB", false},
+	} {
+		_, err := ParseByteSize(test.value)
+		if (err == nil) != test.valid {
+			t.Errorf("inspection byte size %q: %v", test.value, err)
+		}
+	}
+	tooLong := Duration(30*24*time.Hour + time.Hour)
+	if err := ValidateInspection(&Inspection{Retention: &tooLong}); err == nil {
+		t.Fatal("inspection retention exceeded 30 days")
+	}
+	if err := ValidateInspection(&Inspection{}); err != nil {
+		t.Fatalf("partial service override was rejected: %v", err)
+	}
+}
+
 func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
 	mode := InspectionDetailed
 	protocol := "postgres"
@@ -319,8 +341,8 @@ func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)

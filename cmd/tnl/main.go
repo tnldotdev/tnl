@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -54,24 +55,28 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
-	teamSelectionFlags `embed:""`
-	Domain             string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
-	Name               string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
-	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
-	AllowIP            []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowAllIPs        bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
-	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
-	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
-	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
-	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or private TCP target."`
-	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"summary,detailed" default:"summary" help:"Local HTTP and database inspection: summary (default) or detailed."`
+	teamSelectionFlags  `embed:""`
+	Domain              string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name                string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
+	PublicURL           string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
+	AllowIP             []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
+	AllowAllIPs         bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Ephemeral           bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	Requests            *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
+	RateRequests        *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
+	RatePer             string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
+	Concurrency         *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
+	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or private TCP target."`
+	InspectionMode      config.InspectionMode `name:"inspection-mode" enum:"summary,detailed" default:"summary" help:"Local HTTP and database inspection: summary (default) or detailed."`
+	InspectionRetention time.Duration         `name:"inspection-retention" help:"Keep this service's local inspections for this long (default 24h)."`
+	InspectionMaxBytes  string                `name:"inspection-max-bytes" help:"Maximum local inspection bytes for this service, such as 64MiB."`
 
-	allowAllIPsFromCLI    bool
-	ephemeralFromCLI      bool
-	domainFromCLI         bool
-	inspectionModeFromCLI bool
+	allowAllIPsFromCLI         bool
+	ephemeralFromCLI           bool
+	domainFromCLI              bool
+	inspectionModeFromCLI      bool
+	inspectionRetentionFromCLI bool
+	inspectionMaxBytesFromCLI  bool
 }
 
 type remoteFlags struct {
@@ -633,7 +638,7 @@ func canonicalParsedCommand(command string) string {
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false
-	inspectionMode := false
+	inspectionMode, inspectionRetention, inspectionMaxBytes := false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
@@ -655,6 +660,10 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			ephemeral = true
 		case "inspection-mode":
 			inspectionMode = true
+		case "inspection-retention":
+			inspectionRetention = true
+		case "inspection-max-bytes":
+			inspectionMaxBytes = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
@@ -662,6 +671,8 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
 		tunnel.inspectionModeFromCLI = inspectionMode
+		tunnel.inspectionRetentionFromCLI = inspectionRetention
+		tunnel.inspectionMaxBytesFromCLI = inspectionMaxBytes
 		if publicURL && !name {
 			tunnel.Name = ""
 		}

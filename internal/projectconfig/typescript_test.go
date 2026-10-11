@@ -19,7 +19,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	source := `export default async ({cwd, env, worktree, project}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
-  inspection: {mode: "detailed"},
+  inspection: {mode: "detailed", retention: "168h", maxBytes: "64MiB"},
   tunnel: {domain: "routes.example.test", limits: {requests: 20, rate: {requests: 5, per: "1m"}, concurrency: 750}},
   publish: {target: 3000},
   readiness: {path: "/health"},
@@ -39,6 +39,8 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	}
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Tunnel == nil || value.Tunnel.Domain == nil ||
 		value.Inspection == nil || value.Inspection.Mode == nil || *value.Inspection.Mode != "detailed" ||
+		value.Inspection.Retention == nil || value.Inspection.Retention.Value() != 168*time.Hour ||
+		value.Inspection.MaxBytes == nil || value.Inspection.MaxBytes.Value() != 64<<20 ||
 		value.Services["api"].Inspection == nil || value.Services["api"].Inspection.Mode == nil || *value.Services["api"].Inspection.Mode != "summary" ||
 		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
 		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label.FullLabel ||

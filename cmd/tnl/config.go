@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -230,6 +231,12 @@ func applyInspection(flags *tunnelFlags, effective config.TNL) {
 		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
 			flags.InspectionMode = *effective.Inspection.Mode
 		}
+		if !flags.inspectionRetentionFromCLI && flags.InspectionRetention == 0 && effective.Inspection.Retention != nil {
+			flags.InspectionRetention = effective.Inspection.Retention.Value()
+		}
+		if !flags.inspectionMaxBytesFromCLI && flags.InspectionMaxBytes == "" && effective.Inspection.MaxBytes != nil {
+			flags.InspectionMaxBytes = fmt.Sprintf("%dKiB", effective.Inspection.MaxBytes.Value()/(1<<10))
+		}
 	}
 	if flags.InspectionMode == "" {
 		flags.InspectionMode = config.InspectionSummary
@@ -239,6 +246,19 @@ func applyInspection(flags *tunnelFlags, effective config.TNL) {
 func validateTunnelFlags(flags tunnelFlags) error {
 	if !flags.InspectionMode.Valid() {
 		return errors.New("--inspection-mode must be summary or detailed")
+	}
+	if flags.inspectionRetentionFromCLI && flags.InspectionRetention == 0 ||
+		flags.InspectionRetention < 0 || flags.InspectionRetention > inspection.MaxRetention ||
+		flags.InspectionRetention != 0 && flags.InspectionRetention < time.Minute {
+		return errors.New("--inspection-retention must be between 1m and 720h")
+	}
+	if flags.inspectionMaxBytesFromCLI && flags.InspectionMaxBytes == "" {
+		return errors.New("--inspection-max-bytes requires a byte size")
+	}
+	if flags.InspectionMaxBytes != "" {
+		if _, err := config.ParseByteSize(flags.InspectionMaxBytes); err != nil {
+			return fmt.Errorf("--inspection-max-bytes: %w", err)
+		}
 	}
 	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
 		return errors.New("--requests and --concurrency must be greater than zero")
