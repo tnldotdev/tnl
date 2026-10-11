@@ -286,14 +286,31 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 
 func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission,
 	observe func(DatabaseObservation), mode projectconfig.InspectionMode) error {
+	var visitorCertificate []byte
+	if publicTLS.GetCertificate != nil {
+		publicTLS = publicTLS.Clone()
+		getCertificate := publicTLS.GetCertificate
+		publicTLS.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certificate, err := getCertificate(hello)
+			if err == nil && certificate != nil && len(certificate.Certificate) != 0 {
+				visitorCertificate = certificate.Certificate[0]
+			}
+			return certificate, err
+		}
+	}
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
+	var client net.Conn = securedVisitor
+	if targetTLS, ok := backend.(*tls.Conn); !ok || len(targetTLS.ConnectionState().PeerCertificates) == 0 ||
+		!bytes.Equal(visitorCertificate, targetTLS.ConnectionState().PeerCertificates[0].Raw) {
+		client = &postgresAuthChoiceConn{Conn: securedVisitor}
+	}
 	if observe != nil {
 		backend = &databaseInspectionConn{Conn: backend, observer: newPostgresInspector(observe, mode)}
 	}
-	return copyTCPConnections(visitor, securedVisitor, backend, admission)
+	return copyTCPConnections(visitor, client, backend, admission)
 }
 
 func copyTCPConnections(visitor, securedVisitor, backend net.Conn, admission *applicationAdmission) error {
