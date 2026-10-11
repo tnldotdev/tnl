@@ -48,6 +48,9 @@ also appear as drift. `format-check` only checks; `format` applies fixes.
 | Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                             |
 | Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain              |
 
+The database-client target also checks a PostgreSQL query through separate
+control, ingress, and relay processes after publishing a database public URL.
+
 Use `RUN` to select an integration test, for example:
 
 ```console

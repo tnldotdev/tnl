@@ -35,6 +35,7 @@ type splitPublishFixture struct {
 
 type splitPublishOptions struct {
 	dns                  *integrationRoute53
+	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*tnldconfig.Config)
 }
@@ -63,7 +64,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	} else {
 		dnsAddress = startIntegrationDNS(t)
 	}
-	pebble := startIntegrationPebble(t, integrationPort(t, ingressAddress), dnsAddress)
+	validationAddress := ingressAddress
+	if options.proxyIngress {
+		validationAddress = unusedTCPAddress(t)
+		startSplitDatabaseChallengeProxy(t, validationAddress, ingressAddress)
+	}
+	pebble := startIntegrationPebble(t, integrationPort(t, validationAddress), dnsAddress)
 	for _, configure := range configureACME {
 		configure(pebble.httpClient)
 	}
@@ -109,6 +115,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
+	ingressConfig.RequireProxyHeader = options.proxyIngress
 	relayAConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
 	relayBConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
 	if options.dns != nil {

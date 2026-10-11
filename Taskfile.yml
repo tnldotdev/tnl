@@ -242,6 +242,7 @@ tasks:
     cmds:
       - node scripts/run-go-tests-with-postgres.ts --tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|ChannelBinding)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - node scripts/run-go-tests-with-mysql.ts -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - node scripts/run-go-tests-with-postgres.ts --tls -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationSplitDatabasePublishAndVisit$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
