@@ -185,6 +185,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = httpObservation(recorder)
+	if protocol == controlv1.Mysql && !flags.VisitorTLSPassthrough {
+		publisherConfig.ObserveDatabase = sqlObservation(recorder)
+	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err

@@ -60,3 +60,17 @@ func httpObservation(recorder *clientstate.InspectionRecorder) func(publisher.Re
 		})
 	}
 }
+
+func sqlObservation(recorder *clientstate.InspectionRecorder) func(publisher.DatabaseObservation) {
+	if recorder == nil {
+		return nil
+	}
+	return func(event publisher.DatabaseObservation) {
+		recorder.Observe(clientstate.InspectionRecord{
+			Protocol: event.Protocol, ReceivedAt: event.ReceivedAt, DurationMS: event.Duration.Milliseconds(),
+			Origin:    "tnl",
+			Operation: event.Operation, Result: event.Result, SQLState: event.SQLState, Rows: event.Rows,
+			ResultSets: int64(event.ResultSets), MySQLErrorCode: int64(event.MySQLErrorCode),
+		})
+	}
+}

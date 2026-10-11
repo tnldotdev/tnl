@@ -32,6 +32,7 @@ type tcpForwarding struct {
 	backendTLS      *tls.Config
 	passthrough     bool
 	onTargetFailure func()
+	observeDatabase func(DatabaseObservation)
 }
 
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
@@ -62,6 +63,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		backendTLS:      backendTLS,
 		passthrough:     config.VisitorTLSPassthrough,
 		onTargetFailure: config.OnTargetFailure,
+		observeDatabase: config.ObserveDatabase,
 	}, nil
 }
 
@@ -231,10 +233,20 @@ func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, 
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
+	clientFlags := binary.LittleEndian.Uint32(request[4:8])
 	if d.backendTLS == nil {
-		if err := forwardMySQLAuthentication(securedVisitor, backend, scramble); err != nil {
+		if err := forwardMySQLAuthentication(securedVisitor, backend, scramble, &clientFlags); err != nil {
 			return err
 		}
+	}
+	if d.observeDatabase != nil {
+		var observer *mysqlInspector
+		if d.backendTLS != nil {
+			observer = newMySQLInspectorDuringAuth(clientFlags, d.observeDatabase)
+		} else {
+			observer = newMySQLInspector(clientFlags, d.observeDatabase)
+		}
+		backend = &databaseInspectionConn{Conn: backend, observer: observer}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, d.admission)
 }

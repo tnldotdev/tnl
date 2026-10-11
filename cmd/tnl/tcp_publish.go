@@ -73,6 +73,10 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 			return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
 				errors.New("visitor TLS passthrough requires PostgreSQL or MySQL"))
 		}
+		if flags.InspectionMode != config.InspectionNone {
+			return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
+				errors.New("visitor TLS passthrough requires --inspection-mode=none because tnl cannot inspect database commands"))
+		}
 		if flags.TargetTLS || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
 			return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
 				errors.New("visitor TLS passthrough lets the client verify the database certificate; omit target TLS options"))

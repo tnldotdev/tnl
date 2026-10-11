@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -45,6 +47,108 @@ func TestMySQLPublicPortSelectsCertificateWithoutVisitorSNI(t *testing.T) {
 	defer httpRoute.Close()
 	if _, err := httpRoute.getCertificate(&tls.ClientHelloInfo{}); err == nil {
 		t.Fatal("accepted an HTTP visitor without SNI")
+	}
+}
+
+func TestMySQLInspectionWaitsForVerifiedTargetAuthentication(t *testing.T) {
+	visitorCertificate := publicURLTestCertificate(t, "route.example")
+	backendCertificate := publicURLTestCertificate(t, "db.internal")
+	backendRoots := x509.NewCertPool()
+	backendRoots.AddCert(backendCertificate.Leaf)
+	visitorRoots := x509.NewCertPool()
+	visitorRoots.AddCert(visitorCertificate.Leaf)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	backendDone := make(chan error, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			backendDone <- err
+			return
+		}
+		defer connection.Close()
+		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := connection.Write(mysqlTestPacket(0, []byte("greeting"))); err != nil {
+			backendDone <- err
+			return
+		}
+		ssl := make([]byte, 36)
+		if _, err := io.ReadFull(connection, ssl); err != nil {
+			backendDone <- err
+			return
+		}
+		secured := tls.Server(connection, &tls.Config{Certificates: []tls.Certificate{backendCertificate}, MinVersion: tls.VersionTLS12})
+		if err := secured.Handshake(); err != nil {
+			backendDone <- err
+			return
+		}
+		if login, err := readMySQLPacket(secured, 64); err != nil || login[3] != 2 ||
+			binary.LittleEndian.Uint32(login[4:8])&mysqlClientSSL == 0 {
+			backendDone <- fmt.Errorf("private login packet = %x, %v", login, err)
+			return
+		}
+		if _, err := secured.Write(mysqlTestPacket(3, []byte{0, 0, 0, 0, 0, 0, 0})); err != nil {
+			backendDone <- err
+			return
+		}
+		query, err := readMySQLPacket(secured, 64)
+		if err != nil || query[3] != 0 || string(query[4:]) != "\x03SELECT 1" {
+			backendDone <- fmt.Errorf("private query packet = %x, %v", query, err)
+			return
+		}
+		_, err = secured.Write(mysqlTestPacket(1, []byte{0, 0, 0, 0, 0, 0, 0}))
+		backendDone <- err
+	}()
+	observed := make(chan DatabaseObservation, 1)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Mysql, PublicPort: 3306,
+		Target: listener.Addr().String(), TargetTLS: true, TargetTLSName: "db.internal",
+		TargetOptions: localproxy.TargetOptions{RootCAs: backendRoots}, Certificate: visitorCertificate,
+		InspectionMode:  projectconfig.InspectionSummary,
+		ObserveDatabase: func(value DatabaseObservation) { observed <- value },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	visitor := openDatabaseVisitor(t, route, 3306)
+	if got := readDatabasePacket(t, visitor, 8); got != "greeting" {
+		t.Fatalf("target greeting = %q", got)
+	}
+	if _, err := visitor.Write(mysqlTestSSLRequest()); err != nil {
+		t.Fatal(err)
+	}
+	secured := tls.Client(visitor, &tls.Config{ServerName: "route.example", RootCAs: visitorRoots, MinVersion: tls.VersionTLS12})
+	if err := secured.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	login := make([]byte, 32)
+	binary.LittleEndian.PutUint32(login, mysqlClientSSL|mysqlClientDeprecateEOF)
+	if _, err := secured.Write(mysqlTestPacket(2, login)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readDatabasePacket(t, secured, 7); len(got) != 7 || got[0] != 0 {
+		t.Fatalf("authentication response = %x", got)
+	}
+	if _, err := secured.Write(mysqlTestPacket(0, []byte("\x03SELECT 1"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := readDatabasePacket(t, secured, 7); len(got) != 7 || got[0] != 0 {
+		t.Fatalf("query response = %x", got)
+	}
+	select {
+	case value := <-observed:
+		if value.Operation != "query" || value.Result != "ok" {
+			t.Fatalf("verified target inspection = %#v", value)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("authenticated query was not inspected")
+	}
+	if err := <-backendDone; err != nil {
+		t.Fatal(err)
 	}
 }
 
