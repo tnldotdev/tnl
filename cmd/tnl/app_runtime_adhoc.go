@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/adhoc"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -19,18 +19,7 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	if serverURL == "" {
 		serverURL = os.Getenv("TNL_SERVER")
 	}
-	if serverURL == "" {
-		selected, found, err := a.state.SavedServer(ctx)
-		if err != nil {
-			return err
-		}
-		if found {
-			serverURL = selected
-		} else {
-			serverURL = defaultServerURL
-		}
-	}
-	serverURL, err := clientstate.CanonicalServer(serverURL)
+	serverURL, err := clientserver.Select(ctx, a.state, serverURL)
 	if err != nil {
 		return err
 	}

@@ -12,14 +12,22 @@ import (
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
-const primaryIngressPoolID = "ingress-a"
+const PrimaryIngressPoolID = "ingress-a"
+
+type IngressPoolState string
+
+const (
+	IngressPoolDisabled IngressPoolState = "disabled"
+	IngressPoolEnabled  IngressPoolState = "enabled"
+	IngressPoolDraining IngressPoolState = "draining"
+)
 
 // IngressPool identifies one public ingress address group shared by ingress processes.
 type IngressPool struct {
 	ID          string
 	IPv4Address netip.Addr
 	IPv6Address netip.Addr
-	State       string
+	State       IngressPoolState
 }
 
 // EnsurePrimaryIngressPool enables only ports the operator has made reachable
@@ -66,21 +74,21 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 	}
 	defer rollback(ctx, tx, "provision ingress pool", &retErr)()
 	queries := controlstatedb.New(tx)
-	pool, err := queries.LockIngressPoolForProvision(ctx, primaryIngressPoolID)
+	pool, err := queries.LockIngressPoolForProvision(ctx, PrimaryIngressPoolID)
 	if err != nil {
 		return fmt.Errorf("controlstate: lock ingress-a: %w", err)
 	}
-	if pool.State == "disabled" {
+	if IngressPoolState(pool.State) == IngressPoolDisabled {
 		if _, err := queries.EnableIngressPool(ctx, controlstatedb.EnableIngressPoolParams{
-			ID: primaryIngressPoolID, Ipv4Address: v4, Ipv6Address: v6, UpdatedAt: timestamptz(now),
+			ID: PrimaryIngressPoolID, Ipv4Address: v4, Ipv6Address: v6, UpdatedAt: timestamptz(now),
 		}); err != nil {
 			return fmt.Errorf("controlstate: enable ingress-a: %w", err)
 		}
-	} else if pool.State != "enabled" || !sameIngressAddress(pool.Ipv4Address, v4) || !sameIngressAddress(pool.Ipv6Address, v6) {
+	} else if IngressPoolState(pool.State) != IngressPoolEnabled || !sameIngressAddress(pool.Ipv4Address, v4) || !sameIngressAddress(pool.Ipv6Address, v6) {
 		return errors.New("controlstate: ingress-a address differs from the enabled pool")
 	}
 	if _, err := queries.EnableIngressPoolPorts(ctx, controlstatedb.EnableIngressPoolPortsParams{
-		IngressPoolID: primaryIngressPoolID, Ports: ports,
+		IngressPoolID: PrimaryIngressPoolID, Ports: ports,
 	}); err != nil {
 		return fmt.Errorf("controlstate: enable ingress-a ports: %w", err)
 	}
@@ -105,7 +113,7 @@ func (d *Database) GetIngressPool(ctx context.Context, id string) (IngressPool, 
 	if err != nil {
 		return IngressPool{}, fmt.Errorf("controlstate: read ingress pool: %w", err)
 	}
-	result := IngressPool{ID: row.ID, State: row.State}
+	result := IngressPool{ID: row.ID, State: IngressPoolState(row.State)}
 	if row.Ipv4Address != nil {
 		result.IPv4Address = *row.Ipv4Address
 	}

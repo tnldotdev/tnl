@@ -120,7 +120,7 @@ func (w *Worker) publicURLRecord(
 		IngressIPv4Addresses: append([]string(nil), w.config.IngressIPv4Addresses...),
 		IngressIPv6Addresses: append([]string(nil), w.config.IngressIPv6Addresses...),
 	}
-	if pool.State == "enabled" || pool.State == "draining" {
+	if pool.State == controlstate.IngressPoolEnabled || pool.State == controlstate.IngressPoolDraining {
 		record.IngressIPv4Addresses, record.IngressIPv6Addresses = nil, nil
 		if pool.IPv4Address.IsValid() {
 			record.IngressIPv4Addresses = []string{pool.IPv4Address.String()}
@@ -128,9 +128,9 @@ func (w *Worker) publicURLRecord(
 		if pool.IPv6Address.IsValid() {
 			record.IngressIPv6Addresses = []string{pool.IPv6Address.String()}
 		}
-	} else if pool.State == "disabled" && work.IngressPoolID != "ingress-a" {
+	} else if pool.State == controlstate.IngressPoolDisabled && work.IngressPoolID != controlstate.PrimaryIngressPoolID {
 		return PublicURLRecord{}, nil, false, nil
-	} else if pool.State != "disabled" {
+	} else if pool.State != controlstate.IngressPoolDisabled {
 		return PublicURLRecord{}, nil, false, terminalf("public URL ingress pool is invalid")
 	}
 	if work.CanonicalHostname == w.config.ManagedDomain || strings.HasSuffix(work.CanonicalHostname, "."+w.config.ManagedDomain) {

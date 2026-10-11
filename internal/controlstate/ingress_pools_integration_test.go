@@ -109,7 +109,7 @@ func TestIntegrationPrimaryIngressPoolProvisioningIsAdditive(t *testing.T) {
 		t.Fatal(err)
 	}
 	pool, err := database.GetIngressPool(ctx, "ingress-a")
-	if err != nil || pool.State != "enabled" || pool.IPv4Address.String() != "192.0.2.10" || pool.IPv6Address.String() != "2001:db8::10" {
+	if err != nil || pool.State != IngressPoolEnabled || pool.IPv4Address.String() != "192.0.2.10" || pool.IPv6Address.String() != "2001:db8::10" {
 		t.Fatalf("enabled pool = %#v, %v", pool, err)
 	}
 	capacities, err := database.TCPPortPoolCapacities(ctx)

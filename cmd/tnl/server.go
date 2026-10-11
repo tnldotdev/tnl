@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 
+	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 )
 
-const defaultServerURL = "https://control.tnl.dev"
+const defaultServerURL = clientserver.DefaultURL
 
 func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	root, err := clientStateRoot(root)
@@ -17,21 +18,10 @@ func resolveServer(ctx context.Context, root, value string) (string, *clientstat
 	if err != nil {
 		return "", nil, err
 	}
-	if value != "" {
-		server, err := clientstate.CanonicalServer(value)
-		if err != nil {
-			state.Close()
-			return "", nil, err
-		}
-		return server, state, nil
-	}
-	server, found, err := state.SavedServer(ctx)
+	server, err := clientserver.Select(ctx, state, value)
 	if err != nil {
 		state.Close()
 		return "", nil, err
-	}
-	if !found {
-		return defaultServerURL, state, nil
 	}
 	return server, state, nil
 }

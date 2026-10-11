@@ -204,7 +204,7 @@ func TestWorkerUsesAuthorizedManagedWildcardRoots(t *testing.T) {
 func TestWorkerUsesPinnedIngressPoolForMemberWildcard(t *testing.T) {
 	now := time.Now()
 	store := &dnsStoreStub{pool: controlstate.IngressPool{
-		ID: "ingress-b", State: "enabled",
+		ID: "ingress-b", State: controlstate.IngressPoolEnabled,
 		IPv4Address: netip.MustParseAddr("192.0.2.20"), IPv6Address: netip.MustParseAddr("2001:db8::20"),
 	}}
 	worker := testDNSWorker(t, store, &providerStub{}, &verifierStub{}, now)
@@ -219,7 +219,7 @@ func TestWorkerUsesPinnedIngressPoolForMemberWildcard(t *testing.T) {
 		!reflect.DeepEqual(record.IngressIPv6Addresses, []string{"2001:db8::20"}) {
 		t.Fatalf("member URL used another pool's ingress address: record=%#v ready=%t err=%v", record, ready, err)
 	}
-	store.pool.State = "disabled"
+	store.pool.State = controlstate.IngressPoolDisabled
 	if _, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
 		PublicURLID: "url_second_pool", IngressPoolID: "ingress-b", DomainID: "domain_1",
 		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test",
@@ -386,7 +386,7 @@ func (s *dnsStoreStub) GetIngressPool(_ context.Context, id string) (controlstat
 	if s.pool.ID != "" {
 		return s.pool, nil
 	}
-	return controlstate.IngressPool{ID: id, State: "disabled"}, nil
+	return controlstate.IngressPool{ID: id, State: controlstate.IngressPoolDisabled}, nil
 }
 
 func (s *dnsStoreStub) ClaimDNSAuthorityWork(

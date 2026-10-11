@@ -149,13 +149,13 @@ func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	}
 }
 
-func TestJournalResumeAndManagerRestartWatermark(t *testing.T) {
+func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 	project, state := t.TempDir(), t.TempDir()
 	manager, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	watermark := manager.Snapshot().Cursor
+	cursor := manager.Snapshot().Cursor
 	if _, err := manager.Reserve("web", "owner", 1, "https://web.example"); err != nil {
 		t.Fatal(err)
 	}
@@ -169,11 +169,11 @@ func TestJournalResumeAndManagerRestartWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := EventsAfter(snapshot, watermark)
+	events, err := EventsAfter(snapshot, cursor)
 	if err != nil || len(events) != 5 || snapshot.Services[0].Registered {
 		t.Fatalf("resume = %#v, %v", events, err)
 	}
-	previous, _ := ParseCursor(watermark)
+	previous, _ := ParseCursor(cursor)
 	for _, event := range events {
 		value, _ := ParseCursor(event.Cursor)
 		if value != previous+1 {

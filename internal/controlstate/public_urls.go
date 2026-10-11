@@ -217,7 +217,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			return PublicURL{}, ErrPublicURLAccess
 		}
 		// guest team IDs are trial-owned, not rows in control.teams.
-		ingressPoolID = primaryIngressPoolID
+		ingressPoolID = PrimaryIngressPoolID
 		if !guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
 			return PublicURL{}, ErrGuestTrialSpent
 		}
