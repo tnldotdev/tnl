@@ -31,6 +31,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             tools/testharness/go.sum
+            tools/inspectionoracle/go.sum
             .github/workflows/integration.yml
 
       - name: Install Task
@@ -48,6 +49,9 @@ jobs:
 
       - name: Verify database clients
         run: task go:test:integration:database-clients
+
+      - name: Check MySQL inspector against Vitess
+        run: task go:test:integration:mysql-oracle
 
       - name: Verify Redis publishing
         run: task go:test:integration:redis
