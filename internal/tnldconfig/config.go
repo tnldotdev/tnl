@@ -702,7 +702,7 @@ func validateListenAddress(value string) error {
 		return errors.New("must be a canonical host and port")
 	}
 	number, err := strconv.Atoi(port)
-	if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port {
+	if err != nil || !tcpport.ValidNetwork(number) || strconv.Itoa(number) != port {
 		return errors.New("port must be between 1 and 65535")
 	}
 	return nil
@@ -733,7 +733,7 @@ func validateRelayAddress(value string) error {
 		return errors.New("relay address must use a canonical hostname")
 	}
 	number, err := strconv.Atoi(port)
-	if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port {
+	if err != nil || !tcpport.ValidNetwork(number) || strconv.Itoa(number) != port {
 		return errors.New("relay address port must be between 1 and 65535")
 	}
 	return nil

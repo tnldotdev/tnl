@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -54,6 +55,13 @@ func runSession(
 	if setup.PublicUrl.CanonicalHostname != config.Hostname || setup.PublishRun.PublicUrlId != setup.PublicUrl.Id ||
 		setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
 		return errors.New("publisher: server returned a different publish run")
+	}
+	var publicPort uint16
+	if setup.PublicUrl.PublicPort != nil {
+		if !tcpport.Valid(*setup.PublicUrl.PublicPort) {
+			return errors.New("publisher: server returned invalid database public port")
+		}
+		publicPort = uint16(*setup.PublicUrl.PublicPort)
 	}
 	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
@@ -178,14 +186,17 @@ func runSession(
 		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, TargetOptions: config.TargetOptions, CertificatePlan: plan,
-		Mounts:            config.Mounts,
-		ShareAccess:       shareRuntime,
-		Feedback:          feedback,
-		RequestLimit:      config.RequestLimit,
-		Limits:            config.Limits,
-		ObserveRequest:    config.ObserveRequest,
-		RequestInspection: config.RequestInspection,
-		Handler:           config.Handler,
+		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName,
+		PublicPort:             publicPort,
+		DatabaseTLSPassthrough: config.DatabaseTLSPassthrough,
+		Mounts:                 config.Mounts,
+		ShareAccess:            shareRuntime,
+		Feedback:               feedback,
+		RequestLimit:           config.RequestLimit,
+		Limits:                 config.Limits,
+		ObserveRequest:         config.ObserveRequest,
+		RequestInspection:      config.RequestInspection,
+		Handler:                config.Handler,
 		AdmitRequest: func(request *http.Request) error {
 			if config.AdmitRequest == nil {
 				return nil

@@ -10,6 +10,7 @@ import (
 	"net/netip"
 
 	proxy "github.com/pires/go-proxyproto"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const (
@@ -154,8 +155,7 @@ func tcpAddress(endpoint netip.AddrPort) *net.TCPAddr {
 func headerFromTCP(family byte, source, destination *net.TCPAddr) (Header, bool) {
 	sourceAddress, sourceOK := netip.AddrFromSlice(source.IP)
 	destinationAddress, destinationOK := netip.AddrFromSlice(destination.IP)
-	if !sourceOK || !destinationOK || source.Port < 1 || source.Port > 65535 ||
-		destination.Port < 1 || destination.Port > 65535 {
+	if !sourceOK || !destinationOK || !tcpport.ValidNetwork(source.Port) || !tcpport.ValidNetwork(destination.Port) {
 		return Header{}, false
 	}
 	switch family {

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 var ErrInvalidControlURL = errors.New("naming: control URL must be an HTTPS origin")
@@ -25,7 +27,7 @@ func CanonicalControlURL(value string) (string, error) {
 	port := origin.Port()
 	if port != "" {
 		number, err := strconv.Atoi(port)
-		if err != nil || number < 1 || number > 65535 {
+		if err != nil || !tcpport.ValidNetwork(number) {
 			return "", ErrInvalidControlPort
 		}
 	}
