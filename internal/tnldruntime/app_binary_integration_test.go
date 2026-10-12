@@ -317,7 +317,7 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 	if status := call("register", registration, nil); status != http.StatusNoContent {
 		t.Fatalf("app registration returned %d", status)
 	}
-	stopRenewal := make(chan struct{})
+	renewalCtx, cancelRenewal := context.WithCancel(t.Context())
 	renewed := make(chan struct{})
 	go func() {
 		defer close(renewed)
@@ -325,11 +325,11 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-stopRenewal:
+			case <-renewalCtx.Done():
 				return
 			case <-ticker.C:
 				body, _ := json.Marshal(registration)
-				request, err := http.NewRequest(http.MethodPost, endpoint.URL+"/v1/renew", bytes.NewReader(body))
+				request, err := http.NewRequestWithContext(renewalCtx, http.MethodPost, endpoint.URL+"/v1/renew", bytes.NewReader(body))
 				if err != nil {
 					return
 				}
@@ -345,7 +345,7 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 	}()
 	var stopRenewalOnce sync.Once
 	stopAppRenewal := func() {
-		stopRenewalOnce.Do(func() { close(stopRenewal) })
+		stopRenewalOnce.Do(cancelRenewal)
 		<-renewed
 	}
 	t.Cleanup(stopAppRenewal)
@@ -381,10 +381,10 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 		snapshot, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
 		return err == nil && len(snapshot.Services) == 2 && snapshot.Services[0].Registered == false && snapshot.Services[1].Registered, err
 	})
-	stopAppRenewal()
 	if status := call("unregister", registration, nil); status != http.StatusNoContent {
 		t.Fatalf("app unregister returned %d", status)
 	}
+	stopAppRenewal()
 	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 		snapshot, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
 		return err == nil && len(snapshot.Services) == 2 && !snapshot.Services[0].Registered && !snapshot.Services[1].Registered, err
