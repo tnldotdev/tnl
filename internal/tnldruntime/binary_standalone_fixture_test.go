@@ -66,6 +66,10 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	metricsAddress := unusedTCPAddress(t)
 	// standalone creates its own internal listeners. the unused split-role
 	// addresses below only need to satisfy configuration validation.
+	drainTimeout := "1s"
+	if tcpVisitor {
+		drainTimeout = "5s"
+	}
 	serveEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":                     trustFile,
 		"TNLD_ACCESS_TOKEN_LIFETIME":        "5m",
@@ -77,7 +81,7 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 		"TNLD_CONTROL_TLS_CERTIFICATE_FILE": serverCertificate.certificateFile,
 		"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE": serverCertificate.privateKeyFile,
 		"TNLD_DATABASE_URL":                 databaseURL,
-		"TNLD_DRAIN_TIMEOUT":                "1s",
+		"TNLD_DRAIN_TIMEOUT":                drainTimeout,
 		"TNLD_INGRESS_LEASE_DURATION":       "5s",
 		"TNLD_INGRESS_LISTEN":               publicListen,
 		"TNLD_INTERNAL_RELAY_LISTEN":        "127.0.0.1:1",
