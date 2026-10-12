@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 import * as os from "node:os";
@@ -16,7 +16,6 @@ export interface BootstrapRequest {
 }
 
 export interface TestBootstrap {
-  readonly socket: string;
   readonly endpointPath: string;
   readonly environment: Record<string, string>;
   readonly requests: BootstrapRequest[];
@@ -26,15 +25,12 @@ export interface TestBootstrap {
 
 interface BootstrapOptions {
   readonly responseBody?: string;
-  readonly socket?: string;
   readonly status?: number;
 }
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
-  const ownedDirectory =
-    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-")) : null;
-  const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
-  const endpointPath = socket + ".endpoint.json";
+  const ownedDirectory = await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-"));
+  const endpointPath = path.join(ownedDirectory, "control.endpoint.json");
   const credential = randomBytes(32).toString("base64url");
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
@@ -47,10 +43,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
-        if (
-          request.socket.localAddress !== undefined &&
-          request.headers.authorization !== `Bearer ${credential}`
-        ) {
+        if (request.headers.authorization !== `Bearer ${credential}`) {
           response.writeHead(401).end();
           return;
         }
@@ -120,11 +113,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     });
   };
   const server = http.createServer(serve);
-  const tcpServer = http.createServer(serve);
-  server.on("error", (error) => {
-    failure ??= error;
-  });
-  // install ownership before listen/chmod: either operation can fail before returning a handle.
+  // install ownership before listening: either step can fail before returning a handle.
   let closing: Promise<void> | undefined;
   const close = () =>
     (closing ??= (async () => {
@@ -136,16 +125,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           server.closeAllConnections();
           await closed;
         }
-        if (tcpServer.listening) {
-          const closed = new Promise<void>((resolve, reject) =>
-            tcpServer.close((error) => (error ? reject(error) : resolve())),
-          );
-          tcpServer.closeAllConnections();
-          await closed;
-        }
       } finally {
-        if (ownedDirectory !== null) await rm(ownedDirectory, { force: true, recursive: true });
-        else await rm(endpointPath, { force: true });
+        await rm(ownedDirectory, { force: true, recursive: true });
       }
     })());
   const assertHealthy = () => {
@@ -162,20 +143,12 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(socket, () => {
+      server.listen(0, "127.0.0.1", () => {
         server.off("error", reject);
         resolve();
       });
     });
-    await chmod(socket, 0o600);
-    await new Promise<void>((resolve, reject) => {
-      tcpServer.once("error", reject);
-      tcpServer.listen(0, "127.0.0.1", () => {
-        tcpServer.off("error", reject);
-        resolve();
-      });
-    });
-    const address = tcpServer.address();
+    const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("test bootstrap TCP address is missing");
     await writeFile(
@@ -189,9 +162,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     throw error;
   }
   return {
-    socket,
     endpointPath,
-    environment: { APP_TEST_SOCKET: socket },
+    environment: { APP_TEST_ENDPOINT: endpointPath },
     requests,
     assertHealthy,
     close,

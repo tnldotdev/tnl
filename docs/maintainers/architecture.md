@@ -158,11 +158,10 @@ also binds an OS-assigned loopback TCP port with a private, bearer-protected
 endpoint descriptor. the Node, Bun, and Python app integrations and the CLI
 now use the authenticated loopback endpoint for registration and observation.
 the Go ad-hoc SDK owns its own publisher instead of using the app runtime.
-the host lock and TCP credential descriptor live in the verified private `run/`
-directory under canonical client state. the temporary Unix socket stays under
-`/tmp` to fit macOS socket path limits until its remaining native integration
-fixtures move off it; registration wire shapes can then move to the local
-publisher contract.
+the native integration fixture also uses the authenticated endpoint. the host
+lock and TCP credential descriptor live in the verified private `run/` directory
+under canonical client state. registration wire shapes still use the private
+protocol and will move to the local publisher contract with the new owner model.
 
 ## resolve project configuration
 
@@ -230,18 +229,18 @@ stores each project's snapshot and ordered events in client SQLite; one write
 transaction advances the cursor and appends an event, retaining at most 2048
 events and 8 MiB of event data. watch cursors survive publisher restarts until
 their event falls outside the retained history. the private native command
-`tnl runtime address` locates one Unix socket per canonical
+`tnl runtime endpoint` locates one private endpoint descriptor per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
-maintain it. the socket is user-owned
-and mode 0600 beneath a stable, short mode-0700 directory under `/tmp`.
-`internal/privateprotocol` bounds and
-validates requests; golden fixtures describe its wire shape. configured-service
-control sessions remain in the native process. an ad-hoc credential crosses
-only this private socket when the app registers its bound target; it does not
-enter snapshots, diagnostics, or browser metadata. the native runtime can
-start without a project file for ad-hoc registrations.
+maintain its loopback HTTP listener. the descriptor holds its credential in a
+user-owned mode-0600 file beneath the mode-0700 client state runtime directory.
+`internal/privateprotocol` bounds and validates requests; golden fixtures
+describe the wire shape. configured-service control sessions remain in the
+native process. an ad-hoc credential crosses only this authenticated local API
+when the app registers its bound target; it does not enter snapshots,
+diagnostics, or browser metadata. the native runtime can start without a
+project file for ad-hoc registrations.
 
-the same native socket accepts several ad-hoc invocations from one app process.
+the same local publisher accepts several ad-hoc invocations from one app process.
 `internal/clientruntime.AdHocManager` keeps them separate from configured
 services, checks the owner, pid, renewal, and invocation ID for each registration,
 and holds the runtime open until they drain. each worker calls
@@ -291,7 +290,7 @@ observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
 the Python binding starts ASGI lifespan on a port-0 loopback listener before
-registering it over the same private socket used by TypeScript. its status
+registering it over the same authenticated local API used by TypeScript. its status
 poller waits for the exact registration and ready publish run, never a public
 GET probe. on exit, unregister joins native drain before ASGI shutdown; a
 process crash leaves the owner/pid lease and ephemeral expiry as cleanup

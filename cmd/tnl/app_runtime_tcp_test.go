@@ -12,24 +12,24 @@ import (
 )
 
 func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "publisher.sock")
+	key := filepath.Join(t.TempDir(), "publisher")
 	handler := http.NewServeMux()
 	handler.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	handler.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	server, _, err := startRuntimeTCP(socket, handler)
+	server, _, err := startRuntimeTCP(key, handler)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := stopRuntimeTCP(context.Background(), server, socket); err != nil {
+		if err := stopRuntimeTCP(context.Background(), server, key); err != nil {
 			t.Error(err)
 		}
 	})
-	endpoint, err := readRuntimeTCPEndpoint(socket)
+	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil || endpoint.Credential == "" || !strings.HasPrefix(endpoint.URL, "http://127.0.0.1:") {
 		t.Fatalf("invalid loopback endpoint: %+v, %v", endpoint, err)
 	}
-	info, err := os.Stat(runtimeTCPEndpointPath(socket))
+	info, err := os.Stat(runtimeTCPEndpointPath(key))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("endpoint descriptor mode = %v, %v", info, err)
 	}
