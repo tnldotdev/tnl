@@ -161,6 +161,31 @@ await publication.register(server);
 Registration acknowledges the listener; `tnl wait` checks public readiness.
 See [API server setup](https://tnl.dev/docs/frameworks#api-servers).
 
+## use a database public url
+
+Name a PostgreSQL service beside your web app:
+
+```ts
+import { defineConfig } from "@tnldotdev/tnl/config";
+
+export default defineConfig({
+  services: {
+    web: { target: { type: "app" } },
+    orders: {
+      protocol: "postgres",
+      target: { type: "address", address: "127.0.0.1:5432" },
+    },
+  },
+});
+```
+
+Start PostgreSQL and your app normally, then run `tnl publish orders`. Project
+preparation saves a public hostname and TCP port for `orders` before the app
+starts. Application metadata provides `tnl.services?.orders?.hostname`,
+`.port`, and `.url` (`hostname:port`) for a PostgreSQL client using visitor TLS.
+These values do not mean the database is ready; use `tnl wait --service orders`
+to check its current publication and private TCP listener.
+
 ## open changes side by side
 
 Create another Git worktree. The project configuration comes with it:

@@ -27,7 +27,13 @@ if (tnl.namespace && tnl.services) {
   service.hostname satisfies string;
   if (service) {
     service.hostname satisfies string;
-    service.url satisfies `https://${string}`;
+    service.url satisfies string;
+    if (!service.protocol || service.protocol === "http") {
+      service.url satisfies `https://${string}`;
+    }
+    if ("port" in service) {
+      service.port satisfies number;
+    }
     // @ts-expect-error service fields are readonly.
     service.hostname = "other.example";
     // @ts-expect-error service URLs are readonly.
